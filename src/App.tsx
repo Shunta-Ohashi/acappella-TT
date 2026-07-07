@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 import type { DropResult } from '@hello-pangea/dnd'
 import './App.css'
@@ -29,7 +29,7 @@ function App() {
   const [intervalTime, setIntervalTime] = useState(2)
 
   // ➕ バンドを追加する動き
-  const handleAddBand = (e: React.FormEvent) => {
+  const handleAddBand = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!inputName || inputDuration <= 0) return
 
@@ -46,7 +46,7 @@ function App() {
   }
 
   // ☕ 休憩を追加する動き
-  const handleAddBreak = (e: React.FormEvent) => {
+  const handleAddBreak = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (breakDuration <= 0) return
 
@@ -63,18 +63,19 @@ function App() {
 
   // 🗑️ 削除の動き（バンドも休憩もまとめて削除可能）
   const handleDeleteItem = (id: string) => {
-    setItems(items.filter(item => item.id !== id))
+    setItems((prevItems) => prevItems.filter((item) => item.id !== id))
   }
 
   // 🎴 ドラッグが終わったときの動き
   const handleOnDragEnd = (result: DropResult) => {
     if (!result.destination) return
 
-    const reorderedItems = Array.from(items)
-    const [removed] = reorderedItems.splice(result.source.index, 1)
-    reorderedItems.splice(result.destination.index, 0, removed)
-
-    setItems(reorderedItems)
+    setItems((prevItems) => {
+      const reorderedItems = Array.from(prevItems)
+      const [removed] = reorderedItems.splice(result.source.index, 1)
+      reorderedItems.splice(result.destination.index, 0, removed)
+      return reorderedItems
+    })
   }
 
   // 🕒 タイムテーブルを自動計算する関数
@@ -87,9 +88,8 @@ function App() {
       const endMinRaw = currentTotalMinutes + item.duration
 
       // 💡 転換時間の計算ロジック：
-      // もし今処理しているのが「休憩」なら、その後に転換時間(2分)は不要
-      // また、次のアイテムが「休憩」の場合も転換時間は不要に調整可能ですが、
-      // ここではシンプルに「バンドの後にだけ転換時間を挟む」という計算にしています。
+      // いま処理しているのが「バンド」のときだけ、後ろに転換時間（intervalTime分）を加算する
+      // （休憩の直後は転換時間を加算しない）
       if (item.type === 'band') {
         currentTotalMinutes = endMinRaw + intervalTime
       } else {
