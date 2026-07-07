@@ -34,6 +34,13 @@ function App() {
     setInputTime('')
   }
 
+  // 🗑️ 「削除」ボタンを押したときの動き
+  const handleDeleteBand = (id: number) => {
+    // クリックされたID以外のバンドだけで、新しいリストを作る（フィルターをかける）
+    const filteredBands = bands.filter(band => band.id !== id)
+    setBands(filteredBands)
+  }
+
   return (
     <div style={{ padding: '20px', maxWidth: '600px', margin: '0 auto', textAlign: 'left' }}>
       <h1>🎤 アカペラ タイムテーブル作成</h1>
@@ -78,9 +85,18 @@ function App() {
         ) : (
           <ul style={{ listStyle: 'none', padding: 0 }}>
             {bands.map((band) => (
-              <li key={band.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px', borderBottom: '1px solid #ddd', background: '#fff', marginBottom: '5px', borderRadius: '4px', color: '#333' }}>
-                <span style={{ fontWeight: 'bold' }}>⏰ {band.time}</span>
-                <span>🎵 {band.name}</span>
+              <li key={band.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px solid #ddd', background: '#fff', marginBottom: '5px', borderRadius: '4px', color: '#333' }}>
+                <div>
+                  <span style={{ fontWeight: 'bold', marginRight: '15px' }}>⏰ {band.time}</span>
+                  <span>🎵 {band.name}</span>
+                </div>
+                {/* ❌ 削除ボタン */}
+                <button 
+                  onClick={() => handleDeleteBand(band.id)}
+                  style={{ background: '#e53e3e', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
+                >
+                  削除
+                </button>
               </li>
             ))}
           </ul>
