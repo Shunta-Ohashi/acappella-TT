@@ -1,67 +1,100 @@
 import { useState } from 'react'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
-import type { DropResult } from '@hello-pangea/dnd' // 👈 型だけを別でインポートする
+import type { DropResult } from '@hello-pangea/dnd'
 import './App.css'
 
-interface Band {
-  id: number;
-  name: string;
-  duration: number;
+// 🎴 タイムテーブルに入る共通の型（バンドか休憩かを選べるようにする）
+interface TimetableItem {
+  id: string; // Date.now()などを文字列にして保持
+  type: 'band' | 'break'; // 👈 目印
+  name: string; // バンド名、または「休憩」などの文字
+  duration: number; // 時間（分）
 }
 
 function App() {
-  const [bands, setBands] = useState<Band[]>([
-    { id: 1, name: 'あおぞら（仮のバンド名）', duration: 15 },
-    { id: 2, name: '夕焼けコーラス', duration: 10 },
-    { id: 3, name: 'みなみかぜ（サンプル）', duration: 12 }
+  // バンドと休憩を一つのリストで管理（初期データに休憩も入れておきます）
+  const [items, setItems] = useState<TimetableItem[]>([
+    { id: '1', type: 'band', name: 'あおぞら（仮のバンド名）', duration: 15 },
+    { id: '2', type: 'break', name: '中間休憩', duration: 10 },
+    { id: '3', type: 'band', name: '夕焼けコーラス', duration: 10 }
   ])
 
+  // 入力フォームの状態管理
   const [inputName, setInputName] = useState('')
   const [inputDuration, setInputDuration] = useState<number>(15)
+  const [breakDuration, setBreakDuration] = useState<number>(10) // 👈 休憩時間入力用
+
+  // スケジュール設定
   const [startTime, setStartTime] = useState('13:00')
   const [intervalTime, setIntervalTime] = useState(2)
 
+  // ➕ バンドを追加する動き
   const handleAddBand = (e: React.FormEvent) => {
     e.preventDefault()
     if (!inputName || inputDuration <= 0) return
 
-    const newBand: Band = {
-      id: Date.now(),
+    const newItem: TimetableItem = {
+      id: `band-${Date.now()}`,
+      type: 'band',
       name: inputName,
       duration: inputDuration
     }
 
-    setBands([...bands, newBand])
+    setItems([...items, newItem])
     setInputName('')
     setInputDuration(15)
   }
 
-  const handleDeleteBand = (id: number) => {
-    setBands(bands.filter(band => band.id !== id))
+  // ☕ 休憩を追加する動き
+  const handleAddBreak = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (breakDuration <= 0) return
+
+    const newItem: TimetableItem = {
+      id: `break-${Date.now()}`,
+      type: 'break',
+      name: '☕ 休憩', // 固定のタイトル、またはカスタムできるようにしてもOK
+      duration: breakDuration
+    }
+
+    setItems([...items, newItem])
+    setBreakDuration(10) // 追加後は10分に戻す
   }
 
-  // 🎴 【新機能】ドラッグが終わった（指やマウスを離した）ときの動き
+  // 🗑️ 削除の動き（バンドも休憩もまとめて削除可能）
+  const handleDeleteItem = (id: string) => {
+    setItems(items.filter(item => item.id !== id))
+  }
+
+  // 🎴 ドラッグが終わったときの動き
   const handleOnDragEnd = (result: DropResult) => {
-    // リストの外側にドロップされた場合は何もしない
     if (!result.destination) return
 
-    // バンドのリストをコピーして、並び替えの処理を行う
-    const items = Array.from(bands)
-    const [reorderedItem] = items.splice(result.source.index, 1) // 掴んだアイテムを一度抜く
-    items.splice(result.destination.index, 0, reorderedItem) // 離した位置に差し込む
+    const reorderedItems = Array.from(items)
+    const [removed] = reorderedItems.splice(result.source.index, 1)
+    reorderedItems.splice(result.destination.index, 0, removed)
 
-    setBands(items) // 新しい並び順をStateに保存（時間が自動で再計算されます！）
+    setItems(reorderedItems)
   }
 
+  // 🕒 タイムテーブルを自動計算する関数
   const calculateTimeline = () => {
     const [startHour, startMin] = startTime.split(':').map(Number)
     let currentTotalMinutes = startHour * 60 + startMin
 
-    return bands.map((band) => {
+    return items.map((item) => {
       const startMinRaw = currentTotalMinutes
-      const endMinRaw = currentTotalMinutes + band.duration
+      const endMinRaw = currentTotalMinutes + item.duration
 
-      currentTotalMinutes = endMinRaw + intervalTime
+      // 💡 転換時間の計算ロジック：
+      // もし今処理しているのが「休憩」なら、その後に転換時間(2分)は不要
+      // また、次のアイテムが「休憩」の場合も転換時間は不要に調整可能ですが、
+      // ここではシンプルに「バンドの後にだけ転換時間を挟む」という計算にしています。
+      if (item.type === 'band') {
+        currentTotalMinutes = endMinRaw + intervalTime
+      } else {
+        currentTotalMinutes = endMinRaw // 休憩の後はそのまま次の時間に繋ぐ
+      }
 
       const formatTime = (totalMinutes: number) => {
         const h = Math.floor(totalMinutes / 60) % 24
@@ -70,19 +103,19 @@ function App() {
       }
 
       return {
-        ...band,
+        ...item,
         timeString: `${formatTime(startMinRaw)} 〜 ${formatTime(endMinRaw)}`
       }
     })
   }
 
-  const calculatedBands = calculateTimeline()
+  const calculatedItems = calculateTimeline()
 
   return (
     <div style={{ padding: '20px', maxWidth: '600px', margin: '0 auto', textAlign: 'left' }}>
       <h1>🎤 アカペラ タイムテーブル作成</h1>
 
-      {/* ⚙️ スケジュール設定 */}
+      {/* ⚙️ スケジュール基本設定 */}
       <section style={{ background: '#edf2f7', padding: '15px', borderRadius: '8px', marginBottom: '20px', color: '#2d3748' }}>
         <h3>⚙️ スケジュール基本設定</h3>
         <div style={{ display: 'flex', gap: '20px' }}>
@@ -97,41 +130,51 @@ function App() {
         </div>
       </section>
       
-      {/* 📥 バンド入力フォーム */}
-      <section style={{ background: '#f5f5f5', padding: '15px', borderRadius: '8px', marginBottom: '20px', color: '#333' }}>
-        <h3>➕ 出演バンドの追加</h3>
-        <form onSubmit={handleAddBand}>
-          <div style={{ marginBottom: '10px' }}>
-            <label style={{ display: 'block', fontWeight: 'bold' }}>バンド名:</label>
-            <input type="text" placeholder="例: クレシェンド" value={inputName} onChange={(e) => setInputName(e.target.value)} style={{ width: '100%', padding: '8px', marginTop: '5px', borderRadius: '4px', border: '1px solid #ccc' }} />
-          </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', fontWeight: 'bold' }}>演奏時間 (分):</label>
-            <input type="number" value={inputDuration} onChange={(e) => setInputDuration(Number(e.target.value))} style={{ width: '100%', padding: '8px', marginTop: '5px', borderRadius: '4px', border: '1px solid #ccc' }} />
-          </div>
-          <button type="submit" style={{ background: '#007acc', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>タイムテーブルに追加</button>
-        </form>
-      </section>
+      {/* 📥 フォームエリア（横並びに変更） */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '20px' }}>
+        {/* バンド追加フォーム */}
+        <section style={{ background: '#f5f5f5', padding: '15px', borderRadius: '8px', color: '#333' }}>
+          <h3 style={{ marginTop: 0 }}>➕ バンドの追加</h3>
+          <form onSubmit={handleAddBand}>
+            <div style={{ marginBottom: '10px' }}>
+              <input type="text" placeholder="バンド名" value={inputName} onChange={(e) => setInputName(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
+            </div>
+            <div style={{ marginBottom: '10px' }}>
+              <label style={{ fontSize: '12px', fontWeight: 'bold' }}>演奏時間 (分):</label>
+              <input type="number" value={inputDuration} onChange={(e) => setInputDuration(Number(e.target.value))} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
+            </div>
+            <button type="submit" style={{ width: '100%', background: '#007acc', color: 'white', padding: '8px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>追加</button>
+          </form>
+        </section>
+
+        {/* ☕ 休憩追加フォーム */}
+        <section style={{ background: '#e6fffa', padding: '15px', borderRadius: '8px', color: '#234e52' }}>
+          <h3 style={{ marginTop: 0 }}>☕ 休憩の追加</h3>
+          <form onSubmit={handleAddBreak}>
+            <div style={{ marginBottom: '23px' }}> {/* 高さを合わせるための余白 */}
+              <span style={{ fontSize: '14px', color: '#4a5568' }}>タイムテーブルの間に挟む休憩枠を作成します。</span>
+            </div>
+            <div style={{ marginBottom: '10px' }}>
+              <label style={{ fontSize: '12px', fontWeight: 'bold' }}>休憩時間 (分):</label>
+              <input type="number" value={breakDuration} onChange={(e) => setBreakDuration(Number(e.target.value))} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
+            </div>
+            <button type="submit" style={{ width: '100%', background: '#319795', color: 'white', padding: '8px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>休憩枠を追加</button>
+          </form>
+        </section>
+      </div>
 
       {/* 📋 タイムテーブル（D&D対応エリア） */}
       <section>
         <h3>📅 自動計算されたタイムテーブル（ドラッグして並び替え可）</h3>
-        {calculatedBands.length === 0 ? (
-          <p>バンドが登録されていません。</p>
+        {calculatedItems.length === 0 ? (
+          <p>項目が登録されていません。</p>
         ) : (
-          /* 🛠️ D&Dができる全体の範囲を設定 */
           <DragDropContext onDragEnd={handleOnDragEnd}>
-            {/* 🛠️ アイテムを落とせる（Droppable）エリアを設定 */}
             <Droppable droppableId="timetable-list">
               {(provided) => (
-                <ul 
-                  {...provided.droppableProps} 
-                  ref={provided.innerRef} 
-                  style={{ listStyle: 'none', padding: 0 }}
-                >
-                  {calculatedBands.map((band, index) => (
-                    /* 🛠️ 1つずつの要素をドラッグ可能（Draggable）にする。idは文字列にする必要があるので String() を使用 */
-                    <Draggable key={band.id} draggableId={String(band.id)} index={index}>
+                <ul {...provided.droppableProps} ref={provided.innerRef} style={{ listStyle: 'none', padding: 0 }}>
+                  {calculatedItems.map((item, index) => (
+                    <Draggable key={item.id} draggableId={item.id} index={index}>
                       {(provided) => (
                         <li 
                           ref={provided.innerRef}
@@ -143,28 +186,28 @@ function App() {
                             alignItems: 'center', 
                             padding: '12px', 
                             borderBottom: '1px solid #ddd', 
-                            background: '#fff', 
+                            // 💡 休憩枠の場合は背景色をほんのり変える
+                            background: item.type === 'break' ? '#e6fffa' : '#fff', 
                             marginBottom: '5px', 
                             borderRadius: '4px', 
                             color: '#333',
                             boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-                            ...provided.draggableProps.style // ライブラリが動的に計算するスタイルを適用
+                            ...provided.draggableProps.style
                           }}
                         >
                           <div>
-                            {/* ☰ のようなツマミ代わりのマーク */}
                             <span style={{ marginRight: '10px', color: '#aaa', cursor: 'grab' }}>☰</span>
-                            <span style={{ fontWeight: 'bold', marginRight: '15px', color: '#007acc' }}>⏰ {band.timeString}</span>
-                            <span>🎵 {band.name} ({band.duration}分)</span>
+                            <span style={{ fontWeight: 'bold', marginRight: '15px', color: item.type === 'break' ? '#319795' : '#007acc' }}>⏰ {item.timeString}</span>
+                            <span>{item.type === 'break' ? '☕' : '🎵'} {item.name} ({item.duration}分)</span>
                           </div>
-                          <button onClick={() => handleDeleteBand(band.id)} style={{ background: '#e53e3e', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}>
+                          <button onClick={() => handleDeleteItem(item.id)} style={{ background: '#e53e3e', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}>
                             削除
                           </button>
                         </li>
                       )}
                     </Draggable>
                   ))}
-                  {provided.placeholder} {/* リストがガタつかないための隙間埋めパーツ */}
+                  {provided.placeholder}
                 </ul>
               )}
             </Droppable>
