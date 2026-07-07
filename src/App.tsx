@@ -119,17 +119,20 @@ function App() {
     // 2. 違うエリア間（プール ↔ タイムテーブル）の移動の場合
     const srcList = sourceId === 'pool-list' ? Array.from(poolItems) : Array.from(timetableItems)
     const destList = destId === 'pool-list' ? Array.from(poolItems) : Array.from(timetableItems)
-    
+
     const [removed] = srcList.splice(sourceIndex, 1)
 
-    // 移動先のエリアに応じて、IDが重複しないように新しく一意のIDを割り当てる
-    if (destId === 'timetable-list') {
-      removed.id = `time-band-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`
-    } else {
-      removed.id = `pool-band-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`
+    // プールはバンドのみ想定のため、休憩枠をプールへは移動させない
+    if (destId === 'pool-list' && removed.type === 'break') return
+
+    // 移動先のエリアに応じて、IDが重複しないように新しく一意のIDを割り当てる（Stateの直接ミューテーションは避ける）
+    const idPrefix = destId === 'timetable-list' ? 'time' : 'pool'
+    const movedItem: TimetableItem = {
+      ...removed,
+      id: `${idPrefix}-${removed.type}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`
     }
 
-    destList.splice(destinationIndex, 0, removed)
+    destList.splice(destinationIndex, 0, movedItem)
 
     // 両方の状態（State）をまとめて更新
     if (sourceId === 'pool-list') {
@@ -200,10 +203,10 @@ function App() {
               <h3 style={{ marginTop: 0 }}>➕ バンドをプールに登録</h3>
               <form onSubmit={handleRegisterPool}>
                 <div style={{ marginBottom: '10px' }}>
-                  <input type="text" placeholder="バンド名" value={inputName} onChange={(e) => setInputName(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
+                  <input type="text" aria-label="バンド名" placeholder="バンド名" value={inputName} onChange={(e) => setInputName(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
                 </div>
                 <div style={{ marginBottom: '10px' }}>
-                  <input type="text" placeholder="メンバー名（カンマ区切り。例: 山田, 佐藤, 鈴木）" value={inputMembers} onChange={(e) => setInputMembers(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
+                  <input type="text" aria-label="メンバー名（カンマ区切り）" placeholder="メンバー名（カンマ区切り。例: 山田, 佐藤, 鈴木）" value={inputMembers} onChange={(e) => setInputMembers(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
                 </div>
                 <div style={{ marginBottom: '10px' }}>
                   <label style={{ fontSize: '12px', fontWeight: 'bold' }}>演奏時間 (分):</label>
