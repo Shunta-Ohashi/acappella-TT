@@ -70,10 +70,13 @@ function App() {
   const handleOnDragEnd = (result: DropResult) => {
     if (!result.destination) return
 
+    const sourceIndex = result.source.index
+    const destinationIndex = result.destination.index
+
     setItems((prevItems) => {
       const reorderedItems = Array.from(prevItems)
-      const [removed] = reorderedItems.splice(result.source.index, 1)
-      reorderedItems.splice(result.destination.index, 0, removed)
+      const [removed] = reorderedItems.splice(sourceIndex, 1)
+      reorderedItems.splice(destinationIndex, 0, removed)
       return reorderedItems
     })
   }
