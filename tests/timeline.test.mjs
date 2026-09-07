@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { calculateStageTimeline } from '../src/domain/timeline.ts'
+import { calculateStageTimeline, isValidLocalTime } from '../src/domain/timeline.ts'
 
 const event = {
   id: 'event-1',
@@ -181,4 +181,54 @@ test('StageごとにScheduleItemを独立して計算する', () => {
   assert.deepEqual(resultB.map(item => item.scheduleItemId), ['item-b'])
   assert.equal(resultA[0].plannedStartMinute, 540)
   assert.equal(resultB[0].plannedStartMinute, 720)
+})
+
+test('SectionありでsectionId未設定のScheduleItemは明示的なエラーにする', () => {
+  assert.throws(
+    () => calculateStageTimeline({
+      event,
+      stage: createStage(),
+      sections: [{ id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 }],
+      scheduleItems: [performance('item-1', 'event-band-1', 0)],
+      eventBands,
+    }),
+    /ScheduleItem must belong to a Section when Stage has Sections: item-1/,
+  )
+})
+
+test('Sectionありで存在しないsectionIdを参照するScheduleItemは明示的なエラーにする', () => {
+  assert.throws(
+    () => calculateStageTimeline({
+      event,
+      stage: createStage(),
+      sections: [{ id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 }],
+      scheduleItems: [
+        performance('item-1', 'event-band-1', 0, { sectionId: 'unknown-section' }),
+      ],
+      eventBands,
+    }),
+    /Section not found for ScheduleItem item-1: unknown-section/,
+  )
+})
+
+test('Sectionありで有効なSectionに所属するScheduleItemは従来どおり計算する', () => {
+  const result = calculateStageTimeline({
+    event,
+    stage: createStage(),
+    sections: [{ id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 }],
+    scheduleItems: [
+      performance('item-1', 'event-band-1', 0, { sectionId: 'section-1' }),
+    ],
+    eventBands,
+  })
+
+  assert.deepEqual(
+    result.map(item => [item.scheduleItemId, item.plannedStartMinute, item.plannedEndMinute]),
+    [['item-1', 780, 795]],
+  )
+})
+
+test('空文字はStage.plannedStartTimeへ保存できる時刻として扱わない', () => {
+  assert.equal(isValidLocalTime(''), false)
+  assert.equal(isValidLocalTime('13:00'), true)
 })

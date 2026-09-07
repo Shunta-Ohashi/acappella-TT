@@ -21,7 +21,11 @@ import {
   reorderStageScheduleItems,
   reorderUnscheduledEventBands,
 } from './domain/schedule'
-import { calculateStageTimeline, formatMinuteAsLocalTime } from './domain/timeline'
+import {
+  calculateStageTimeline,
+  formatMinuteAsLocalTime,
+  isValidLocalTime,
+} from './domain/timeline'
 import './App.css'
 
 const CURRENT_STAGE_ID = 'stage-1'
@@ -141,6 +145,16 @@ function App() {
 
   const handleToggleMemberSelection = (memberId: string) => {
     setSelectedMemberIds(prev => prev.includes(memberId) ? prev.filter(id => id !== memberId) : [...prev, memberId])
+  }
+
+  const handleStageStartTimeChange = (value: string) => {
+    if (!isValidLocalTime(value)) return
+
+    setStages(prev => prev.map(stage => (
+      stage.id === currentStage.id
+        ? { ...stage, plannedStartTime: value }
+        : stage
+    )))
   }
 
   // ==================== 🎴 プール・タイムテーブル操作ロジック ====================
@@ -384,7 +398,7 @@ function App() {
         <div style={{ display: 'flex', gap: '20px' }}>
           <div>
             <label style={{ fontWeight: 'bold', display: 'block' }}>イベント開始時刻:</label>
-            <input type="time" aria-label="イベント開始時刻" value={startTime} onChange={(e) => setStages(prev => prev.map(stage => stage.id === currentStage.id ? { ...stage, plannedStartTime: e.target.value } : stage))} style={{ padding: '6px', marginTop: '5px' }} />
+            <input type="time" aria-label="イベント開始時刻" value={startTime} onChange={(e) => handleStageStartTimeChange(e.target.value)} style={{ padding: '6px', marginTop: '5px' }} />
           </div>
           <div>
             <label style={{ fontWeight: 'bold', display: 'block' }}>転換時間 (分):</label>

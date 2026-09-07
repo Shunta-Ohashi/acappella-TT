@@ -28,17 +28,24 @@ export interface CalculateStageTimelineInput {
   eventBands: EventBand[]
 }
 
-export const parseLocalTimeToMinute = (time: string): number => {
+const getLocalTimeParts = (time: string): { hour: number; minute: number } | undefined => {
   const match = /^(\d{2}):(\d{2})$/.exec(time)
-  if (!match) throw new RangeError(`Invalid local time: ${time}`)
+  if (!match) return undefined
 
   const hour = Number(match[1])
   const minute = Number(match[2])
-  if (hour > 23 || minute > 59) {
-    throw new RangeError(`Invalid local time: ${time}`)
-  }
+  if (hour > 23 || minute > 59) return undefined
 
-  return hour * 60 + minute
+  return { hour, minute }
+}
+
+export const isValidLocalTime = (time: string): boolean => getLocalTimeParts(time) !== undefined
+
+export const parseLocalTimeToMinute = (time: string): number => {
+  const parts = getLocalTimeParts(time)
+  if (!parts) throw new RangeError(`Invalid local time: ${time}`)
+
+  return parts.hour * 60 + parts.minute
 }
 
 export const formatMinuteAsLocalTime = (totalMinutes: number): string => {
@@ -103,6 +110,20 @@ export const calculateStageTimeline = ({
   if (stageSections.length === 0) {
     calculateItems(stageScheduleItems)
     return calculatedItems
+  }
+
+  const stageSectionIds = new Set(stageSections.map(section => section.id))
+  for (const scheduleItem of stageScheduleItems) {
+    if (!scheduleItem.sectionId) {
+      throw new Error(
+        `ScheduleItem must belong to a Section when Stage has Sections: ${scheduleItem.id}`,
+      )
+    }
+    if (!stageSectionIds.has(scheduleItem.sectionId)) {
+      throw new Error(
+        `Section not found for ScheduleItem ${scheduleItem.id}: ${scheduleItem.sectionId}`,
+      )
+    }
   }
 
   for (const section of stageSections) {
