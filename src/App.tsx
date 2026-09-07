@@ -6,6 +6,7 @@ import type {
   BreakScheduleItem,
   Event as TimetableEvent,
   EventBand,
+  EventMember,
   Member,
   PerformanceScheduleItem,
   ScheduleItem,
@@ -26,11 +27,21 @@ import {
   formatMinuteAsLocalTime,
   isValidLocalTime,
 } from './domain/timeline'
+import { detectScheduleIssues } from './domain/issues'
+import { IssuePanel } from './components/IssuePanel'
+import { getHighestSeverityByScheduleItem } from './ui/issuePresentation'
 import './App.css'
 
 const CURRENT_STAGE_ID = 'stage-1'
 
 const createId = (prefix: string) => `${prefix}-${crypto.randomUUID()}`
+
+const initialMembers: Member[] = [
+  { id: 'm-1', realName: '佐藤', active: true },
+  { id: 'm-2', realName: '鈴木', active: true },
+  { id: 'm-3', realName: '高橋', active: true },
+  { id: 'm-4', realName: '田中', active: true },
+]
 
 const initialEvent: TimetableEvent = {
   id: 'event-1',
@@ -62,6 +73,12 @@ const initialEventBands: EventBand[] = [
   },
 ]
 
+const initialEventMembers: EventMember[] = initialMembers.map((member) => ({
+  eventId: initialEvent.id,
+  memberId: member.id,
+  participationStatus: 'participating',
+}))
+
 const initialScheduleItems: ScheduleItem[] = [
   {
     id: 'schedule-break-1',
@@ -84,12 +101,7 @@ function App() {
   const currentStage = stages.find(stage => stage.id === CURRENT_STAGE_ID) ?? initialStage
 
   // 1️⃣ サークル員データベース（初期データ）
-  const [members, setMembers] = useState<Member[]>([
-    { id: 'm-1', realName: '佐藤', active: true },
-    { id: 'm-2', realName: '鈴木', active: true },
-    { id: 'm-3', realName: '高橋', active: true },
-    { id: 'm-4', realName: '田中', active: true },
-  ])
+  const [members, setMembers] = useState<Member[]>(initialMembers)
 
   // 2️⃣ バンドデータベース（初期データ）
   const [bands, setBands] = useState<Band[]>([
@@ -299,13 +311,22 @@ function App() {
   const currentStageScheduleItemsById = new Map(
     currentStageScheduleItems.map(scheduleItem => [scheduleItem.id, scheduleItem]),
   )
-  const calculatedTimetable = calculateStageTimeline({
+  const calculatedItems = calculateStageTimeline({
     event: currentEvent,
     stage: currentStage,
     sections: initialSections,
     scheduleItems,
     eventBands,
-  }).map(calculatedItem => {
+  })
+  const scheduleIssues = detectScheduleIssues({
+    event: currentEvent,
+    eventMembers: initialEventMembers,
+    eventBands,
+    calculatedItems,
+  })
+  const highestSeverityByScheduleItem =
+    getHighestSeverityByScheduleItem(scheduleIssues)
+  const calculatedTimetable = calculatedItems.map(calculatedItem => {
     const scheduleItem = currentStageScheduleItemsById.get(calculatedItem.scheduleItemId)
     if (!scheduleItem) {
       throw new Error(`ScheduleItem not found: ${calculatedItem.scheduleItemId}`)
@@ -470,25 +491,50 @@ function App() {
             <Droppable droppableId="timetable-list">
               {(provided) => (
                 <ul {...provided.droppableProps} ref={provided.innerRef} style={{ ...listContainerBase, background: '#edf2f7' }}>
-                  {calculatedTimetable.map(({ scheduleItem, eventBand, durationMinutes, timeString }, index) => (
-                    <Draggable key={scheduleItem.id} draggableId={scheduleItem.id} index={index}>
-                      {(provided) => (
-                        <li ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps} style={{ ...listItemBase, background: scheduleItem.kind === 'break' ? '#e6fffa' : '#fff', ...provided.draggableProps.style }}>
-                          <div>
-                            <span style={{ marginRight: '10px', color: '#aaa', cursor: 'grab' }}>☰</span>
-                            <span style={{ fontWeight: 'bold', marginRight: '15px', color: scheduleItem.kind === 'break' ? '#319795' : '#007acc' }}>⏰ {timeString}</span>
-                            <span>{scheduleItem.kind === 'break' ? '☕' : '🎵'} {scheduleItem.kind === 'break' ? scheduleItem.title : getBandNameByEventBand(eventBand)} ({durationMinutes}分)</span>
-                            {scheduleItem.kind === 'performance' && <div style={{ fontSize: '11px', color: '#718096', marginTop: '4px', marginLeft: '43px' }}>👥 {getMemberNamesByIds(eventBand?.memberIds)}</div>}
-                          </div>
-                          <button onClick={() => handleRemoveScheduleItem(scheduleItem.id)} style={{ ...baseButton, background: '#e53e3e', color: 'white', padding: '6px 12px', fontSize: '13px' }}>外す</button>
-                        </li>
-                      )}
-                    </Draggable>
-                  ))}
+                  {calculatedTimetable.map(({ scheduleItem, eventBand, durationMinutes, timeString }, index) => {
+                    const issueSeverity = highestSeverityByScheduleItem.get(scheduleItem.id)
+
+                    return (
+                      <Draggable key={scheduleItem.id} draggableId={scheduleItem.id} index={index}>
+                        {(provided) => (
+                          <li
+                            ref={provided.innerRef}
+                            {...provided.draggableProps}
+                            {...provided.dragHandleProps}
+                            className={issueSeverity
+                              ? `schedule-item schedule-item--${issueSeverity.toLowerCase()}`
+                              : 'schedule-item'}
+                            style={{ ...listItemBase, background: scheduleItem.kind === 'break' ? '#e6fffa' : '#fff', ...provided.draggableProps.style }}
+                          >
+                            <div>
+                              <span style={{ marginRight: '10px', color: '#aaa', cursor: 'grab' }}>☰</span>
+                              <span style={{ fontWeight: 'bold', marginRight: '15px', color: scheduleItem.kind === 'break' ? '#319795' : '#007acc' }}>⏰ {timeString}</span>
+                              <span>{scheduleItem.kind === 'break' ? '☕' : '🎵'} {scheduleItem.kind === 'break' ? scheduleItem.title : getBandNameByEventBand(eventBand)} ({durationMinutes}分)</span>
+                              {issueSeverity && (
+                                <span className={`schedule-item__issue-label schedule-item__issue-label--${issueSeverity.toLowerCase()}`}>
+                                  {issueSeverity}
+                                </span>
+                              )}
+                              {scheduleItem.kind === 'performance' && <div style={{ fontSize: '11px', color: '#718096', marginTop: '4px', marginLeft: '43px' }}>👥 {getMemberNamesByIds(eventBand?.memberIds)}</div>}
+                            </div>
+                            <button onClick={() => handleRemoveScheduleItem(scheduleItem.id)} style={{ ...baseButton, background: '#e53e3e', color: 'white', padding: '6px 12px', fontSize: '13px' }}>外す</button>
+                          </li>
+                        )}
+                      </Draggable>
+                    )
+                  })}
                   {provided.placeholder}
                 </ul>
               )}
             </Droppable>
+            <IssuePanel
+              issues={scheduleIssues}
+              members={members}
+              bands={bands}
+              eventBands={eventBands}
+              stages={stages}
+              calculatedItems={calculatedItems}
+            />
           </div>
 
         </div>

@@ -182,3 +182,139 @@
     border-right-color: var(--border);
   }
 }
+
+.issue-panel {
+  margin-top: 20px;
+  padding: 16px;
+  color: #2d3748;
+  background: #f7fafc;
+  border: 1px solid #cbd5e0;
+  border-radius: 8px;
+}
+
+.issue-panel__title {
+  margin: 0 0 12px;
+}
+
+.issue-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.issue-summary__count,
+.issue-severity-label,
+.schedule-item__issue-label {
+  display: inline-block;
+  border: 1px solid currentcolor;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.issue-summary__count {
+  padding: 6px 10px;
+}
+
+.issue-summary__count--error,
+.issue-severity-label--error,
+.schedule-item__issue-label--error {
+  color: #9b2c2c;
+  background: #fff5f5;
+}
+
+.issue-summary__count--warning,
+.issue-severity-label--warning,
+.schedule-item__issue-label--warning {
+  color: #975a16;
+  background: #fffaf0;
+}
+
+.issue-summary__count--info,
+.issue-severity-label--info,
+.schedule-item__issue-label--info {
+  color: #2c5282;
+  background: #ebf8ff;
+}
+
+.issue-panel__empty {
+  padding: 12px;
+  color: #276749;
+  background: #f0fff4;
+  border: 1px solid #9ae6b4;
+  border-radius: 6px;
+}
+
+.issue-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.issue-list__item {
+  padding: 12px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-left-width: 4px;
+  border-radius: 6px;
+}
+
+.issue-list__item--error {
+  border-left-color: #c53030;
+}
+
+.issue-list__item--warning {
+  border-left-color: #b7791f;
+}
+
+.issue-list__item--info {
+  border-left-color: #3182ce;
+}
+
+.issue-list__heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.issue-severity-label,
+.schedule-item__issue-label {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+}
+
+.issue-list__message {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.issue-list__details {
+  margin-top: 6px;
+  color: #4a5568;
+  font-size: 12px;
+}
+
+.schedule-item {
+  border: 2px solid transparent;
+}
+
+.schedule-item--error {
+  border-color: #c53030;
+}
+
+.schedule-item--warning {
+  border-color: #b7791f;
+}
+
+.schedule-item--info {
+  border-color: #3182ce;
+}
+
+.schedule-item__issue-label {
+  margin-left: 8px;
+  vertical-align: middle;
+}
