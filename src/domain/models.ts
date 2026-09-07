@@ -1,0 +1,125 @@
+export type MemberId = string
+export type BandId = string
+export type EventId = string
+export type StageId = string
+export type SectionId = string
+export type EventBandId = string
+export type ScheduleItemId = string
+
+// Values are stored as ISO-like strings and validated at the input boundary.
+export type LocalDate = string // YYYY-MM-DD
+export type LocalTime = string // HH:mm
+
+export interface TimeRange {
+  from: LocalTime
+  until: LocalTime
+}
+
+export type ParticipationStatus = 'participating' | 'absent' | 'undecided'
+
+export type FixedPosition =
+  | { kind: 'first' }
+  | { kind: 'last' }
+  | { kind: 'index'; index: number }
+
+export interface FixedPlacement {
+  stageId: StageId
+  sectionId?: SectionId
+  position?: FixedPosition
+  plannedStartTime?: LocalTime
+}
+
+export interface Member {
+  id: MemberId
+  realName: string
+  acaName?: string
+  entryAcademicYear?: number
+  notes?: string
+  active: boolean
+}
+
+export interface Band {
+  id: BandId
+  name: string
+  defaultMemberIds: MemberId[]
+  defaultDurationMinutes: number
+  notes?: string
+  active: boolean
+}
+
+export interface Event {
+  id: EventId
+  name: string
+  date: LocalDate
+  timeZone: string
+  defaultTransitionMinutes: number
+  validationPolicy: {
+    minimumGapBands: number
+    minimumRestMinutes: number
+  }
+  notes?: string
+}
+
+export interface Stage {
+  id: StageId
+  eventId: EventId
+  name: string
+  location?: string
+  order: number
+  plannedStartTime: LocalTime
+  plannedEndTime?: LocalTime
+  transitionMinutes?: number
+  notes?: string
+}
+
+export interface EventMember {
+  eventId: EventId
+  memberId: MemberId
+  participationStatus: ParticipationStatus
+  availableFrom?: LocalTime
+  availableUntil?: LocalTime
+  preferredTimeRange?: TimeRange
+  notes?: string
+}
+
+export interface EventBand {
+  id: EventBandId
+  eventId: EventId
+  bandId: BandId
+  memberIds: MemberId[]
+  durationMinutes: number
+  availableTimeRange?: TimeRange
+  preferredTimeRange?: TimeRange
+  fixedPlacement?: FixedPlacement
+  notes?: string
+}
+
+export interface Section {
+  id: SectionId
+  stageId: StageId
+  name: string
+  order: number
+  plannedStartTime?: LocalTime
+  plannedEndTime?: LocalTime
+  notes?: string
+}
+
+interface ScheduleItemBase {
+  id: ScheduleItemId
+  stageId: StageId
+  sectionId?: SectionId
+  order: number
+}
+
+export interface PerformanceScheduleItem extends ScheduleItemBase {
+  kind: 'performance'
+  eventBandId: EventBandId
+}
+
+export interface BreakScheduleItem extends ScheduleItemBase {
+  kind: 'break'
+  title: string
+  durationMinutes: number
+}
+
+export type ScheduleItem = PerformanceScheduleItem | BreakScheduleItem
