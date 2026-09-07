@@ -9,6 +9,7 @@ import type {
   Member,
   PerformanceScheduleItem,
   ScheduleItem,
+  Section,
   Stage,
 } from './domain/models'
 import {
@@ -20,6 +21,11 @@ import {
   reorderStageScheduleItems,
   reorderUnscheduledEventBands,
 } from './domain/schedule'
+import {
+  calculateStageTimeline,
+  formatMinuteAsLocalTime,
+  isValidLocalTime,
+} from './domain/timeline'
 import './App.css'
 
 const CURRENT_STAGE_ID = 'stage-1'
@@ -66,6 +72,8 @@ const initialScheduleItems: ScheduleItem[] = [
     durationMinutes: 10,
   },
 ]
+
+const initialSections: Section[] = []
 
 function App() {
   // ==================== 📦 各種状態（State）の管理 ====================
@@ -137,6 +145,16 @@ function App() {
 
   const handleToggleMemberSelection = (memberId: string) => {
     setSelectedMemberIds(prev => prev.includes(memberId) ? prev.filter(id => id !== memberId) : [...prev, memberId])
+  }
+
+  const handleStageStartTimeChange = (value: string) => {
+    if (!isValidLocalTime(value)) return
+
+    setStages(prev => prev.map(stage => (
+      stage.id === currentStage.id
+        ? { ...stage, plannedStartTime: value }
+        : stage
+    )))
   }
 
   // ==================== 🎴 プール・タイムテーブル操作ロジック ====================
@@ -267,39 +285,6 @@ function App() {
     }
   }
 
-  // ==================== 🕒 時間自動計算 ＆ IDから名前の変換 ====================
-  const calculateTimeline = () => {
-    const [startHour, startMin] = startTime.split(':').map(Number)
-    let currentTotalMinutes = startHour * 60 + startMin
-
-    return currentStageScheduleItems.map((scheduleItem) => {
-      const eventBand = scheduleItem.kind === 'performance'
-        ? getEventBandById(eventBands, scheduleItem.eventBandId)
-        : undefined
-      const durationMinutes = scheduleItem.kind === 'break'
-        ? scheduleItem.durationMinutes
-        : eventBand?.durationMinutes ?? 0
-      const startMinRaw = currentTotalMinutes
-      const endMinRaw = currentTotalMinutes + durationMinutes
-      currentTotalMinutes = scheduleItem.kind === 'performance'
-        ? endMinRaw + intervalTime
-        : endMinRaw
-
-      const formatTime = (tot: number) => {
-        const h = Math.floor(tot / 60) % 24
-        const m = tot % 60
-        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
-      }
-
-      return {
-        scheduleItem,
-        eventBand,
-        durationMinutes,
-        timeString: `${formatTime(startMinRaw)} 〜 ${formatTime(endMinRaw)}`,
-      }
-    })
-  }
-
   const getMemberNamesByIds = (ids?: string[]) => {
     if (!ids) return '未登録'
     return ids.map(id => members.find(m => m.id === id)?.realName || '不明').join(', ')
@@ -310,7 +295,34 @@ function App() {
     return bands.find(band => band.id === eventBand.bandId)?.name ?? '不明なバンド'
   }
 
-  const calculatedTimetable = calculateTimeline()
+  // Timeline engineの計算結果を、現在の表示に必要な参照と組み合わせる
+  const currentStageScheduleItemsById = new Map(
+    currentStageScheduleItems.map(scheduleItem => [scheduleItem.id, scheduleItem]),
+  )
+  const calculatedTimetable = calculateStageTimeline({
+    event: currentEvent,
+    stage: currentStage,
+    sections: initialSections,
+    scheduleItems,
+    eventBands,
+  }).map(calculatedItem => {
+    const scheduleItem = currentStageScheduleItemsById.get(calculatedItem.scheduleItemId)
+    if (!scheduleItem) {
+      throw new Error(`ScheduleItem not found: ${calculatedItem.scheduleItemId}`)
+    }
+
+    const eventBand = scheduleItem.kind === 'performance'
+      ? getEventBandById(eventBands, scheduleItem.eventBandId)
+      : undefined
+    const durationMinutes = calculatedItem.plannedEndMinute - calculatedItem.plannedStartMinute
+
+    return {
+      scheduleItem,
+      eventBand,
+      durationMinutes,
+      timeString: `${formatMinuteAsLocalTime(calculatedItem.plannedStartMinute)} 〜 ${formatMinuteAsLocalTime(calculatedItem.plannedEndMinute)}`,
+    }
+  })
 
   // 共通スタイル定義（可読性向上のためまとめる）
   const containerStyle: React.CSSProperties = { padding: '20px', maxWidth: '1250px', margin: '0 auto', textAlign: 'left' }
@@ -386,7 +398,7 @@ function App() {
         <div style={{ display: 'flex', gap: '20px' }}>
           <div>
             <label style={{ fontWeight: 'bold', display: 'block' }}>イベント開始時刻:</label>
-            <input type="time" aria-label="イベント開始時刻" value={startTime} onChange={(e) => setStages(prev => prev.map(stage => stage.id === currentStage.id ? { ...stage, plannedStartTime: e.target.value } : stage))} style={{ padding: '6px', marginTop: '5px' }} />
+            <input type="time" aria-label="イベント開始時刻" value={startTime} onChange={(e) => handleStageStartTimeChange(e.target.value)} style={{ padding: '6px', marginTop: '5px' }} />
           </div>
           <div>
             <label style={{ fontWeight: 'bold', display: 'block' }}>転換時間 (分):</label>
