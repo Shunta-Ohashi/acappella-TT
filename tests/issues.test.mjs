@@ -186,7 +186,60 @@ test('全Stage横断でrestMinutesを計算してminimumRestMinutes未満を検�
   const shortRests = findIssues(issues, 'SHORT_REST')
   assert.equal(shortRests.length, 1)
   assert.equal(shortRests[0].restMinutes, 2)
+  assert.deepEqual(shortRests[0].eventBandIds, [
+    'event-band-1',
+    'event-band-2',
+  ])
+  assert.deepEqual(shortRests[0].scheduleItemIds, ['item-1', 'item-2'])
   assert.equal(findIssues(issues, 'PERFORMANCE_OVERLAP').length, 0)
+})
+
+test('入れ子状の重複後は最も遅く終了する出演からrestMinutesを計算する', () => {
+  const issues = detect({
+    event: createEvent({ minimumRestMinutes: 10 }),
+    eventBands: [
+      createEventBand('event-band-a', ['member-1']),
+      createEventBand('event-band-b', ['member-1']),
+      createEventBand('event-band-c', ['member-1']),
+    ],
+    calculatedItems: [
+      performance('item-a', 'event-band-a', 600, 630, 'stage-a'),
+      performance('item-b', 'event-band-b', 605, 610, 'stage-b'),
+      performance('item-c', 'event-band-c', 635, 645, 'stage-c'),
+    ],
+  })
+
+  const overlaps = findIssues(issues, 'PERFORMANCE_OVERLAP')
+  assert.equal(overlaps.length, 1)
+  assert.deepEqual(overlaps[0].scheduleItemIds, ['item-a', 'item-b'])
+
+  const shortRests = findIssues(issues, 'SHORT_REST')
+  assert.equal(shortRests.length, 1)
+  assert.equal(shortRests[0].restMinutes, 5)
+  assert.deepEqual(shortRests[0].eventBandIds, [
+    'event-band-a',
+    'event-band-c',
+  ])
+  assert.deepEqual(shortRests[0].scheduleItemIds, ['item-a', 'item-c'])
+})
+
+test('入れ子状の重複後でも次の出演まで十分な時間があればSHORT_RESTにしない', () => {
+  const issues = detect({
+    event: createEvent({ minimumRestMinutes: 10 }),
+    eventBands: [
+      createEventBand('event-band-a', ['member-1']),
+      createEventBand('event-band-b', ['member-1']),
+      createEventBand('event-band-c', ['member-1']),
+    ],
+    calculatedItems: [
+      performance('item-a', 'event-band-a', 600, 630, 'stage-a'),
+      performance('item-b', 'event-band-b', 605, 610, 'stage-b'),
+      performance('item-c', 'event-band-c', 640, 650, 'stage-c'),
+    ],
+  })
+
+  assert.equal(findIssues(issues, 'PERFORMANCE_OVERLAP').length, 1)
+  assert.equal(findIssues(issues, 'SHORT_REST').length, 0)
 })
 
 test('EventMember未登録を検出し、重複memberIdから同じIssueを重複生成しない', () => {

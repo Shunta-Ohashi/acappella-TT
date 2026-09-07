@@ -293,11 +293,12 @@ export const detectScheduleIssues = ({
       }
     }
 
+    let previousWithLatestEnd = chronologicalAppearances[0]
+
     for (let index = 1; index < chronologicalAppearances.length; index += 1) {
-      const previous = chronologicalAppearances[index - 1]
       const next = chronologicalAppearances[index]
       const restMinutes =
-        next.plannedStartMinute - previous.plannedEndMinute
+        next.plannedStartMinute - previousWithLatestEnd.plannedEndMinute
 
       if (
         restMinutes >= 0 &&
@@ -308,10 +309,19 @@ export const detectScheduleIssues = ({
           code: 'SHORT_REST',
           message: `メンバー ${memberId} の出演間隔が ${restMinutes} 分です`,
           memberIds: [memberId],
-          eventBandIds: [previous.eventBandId, next.eventBandId],
-          scheduleItemIds: [previous.scheduleItemId, next.scheduleItemId],
+          eventBandIds: [previousWithLatestEnd.eventBandId, next.eventBandId],
+          scheduleItemIds: [
+            previousWithLatestEnd.scheduleItemId,
+            next.scheduleItemId,
+          ],
           restMinutes,
         })
+      }
+
+      if (
+        next.plannedEndMinute > previousWithLatestEnd.plannedEndMinute
+      ) {
+        previousWithLatestEnd = next
       }
     }
 
