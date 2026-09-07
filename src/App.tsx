@@ -1,25 +1,10 @@
 import { useState, type FormEvent } from 'react'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 import type { DropResult } from '@hello-pangea/dnd'
+import type { Band, Event as TimetableEvent, Member, Stage } from './domain/models'
 import './App.css'
 
-// ==================== 💾 データベース（マスタ）の型定義 ====================
-
-// ① サークル員マスタの型
-interface Member {
-  id: string;
-  name: string;
-}
-
-// ② バンドマスタの型
-interface MasterBand {
-  id: string;
-  name: string;
-  memberIds: string[]; // 👥 サークル員IDの配列
-  defaultDuration: number;
-}
-
-// ③ タイムテーブル・プールに入るアイテムの型
+// ScheduleItem参照モデルへ移行するまで使用する既存画面用の一時的な型
 interface TimetableItem {
   id: string;
   type: 'band' | 'break';
@@ -28,21 +13,48 @@ interface TimetableItem {
   memberIds?: string[]; // 👈 名前ではなくIDの配列で管理！
 }
 
+const CURRENT_STAGE_ID = 'stage-1'
+
+const initialEvent: TimetableEvent = {
+  id: 'event-1',
+  name: '現在のイベント',
+  date: '2026-01-01',
+  timeZone: 'Asia/Tokyo',
+  defaultTransitionMinutes: 2,
+  validationPolicy: {
+    minimumGapBands: 1,
+    minimumRestMinutes: 10,
+  },
+}
+
+const initialStage: Stage = {
+  id: CURRENT_STAGE_ID,
+  eventId: initialEvent.id,
+  name: 'メインステージ',
+  order: 0,
+  plannedStartTime: '13:00',
+}
+
 function App() {
   // ==================== 📦 各種状態（State）の管理 ====================
 
+  // 現在は単一イベント・単一Stageだけを画面で扱う
+  const [currentEvent, setCurrentEvent] = useState<TimetableEvent>(initialEvent)
+  const [stages, setStages] = useState<Stage[]>([initialStage])
+  const currentStage = stages.find(stage => stage.id === CURRENT_STAGE_ID) ?? initialStage
+
   // 1️⃣ サークル員データベース（初期データ）
   const [members, setMembers] = useState<Member[]>([
-    { id: 'm-1', name: '佐藤' },
-    { id: 'm-2', name: '鈴木' },
-    { id: 'm-3', name: '高橋' },
-    { id: 'm-4', name: '田中' },
+    { id: 'm-1', realName: '佐藤', active: true },
+    { id: 'm-2', realName: '鈴木', active: true },
+    { id: 'm-3', realName: '高橋', active: true },
+    { id: 'm-4', realName: '田中', active: true },
   ])
 
   // 2️⃣ バンドデータベース（初期データ）
-  const [masterBands, setMasterBands] = useState<MasterBand[]>([
-    { id: 'b-1', name: 'あおぞら', memberIds: ['m-1', 'm-2', 'm-3'], defaultDuration: 15 },
-    { id: 'b-2', name: '夕焼けコーラス', memberIds: ['m-4', 'm-1'], defaultDuration: 10 },
+  const [bands, setBands] = useState<Band[]>([
+    { id: 'b-1', name: 'あおぞら', defaultMemberIds: ['m-1', 'm-2', 'm-3'], defaultDurationMinutes: 15, active: true },
+    { id: 'b-2', name: '夕焼けコーラス', defaultMemberIds: ['m-4', 'm-1'], defaultDurationMinutes: 10, active: true },
   ])
 
   // 3️⃣ 出演候補バンドのプール（左側）
@@ -64,15 +76,15 @@ function App() {
   const [selectedMasterBandId, setSelectedMasterBandId] = useState('')
   const [breakDuration, setBreakDuration] = useState<number>(10)
 
-  const [startTime, setStartTime] = useState('13:00')
-  const [intervalTime, setIntervalTime] = useState(2)
+  const startTime = currentStage.plannedStartTime
+  const intervalTime = currentStage.transitionMinutes ?? currentEvent.defaultTransitionMinutes
 
   // ==================== 🛠️ データベース（マスタ）操作ロジック ====================
 
   const handleRegisterMember = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!newMemberName.trim()) return
-    const newMember: Member = { id: `m-${Date.now()}`, name: newMemberName.trim() }
+    const newMember: Member = { id: `m-${Date.now()}`, realName: newMemberName.trim(), active: true }
     setMembers([...members, newMember])
     setNewMemberName('')
   }
@@ -80,13 +92,14 @@ function App() {
   const handleRegisterMasterBand = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!newBandName.trim() || newBandDuration <= 0) return
-    const newBand: MasterBand = {
+    const newBand: Band = {
       id: `b-${Date.now()}`,
       name: newBandName.trim(),
-      memberIds: selectedMemberIds,
-      defaultDuration: newBandDuration
+      defaultMemberIds: selectedMemberIds,
+      defaultDurationMinutes: newBandDuration,
+      active: true,
     }
-    setMasterBands([...masterBands, newBand])
+    setBands([...bands, newBand])
     setNewBandName('')
     setNewBandDuration(15)
     setSelectedMemberIds([])
@@ -100,15 +113,15 @@ function App() {
 
   const handleAddSelectedBandToPool = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    const targetMaster = masterBands.find(b => b.id === selectedMasterBandId)
+    const targetMaster = bands.find(b => b.id === selectedMasterBandId)
     if (!targetMaster) return
 
     const newPoolItem: TimetableItem = {
       id: `pool-band-${Date.now()}`,
       type: 'band',
       name: targetMaster.name,
-      duration: targetMaster.defaultDuration,
-      memberIds: targetMaster.memberIds
+      duration: targetMaster.defaultDurationMinutes,
+      memberIds: targetMaster.defaultMemberIds
     }
     setPoolItems([...poolItems, newPoolItem])
   }
@@ -131,7 +144,7 @@ function App() {
   // メンバー削除（登録ミスに対応）
   const handleDeleteMember = (id: string) => {
     setMembers(prev => prev.filter(m => m.id !== id))
-    // もし削除したメンバーが masterBands や timetable に入っていればそのまま残す／参照はidsなので特別な処理は不要
+    // もし削除したメンバーが bands や timetable に入っていればそのまま残す／参照はidsなので特別な処理は不要
   }
 
   // タイムテーブルのアイテムをプールに戻す（「外す」ボタンの新挙動）
@@ -229,7 +242,7 @@ function App() {
 
   const getMemberNamesByIds = (ids?: string[]) => {
     if (!ids) return '未登録'
-    return ids.map(id => members.find(m => m.id === id)?.name || '不明').join(', ')
+    return ids.map(id => members.find(m => m.id === id)?.realName || '不明').join(', ')
   }
 
   const calculatedTimetable = calculateTimeline()
@@ -265,8 +278,8 @@ function App() {
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
                 {members.map(m => (
                   <span key={m.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', marginRight: '6px' }}>
-                    <span style={badgeStyle}>{m.name}</span>
-                    <button onClick={() => handleDeleteMember(m.id)} aria-label={`delete-${m.name}`} style={{ ...baseButton, background: '#fff', color: '#e53e3e', padding: '4px 6px', borderRadius: '6px', fontSize: '12px' }}>×</button>
+                    <span style={badgeStyle}>{m.realName}</span>
+                    <button onClick={() => handleDeleteMember(m.id)} aria-label={`delete-${m.realName}`} style={{ ...baseButton, background: '#fff', color: '#e53e3e', padding: '4px 6px', borderRadius: '6px', fontSize: '12px' }}>×</button>
                   </span>
                 ))}
               </div>
@@ -292,7 +305,7 @@ function App() {
                   {members.map(m => (
                     <label key={m.id} style={{ display: 'block', fontSize: '13px', marginBottom: '4px', cursor: 'pointer' }}>
                       <input type="checkbox" checked={selectedMemberIds.includes(m.id)} onChange={() => handleToggleMemberSelection(m.id)} style={{ marginRight: '6px' }} />
-                      {m.name}
+                      {m.realName}
                     </label>
                   ))}
                 </div>
@@ -308,11 +321,11 @@ function App() {
         <div style={{ display: 'flex', gap: '20px' }}>
           <div>
             <label style={{ fontWeight: 'bold', display: 'block' }}>イベント開始時刻:</label>
-            <input type="time" aria-label="イベント開始時刻" value={startTime} onChange={(e) => setStartTime(e.target.value)} style={{ padding: '6px', marginTop: '5px' }} />
+            <input type="time" aria-label="イベント開始時刻" value={startTime} onChange={(e) => setStages(prev => prev.map(stage => stage.id === currentStage.id ? { ...stage, plannedStartTime: e.target.value } : stage))} style={{ padding: '6px', marginTop: '5px' }} />
           </div>
           <div>
             <label style={{ fontWeight: 'bold', display: 'block' }}>転換時間 (分):</label>
-            <input type="number" aria-label="転換時間" value={intervalTime} onChange={(e) => setIntervalTime(Number(e.target.value))} style={{ padding: '6px', width: '60px', marginTop: '5px' }} />
+            <input type="number" aria-label="転換時間" value={intervalTime} onChange={(e) => setCurrentEvent(prev => ({ ...prev, defaultTransitionMinutes: Number(e.target.value) }))} style={{ padding: '6px', width: '60px', marginTop: '5px' }} />
           </div>
         </div>
       </section>
@@ -330,8 +343,8 @@ function App() {
                   <label style={{ fontSize: '12px', fontWeight: 'bold' }}>登録済みバンドから選択:</label>
                   <select aria-label="プールに追加するバンドを選択" value={selectedMasterBandId} onChange={(e) => setSelectedMasterBandId(e.target.value)} style={{ ...inputStyle, marginTop: '5px' }}>
                     <option value="">-- バンドを選択 --</option>
-                    {masterBands.map(b => (
-                      <option key={b.id} value={b.id}>{b.name} ({b.defaultDuration}分 / 👥 {getMemberNamesByIds(b.memberIds)})</option>
+                    {bands.map(b => (
+                      <option key={b.id} value={b.id}>{b.name} ({b.defaultDurationMinutes}分 / 👥 {getMemberNamesByIds(b.defaultMemberIds)})</option>
                     ))}
                   </select>
                 </div>
