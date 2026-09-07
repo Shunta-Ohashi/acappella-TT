@@ -1,19 +1,30 @@
 import { useState, type FormEvent } from 'react'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 import type { DropResult } from '@hello-pangea/dnd'
-import type { Band, Event as TimetableEvent, Member, Stage } from './domain/models'
+import type {
+  Band,
+  BreakScheduleItem,
+  Event as TimetableEvent,
+  EventBand,
+  Member,
+  PerformanceScheduleItem,
+  ScheduleItem,
+  Stage,
+} from './domain/models'
+import {
+  getEventBandById,
+  getStageScheduleItems,
+  getUnscheduledEventBands,
+  insertStageScheduleItem,
+  removeScheduleItem,
+  reorderStageScheduleItems,
+  reorderUnscheduledEventBands,
+} from './domain/schedule'
 import './App.css'
 
-// ScheduleItem参照モデルへ移行するまで使用する既存画面用の一時的な型
-interface TimetableItem {
-  id: string;
-  type: 'band' | 'break';
-  name: string;
-  duration: number;
-  memberIds?: string[]; // 👈 名前ではなくIDの配列で管理！
-}
-
 const CURRENT_STAGE_ID = 'stage-1'
+
+const createId = (prefix: string) => `${prefix}-${crypto.randomUUID()}`
 
 const initialEvent: TimetableEvent = {
   id: 'event-1',
@@ -34,6 +45,27 @@ const initialStage: Stage = {
   order: 0,
   plannedStartTime: '13:00',
 }
+
+const initialEventBands: EventBand[] = [
+  {
+    id: 'event-band-1',
+    eventId: initialEvent.id,
+    bandId: 'b-1',
+    memberIds: ['m-1', 'm-2', 'm-3'],
+    durationMinutes: 15,
+  },
+]
+
+const initialScheduleItems: ScheduleItem[] = [
+  {
+    id: 'schedule-break-1',
+    stageId: CURRENT_STAGE_ID,
+    order: 0,
+    kind: 'break',
+    title: '中間休憩',
+    durationMinutes: 10,
+  },
+]
 
 function App() {
   // ==================== 📦 各種状態（State）の管理 ====================
@@ -57,15 +89,11 @@ function App() {
     { id: 'b-2', name: '夕焼けコーラス', defaultMemberIds: ['m-4', 'm-1'], defaultDurationMinutes: 10, active: true },
   ])
 
-  // 3️⃣ 出演候補バンドのプール（左側）
-  const [poolItems, setPoolItems] = useState<TimetableItem[]>([
-    { id: 'pool-band-1', type: 'band', name: 'あおぞら', duration: 15, memberIds: ['m-1', 'm-2', 'm-3'] }
-  ])
+  // 3️⃣ このイベントに出演するバンド
+  const [eventBands, setEventBands] = useState<EventBand[]>(initialEventBands)
 
-  // 4️⃣ 当日のタイムテーブル（右側）
-  const [timetableItems, setTimetableItems] = useState<TimetableItem[]>([
-    { id: 'time-break-1', type: 'break', name: '中間休憩', duration: 10 }
-  ])
+  // 4️⃣ 当日のタイムテーブル。出演項目はEventBandをIDで参照する
+  const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>(initialScheduleItems)
 
   // ✍️ 各種フォームの入力状態
   const [newMemberName, setNewMemberName] = useState('')
@@ -78,13 +106,15 @@ function App() {
 
   const startTime = currentStage.plannedStartTime
   const intervalTime = currentStage.transitionMinutes ?? currentEvent.defaultTransitionMinutes
+  const currentStageScheduleItems = getStageScheduleItems(scheduleItems, currentStage.id)
+  const poolEventBands = getUnscheduledEventBands(eventBands, scheduleItems)
 
   // ==================== 🛠️ データベース（マスタ）操作ロジック ====================
 
   const handleRegisterMember = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!newMemberName.trim()) return
-    const newMember: Member = { id: `m-${Date.now()}`, realName: newMemberName.trim(), active: true }
+    const newMember: Member = { id: createId('member'), realName: newMemberName.trim(), active: true }
     setMembers([...members, newMember])
     setNewMemberName('')
   }
@@ -93,7 +123,7 @@ function App() {
     e.preventDefault()
     if (!newBandName.trim() || newBandDuration <= 0) return
     const newBand: Band = {
-      id: `b-${Date.now()}`,
+      id: createId('band'),
       name: newBandName.trim(),
       defaultMemberIds: selectedMemberIds,
       defaultDurationMinutes: newBandDuration,
@@ -116,56 +146,49 @@ function App() {
     const targetMaster = bands.find(b => b.id === selectedMasterBandId)
     if (!targetMaster) return
 
-    const newPoolItem: TimetableItem = {
-      id: `pool-band-${Date.now()}`,
-      type: 'band',
-      name: targetMaster.name,
-      duration: targetMaster.defaultDurationMinutes,
-      memberIds: targetMaster.defaultMemberIds
+    const newEventBand: EventBand = {
+      id: createId('event-band'),
+      eventId: currentEvent.id,
+      bandId: targetMaster.id,
+      memberIds: [...targetMaster.defaultMemberIds],
+      durationMinutes: targetMaster.defaultDurationMinutes,
     }
-    setPoolItems([...poolItems, newPoolItem])
+    setEventBands(prev => [...prev, newEventBand])
   }
 
   const handleAddBreak = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (breakDuration <= 0) return
-    const newBreakItem: TimetableItem = {
-      id: `time-break-${Date.now()}`,
-      type: 'break',
-      name: '☕ 休憩',
-      duration: breakDuration
+    const newBreakItem: BreakScheduleItem = {
+      id: createId('schedule-break'),
+      stageId: currentStage.id,
+      order: currentStageScheduleItems.length,
+      kind: 'break',
+      title: '☕ 休憩',
+      durationMinutes: breakDuration,
     }
-    setTimetableItems([...timetableItems, newBreakItem])
+    setScheduleItems(prev => insertStageScheduleItem(
+      prev,
+      currentStage.id,
+      newBreakItem,
+      currentStageScheduleItems.length,
+    ))
     setBreakDuration(10)
   }
 
-  const handleDeletePoolItem = (id: string) => setPoolItems(prev => prev.filter(i => i.id !== id))
+  const handleDeletePoolEventBand = (id: string) => {
+    setEventBands(prev => prev.filter(eventBand => eventBand.id !== id))
+  }
 
   // メンバー削除（登録ミスに対応）
   const handleDeleteMember = (id: string) => {
     setMembers(prev => prev.filter(m => m.id !== id))
-    // もし削除したメンバーが bands や timetable に入っていればそのまま残す／参照はidsなので特別な処理は不要
+    // BandとEventBandのメンバー参照は既存挙動に合わせてそのまま残す
   }
 
-  // タイムテーブルのアイテムをプールに戻す（「外す」ボタンの新挙動）
-  const handleReturnToPool = (id: string) => {
-    const item = timetableItems.find(i => i.id === id)
-    if (!item) return
-
-    // 休憩枠なら完全削除、バンドならプールに戻す
-    if (item.type === 'break') {
-      setTimetableItems(prev => prev.filter(i => i.id !== id))
-      return
-    }
-
-    // バンドをプールに戻す（新しい一意な id を生成）
-    const newPoolItem: TimetableItem = {
-      ...item,
-      id: `pool-${item.type}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`
-    }
-
-    setTimetableItems(prev => prev.filter(i => i.id !== id))
-    setPoolItems(prev => [...prev, newPoolItem])
+  // 演奏項目を削除すると、参照先のEventBandが算出プールへ戻る。休憩はそのまま削除する
+  const handleRemoveScheduleItem = (id: string) => {
+    setScheduleItems(prev => removeScheduleItem(prev, id))
   }
 
   // ==================== 🔀 安全なドラッグ＆ドロップ処理 ====================
@@ -178,42 +201,69 @@ function App() {
     const sourceIndex = source.index
     const destinationIndex = destination.index
 
-    // 1. 同じエリア内での並び替えの場合
+    // 同じエリア内ではIDを維持したまま表示順だけを更新する
     if (sourceId === destId) {
-      const stateUpdater = sourceId === 'pool-list' ? setPoolItems : setTimetableItems
-      stateUpdater((prev) => {
-        const reordered = Array.from(prev)
-        const [removed] = reordered.splice(sourceIndex, 1)
-        reordered.splice(destinationIndex, 0, removed)
-        return reordered
-      })
+      if (sourceId === 'pool-list') {
+        setEventBands(prev => reorderUnscheduledEventBands(
+          prev,
+          scheduleItems,
+          sourceIndex,
+          destinationIndex,
+        ))
+      } else {
+        setScheduleItems(prev => reorderStageScheduleItems(
+          prev,
+          currentStage.id,
+          sourceIndex,
+          destinationIndex,
+        ))
+      }
       return
     }
 
-    // 2. 違うエリア間（プール ↔ タイムテーブル）の移動の場合
-    const srcList = sourceId === 'pool-list' ? Array.from(poolItems) : Array.from(timetableItems)
-    const destList = destId === 'pool-list' ? Array.from(poolItems) : Array.from(timetableItems)
+    // EventBandをタイムテーブルへ配置するときだけScheduleItemを新規作成する
+    if (sourceId === 'pool-list' && destId === 'timetable-list') {
+      const eventBand = poolEventBands[sourceIndex]
+      if (!eventBand) return
 
-    const [removed] = srcList.splice(sourceIndex, 1)
+      const newScheduleItem: PerformanceScheduleItem = {
+        id: createId('schedule-performance'),
+        stageId: currentStage.id,
+        order: destinationIndex,
+        kind: 'performance',
+        eventBandId: eventBand.id,
+      }
 
-    // 🌟 ご自身で追加されたガード節：休憩枠をプールへは移動させない
-    if (destId === 'pool-list' && removed.type === 'break') return
-
-    // 🌟 ご自身で追加されたStateミューテーション回避＆一意のID生成
-    const idPrefix = destId === 'timetable-list' ? 'time' : 'pool'
-    const movedItem: TimetableItem = {
-      ...removed,
-      id: `${idPrefix}-${removed.type}-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`
+      setScheduleItems(prev => insertStageScheduleItem(
+        prev,
+        currentStage.id,
+        newScheduleItem,
+        destinationIndex,
+      ))
+      return
     }
 
-    destList.splice(destinationIndex, 0, movedItem)
+    // 演奏項目を外すとEventBandが再び算出プールへ現れる。休憩はプールへ移動しない
+    if (sourceId === 'timetable-list' && destId === 'pool-list') {
+      const scheduleItem = currentStageScheduleItems[sourceIndex]
+      if (!scheduleItem || scheduleItem.kind === 'break') return
 
-    if (sourceId === 'pool-list') {
-      setPoolItems(srcList)
-      setTimetableItems(destList)
-    } else {
-      setTimetableItems(srcList)
-      setPoolItems(destList)
+      const remainingScheduleItems = removeScheduleItem(scheduleItems, scheduleItem.id)
+      setScheduleItems(remainingScheduleItems)
+      setEventBands(prev => {
+        const poolAfterRemoval = getUnscheduledEventBands(prev, remainingScheduleItems)
+        const returnedEventBandIndex = poolAfterRemoval.findIndex(
+          eventBand => eventBand.id === scheduleItem.eventBandId,
+        )
+        if (returnedEventBandIndex < 0) return prev
+
+        return reorderUnscheduledEventBands(
+          prev,
+          remainingScheduleItems,
+          returnedEventBandIndex,
+          destinationIndex,
+        )
+      })
     }
   }
 
@@ -222,10 +272,18 @@ function App() {
     const [startHour, startMin] = startTime.split(':').map(Number)
     let currentTotalMinutes = startHour * 60 + startMin
 
-    return timetableItems.map((item) => {
+    return currentStageScheduleItems.map((scheduleItem) => {
+      const eventBand = scheduleItem.kind === 'performance'
+        ? getEventBandById(eventBands, scheduleItem.eventBandId)
+        : undefined
+      const durationMinutes = scheduleItem.kind === 'break'
+        ? scheduleItem.durationMinutes
+        : eventBand?.durationMinutes ?? 0
       const startMinRaw = currentTotalMinutes
-      const endMinRaw = currentTotalMinutes + item.duration
-      currentTotalMinutes = item.type === 'band' ? endMinRaw + intervalTime : endMinRaw
+      const endMinRaw = currentTotalMinutes + durationMinutes
+      currentTotalMinutes = scheduleItem.kind === 'performance'
+        ? endMinRaw + intervalTime
+        : endMinRaw
 
       const formatTime = (tot: number) => {
         const h = Math.floor(tot / 60) % 24
@@ -234,8 +292,10 @@ function App() {
       }
 
       return {
-        ...item,
-        timeString: `${formatTime(startMinRaw)} 〜 ${formatTime(endMinRaw)}`
+        scheduleItem,
+        eventBand,
+        durationMinutes,
+        timeString: `${formatTime(startMinRaw)} 〜 ${formatTime(endMinRaw)}`,
       }
     })
   }
@@ -243,6 +303,11 @@ function App() {
   const getMemberNamesByIds = (ids?: string[]) => {
     if (!ids) return '未登録'
     return ids.map(id => members.find(m => m.id === id)?.realName || '不明').join(', ')
+  }
+
+  const getBandNameByEventBand = (eventBand?: EventBand) => {
+    if (!eventBand) return '不明なバンド'
+    return bands.find(band => band.id === eventBand.bandId)?.name ?? '不明なバンド'
   }
 
   const calculatedTimetable = calculateTimeline()
@@ -356,16 +421,16 @@ function App() {
             <Droppable droppableId="pool-list">
               {(provided) => (
                 <ul {...provided.droppableProps} ref={provided.innerRef} style={{ ...listContainerBase, background: '#f7fafc' }}>
-                  {poolItems.map((item, index) => (
-                    <Draggable key={item.id} draggableId={item.id} index={index}>
+                  {poolEventBands.map((eventBand, index) => (
+                    <Draggable key={eventBand.id} draggableId={eventBand.id} index={index}>
                       {(provided) => (
                         <li ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps} style={{ ...listItemBase, background: '#fff', ...provided.draggableProps.style }}>
                           <div>
                             <span style={{ marginRight: '10px', color: '#aaa', cursor: 'grab' }}>☰</span>
-                            <span style={{ fontWeight: 'bold' }}>🎵 {item.name}</span> ({item.duration}分)
-                            <div style={{ fontSize: '11px', color: '#718096', marginTop: '4px' }}>👥 メンバー: {getMemberNamesByIds(item.memberIds)}</div>
+                            <span style={{ fontWeight: 'bold' }}>🎵 {getBandNameByEventBand(eventBand)}</span> ({eventBand.durationMinutes}分)
+                            <div style={{ fontSize: '11px', color: '#718096', marginTop: '4px' }}>👥 メンバー: {getMemberNamesByIds(eventBand.memberIds)}</div>
                           </div>
-                          <button onClick={() => handleDeletePoolItem(item.id)} style={{ ...baseButton, background: '#edf2f7', color: '#e53e3e', padding: '4px 8px', fontSize: '12px' }}>完全に消す</button>
+                          <button onClick={() => handleDeletePoolEventBand(eventBand.id)} style={{ ...baseButton, background: '#edf2f7', color: '#e53e3e', padding: '4px 8px', fontSize: '12px' }}>完全に消す</button>
                         </li>
                       )}
                     </Draggable>
@@ -393,17 +458,17 @@ function App() {
             <Droppable droppableId="timetable-list">
               {(provided) => (
                 <ul {...provided.droppableProps} ref={provided.innerRef} style={{ ...listContainerBase, background: '#edf2f7' }}>
-                  {calculatedTimetable.map((item, index) => (
-                    <Draggable key={item.id} draggableId={item.id} index={index}>
+                  {calculatedTimetable.map(({ scheduleItem, eventBand, durationMinutes, timeString }, index) => (
+                    <Draggable key={scheduleItem.id} draggableId={scheduleItem.id} index={index}>
                       {(provided) => (
-                        <li ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps} style={{ ...listItemBase, background: item.type === 'break' ? '#e6fffa' : '#fff', ...provided.draggableProps.style }}>
+                        <li ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps} style={{ ...listItemBase, background: scheduleItem.kind === 'break' ? '#e6fffa' : '#fff', ...provided.draggableProps.style }}>
                           <div>
                             <span style={{ marginRight: '10px', color: '#aaa', cursor: 'grab' }}>☰</span>
-                            <span style={{ fontWeight: 'bold', marginRight: '15px', color: item.type === 'break' ? '#319795' : '#007acc' }}>⏰ {item.timeString}</span>
-                            <span>{item.type === 'break' ? '☕' : '🎵'} {item.name} ({item.duration}分)</span>
-                            {item.type === 'band' && <div style={{ fontSize: '11px', color: '#718096', marginTop: '4px', marginLeft: '43px' }}>👥 {getMemberNamesByIds(item.memberIds)}</div>}
+                            <span style={{ fontWeight: 'bold', marginRight: '15px', color: scheduleItem.kind === 'break' ? '#319795' : '#007acc' }}>⏰ {timeString}</span>
+                            <span>{scheduleItem.kind === 'break' ? '☕' : '🎵'} {scheduleItem.kind === 'break' ? scheduleItem.title : getBandNameByEventBand(eventBand)} ({durationMinutes}分)</span>
+                            {scheduleItem.kind === 'performance' && <div style={{ fontSize: '11px', color: '#718096', marginTop: '4px', marginLeft: '43px' }}>👥 {getMemberNamesByIds(eventBand?.memberIds)}</div>}
                           </div>
-                          <button onClick={() => handleReturnToPool(item.id)} style={{ ...baseButton, background: '#e53e3e', color: 'white', padding: '6px 12px', fontSize: '13px' }}>外す</button>
+                          <button onClick={() => handleRemoveScheduleItem(scheduleItem.id)} style={{ ...baseButton, background: '#e53e3e', color: 'white', padding: '6px 12px', fontSize: '13px' }}>外す</button>
                         </li>
                       )}
                     </Draggable>
