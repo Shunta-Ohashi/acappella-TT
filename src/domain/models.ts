@@ -1,6 +1,7 @@
 export type MemberId = string
 export type BandId = string
 export type EventId = string
+export type EventDayId = string
 export type StageId = string
 export type SectionId = string
 export type EventBandId = string
@@ -50,7 +51,6 @@ export interface Band {
 export interface Event {
   id: EventId
   name: string
-  date: LocalDate
   timeZone: string
   defaultTransitionMinutes: number
   validationPolicy: {
@@ -60,9 +60,17 @@ export interface Event {
   notes?: string
 }
 
+export interface EventDay {
+  id: EventDayId
+  eventId: EventId
+  date: LocalDate
+  label?: string
+  order: number
+}
+
 export interface Stage {
   id: StageId
-  eventId: EventId
+  eventDayId: EventDayId
   name: string
   location?: string
   order: number

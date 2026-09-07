@@ -6,7 +6,6 @@ import { calculateStageTimeline, isValidLocalTime } from '../src/domain/timeline
 const event = {
   id: 'event-1',
   name: 'テストイベント',
-  date: '2026-09-08',
   timeZone: 'Asia/Tokyo',
   defaultTransitionMinutes: 2,
   validationPolicy: {
@@ -17,7 +16,7 @@ const event = {
 
 const createStage = (overrides = {}) => ({
   id: 'stage-1',
-  eventId: event.id,
+  eventDayId: 'event-day-1',
   name: 'Stage A',
   order: 0,
   plannedStartTime: '13:00',

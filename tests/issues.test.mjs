@@ -6,7 +6,6 @@ import { detectScheduleIssues } from '../src/domain/issues.ts'
 const createEvent = (policy = {}) => ({
   id: 'event-1',
   name: 'テストイベント',
-  date: '2026-09-08',
   timeZone: 'Asia/Tokyo',
   defaultTransitionMinutes: 0,
   validationPolicy: {

@@ -6,6 +6,7 @@ import type {
   BreakScheduleItem,
   Event as TimetableEvent,
   EventBand,
+  EventDay,
   EventMember,
   Member,
   PerformanceScheduleItem,
@@ -46,7 +47,6 @@ const initialMembers: Member[] = [
 const initialEvent: TimetableEvent = {
   id: 'event-1',
   name: '現在のイベント',
-  date: '2026-01-01',
   timeZone: 'Asia/Tokyo',
   defaultTransitionMinutes: 2,
   validationPolicy: {
@@ -55,9 +55,18 @@ const initialEvent: TimetableEvent = {
   },
 }
 
+const eventDays: EventDay[] = [
+  {
+    id: 'event-day-1',
+    eventId: initialEvent.id,
+    date: '2026-01-01',
+    order: 0,
+  },
+]
+
 const initialStage: Stage = {
   id: CURRENT_STAGE_ID,
-  eventId: initialEvent.id,
+  eventDayId: eventDays[0].id,
   name: 'メインステージ',
   order: 0,
   plannedStartTime: '13:00',
