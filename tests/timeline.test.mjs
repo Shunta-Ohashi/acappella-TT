@@ -3,6 +3,21 @@ import test from 'node:test'
 
 import { calculateStageTimeline, isValidLocalTime } from '../src/domain/timeline.ts'
 
+const eventDays = [
+  {
+    id: 'event-day-1',
+    eventId: 'event-1',
+    date: '2027-11-06',
+    order: 0,
+  },
+  {
+    id: 'event-day-2',
+    eventId: 'event-1',
+    date: '2027-11-07',
+    order: 1,
+  },
+]
+
 const event = {
   id: 'event-1',
   name: 'テストイベント',
@@ -16,7 +31,7 @@ const event = {
 
 const createStage = (overrides = {}) => ({
   id: 'stage-1',
-  eventDayId: 'event-day-1',
+  eventDayId: eventDays[0].id,
   name: 'Stage A',
   order: 0,
   plannedStartTime: '13:00',
@@ -167,7 +182,11 @@ test('次Sectionの開始アンカーが前Sectionの終了より前でも、そ
 
 test('StageごとにScheduleItemを独立して計算する', () => {
   const stageA = createStage({ id: 'stage-a', plannedStartTime: '09:00' })
-  const stageB = createStage({ id: 'stage-b', plannedStartTime: '12:00' })
+  const stageB = createStage({
+    id: 'stage-b',
+    eventDayId: eventDays[1].id,
+    plannedStartTime: '12:00',
+  })
   const scheduleItems = [
     performance('item-a', 'event-band-1', 0, { stageId: 'stage-a' }),
     performance('item-b', 'event-band-2', 0, { stageId: 'stage-b' }),
@@ -180,6 +199,8 @@ test('StageごとにScheduleItemを独立して計算する', () => {
   assert.deepEqual(resultB.map(item => item.scheduleItemId), ['item-b'])
   assert.equal(resultA[0].plannedStartMinute, 540)
   assert.equal(resultB[0].plannedStartMinute, 720)
+  assert.equal(resultA[0].eventDayId, eventDays[0].id)
+  assert.equal(resultB[0].eventDayId, eventDays[1].id)
 })
 
 test('SectionありでsectionId未設定のScheduleItemは明示的なエラーにする', () => {

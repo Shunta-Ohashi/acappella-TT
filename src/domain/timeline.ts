@@ -2,6 +2,7 @@ import type {
   Event,
   EventBand,
   EventBandId,
+  EventDayId,
   ScheduleItem,
   ScheduleItemId,
   Section,
@@ -12,6 +13,7 @@ import type {
 
 export interface CalculatedScheduleItem {
   scheduleItemId: ScheduleItemId
+  eventDayId: EventDayId
   stageId: StageId
   sectionId?: SectionId
   kind: 'performance' | 'break'
@@ -91,6 +93,7 @@ export const calculateStageTimeline = ({
 
       calculatedItems.push({
         scheduleItemId: scheduleItem.id,
+        eventDayId: stage.eventDayId,
         stageId: scheduleItem.stageId,
         sectionId: scheduleItem.sectionId,
         kind: scheduleItem.kind,

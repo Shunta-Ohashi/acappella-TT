@@ -2,6 +2,7 @@ import type {
   Event,
   EventBand,
   EventBandId,
+  EventDayId,
   EventMember,
   MemberId,
   ScheduleItemId,
@@ -47,6 +48,7 @@ interface PerformanceAppearance {
   memberId: MemberId
   eventBandId: EventBandId
   scheduleItemId: ScheduleItemId
+  eventDayId: EventDayId
   stageId: StageId
   plannedStartMinute: number
   plannedEndMinute: number
@@ -139,6 +141,7 @@ export const detectScheduleIssues = ({
         memberId,
         eventBandId: eventBand.id,
         scheduleItemId: calculatedItem.scheduleItemId,
+        eventDayId: calculatedItem.eventDayId,
         stageId: calculatedItem.stageId,
         plannedStartMinute: calculatedItem.plannedStartMinute,
         plannedEndMinute: calculatedItem.plannedEndMinute,
@@ -264,66 +267,81 @@ export const detectScheduleIssues = ({
       }
     })
 
-    const chronologicalAppearances = [...appearances].sort(compareAppearances)
+    const appearancesByEventDay = new Map<
+      EventDayId,
+      PerformanceAppearance[]
+    >()
+    appearances.forEach((appearance) => {
+      const dayAppearances =
+        appearancesByEventDay.get(appearance.eventDayId) ?? []
+      dayAppearances.push(appearance)
+      appearancesByEventDay.set(appearance.eventDayId, dayAppearances)
+    })
 
-    for (let firstIndex = 0; firstIndex < chronologicalAppearances.length; firstIndex += 1) {
-      const first = chronologicalAppearances[firstIndex]
+    appearancesByEventDay.forEach((dayAppearances) => {
+      const chronologicalAppearances = [...dayAppearances].sort(
+        compareAppearances,
+      )
 
-      for (
-        let secondIndex = firstIndex + 1;
-        secondIndex < chronologicalAppearances.length;
-        secondIndex += 1
-      ) {
-        const second = chronologicalAppearances[secondIndex]
-        if (second.plannedStartMinute >= first.plannedEndMinute) break
+      for (let firstIndex = 0; firstIndex < chronologicalAppearances.length; firstIndex += 1) {
+        const first = chronologicalAppearances[firstIndex]
 
-        if (
-          first.plannedStartMinute < second.plannedEndMinute &&
-          second.plannedStartMinute < first.plannedEndMinute
+        for (
+          let secondIndex = firstIndex + 1;
+          secondIndex < chronologicalAppearances.length;
+          secondIndex += 1
         ) {
-          addIssue({
-            severity: 'ERROR',
-            code: 'PERFORMANCE_OVERLAP',
-            message: `メンバー ${memberId} の出演時間が重複しています`,
-            memberIds: [memberId],
-            eventBandIds: [first.eventBandId, second.eventBandId],
-            scheduleItemIds: [first.scheduleItemId, second.scheduleItemId],
-          })
+          const second = chronologicalAppearances[secondIndex]
+          if (second.plannedStartMinute >= first.plannedEndMinute) break
+
+          if (
+            first.plannedStartMinute < second.plannedEndMinute &&
+            second.plannedStartMinute < first.plannedEndMinute
+          ) {
+            addIssue({
+              severity: 'ERROR',
+              code: 'PERFORMANCE_OVERLAP',
+              message: `メンバー ${memberId} の出演時間が重複しています`,
+              memberIds: [memberId],
+              eventBandIds: [first.eventBandId, second.eventBandId],
+              scheduleItemIds: [first.scheduleItemId, second.scheduleItemId],
+            })
+          }
         }
       }
-    }
 
-    let previousWithLatestEnd = chronologicalAppearances[0]
+      let previousWithLatestEnd = chronologicalAppearances[0]
 
-    for (let index = 1; index < chronologicalAppearances.length; index += 1) {
-      const next = chronologicalAppearances[index]
-      const restMinutes =
-        next.plannedStartMinute - previousWithLatestEnd.plannedEndMinute
+      for (let index = 1; index < chronologicalAppearances.length; index += 1) {
+        const next = chronologicalAppearances[index]
+        const restMinutes =
+          next.plannedStartMinute - previousWithLatestEnd.plannedEndMinute
 
-      if (
-        restMinutes >= 0 &&
-        restMinutes < event.validationPolicy.minimumRestMinutes
-      ) {
-        addIssue({
-          severity: 'WARNING',
-          code: 'SHORT_REST',
-          message: `メンバー ${memberId} の出演間隔が ${restMinutes} 分です`,
-          memberIds: [memberId],
-          eventBandIds: [previousWithLatestEnd.eventBandId, next.eventBandId],
-          scheduleItemIds: [
-            previousWithLatestEnd.scheduleItemId,
-            next.scheduleItemId,
-          ],
-          restMinutes,
-        })
+        if (
+          restMinutes >= 0 &&
+          restMinutes < event.validationPolicy.minimumRestMinutes
+        ) {
+          addIssue({
+            severity: 'WARNING',
+            code: 'SHORT_REST',
+            message: `メンバー ${memberId} の出演間隔が ${restMinutes} 分です`,
+            memberIds: [memberId],
+            eventBandIds: [previousWithLatestEnd.eventBandId, next.eventBandId],
+            scheduleItemIds: [
+              previousWithLatestEnd.scheduleItemId,
+              next.scheduleItemId,
+            ],
+            restMinutes,
+          })
+        }
+
+        if (
+          next.plannedEndMinute > previousWithLatestEnd.plannedEndMinute
+        ) {
+          previousWithLatestEnd = next
+        }
       }
-
-      if (
-        next.plannedEndMinute > previousWithLatestEnd.plannedEndMinute
-      ) {
-        previousWithLatestEnd = next
-      }
-    }
+    })
 
     const appearancesByStage = new Map<StageId, PerformanceAppearance[]>()
     appearances.forEach((appearance) => {

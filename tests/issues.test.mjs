@@ -3,6 +3,21 @@ import assert from 'node:assert/strict'
 
 import { detectScheduleIssues } from '../src/domain/issues.ts'
 
+const eventDays = [
+  {
+    id: 'event-day-1',
+    eventId: 'event-1',
+    date: '2027-11-06',
+    order: 0,
+  },
+  {
+    id: 'event-day-2',
+    eventId: 'event-1',
+    date: '2027-11-07',
+    order: 1,
+  },
+]
+
 const createEvent = (policy = {}) => ({
   id: 'event-1',
   name: 'テストイベント',
@@ -31,8 +46,16 @@ const createEventBand = (id, memberIds, overrides = {}) => ({
   ...overrides,
 })
 
-const performance = (id, eventBandId, start, end, stageId = 'stage-a') => ({
+const performance = (
+  id,
+  eventBandId,
+  start,
+  end,
+  stageId = 'stage-a',
+  eventDayId = eventDays[0].id,
+) => ({
   scheduleItemId: id,
+  eventDayId,
   stageId,
   kind: 'performance',
   plannedStartMinute: start,
@@ -40,8 +63,15 @@ const performance = (id, eventBandId, start, end, stageId = 'stage-a') => ({
   eventBandId,
 })
 
-const breakItem = (id, start, end, stageId = 'stage-a') => ({
+const breakItem = (
+  id,
+  start,
+  end,
+  stageId = 'stage-a',
+  eventDayId = eventDays[0].id,
+) => ({
   scheduleItemId: id,
+  eventDayId,
   stageId,
   kind: 'break',
   plannedStartMinute: start,
@@ -83,19 +113,95 @@ test('同一Stageの出演時間重複を検出し、SHORT_RESTは重複表示�
   assert.equal(findIssues(issues, 'SHORT_REST').length, 0)
 })
 
-test('別Stage間の出演時間重複を検出する', () => {
+test('同じEventDayの別Stage間の出演時間重複を検出する', () => {
   const issues = detect({
     eventBands: [
       createEventBand('event-band-1', ['member-1']),
       createEventBand('event-band-2', ['member-1']),
     ],
     calculatedItems: [
-      performance('item-1', 'event-band-1', 600, 610, 'stage-a'),
-      performance('item-2', 'event-band-2', 605, 615, 'stage-b'),
+      performance(
+        'item-1',
+        'event-band-1',
+        600,
+        610,
+        'stage-a',
+        eventDays[0].id,
+      ),
+      performance(
+        'item-2',
+        'event-band-2',
+        605,
+        615,
+        'stage-b',
+        eventDays[0].id,
+      ),
     ],
   })
 
   assert.equal(findIssues(issues, 'PERFORMANCE_OVERLAP').length, 1)
+})
+
+test('異なるEventDayの同時刻出演は重複や短休憩として扱わない', () => {
+  const issues = detect({
+    event: createEvent({ minimumRestMinutes: 30 }),
+    eventBands: [
+      createEventBand('event-band-1', ['member-1']),
+      createEventBand('event-band-2', ['member-1']),
+    ],
+    calculatedItems: [
+      performance(
+        'item-1',
+        'event-band-1',
+        600,
+        610,
+        'stage-day-1',
+        eventDays[0].id,
+      ),
+      performance(
+        'item-2',
+        'event-band-2',
+        600,
+        610,
+        'stage-day-2',
+        eventDays[1].id,
+      ),
+    ],
+  })
+
+  assert.equal(findIssues(issues, 'PERFORMANCE_OVERLAP').length, 0)
+  assert.equal(findIssues(issues, 'SHORT_REST').length, 0)
+})
+
+test('翌日の早い時刻を前日の出演と比較しない', () => {
+  const issues = detect({
+    event: createEvent({ minimumRestMinutes: 600 }),
+    eventBands: [
+      createEventBand('event-band-1', ['member-1']),
+      createEventBand('event-band-2', ['member-1']),
+    ],
+    calculatedItems: [
+      performance(
+        'item-1',
+        'event-band-1',
+        1020,
+        1030,
+        'stage-day-1',
+        eventDays[0].id,
+      ),
+      performance(
+        'item-2',
+        'event-band-2',
+        600,
+        610,
+        'stage-day-2',
+        eventDays[1].id,
+      ),
+    ],
+  })
+
+  assert.equal(findIssues(issues, 'PERFORMANCE_OVERLAP').length, 0)
+  assert.equal(findIssues(issues, 'SHORT_REST').length, 0)
 })
 
 test('同一Stageの連続出演を検出し、間のBreakはgapBandsに数えない', () => {
@@ -169,7 +275,7 @@ test('gapBandsがminimumGapBands以上なら間隔Issueを返さない', () => {
   assert.equal(findIssues(issues, 'SHORT_GAP').length, 0)
 })
 
-test('全Stage横断でrestMinutesを計算してminimumRestMinutes未満を検出する', () => {
+test('同じEventDayの全Stage横断でminimumRestMinutes未満を検出する', () => {
   const issues = detect({
     event: createEvent({ minimumRestMinutes: 5 }),
     eventBands: [
@@ -177,14 +283,28 @@ test('全Stage横断でrestMinutesを計算してminimumRestMinutes未満を検�
       createEventBand('event-band-2', ['member-1']),
     ],
     calculatedItems: [
-      performance('item-1', 'event-band-1', 600, 610, 'stage-a'),
-      performance('item-2', 'event-band-2', 612, 622, 'stage-b'),
+      performance(
+        'item-1',
+        'event-band-1',
+        600,
+        610,
+        'stage-a',
+        eventDays[0].id,
+      ),
+      performance(
+        'item-2',
+        'event-band-2',
+        613,
+        623,
+        'stage-b',
+        eventDays[0].id,
+      ),
     ],
   })
 
   const shortRests = findIssues(issues, 'SHORT_REST')
   assert.equal(shortRests.length, 1)
-  assert.equal(shortRests[0].restMinutes, 2)
+  assert.equal(shortRests[0].restMinutes, 3)
   assert.deepEqual(shortRests[0].eventBandIds, [
     'event-band-1',
     'event-band-2',
