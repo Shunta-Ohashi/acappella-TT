@@ -29,7 +29,6 @@ import {
 import {
   calculateStageTimeline,
   formatMinuteAsLocalTime,
-  isValidLocalTime,
 } from './domain/timeline'
 import { detectScheduleIssues } from './domain/issues'
 import {
@@ -59,6 +58,7 @@ import {
 import {
   canDeleteStage,
   createEventStageSettingsUpdate,
+  isValidStageTimeRange,
   type EventStageSettingsUpdateResult,
   type StageSettingsDraft,
 } from './domain/eventStageSettings'
@@ -296,7 +296,10 @@ function App() {
   }
 
   const handleStageStartTimeChange = (value: string) => {
-    if (!currentStage || !isValidLocalTime(value)) return
+    if (
+      !currentStage ||
+      !isValidStageTimeRange(value, currentStage.plannedEndTime)
+    ) return
 
     setStages(prev => prev.map(stage => (
       stage.id === currentStage.id

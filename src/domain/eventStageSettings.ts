@@ -76,6 +76,18 @@ const normalizeOptionalText = (value: string): string | undefined => {
 const hasStageErrors = (errors: StageSettingsValidationErrors): boolean =>
   Object.values(errors).some(Boolean)
 
+export const isValidStageTimeRange = (
+  plannedStartTime: LocalTime,
+  plannedEndTime?: LocalTime,
+): boolean => {
+  if (!isValidLocalTime(plannedStartTime)) return false
+  if (plannedEndTime === undefined) return true
+  if (!isValidLocalTime(plannedEndTime)) return false
+
+  return parseLocalTimeToMinute(plannedStartTime) <
+    parseLocalTimeToMinute(plannedEndTime)
+}
+
 export const createEventStageSettingsDraft = (
   event: Event,
   eventDays: EventDay[],
@@ -148,8 +160,10 @@ export const validateEventStageSettingsDraft = (
         stageErrors.plannedEndTime = '有効な終了時刻を入力してください。'
       } else if (
         startIsValid &&
-        parseLocalTimeToMinute(stage.plannedEndTime) <=
-          parseLocalTimeToMinute(stage.plannedStartTime)
+        !isValidStageTimeRange(
+          stage.plannedStartTime,
+          stage.plannedEndTime,
+        )
       ) {
         stageErrors.plannedEndTime =
           '終了時刻は開始時刻より後にしてください。'

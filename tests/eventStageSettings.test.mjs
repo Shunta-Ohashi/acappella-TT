@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import {
   canDeleteStage,
   createEventStageSettingsUpdate,
+  isValidStageTimeRange,
   validateEventStageSettingsDraft,
 } from '../src/domain/eventStageSettings.ts'
 
@@ -48,6 +49,14 @@ const validStageDraft = (overrides = {}) => ({
 })
 
 const noReferences = { sections: [], scheduleItems: [] }
+
+test('Stage開始時刻は自動終了または固定終了より前の場合だけ変更可能にする', () => {
+  assert.equal(isValidStageTimeRange('16:59'), true)
+  assert.equal(isValidStageTimeRange('16:59', '17:00'), true)
+  assert.equal(isValidStageTimeRange('17:00', '17:00'), false)
+  assert.equal(isValidStageTimeRange('18:00', '17:00'), false)
+  assert.equal(isValidStageTimeRange('24:00', '17:00'), false)
+})
 
 test('既存Stage IDを維持し、新規Stageを対応するEventDayへ生成する', () => {
   const result = createEventStageSettingsUpdate({

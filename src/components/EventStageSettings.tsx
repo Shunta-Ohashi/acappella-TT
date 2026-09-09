@@ -172,12 +172,8 @@ export function EventStageSettings({
       <form noValidate onSubmit={handleSubmit}>
         <div className="event-stage-settings__overview">
           <div className="event-stage-settings__days">
-            <p id="event-day-tabs-label">開催日</p>
-            <div
-              className="event-day-tabs"
-              role="tablist"
-              aria-labelledby="event-day-tabs-label"
-            >
+            <p>開催日</p>
+            <div className="event-day-tabs">
               {orderedEventDays.map((eventDay) => {
                 const isSelected = eventDay.id === selectedEventDayId
 
@@ -185,12 +181,10 @@ export function EventStageSettings({
                   <button
                     key={eventDay.id}
                     type="button"
-                    role="tab"
                     className={isSelected
                       ? 'event-day-tabs__button event-day-tabs__button--active'
                       : 'event-day-tabs__button'}
-                    aria-selected={isSelected}
-                    aria-controls="selected-event-day-stages"
+                    aria-pressed={isSelected}
                     onClick={() => setSelectedEventDayId(eventDay.id)}
                   >
                     <span>{formatEventDay(eventDay.date)}</span>
@@ -245,11 +239,7 @@ export function EventStageSettings({
           </div>
         </div>
 
-        <div
-          id="selected-event-day-stages"
-          className="event-stage-settings__day-panel"
-          role="tabpanel"
-        >
+        <div className="event-stage-settings__day-panel">
           <header className="event-stage-settings__day-header">
             <div>
               <p>Stage設定</p>
@@ -299,6 +289,7 @@ export function EventStageSettings({
                       <button
                         type="button"
                         className="stage-settings-card__delete"
+                        aria-label={`${stage.name.trim() || '新しいStage'}を削除`}
                         onClick={() => handleRemoveStage(stage)}
                       >
                         削除
