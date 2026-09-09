@@ -910,6 +910,14 @@
   font-weight: 650;
 }
 
+.event-day-tabs__button .event-day-tabs__error {
+  color: #8f2d25;
+}
+
+.event-day-tabs__button--active .event-day-tabs__error {
+  color: #fff;
+}
+
 .event-stage-settings__common-transition {
   min-width: 210px;
 }

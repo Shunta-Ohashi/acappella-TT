@@ -2,7 +2,9 @@ import { useState, type FormEvent } from 'react'
 import type { Event, EventDay, EventDayId, Stage, StageId } from '../domain/models'
 import {
   createEventStageSettingsDraft,
+  getStageErrorEventDayIds,
   hasEventStageSettingsErrors,
+  STAGE_DELETE_BLOCKED_MESSAGE,
   validateEventStageSettingsDraft,
   type EventStageSettingsUpdateResult,
   type StageSettingsDraft,
@@ -20,9 +22,6 @@ interface EventStageSettingsProps {
   ) => EventStageSettingsUpdateResult
   onSaveAndNext: () => void
 }
-
-const DELETE_BLOCKED_MESSAGE =
-  'このStageにはタイムテーブルまたはSectionが設定されているため削除できません。関連する設定を先に削除してください。'
 
 const formatEventDay = (date: string): string => {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
@@ -68,6 +67,9 @@ export function EventStageSettings({
   )
   const selectedStageDrafts = stageDrafts.filter(
     (stage) => stage.eventDayId === selectedEventDayId,
+  )
+  const errorEventDayIds = new Set(
+    getStageErrorEventDayIds(stageDrafts, errors),
   )
 
   const clearFeedback = () => {
@@ -119,7 +121,7 @@ export function EventStageSettings({
           ...previous.stages,
           [stage.draftId]: {
             ...previous.stages[stage.draftId],
-            form: DELETE_BLOCKED_MESSAGE,
+            form: STAGE_DELETE_BLOCKED_MESSAGE,
           },
         },
       }))
@@ -130,7 +132,12 @@ export function EventStageSettings({
     setStageDrafts((previous) => previous.filter(
       (candidate) => candidate.draftId !== stage.draftId,
     ))
-    clearFeedback()
+    setErrors((previous) => {
+      const nextStageErrors = { ...previous.stages }
+      delete nextStageErrors[stage.draftId]
+      return { ...previous, stages: nextStageErrors, form: undefined }
+    })
+    setSaveMessage('')
   }
 
   const save = (moveToNext: boolean) => {
@@ -139,7 +146,16 @@ export function EventStageSettings({
     setErrors(validationErrors)
     setSaveMessage('')
 
-    if (hasEventStageSettingsErrors(validationErrors)) return
+    if (hasEventStageSettingsErrors(validationErrors)) {
+      const [firstErrorEventDayId] = getStageErrorEventDayIds(
+        stageDrafts,
+        validationErrors,
+      )
+      if (firstErrorEventDayId) {
+        setSelectedEventDayId(firstErrorEventDayId)
+      }
+      return
+    }
 
     const result = onSave(defaultTransitionMinutes, stageDrafts)
     if (!result.ok) {
@@ -176,6 +192,7 @@ export function EventStageSettings({
             <div className="event-day-tabs">
               {orderedEventDays.map((eventDay) => {
                 const isSelected = eventDay.id === selectedEventDayId
+                const hasErrors = errorEventDayIds.has(eventDay.id)
 
                 return (
                   <button
@@ -190,6 +207,11 @@ export function EventStageSettings({
                     <span>{formatEventDay(eventDay.date)}</span>
                     {isSelected && (
                       <small>選択中</small>
+                    )}
+                    {hasErrors && (
+                      <small className="event-day-tabs__error">
+                        エラーあり
+                      </small>
                     )}
                   </button>
                 )

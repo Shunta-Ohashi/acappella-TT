@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import {
   canDeleteStage,
   createEventStageSettingsUpdate,
+  getStageErrorEventDayIds,
   isValidStageTimeRange,
   validateEventStageSettingsDraft,
 } from '../src/domain/eventStageSettings.ts'
@@ -48,7 +49,7 @@ const validStageDraft = (overrides = {}) => ({
   ...overrides,
 })
 
-const noReferences = { sections: [], scheduleItems: [] }
+const noReferences = { sections: [], scheduleItems: [], eventBands: [] }
 
 test('Stage開始時刻は自動終了または固定終了より前の場合だけ変更可能にする', () => {
   assert.equal(isValidStageTimeRange('16:59'), true)
@@ -164,6 +165,23 @@ test('固定終了時刻は開始時刻より後の場合だけ許可する', ()
   }
 })
 
+test('Stage errorがある開催日をdraft順で特定する', () => {
+  const stageDrafts = [
+    validStageDraft({ draftId: 'day-1-stage', eventDayId: 'day-1' }),
+    validStageDraft({
+      draftId: 'day-2-stage',
+      eventDayId: 'day-2',
+      name: '',
+    }),
+  ]
+  const errors = validateEventStageSettingsDraft({
+    defaultTransitionMinutes: '2',
+    stages: stageDrafts,
+  })
+
+  assert.deepEqual(getStageErrorEventDayIds(stageDrafts, errors), ['day-2'])
+})
+
 test('終了時刻を自動にすると既存の固定終了時刻を削除する', () => {
   const result = createEventStageSettingsUpdate({
     event,
@@ -218,16 +236,28 @@ test('Event共通とStage固有の転換時間は0以上の整数だけ許可す
   assert.equal(validErrors.stages['draft-stage'], undefined)
 })
 
-test('ScheduleItemまたはSectionから参照されるStageは削除不可にする', () => {
+test('ScheduleItem、Section、または固定配置から参照されるStageは削除不可にする', () => {
   assert.equal(canDeleteStage(existingStage.id, noReferences), true)
   assert.equal(canDeleteStage(existingStage.id, {
     sections: [],
     scheduleItems: [{ stageId: existingStage.id }],
+    eventBands: [],
   }), false)
   assert.equal(canDeleteStage(existingStage.id, {
     sections: [{ stageId: existingStage.id }],
     scheduleItems: [],
+    eventBands: [],
   }), false)
+  assert.equal(canDeleteStage(existingStage.id, {
+    sections: [],
+    scheduleItems: [],
+    eventBands: [{ fixedPlacement: { stageId: existingStage.id } }],
+  }), false)
+  assert.equal(canDeleteStage(existingStage.id, {
+    sections: [],
+    scheduleItems: [],
+    eventBands: [{ fixedPlacement: { stageId: 'another-stage' } }],
+  }), true)
 })
 
 test('未参照Stageは削除でき、参照中Stageは保存処理でも削除をブロックする', () => {
@@ -250,7 +280,26 @@ test('未参照Stageは削除でき、参照中Stageは保存処理でも削除�
     newStageIds: [],
     sections: [],
     scheduleItems: [{ stageId: existingStage.id }],
+    eventBands: [],
   })
   assert.equal(blocked.ok, false)
   if (!blocked.ok) assert.match(blocked.errors.form ?? '', /削除できません/)
+})
+
+test('固定配置から参照中のStageは保存処理でも削除をブロックする', () => {
+  const result = createEventStageSettingsUpdate({
+    event,
+    eventDays,
+    stages: [existingStage],
+    draft: { defaultTransitionMinutes: '2', stages: [] },
+    newStageIds: [],
+    sections: [],
+    scheduleItems: [],
+    eventBands: [{ fixedPlacement: { stageId: existingStage.id } }],
+  })
+
+  assert.equal(result.ok, false)
+  if (!result.ok) {
+    assert.match(result.errors.form ?? '', /固定配置/)
+  }
 })

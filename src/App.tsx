@@ -403,6 +403,7 @@ function App() {
         .map(() => createId('stage')),
       sections: initialSections,
       scheduleItems,
+      eventBands,
     })
 
     if (!result.ok) return result
@@ -689,6 +690,7 @@ function App() {
               canDeleteStage={(stageId) => canDeleteStage(stageId, {
                 sections: initialSections,
                 scheduleItems,
+                eventBands,
               })}
               onSave={handleSaveEventStageSettings}
               onSaveAndNext={() => setActiveStep(3)}

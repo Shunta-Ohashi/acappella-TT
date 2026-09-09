@@ -1,5 +1,6 @@
 import type {
   Event,
+  EventBand,
   EventDay,
   EventDayId,
   LocalTime,
@@ -51,6 +52,7 @@ export interface EventStageSettingsValidationErrors {
 export interface StageReferences {
   sections: Pick<Section, 'stageId'>[]
   scheduleItems: Pick<ScheduleItem, 'stageId'>[]
+  eventBands: Pick<EventBand, 'fixedPlacement'>[]
 }
 
 interface CreateEventStageSettingsUpdateInput extends StageReferences {
@@ -193,12 +195,40 @@ export const hasEventStageSettingsErrors = (
   Object.values(errors.stages).some(hasStageErrors),
 )
 
+export const getStageErrorEventDayIds = (
+  stages: StageSettingsDraft[],
+  errors: EventStageSettingsValidationErrors,
+): EventDayId[] => {
+  const eventDayIds: EventDayId[] = []
+  const seenEventDayIds = new Set<EventDayId>()
+
+  for (const stage of stages) {
+    const stageErrors = errors.stages[stage.draftId]
+    if (
+      stageErrors &&
+      hasStageErrors(stageErrors) &&
+      !seenEventDayIds.has(stage.eventDayId)
+    ) {
+      eventDayIds.push(stage.eventDayId)
+      seenEventDayIds.add(stage.eventDayId)
+    }
+  }
+
+  return eventDayIds
+}
+
+export const STAGE_DELETE_BLOCKED_MESSAGE =
+  'このStageにはSection、タイムテーブル、または固定配置の設定があるため削除できません。関連する設定を先に解除してください。'
+
 export const canDeleteStage = (
   stageId: StageId,
-  { sections, scheduleItems }: StageReferences,
+  { sections, scheduleItems, eventBands }: StageReferences,
 ): boolean =>
   !sections.some((section) => section.stageId === stageId) &&
-  !scheduleItems.some((scheduleItem) => scheduleItem.stageId === stageId)
+  !scheduleItems.some((scheduleItem) => scheduleItem.stageId === stageId) &&
+  !eventBands.some((eventBand) =>
+    eventBand.fixedPlacement?.stageId === stageId,
+  )
 
 export const createEventStageSettingsUpdate = ({
   event,
@@ -208,6 +238,7 @@ export const createEventStageSettingsUpdate = ({
   newStageIds,
   sections,
   scheduleItems,
+  eventBands,
 }: CreateEventStageSettingsUpdateInput): EventStageSettingsUpdateResult => {
   const errors = validateEventStageSettingsDraft(draft)
   if (hasEventStageSettingsErrors(errors)) return { ok: false, errors }
@@ -233,7 +264,7 @@ export const createEventStageSettingsUpdate = ({
   )
   const blockedDeletion = currentStages.find((stage) =>
     !retainedStageIds.has(stage.id) &&
-    !canDeleteStage(stage.id, { sections, scheduleItems }),
+    !canDeleteStage(stage.id, { sections, scheduleItems, eventBands }),
   )
 
   if (blockedDeletion) {
@@ -241,7 +272,7 @@ export const createEventStageSettingsUpdate = ({
       ok: false,
       errors: {
         stages: {},
-        form: 'このStageにはタイムテーブルまたはSectionが設定されているため削除できません。関連する設定を先に削除してください。',
+        form: STAGE_DELETE_BLOCKED_MESSAGE,
       },
     }
   }
