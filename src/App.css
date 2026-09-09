@@ -291,7 +291,7 @@
 }
 
 .event-list-page__create > span {
-  color: #8792a2;
+  color: #596678;
   font-size: 11px;
 }
 
@@ -338,6 +338,7 @@
 
 .event-card__eyebrow {
   margin-bottom: 6px;
+  color: #596678;
 }
 
 .event-card__header h2 {
@@ -383,7 +384,7 @@
 
 .event-card__facts dt {
   margin-bottom: 3px;
-  color: #7a8595;
+  color: #596678;
   font-size: 10px;
   font-weight: 700;
 }
@@ -434,7 +435,7 @@
 
 .event-list-empty p {
   margin: 0;
-  color: #748094;
+  color: #596678;
   font-size: 13px;
 }
 
