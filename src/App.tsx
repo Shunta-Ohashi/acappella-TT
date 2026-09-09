@@ -56,10 +56,13 @@ import {
   type EventBasicInfoUpdateResult,
 } from './domain/eventBasicInfo'
 import {
+  canAddFirstSection,
+  canDeleteSection,
   canDeleteStage,
   createEventStageSettingsUpdate,
   isValidStageTimeRange,
   type EventStageSettingsUpdateResult,
+  type SectionSettingsDraft,
   type StageSettingsDraft,
 } from './domain/eventStageSettings'
 import { getHighestSeverityByScheduleItem } from './ui/issuePresentation'
@@ -192,6 +195,7 @@ function App() {
   const [events, setEvents] = useState<TimetableEvent[]>([initialEvent])
   const [eventDays, setEventDays] = useState<EventDay[]>(initialEventDays)
   const [stages, setStages] = useState<Stage[]>([initialStage])
+  const [sections, setSections] = useState<Section[]>(initialSections)
   const selectedEvent = events.find((event) => event.id === selectedEventId)
   const selectedEventDays = eventDays.filter(
     (eventDay) => eventDay.eventId === selectedEventId,
@@ -201,6 +205,10 @@ function App() {
   )
   const selectedStages = stages.filter((stage) =>
     selectedEventDayIds.has(stage.eventDayId),
+  )
+  const selectedStageIds = new Set(selectedStages.map((stage) => stage.id))
+  const selectedSections = sections.filter((section) =>
+    selectedStageIds.has(section.stageId),
   )
   const currentStage = selectedStages.find(
     (stage) => stage.id === CURRENT_STAGE_ID,
@@ -230,7 +238,6 @@ function App() {
 
   // 4️⃣ 当日のタイムテーブル。出演項目はEventBandをIDで参照する
   const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>(initialScheduleItems)
-  const selectedStageIds = new Set(selectedStages.map((stage) => stage.id))
   const selectedScheduleItems = scheduleItems.filter((scheduleItem) =>
     selectedStageIds.has(scheduleItem.stageId),
   )
@@ -260,6 +267,12 @@ function App() {
   const currentStageScheduleItems = currentStage
     ? getStageScheduleItems(selectedScheduleItems, currentStage.id)
     : []
+  const currentStageSections = currentStage
+    ? selectedSections
+        .filter((section) => section.stageId === currentStage.id)
+        .sort((first, second) => first.order - second.order)
+    : []
+  const currentStageUsesSections = currentStageSections.length > 0
   const poolEventBands = getUnscheduledEventBands(
     currentDayEventBands,
     selectedScheduleItems,
@@ -379,12 +392,14 @@ function App() {
   const handleSaveEventStageSettings = (
     defaultTransitionMinutes: string,
     stageDrafts: StageSettingsDraft[],
+    sectionDrafts: SectionSettingsDraft[],
   ): EventStageSettingsUpdateResult => {
     if (!selectedEvent) {
       return {
         ok: false,
         errors: {
           stages: {},
+          sections: {},
           form: '編集するイベントが見つかりません。',
         },
       }
@@ -394,14 +409,18 @@ function App() {
       event: selectedEvent,
       eventDays: selectedEventDays,
       stages: selectedStages,
+      sections: selectedSections,
       draft: {
         defaultTransitionMinutes,
         stages: stageDrafts,
+        sections: sectionDrafts,
       },
       newStageIds: stageDrafts
         .filter((stage) => !stage.stageId)
         .map(() => createId('stage')),
-      sections: initialSections,
+      newSectionIds: sectionDrafts
+        .filter((section) => !section.sectionId)
+        .map(() => createId('section')),
       scheduleItems,
       eventBands,
     })
@@ -414,6 +433,10 @@ function App() {
     setStages((previous) => [
       ...previous.filter((stage) => !selectedEventDayIds.has(stage.eventDayId)),
       ...result.stages,
+    ])
+    setSections((previous) => [
+      ...previous.filter((section) => !selectedStageIds.has(section.stageId)),
+      ...result.sections,
     ])
 
     return result
@@ -441,7 +464,7 @@ function App() {
 
   const handleAddBreak = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (!currentStage || breakDuration <= 0) return
+    if (!currentStage || currentStageUsesSections || breakDuration <= 0) return
     const newBreakItem: BreakScheduleItem = {
       id: createId('schedule-break'),
       stageId: currentStage.id,
@@ -476,7 +499,7 @@ function App() {
 
   // ==================== 🔀 安全なドラッグ＆ドロップ処理 ====================
   const handleOnDragEnd = (result: DropResult) => {
-    if (!currentStage || !selectedEvent) return
+    if (!currentStage || !selectedEvent || currentStageUsesSections) return
 
     const { source, destination } = result
     if (!destination) return
@@ -601,13 +624,11 @@ function App() {
   const currentStageScheduleItemsById = new Map(
     currentStageScheduleItems.map(scheduleItem => [scheduleItem.id, scheduleItem]),
   )
-  const calculatedItems = selectedEvent && currentStage
+  const calculatedItems = selectedEvent && currentStage && !currentStageUsesSections
     ? calculateStageTimeline({
         event: selectedEvent,
         stage: currentStage,
-        sections: initialSections.filter(
-          (section) => section.stageId === currentStage.id,
-        ),
+        sections: currentStageSections,
         scheduleItems: selectedScheduleItems,
         eventBands: selectedEventBands,
       })
@@ -687,8 +708,18 @@ function App() {
               event={selectedEvent}
               eventDays={selectedEventDays}
               stages={selectedStages}
+              sections={selectedSections}
+              canAddFirstSection={(stageId) => canAddFirstSection(
+                stageId,
+                sections,
+                scheduleItems,
+              )}
               canDeleteStage={(stageId) => canDeleteStage(stageId, {
-                sections: initialSections,
+                sections,
+                scheduleItems,
+                eventBands,
+              })}
+              canDeleteSection={(sectionId) => canDeleteSection(sectionId, {
                 scheduleItems,
                 eventBands,
               })}
@@ -696,6 +727,21 @@ function App() {
               onSaveAndNext={() => setActiveStep(3)}
             />
           ) : currentStage && selectedEvent ? (
+            currentStageUsesSections ? (
+              <section className="timetable-empty-state">
+                <h3>Sectionを使用しているStageです</h3>
+                <p>
+                  このStageではSectionを使用しています。Sectionごとのタイムテーブル編集は次の対応で利用できるようになります。
+                </p>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setActiveStep(2)}
+                >
+                  Step 2 会場・Stageへ
+                </button>
+              </section>
+            ) : (
           <div className="timetable-workspace" style={containerStyle}>
 
       {/* ==================== 🗃️ データベース（マスタ）管理 ==================== */}
@@ -878,6 +924,7 @@ function App() {
         </div>
       </DragDropContext>
           </div>
+            )
           ) : (
             <section className="timetable-empty-state">
               <h3>会場・Stageが設定されていません</h3>

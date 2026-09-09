@@ -1,24 +1,40 @@
 import { useState, type FormEvent } from 'react'
-import type { Event, EventDay, EventDayId, Stage, StageId } from '../domain/models'
+import type {
+  Event,
+  EventDay,
+  EventDayId,
+  Section,
+  SectionId,
+  Stage,
+  StageId,
+} from '../domain/models'
 import {
   createEventStageSettingsDraft,
-  getStageErrorEventDayIds,
+  FIRST_SECTION_ADD_BLOCKED_MESSAGE,
+  getEventStageSettingsErrorEventDayIds,
   hasEventStageSettingsErrors,
+  SECTION_DELETE_BLOCKED_MESSAGE,
   STAGE_DELETE_BLOCKED_MESSAGE,
   validateEventStageSettingsDraft,
   type EventStageSettingsUpdateResult,
+  type SectionSettingsDraft,
   type StageSettingsDraft,
   type EventStageSettingsValidationErrors,
 } from '../domain/eventStageSettings'
+import { StageSectionSettings } from './StageSectionSettings'
 
 interface EventStageSettingsProps {
   event: Event
   eventDays: EventDay[]
   stages: Stage[]
+  sections: Section[]
+  canAddFirstSection: (stageId: StageId) => boolean
   canDeleteStage: (stageId: StageId) => boolean
+  canDeleteSection: (sectionId: SectionId) => boolean
   onSave: (
     defaultTransitionMinutes: string,
     stages: StageSettingsDraft[],
+    sections: SectionSettingsDraft[],
   ) => EventStageSettingsUpdateResult
   onSaveAndNext: () => void
 }
@@ -33,7 +49,10 @@ export function EventStageSettings({
   event,
   eventDays,
   stages,
+  sections,
+  canAddFirstSection,
   canDeleteStage,
+  canDeleteSection,
   onSave,
   onSaveAndNext,
 }: EventStageSettingsProps) {
@@ -44,16 +63,24 @@ export function EventStageSettings({
       first.date.localeCompare(second.date) ||
       first.id.localeCompare(second.id),
     )
-  const initialDraft = createEventStageSettingsDraft(event, eventDays, stages)
+  const initialDraft = createEventStageSettingsDraft(
+    event,
+    eventDays,
+    stages,
+    sections,
+  )
   const [selectedEventDayIdState, setSelectedEventDayId] =
     useState<EventDayId | undefined>(orderedEventDays[0]?.id)
   const [defaultTransitionMinutes, setDefaultTransitionMinutes] = useState(
     initialDraft.defaultTransitionMinutes,
   )
   const [stageDrafts, setStageDrafts] = useState(initialDraft.stages)
+  const [sectionDrafts, setSectionDrafts] = useState(initialDraft.sections)
   const [nextStageDraftKey, setNextStageDraftKey] = useState(0)
+  const [nextSectionDraftKey, setNextSectionDraftKey] = useState(0)
   const [errors, setErrors] = useState<EventStageSettingsValidationErrors>({
     stages: {},
+    sections: {},
   })
   const [saveMessage, setSaveMessage] = useState('')
 
@@ -69,7 +96,14 @@ export function EventStageSettings({
     (stage) => stage.eventDayId === selectedEventDayId,
   )
   const errorEventDayIds = new Set(
-    getStageErrorEventDayIds(stageDrafts, errors),
+    getEventStageSettingsErrorEventDayIds(
+      {
+        defaultTransitionMinutes,
+        stages: stageDrafts,
+        sections: sectionDrafts,
+      },
+      errors,
+    ),
   )
 
   const clearFeedback = () => {
@@ -86,8 +120,19 @@ export function EventStageSettings({
     ))
     setErrors((previous) => {
       const nextStageErrors = { ...previous.stages }
+      const nextSectionErrors = { ...previous.sections }
       delete nextStageErrors[draftId]
-      return { ...previous, stages: nextStageErrors, form: undefined }
+      for (const section of sectionDrafts) {
+        if (section.stageDraftId === draftId) {
+          delete nextSectionErrors[section.draftId]
+        }
+      }
+      return {
+        ...previous,
+        stages: nextStageErrors,
+        sections: nextSectionErrors,
+        form: undefined,
+      }
     })
     setSaveMessage('')
   }
@@ -114,7 +159,13 @@ export function EventStageSettings({
   }
 
   const handleRemoveStage = (stage: StageSettingsDraft) => {
-    if (stage.stageId && !canDeleteStage(stage.stageId)) {
+    const hasSectionDrafts = sectionDrafts.some(
+      (section) => section.stageDraftId === stage.draftId,
+    )
+    if (
+      hasSectionDrafts ||
+      (stage.stageId && !canDeleteStage(stage.stageId))
+    ) {
       setErrors((previous) => ({
         ...previous,
         stages: {
@@ -140,15 +191,105 @@ export function EventStageSettings({
     setSaveMessage('')
   }
 
+  const handleAddSection = (stage: StageSettingsDraft) => {
+    const stageSections = sectionDrafts.filter(
+      (section) => section.stageDraftId === stage.draftId,
+    )
+    if (
+      stageSections.length === 0 &&
+      stage.stageId &&
+      !canAddFirstSection(stage.stageId)
+    ) {
+      setErrors((previous) => ({
+        ...previous,
+        stages: {
+          ...previous.stages,
+          [stage.draftId]: {
+            ...previous.stages[stage.draftId],
+            form: FIRST_SECTION_ADD_BLOCKED_MESSAGE,
+          },
+        },
+      }))
+      setSaveMessage('')
+      return
+    }
+
+    setSectionDrafts((previous) => [
+      ...previous,
+      {
+        draftId: `new-section-${nextSectionDraftKey}`,
+        stageDraftId: stage.draftId,
+        name: '',
+        startMode: 'automatic',
+        plannedStartTime: '',
+        endMode: 'automatic',
+        plannedEndTime: '',
+      },
+    ])
+    setNextSectionDraftKey((previous) => previous + 1)
+    setErrors((previous) => {
+      const nextStageErrors = { ...previous.stages }
+      delete nextStageErrors[stage.draftId]
+      return { ...previous, stages: nextStageErrors, form: undefined }
+    })
+    setSaveMessage('')
+  }
+
+  const updateSection = (
+    draftId: string,
+    update: (section: SectionSettingsDraft) => SectionSettingsDraft,
+  ) => {
+    setSectionDrafts((previous) => previous.map((section) =>
+      section.draftId === draftId ? update(section) : section,
+    ))
+    setErrors((previous) => {
+      const nextSectionErrors = { ...previous.sections }
+      delete nextSectionErrors[draftId]
+      return { ...previous, sections: nextSectionErrors, form: undefined }
+    })
+    setSaveMessage('')
+  }
+
+  const handleRemoveSection = (section: SectionSettingsDraft) => {
+    if (section.sectionId && !canDeleteSection(section.sectionId)) {
+      setErrors((previous) => ({
+        ...previous,
+        sections: {
+          ...previous.sections,
+          [section.draftId]: {
+            ...previous.sections[section.draftId],
+            form: SECTION_DELETE_BLOCKED_MESSAGE,
+          },
+        },
+      }))
+      setSaveMessage('')
+      return
+    }
+
+    setSectionDrafts((previous) => previous.filter(
+      (candidate) => candidate.draftId !== section.draftId,
+    ))
+    setErrors((previous) => {
+      const nextSectionErrors = { ...previous.sections }
+      delete nextSectionErrors[section.draftId]
+      return { ...previous, sections: nextSectionErrors, form: undefined }
+    })
+    setSaveMessage('')
+  }
+
   const save = (moveToNext: boolean) => {
-    const draft = { defaultTransitionMinutes, stages: stageDrafts }
+    const draft = {
+      defaultTransitionMinutes,
+      stages: stageDrafts,
+      sections: sectionDrafts,
+    }
     const validationErrors = validateEventStageSettingsDraft(draft)
     setErrors(validationErrors)
     setSaveMessage('')
 
     if (hasEventStageSettingsErrors(validationErrors)) {
-      const [firstErrorEventDayId] = getStageErrorEventDayIds(
-        stageDrafts,
+      const [firstErrorEventDayId] = getEventStageSettingsErrorEventDayIds(
+        draft,
         validationErrors,
       )
       if (firstErrorEventDayId) {
@@ -157,9 +298,20 @@ export function EventStageSettings({
       return
     }
 
-    const result = onSave(defaultTransitionMinutes, stageDrafts)
+    const result = onSave(
+      defaultTransitionMinutes,
+      stageDrafts,
+      sectionDrafts,
+    )
     if (!result.ok) {
       setErrors(result.errors)
+      const [firstErrorEventDayId] = getEventStageSettingsErrorEventDayIds(
+        draft,
+        result.errors,
+      )
+      if (firstErrorEventDayId) {
+        setSelectedEventDayId(firstErrorEventDayId)
+      }
       return
     }
 
@@ -167,9 +319,11 @@ export function EventStageSettings({
       result.event,
       eventDays,
       result.stages,
+      result.sections,
     )
     setDefaultTransitionMinutes(savedDraft.defaultTransitionMinutes)
     setStageDrafts(savedDraft.stages)
+    setSectionDrafts(savedDraft.sections)
 
     if (moveToNext) {
       onSaveAndNext()
@@ -299,6 +453,9 @@ export function EventStageSettings({
             <div className="stage-settings-list">
               {selectedStageDrafts.map((stage, index) => {
                 const stageErrors = errors.stages[stage.draftId] ?? {}
+                const stageSectionDrafts = sectionDrafts.filter(
+                  (section) => section.stageDraftId === stage.draftId,
+                )
                 const idPrefix = `stage-settings-${stage.draftId}`
 
                 return (
@@ -540,6 +697,15 @@ export function EventStageSettings({
                         </div>
                       )}
                     </fieldset>
+
+                    <StageSectionSettings
+                      stageName={stage.name}
+                      sections={stageSectionDrafts}
+                      errors={errors.sections}
+                      onAdd={() => handleAddSection(stage)}
+                      onUpdate={updateSection}
+                      onRemove={handleRemoveSection}
+                    />
 
                     {stageErrors.form && (
                       <p className="form-error stage-settings-card__error" role="alert">
