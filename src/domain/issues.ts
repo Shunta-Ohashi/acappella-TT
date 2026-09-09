@@ -4,6 +4,8 @@ import type {
   EventBandId,
   EventDayId,
   EventMember,
+  EventMemberDay,
+  EventMemberId,
   MemberId,
   ScheduleItemId,
   StageId,
@@ -16,6 +18,7 @@ export type IssueSeverity = 'ERROR' | 'WARNING' | 'INFO'
 
 export type ScheduleIssueCode =
   | 'MEMBER_NOT_REGISTERED_FOR_EVENT'
+  | 'MEMBER_DAY_NOT_CONFIGURED'
   | 'MEMBER_ABSENT'
   | 'MEMBER_PARTICIPATION_UNDECIDED'
   | 'OUTSIDE_MEMBER_AVAILABILITY'
@@ -40,6 +43,7 @@ export interface ScheduleIssue {
 export interface DetectScheduleIssuesInput {
   event: Event
   eventMembers: EventMember[]
+  eventMemberDays: EventMemberDay[]
   eventBands: EventBand[]
   calculatedItems: CalculatedScheduleItem[]
 }
@@ -60,13 +64,22 @@ interface ResolvedPerformance {
   eventBand: EventBand
 }
 
+const isWithinTimeRange = (
+  plannedStartMinute: number,
+  plannedEndMinute: number,
+  timeRange: TimeRange,
+): boolean =>
+  (timeRange.from === undefined ||
+    plannedStartMinute >= parseLocalTimeToMinute(timeRange.from)) &&
+  (timeRange.until === undefined ||
+    plannedEndMinute <= parseLocalTimeToMinute(timeRange.until))
+
 const isOutsideTimeRange = (
   plannedStartMinute: number,
   plannedEndMinute: number,
   timeRange: TimeRange,
 ): boolean =>
-  plannedStartMinute < parseLocalTimeToMinute(timeRange.from) ||
-  plannedEndMinute > parseLocalTimeToMinute(timeRange.until)
+  !isWithinTimeRange(plannedStartMinute, plannedEndMinute, timeRange)
 
 const createIssueKey = (issue: ScheduleIssue): string =>
   [
@@ -88,6 +101,7 @@ const compareAppearances = (
 export const detectScheduleIssues = ({
   event,
   eventMembers,
+  eventMemberDays,
   eventBands,
   calculatedItems,
 }: DetectScheduleIssuesInput): ScheduleIssue[] => {
@@ -111,6 +125,20 @@ export const detectScheduleIssues = ({
       .filter((eventMember) => eventMember.eventId === event.id)
       .map((eventMember) => [eventMember.memberId, eventMember]),
   )
+  const eventMemberDayByEventMemberId = new Map<
+    EventMemberId,
+    Map<EventDayId, EventMemberDay>
+  >()
+  eventMemberDays.forEach((eventMemberDay) => {
+    const daysByEventDayId =
+      eventMemberDayByEventMemberId.get(eventMemberDay.eventMemberId) ??
+      new Map<EventDayId, EventMemberDay>()
+    daysByEventDayId.set(eventMemberDay.eventDayId, eventMemberDay)
+    eventMemberDayByEventMemberId.set(
+      eventMemberDay.eventMemberId,
+      daysByEventDayId,
+    )
+  })
   const nextPerformanceIndexByStage = new Map<StageId, number>()
   const resolvedPerformances: ResolvedPerformance[] = []
   const appearancesByMember = new Map<MemberId, PerformanceAppearance[]>()
@@ -205,7 +233,22 @@ export const detectScheduleIssues = ({
         return
       }
 
-      if (eventMember.participationStatus === 'absent') {
+      const eventMemberDay = eventMemberDayByEventMemberId
+        .get(eventMember.id)
+        ?.get(appearance.eventDayId)
+      if (!eventMemberDay) {
+        addIssue({
+          severity: 'ERROR',
+          code: 'MEMBER_DAY_NOT_CONFIGURED',
+          message: `メンバー ${memberId} のこの開催日の参加情報が設定されていません`,
+          memberIds: [memberId],
+          eventBandIds: [appearance.eventBandId],
+          scheduleItemIds: [appearance.scheduleItemId],
+        })
+        return
+      }
+
+      if (eventMemberDay.participationStatus === 'absent') {
         addIssue({
           severity: 'ERROR',
           code: 'MEMBER_ABSENT',
@@ -217,7 +260,7 @@ export const detectScheduleIssues = ({
         return
       }
 
-      if (eventMember.participationStatus === 'undecided') {
+      if (eventMemberDay.participationStatus === 'undecided') {
         addIssue({
           severity: 'INFO',
           code: 'MEMBER_PARTICIPATION_UNDECIDED',
@@ -228,16 +271,17 @@ export const detectScheduleIssues = ({
         })
       }
 
-      const outsideAvailableFrom =
-        eventMember.availableFrom !== undefined &&
-        appearance.plannedStartMinute <
-          parseLocalTimeToMinute(eventMember.availableFrom)
-      const outsideAvailableUntil =
-        eventMember.availableUntil !== undefined &&
-        appearance.plannedEndMinute >
-          parseLocalTimeToMinute(eventMember.availableUntil)
+      const isOutsideAvailability =
+        eventMemberDay.availabilityWindows !== undefined &&
+        !eventMemberDay.availabilityWindows.some((availabilityWindow) =>
+          isWithinTimeRange(
+            appearance.plannedStartMinute,
+            appearance.plannedEndMinute,
+            availabilityWindow,
+          ),
+        )
 
-      if (outsideAvailableFrom || outsideAvailableUntil) {
+      if (isOutsideAvailability) {
         addIssue({
           severity: 'ERROR',
           code: 'OUTSIDE_MEMBER_AVAILABILITY',
@@ -249,11 +293,11 @@ export const detectScheduleIssues = ({
       }
 
       if (
-        eventMember.preferredTimeRange &&
+        eventMemberDay.preferredTimeRange &&
         isOutsideTimeRange(
           appearance.plannedStartMinute,
           appearance.plannedEndMinute,
-          eventMember.preferredTimeRange,
+          eventMemberDay.preferredTimeRange,
         )
       ) {
         addIssue({
