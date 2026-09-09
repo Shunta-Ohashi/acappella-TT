@@ -29,7 +29,6 @@ import {
 import {
   calculateStageTimeline,
   formatMinuteAsLocalTime,
-  isValidLocalTime,
 } from './domain/timeline'
 import { detectScheduleIssues } from './domain/issues'
 import {
@@ -43,6 +42,7 @@ import {
 } from './components/EventEditorShell'
 import { CreateEventDialog } from './components/CreateEventDialog'
 import { EventBasicInfo } from './components/EventBasicInfo'
+import { EventStageSettings } from './components/EventStageSettings'
 import { EventList } from './components/EventList'
 import { IssuePanel } from './components/IssuePanel'
 import {
@@ -55,6 +55,13 @@ import {
   type EventBasicInfoDraft,
   type EventBasicInfoUpdateResult,
 } from './domain/eventBasicInfo'
+import {
+  canDeleteStage,
+  createEventStageSettingsUpdate,
+  isValidStageTimeRange,
+  type EventStageSettingsUpdateResult,
+  type StageSettingsDraft,
+} from './domain/eventStageSettings'
 import { getHighestSeverityByScheduleItem } from './ui/issuePresentation'
 import './App.css'
 
@@ -289,7 +296,10 @@ function App() {
   }
 
   const handleStageStartTimeChange = (value: string) => {
-    if (!currentStage || !isValidLocalTime(value)) return
+    if (
+      !currentStage ||
+      !isValidStageTimeRange(value, currentStage.plannedEndTime)
+    ) return
 
     setStages(prev => prev.map(stage => (
       stage.id === currentStage.id
@@ -361,6 +371,49 @@ function App() {
     setEventDays((previous) => [
       ...previous.filter((eventDay) => eventDay.eventId !== selectedEvent.id),
       ...result.eventDays,
+    ])
+
+    return result
+  }
+
+  const handleSaveEventStageSettings = (
+    defaultTransitionMinutes: string,
+    stageDrafts: StageSettingsDraft[],
+  ): EventStageSettingsUpdateResult => {
+    if (!selectedEvent) {
+      return {
+        ok: false,
+        errors: {
+          stages: {},
+          form: '編集するイベントが見つかりません。',
+        },
+      }
+    }
+
+    const result = createEventStageSettingsUpdate({
+      event: selectedEvent,
+      eventDays: selectedEventDays,
+      stages: selectedStages,
+      draft: {
+        defaultTransitionMinutes,
+        stages: stageDrafts,
+      },
+      newStageIds: stageDrafts
+        .filter((stage) => !stage.stageId)
+        .map(() => createId('stage')),
+      sections: initialSections,
+      scheduleItems,
+      eventBands,
+    })
+
+    if (!result.ok) return result
+
+    setEvents((previous) => previous.map((event) =>
+      event.id === selectedEvent.id ? result.event : event,
+    ))
+    setStages((previous) => [
+      ...previous.filter((stage) => !selectedEventDayIds.has(stage.eventDayId)),
+      ...result.stages,
     ])
 
     return result
@@ -627,6 +680,20 @@ function App() {
               )}
               onSave={handleSaveEventBasicInfo}
               onSaveAndNext={() => setActiveStep(2)}
+            />
+          ) : activeStep === 2 && selectedEvent ? (
+            <EventStageSettings
+              key={selectedEvent.id}
+              event={selectedEvent}
+              eventDays={selectedEventDays}
+              stages={selectedStages}
+              canDeleteStage={(stageId) => canDeleteStage(stageId, {
+                sections: initialSections,
+                scheduleItems,
+                eventBands,
+              })}
+              onSave={handleSaveEventStageSettings}
+              onSaveAndNext={() => setActiveStep(3)}
             />
           ) : currentStage && selectedEvent ? (
           <div className="timetable-workspace" style={containerStyle}>
