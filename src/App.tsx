@@ -8,6 +8,7 @@ import type {
   EventBand,
   EventDay,
   EventMember,
+  EventMemberDay,
   Member,
   PerformanceScheduleItem,
   ScheduleItem,
@@ -83,8 +84,17 @@ const initialEventBands: EventBand[] = [
 ]
 
 const initialEventMembers: EventMember[] = initialMembers.map((member) => ({
+  id: `event-member-${member.id}`,
   eventId: initialEvent.id,
   memberId: member.id,
+}))
+
+const initialEventMemberDays: EventMemberDay[] = initialEventMembers.map((
+  eventMember,
+) => ({
+  id: `event-member-day-${eventMember.memberId}`,
+  eventMemberId: eventMember.id,
+  eventDayId: eventDays[0].id,
   participationStatus: 'participating',
 }))
 
@@ -330,6 +340,7 @@ function App() {
   const scheduleIssues = detectScheduleIssues({
     event: currentEvent,
     eventMembers: initialEventMembers,
+    eventMemberDays: initialEventMemberDays,
     eventBands,
     calculatedItems,
   })

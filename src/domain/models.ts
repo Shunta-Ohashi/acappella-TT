@@ -2,6 +2,8 @@ export type MemberId = string
 export type BandId = string
 export type EventId = string
 export type EventDayId = string
+export type EventMemberId = string
+export type EventMemberDayId = string
 export type StageId = string
 export type SectionId = string
 export type EventBandId = string
@@ -11,10 +13,9 @@ export type ScheduleItemId = string
 export type LocalDate = string // YYYY-MM-DD
 export type LocalTime = string // HH:mm
 
-export interface TimeRange {
-  from: LocalTime
-  until: LocalTime
-}
+export type TimeRange =
+  | { from: LocalTime; until?: LocalTime }
+  | { from?: LocalTime; until: LocalTime }
 
 export type ParticipationStatus = 'participating' | 'absent' | 'undecided'
 
@@ -81,11 +82,19 @@ export interface Stage {
 }
 
 export interface EventMember {
+  id: EventMemberId
   eventId: EventId
   memberId: MemberId
+  notes?: string
+}
+
+export interface EventMemberDay {
+  id: EventMemberDayId
+  eventMemberId: EventMemberId
+  eventDayId: EventDayId
   participationStatus: ParticipationStatus
-  availableFrom?: LocalTime
-  availableUntil?: LocalTime
+  // undefined means unrestricted; an empty array means no available time.
+  availabilityWindows?: TimeRange[]
   preferredTimeRange?: TimeRange
   notes?: string
 }
