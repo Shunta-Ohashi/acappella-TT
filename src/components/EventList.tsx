@@ -16,6 +16,7 @@ interface EventListProps {
   stages: Stage[]
   eventBands: EventBand[]
   onOpenEvent: (eventId: EventId) => void
+  onCreateEvent: () => void
 }
 
 interface EventCardProps {
@@ -73,6 +74,7 @@ export function EventList({
   stages,
   eventBands,
   onOpenEvent,
+  onCreateEvent,
 }: EventListProps) {
   const eventListItems = createEventListItems({
     events,
@@ -90,10 +92,13 @@ export function EventList({
           <p>イベントのタイムテーブルを作成・管理します。</p>
         </div>
         <div className="event-list-page__create">
-          <button type="button" className="primary-button" disabled>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={onCreateEvent}
+          >
             <span aria-hidden="true">＋</span> 新規イベント作成
           </button>
-          <span>後続PRで実装予定</span>
         </div>
       </header>
 

@@ -40,8 +40,13 @@ import {
   EventEditorShell,
   type EventEditorStepId,
 } from './components/EventEditorShell'
+import { CreateEventDialog } from './components/CreateEventDialog'
 import { EventList } from './components/EventList'
 import { IssuePanel } from './components/IssuePanel'
+import {
+  createEventData,
+  type NewEventDraft,
+} from './domain/eventCreation'
 import { getHighestSeverityByScheduleItem } from './ui/issuePresentation'
 import './App.css'
 
@@ -65,6 +70,32 @@ const appSectionPlaceholders: Record<
 
 const createId = (prefix: string) => `${prefix}-${crypto.randomUUID()}`
 
+const replaceEventBandsForEvent = (
+  allEventBands: EventBand[],
+  eventId: EventId,
+  replacement: EventBand[],
+): EventBand[] => {
+  let replacementIndex = 0
+
+  return allEventBands.map((eventBand) =>
+    eventBand.eventId === eventId
+      ? replacement[replacementIndex++]
+      : eventBand,
+  )
+}
+
+const DEFAULT_EVENT_SETTINGS = {
+  timeZone: 'Asia/Tokyo',
+  defaultTransitionMinutes: 2,
+  validationPolicy: {
+    minimumGapBands: 1,
+    minimumRestMinutes: 10,
+  },
+} satisfies Pick<
+  TimetableEvent,
+  'timeZone' | 'defaultTransitionMinutes' | 'validationPolicy'
+>
+
 const initialMembers: Member[] = [
   { id: 'm-1', realName: '佐藤', active: true },
   { id: 'm-2', realName: '鈴木', active: true },
@@ -75,15 +106,10 @@ const initialMembers: Member[] = [
 const initialEvent: TimetableEvent = {
   id: 'event-1',
   name: '現在のイベント',
-  timeZone: 'Asia/Tokyo',
-  defaultTransitionMinutes: 2,
-  validationPolicy: {
-    minimumGapBands: 1,
-    minimumRestMinutes: 10,
-  },
+  ...DEFAULT_EVENT_SETTINGS,
 }
 
-const eventDays: EventDay[] = [
+const initialEventDays: EventDay[] = [
   {
     id: 'event-day-1',
     eventId: initialEvent.id,
@@ -94,7 +120,7 @@ const eventDays: EventDay[] = [
 
 const initialStage: Stage = {
   id: CURRENT_STAGE_ID,
-  eventDayId: eventDays[0].id,
+  eventDayId: initialEventDays[0].id,
   name: 'メインステージ',
   order: 0,
   plannedStartTime: '13:00',
@@ -104,7 +130,7 @@ const initialEventBands: EventBand[] = [
   {
     id: 'event-band-1',
     eventId: initialEvent.id,
-    eventDayId: eventDays[0].id,
+    eventDayId: initialEventDays[0].id,
     bandId: 'b-1',
     memberIds: ['m-1', 'm-2', 'm-3'],
     durationMinutes: 15,
@@ -122,7 +148,7 @@ const initialEventMemberDays: EventMemberDay[] = initialEventMembers.map((
 ) => ({
   id: `event-member-day-${eventMember.memberId}`,
   eventMemberId: eventMember.id,
-  eventDayId: eventDays[0].id,
+  eventDayId: initialEventDays[0].id,
   participationStatus: 'participating',
 }))
 
@@ -143,15 +169,26 @@ function App() {
   const [activeView, setActiveView] = useState<AppView>('events')
   const [activeStep, setActiveStep] = useState<EventEditorStepId>(7)
   const [selectedEventId, setSelectedEventId] = useState<EventId>(initialEvent.id)
+  const [isCreateEventDialogOpen, setIsCreateEventDialogOpen] = useState(false)
 
   // ==================== 📦 各種状態（State）の管理 ====================
 
-  // 現在は単一イベント・単一Stageだけを画面で扱う
-  const [currentEvent, setCurrentEvent] = useState<TimetableEvent>(initialEvent)
+  const [events, setEvents] = useState<TimetableEvent[]>([initialEvent])
+  const [eventDays, setEventDays] = useState<EventDay[]>(initialEventDays)
   const [stages, setStages] = useState<Stage[]>([initialStage])
-  const currentStage = stages.find(stage => stage.id === CURRENT_STAGE_ID) ?? initialStage
-  const events = [currentEvent]
   const selectedEvent = events.find((event) => event.id === selectedEventId)
+  const selectedEventDays = eventDays.filter(
+    (eventDay) => eventDay.eventId === selectedEventId,
+  )
+  const selectedEventDayIds = new Set(
+    selectedEventDays.map((eventDay) => eventDay.id),
+  )
+  const selectedStages = stages.filter((stage) =>
+    selectedEventDayIds.has(stage.eventDayId),
+  )
+  const currentStage = selectedStages.find(
+    (stage) => stage.id === CURRENT_STAGE_ID,
+  ) ?? selectedStages[0]
 
   // 1️⃣ サークル員データベース（初期データ）
   const [members, setMembers] = useState<Member[]>(initialMembers)
@@ -164,9 +201,16 @@ function App() {
 
   // 3️⃣ このイベントに出演するバンド
   const [eventBands, setEventBands] = useState<EventBand[]>(initialEventBands)
+  const selectedEventBands = eventBands.filter(
+    (eventBand) => eventBand.eventId === selectedEventId,
+  )
 
   // 4️⃣ 当日のタイムテーブル。出演項目はEventBandをIDで参照する
   const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>(initialScheduleItems)
+  const selectedStageIds = new Set(selectedStages.map((stage) => stage.id))
+  const selectedScheduleItems = scheduleItems.filter((scheduleItem) =>
+    selectedStageIds.has(scheduleItem.stageId),
+  )
 
   // ✍️ 各種フォームの入力状態
   const [newMemberName, setNewMemberName] = useState('')
@@ -177,10 +221,26 @@ function App() {
   const [selectedMasterBandId, setSelectedMasterBandId] = useState('')
   const [breakDuration, setBreakDuration] = useState<number>(10)
 
-  const startTime = currentStage.plannedStartTime
-  const intervalTime = currentStage.transitionMinutes ?? currentEvent.defaultTransitionMinutes
-  const currentStageScheduleItems = getStageScheduleItems(scheduleItems, currentStage.id)
-  const poolEventBands = getUnscheduledEventBands(eventBands, scheduleItems)
+  const selectedEventMembers = initialEventMembers.filter(
+    (eventMember) => eventMember.eventId === selectedEventId,
+  )
+  const selectedEventMemberIds = new Set(
+    selectedEventMembers.map((eventMember) => eventMember.id),
+  )
+  const selectedEventMemberDays = initialEventMemberDays.filter(
+    (eventMemberDay) => selectedEventMemberIds.has(eventMemberDay.eventMemberId),
+  )
+  const startTime = currentStage?.plannedStartTime ?? ''
+  const intervalTime = currentStage?.transitionMinutes ??
+    selectedEvent?.defaultTransitionMinutes ??
+    DEFAULT_EVENT_SETTINGS.defaultTransitionMinutes
+  const currentStageScheduleItems = currentStage
+    ? getStageScheduleItems(selectedScheduleItems, currentStage.id)
+    : []
+  const poolEventBands = getUnscheduledEventBands(
+    selectedEventBands,
+    selectedScheduleItems,
+  )
 
   // ==================== 🛠️ データベース（マスタ）操作ロジック ====================
 
@@ -213,7 +273,7 @@ function App() {
   }
 
   const handleStageStartTimeChange = (value: string) => {
-    if (!isValidLocalTime(value)) return
+    if (!currentStage || !isValidLocalTime(value)) return
 
     setStages(prev => prev.map(stage => (
       stage.id === currentStage.id
@@ -229,16 +289,44 @@ function App() {
     setActiveView('event-editor')
   }
 
+  const handleCreateEvent = (draft: NewEventDraft) => {
+    const eventId = createId('event')
+    const eventDayIds = draft.dates.map(() => createId('event-day'))
+    const created = createEventData({
+      eventId,
+      eventDayIds,
+      draft,
+      defaults: DEFAULT_EVENT_SETTINGS,
+    })
+
+    setEvents((previous) => [...previous, created.event])
+    setEventDays((previous) => [...previous, ...created.eventDays])
+    setSelectedEventId(created.event.id)
+    setActiveStep(1)
+    setActiveView('event-editor')
+    setIsCreateEventDialogOpen(false)
+  }
+
+  const updateSelectedEvent = (
+    update: (event: TimetableEvent) => TimetableEvent,
+  ) => {
+    setEvents((previous) => previous.map((event) =>
+      event.id === selectedEventId ? update(event) : event,
+    ))
+  }
+
   // ==================== 🎴 プール・タイムテーブル操作ロジック ====================
 
   const handleAddSelectedBandToPool = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    if (!selectedEvent || !currentStage) return
+
     const targetMaster = bands.find(b => b.id === selectedMasterBandId)
     if (!targetMaster) return
 
     const newEventBand: EventBand = {
       id: createId('event-band'),
-      eventId: currentEvent.id,
+      eventId: selectedEvent.id,
       eventDayId: currentStage.eventDayId,
       bandId: targetMaster.id,
       memberIds: [...targetMaster.defaultMemberIds],
@@ -249,7 +337,7 @@ function App() {
 
   const handleAddBreak = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (breakDuration <= 0) return
+    if (!currentStage || breakDuration <= 0) return
     const newBreakItem: BreakScheduleItem = {
       id: createId('schedule-break'),
       stageId: currentStage.id,
@@ -284,6 +372,8 @@ function App() {
 
   // ==================== 🔀 安全なドラッグ＆ドロップ処理 ====================
   const handleOnDragEnd = (result: DropResult) => {
+    if (!currentStage || !selectedEvent) return
+
     const { source, destination } = result
     if (!destination) return
 
@@ -295,12 +385,23 @@ function App() {
     // 同じエリア内ではIDを維持したまま表示順だけを更新する
     if (sourceId === destId) {
       if (sourceId === 'pool-list') {
-        setEventBands(prev => reorderUnscheduledEventBands(
-          prev,
-          scheduleItems,
-          sourceIndex,
-          destinationIndex,
-        ))
+        setEventBands((previous) => {
+          const eventSpecificBands = previous.filter(
+            (eventBand) => eventBand.eventId === selectedEvent.id,
+          )
+          const reordered = reorderUnscheduledEventBands(
+            eventSpecificBands,
+            selectedScheduleItems,
+            sourceIndex,
+            destinationIndex,
+          )
+
+          return replaceEventBandsForEvent(
+            previous,
+            selectedEvent.id,
+            reordered,
+          )
+        })
       } else {
         setScheduleItems(prev => reorderStageScheduleItems(
           prev,
@@ -341,18 +442,32 @@ function App() {
 
       const remainingScheduleItems = removeScheduleItem(scheduleItems, scheduleItem.id)
       setScheduleItems(remainingScheduleItems)
-      setEventBands(prev => {
-        const poolAfterRemoval = getUnscheduledEventBands(prev, remainingScheduleItems)
+      setEventBands(previous => {
+        const eventSpecificBands = previous.filter(
+          (eventBand) => eventBand.eventId === selectedEvent.id,
+        )
+        const remainingSelectedScheduleItems = remainingScheduleItems.filter(
+          (item) => selectedStageIds.has(item.stageId),
+        )
+        const poolAfterRemoval = getUnscheduledEventBands(
+          eventSpecificBands,
+          remainingSelectedScheduleItems,
+        )
         const returnedEventBandIndex = poolAfterRemoval.findIndex(
           eventBand => eventBand.id === scheduleItem.eventBandId,
         )
-        if (returnedEventBandIndex < 0) return prev
+        if (returnedEventBandIndex < 0) return previous
 
-        return reorderUnscheduledEventBands(
-          prev,
-          remainingScheduleItems,
+        const reordered = reorderUnscheduledEventBands(
+          eventSpecificBands,
+          remainingSelectedScheduleItems,
           returnedEventBandIndex,
           destinationIndex,
+        )
+        return replaceEventBandsForEvent(
+          previous,
+          selectedEvent.id,
+          reordered,
         )
       })
     }
@@ -372,20 +487,26 @@ function App() {
   const currentStageScheduleItemsById = new Map(
     currentStageScheduleItems.map(scheduleItem => [scheduleItem.id, scheduleItem]),
   )
-  const calculatedItems = calculateStageTimeline({
-    event: currentEvent,
-    stage: currentStage,
-    sections: initialSections,
-    scheduleItems,
-    eventBands,
-  })
-  const scheduleIssues = detectScheduleIssues({
-    event: currentEvent,
-    eventMembers: initialEventMembers,
-    eventMemberDays: initialEventMemberDays,
-    eventBands,
-    calculatedItems,
-  })
+  const calculatedItems = selectedEvent && currentStage
+    ? calculateStageTimeline({
+        event: selectedEvent,
+        stage: currentStage,
+        sections: initialSections.filter(
+          (section) => section.stageId === currentStage.id,
+        ),
+        scheduleItems: selectedScheduleItems,
+        eventBands: selectedEventBands,
+      })
+    : []
+  const scheduleIssues = selectedEvent
+    ? detectScheduleIssues({
+        event: selectedEvent,
+        eventMembers: selectedEventMembers,
+        eventMemberDays: selectedEventMemberDays,
+        eventBands: selectedEventBands,
+        calculatedItems,
+      })
+    : []
   const highestSeverityByScheduleItem =
     getHighestSeverityByScheduleItem(scheduleIssues)
   const calculatedTimetable = calculatedItems.map(calculatedItem => {
@@ -395,7 +516,7 @@ function App() {
     }
 
     const eventBand = scheduleItem.kind === 'performance'
-      ? getEventBandById(eventBands, scheduleItem.eventBandId)
+      ? getEventBandById(selectedEventBands, scheduleItem.eventBandId)
       : undefined
     const durationMinutes = calculatedItem.plannedEndMinute - calculatedItem.plannedStartMinute
 
@@ -425,11 +546,12 @@ function App() {
     >
       {activeView === 'event-editor' ? (
         <EventEditorShell
-          eventName={selectedEvent?.name ?? currentEvent.name}
+          eventName={selectedEvent?.name ?? 'イベント'}
           activeStep={activeStep}
           onStepChange={setActiveStep}
           onBackToEvents={() => setActiveView('events')}
         >
+          {currentStage && selectedEvent ? (
           <div className="timetable-workspace" style={containerStyle}>
 
       {/* ==================== 🗃️ データベース（マスタ）管理 ==================== */}
@@ -495,7 +617,7 @@ function App() {
           </div>
           <div>
             <label style={{ fontWeight: 'bold', display: 'block' }}>転換時間 (分):</label>
-            <input type="number" aria-label="転換時間" value={intervalTime} onChange={(e) => setCurrentEvent(prev => ({ ...prev, defaultTransitionMinutes: Number(e.target.value) }))} style={{ padding: '6px', width: '60px', marginTop: '5px' }} />
+            <input type="number" aria-label="転換時間" value={intervalTime} onChange={(e) => updateSelectedEvent((event) => ({ ...event, defaultTransitionMinutes: Number(e.target.value) }))} style={{ padding: '6px', width: '60px', marginTop: '5px' }} />
           </div>
         </div>
       </section>
@@ -603,8 +725,8 @@ function App() {
               issues={scheduleIssues}
               members={members}
               bands={bands}
-              eventBands={eventBands}
-              stages={stages}
+              eventBands={selectedEventBands}
+              stages={selectedStages}
               calculatedItems={calculatedItems}
             />
           </div>
@@ -612,6 +734,21 @@ function App() {
         </div>
       </DragDropContext>
           </div>
+          ) : (
+            <section className="timetable-empty-state">
+              <h3>会場・Stageが設定されていません</h3>
+              <p>
+                タイムテーブルを作成するには、先にStep 2で会場・Stageを設定してください。
+              </p>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setActiveStep(2)}
+              >
+                Step 2 会場・Stageへ
+              </button>
+            </section>
+          )}
         </EventEditorShell>
       ) : activeView === 'events' ? (
         <EventList
@@ -620,11 +757,18 @@ function App() {
           stages={stages}
           eventBands={eventBands}
           onOpenEvent={handleOpenEvent}
+          onCreateEvent={() => setIsCreateEventDialogOpen(true)}
         />
       ) : (
         <AppSectionPlaceholder
           title={appSectionPlaceholders[activeView].title}
           description={appSectionPlaceholders[activeView].description}
+        />
+      )}
+      {isCreateEventDialogOpen && (
+        <CreateEventDialog
+          onCancel={() => setIsCreateEventDialogOpen(false)}
+          onCreate={handleCreateEvent}
         />
       )}
     </AppShell>
