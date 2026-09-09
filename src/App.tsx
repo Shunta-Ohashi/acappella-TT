@@ -7,6 +7,7 @@ import type {
   Event as TimetableEvent,
   EventBand,
   EventDay,
+  EventId,
   EventMember,
   EventMemberDay,
   Member,
@@ -39,6 +40,7 @@ import {
   EventEditorShell,
   type EventEditorStepId,
 } from './components/EventEditorShell'
+import { EventList } from './components/EventList'
 import { IssuePanel } from './components/IssuePanel'
 import { getHighestSeverityByScheduleItem } from './ui/issuePresentation'
 import './App.css'
@@ -48,13 +50,9 @@ const CURRENT_STAGE_ID = 'stage-1'
 type AppView = 'event-editor' | AppSection
 
 const appSectionPlaceholders: Record<
-  AppSection,
+  Exclude<AppSection, 'events'>,
   { title: string; description: string }
 > = {
-  events: {
-    title: 'イベント',
-    description: 'イベント一覧と新規作成は後続PRで実装します。',
-  },
   'shared-data': {
     title: '共通データ',
     description: 'メンバーや固定バンドの共通データ管理は後続PRで実装します。',
@@ -142,8 +140,9 @@ const initialScheduleItems: ScheduleItem[] = [
 const initialSections: Section[] = []
 
 function App() {
-  const [activeView, setActiveView] = useState<AppView>('event-editor')
+  const [activeView, setActiveView] = useState<AppView>('events')
   const [activeStep, setActiveStep] = useState<EventEditorStepId>(7)
+  const [selectedEventId, setSelectedEventId] = useState<EventId>(initialEvent.id)
 
   // ==================== 📦 各種状態（State）の管理 ====================
 
@@ -151,6 +150,8 @@ function App() {
   const [currentEvent, setCurrentEvent] = useState<TimetableEvent>(initialEvent)
   const [stages, setStages] = useState<Stage[]>([initialStage])
   const currentStage = stages.find(stage => stage.id === CURRENT_STAGE_ID) ?? initialStage
+  const events = [currentEvent]
+  const selectedEvent = events.find((event) => event.id === selectedEventId)
 
   // 1️⃣ サークル員データベース（初期データ）
   const [members, setMembers] = useState<Member[]>(initialMembers)
@@ -219,6 +220,13 @@ function App() {
         ? { ...stage, plannedStartTime: value }
         : stage
     )))
+  }
+
+  const handleOpenEvent = (eventId: EventId) => {
+    if (!events.some((event) => event.id === eventId)) return
+
+    setSelectedEventId(eventId)
+    setActiveView('event-editor')
   }
 
   // ==================== 🎴 プール・タイムテーブル操作ロジック ====================
@@ -417,7 +425,7 @@ function App() {
     >
       {activeView === 'event-editor' ? (
         <EventEditorShell
-          eventName={currentEvent.name}
+          eventName={selectedEvent?.name ?? currentEvent.name}
           activeStep={activeStep}
           onStepChange={setActiveStep}
           onBackToEvents={() => setActiveView('events')}
@@ -605,14 +613,18 @@ function App() {
       </DragDropContext>
           </div>
         </EventEditorShell>
+      ) : activeView === 'events' ? (
+        <EventList
+          events={events}
+          eventDays={eventDays}
+          stages={stages}
+          eventBands={eventBands}
+          onOpenEvent={handleOpenEvent}
+        />
       ) : (
         <AppSectionPlaceholder
           title={appSectionPlaceholders[activeView].title}
           description={appSectionPlaceholders[activeView].description}
-          actionLabel={activeView === 'events' ? '現在のイベントを開く' : undefined}
-          onAction={activeView === 'events'
-            ? () => setActiveView('event-editor')
-            : undefined}
         />
       )}
     </AppShell>

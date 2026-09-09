@@ -113,7 +113,9 @@
 
 .event-editor__eyebrow,
 .event-editor__step-header > p,
-.app-placeholder__eyebrow {
+.app-placeholder__eyebrow,
+.event-list-page__eyebrow,
+.event-card__eyebrow {
   margin-bottom: 5px;
   color: #748094;
   font-size: 11px;
@@ -246,6 +248,195 @@
 .event-editor__step-header > span {
   color: #687587;
   font-size: 14px;
+}
+
+.event-list-page {
+  width: min(100%, 1180px);
+  margin: 0 auto;
+  padding: 56px 32px 72px;
+}
+
+.event-list-page__header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 32px;
+  margin-bottom: 30px;
+}
+
+.event-list-page__eyebrow {
+  color: #2563a6;
+}
+
+.event-list-page__header h1 {
+  margin: 0 0 8px;
+  color: #182230;
+  font-size: 32px;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+}
+
+.event-list-page__header > div:first-child > p:last-child {
+  margin: 0;
+  color: #687587;
+  font-size: 14px;
+}
+
+.event-list-page__create {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.event-list-page__create > span {
+  color: #596678;
+  font-size: 11px;
+}
+
+.primary-button {
+  padding: 10px 16px;
+  color: #fff;
+  background: #2563a6;
+  border: 1px solid #2563a6;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.primary-button:disabled {
+  color: #728094;
+  background: #eef1f5;
+  border-color: #dce2e9;
+  cursor: not-allowed;
+}
+
+.event-list-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+  gap: 20px;
+}
+
+.event-card {
+  display: flex;
+  min-height: 290px;
+  padding: 26px;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid #dfe5ec;
+  border-radius: 12px;
+  box-shadow: 0 5px 20px rgba(24, 34, 48, 0.04);
+}
+
+.event-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.event-card__eyebrow {
+  margin-bottom: 6px;
+  color: #596678;
+}
+
+.event-card__header h2 {
+  margin: 0;
+  color: #182230;
+  font-size: 21px;
+  line-height: 1.35;
+  letter-spacing: -0.015em;
+}
+
+.event-card__status {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  color: #526174;
+  background: #f6f8fa;
+  border: 1px solid #dce2e9;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.event-card__dates {
+  margin: 18px 0 22px;
+  color: #3e4b5c;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.event-card__facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.event-card__facts > div {
+  min-width: 0;
+  padding: 11px 12px;
+  background: #f7f9fb;
+  border: 1px solid #edf0f4;
+  border-radius: 8px;
+}
+
+.event-card__facts dt {
+  margin-bottom: 3px;
+  color: #596678;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.event-card__facts dd {
+  margin: 0;
+  color: #26303d;
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.event-card__footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: auto;
+  padding-top: 24px;
+}
+
+.event-card__open {
+  padding: 8px 2px;
+  color: #175397;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.event-card__open:hover {
+  color: #0d3d75;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.event-list-empty {
+  padding: 72px 32px;
+  background: #fff;
+  border: 1px dashed #cfd7e1;
+  border-radius: 12px;
+  text-align: center;
+}
+
+.event-list-empty h2 {
+  margin-bottom: 8px;
+  color: #26303d;
+  font-size: 20px;
+}
+
+.event-list-empty p {
+  margin: 0;
+  color: #596678;
+  font-size: 13px;
 }
 
 .step-placeholder,
@@ -497,6 +688,25 @@
   .event-editor__layout {
     grid-template-columns: 1fr;
     padding: 18px 12px 28px;
+  }
+
+  .event-list-page {
+    padding: 32px 16px 48px;
+  }
+
+  .event-list-page__header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .event-list-page__create {
+    align-items: flex-start;
+  }
+
+  .event-card {
+    min-height: 270px;
+    padding: 20px;
   }
 
   .step-sidebar {
