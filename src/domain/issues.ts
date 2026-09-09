@@ -23,6 +23,7 @@ export type ScheduleIssueCode =
   | 'MEMBER_PARTICIPATION_UNDECIDED'
   | 'OUTSIDE_MEMBER_AVAILABILITY'
   | 'OUTSIDE_BAND_AVAILABILITY'
+  | 'EVENT_BAND_DAY_MISMATCH'
   | 'PERFORMANCE_OVERLAP'
   | 'BACK_TO_BACK'
   | 'SHORT_GAP'
@@ -182,6 +183,16 @@ export const detectScheduleIssues = ({
   })
 
   resolvedPerformances.forEach(({ calculatedItem, eventBand }) => {
+    if (eventBand.eventDayId !== calculatedItem.eventDayId) {
+      addIssue({
+        severity: 'ERROR',
+        code: 'EVENT_BAND_DAY_MISMATCH',
+        message: `EventBand ${eventBand.id} は別の開催日に登録されています`,
+        eventBandIds: [eventBand.id],
+        scheduleItemIds: [calculatedItem.scheduleItemId],
+      })
+    }
+
     if (
       eventBand.availableTimeRange &&
       isOutsideTimeRange(

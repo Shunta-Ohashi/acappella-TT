@@ -52,6 +52,7 @@ const createEventMemberDay = (
 const createEventBand = (id, memberIds, overrides = {}) => ({
   id,
   eventId: 'event-1',
+  eventDayId: eventDays[0].id,
   bandId: `band-${id}`,
   memberIds,
   durationMinutes: 10,
@@ -178,7 +179,9 @@ test('異なるEventDayの同時刻出演は重複や短休憩として扱わな
     event: createEvent({ minimumRestMinutes: 30 }),
     eventBands: [
       createEventBand('event-band-1', ['member-1']),
-      createEventBand('event-band-2', ['member-1']),
+      createEventBand('event-band-2', ['member-1'], {
+        eventDayId: eventDays[1].id,
+      }),
     ],
     calculatedItems: [
       performance(
@@ -204,12 +207,85 @@ test('異なるEventDayの同時刻出演は重複や短休憩として扱わな
   assert.equal(findIssues(issues, 'SHORT_REST').length, 0)
 })
 
+test('同じBandの別日EventBandを独立した出演として扱う', () => {
+  const sharedBandId = 'band-choir'
+  const issues = detect({
+    event: createEvent({ minimumRestMinutes: 30 }),
+    eventBands: [
+      createEventBand('choir-day-1', ['member-1'], {
+        bandId: sharedBandId,
+        eventDayId: eventDays[0].id,
+      }),
+      createEventBand('choir-day-2', ['member-1'], {
+        bandId: sharedBandId,
+        eventDayId: eventDays[1].id,
+      }),
+    ],
+    calculatedItems: [
+      performance(
+        'choir-item-day-1',
+        'choir-day-1',
+        600,
+        610,
+        'stage-day-1',
+        eventDays[0].id,
+      ),
+      performance(
+        'choir-item-day-2',
+        'choir-day-2',
+        600,
+        610,
+        'stage-day-2',
+        eventDays[1].id,
+      ),
+    ],
+  })
+
+  assert.equal(findIssues(issues, 'EVENT_BAND_DAY_MISMATCH').length, 0)
+  assert.equal(findIssues(issues, 'PERFORMANCE_OVERLAP').length, 0)
+  assert.equal(findIssues(issues, 'SHORT_REST').length, 0)
+})
+
+test('EventBandを同じEventDayのStageへ配置しても日付不一致にしない', () => {
+  const issues = detect()
+
+  assert.equal(findIssues(issues, 'EVENT_BAND_DAY_MISMATCH').length, 0)
+})
+
+test('EventBandを異なるEventDayのStageへ配置すると日付不一致を検出する', () => {
+  const issues = detect({
+    eventBands: [
+      createEventBand('event-band-day-1', ['member-1'], {
+        eventDayId: eventDays[0].id,
+      }),
+    ],
+    calculatedItems: [
+      performance(
+        'item-day-2',
+        'event-band-day-1',
+        600,
+        610,
+        'stage-day-2',
+        eventDays[1].id,
+      ),
+    ],
+  })
+
+  const mismatches = findIssues(issues, 'EVENT_BAND_DAY_MISMATCH')
+  assert.equal(mismatches.length, 1)
+  assert.equal(mismatches[0].severity, 'ERROR')
+  assert.deepEqual(mismatches[0].eventBandIds, ['event-band-day-1'])
+  assert.deepEqual(mismatches[0].scheduleItemIds, ['item-day-2'])
+})
+
 test('翌日の早い時刻を前日の出演と比較しない', () => {
   const issues = detect({
     event: createEvent({ minimumRestMinutes: 600 }),
     eventBands: [
       createEventBand('event-band-1', ['member-1']),
-      createEventBand('event-band-2', ['member-1']),
+      createEventBand('event-band-2', ['member-1'], {
+        eventDayId: eventDays[1].id,
+      }),
     ],
     calculatedItems: [
       performance(
@@ -447,7 +523,9 @@ test('参加状態は出演するEventDayのEventMemberDayだけを参照する'
     ],
     eventBands: [
       createEventBand('event-band-day-1', ['member-1']),
-      createEventBand('event-band-day-2', ['member-1']),
+      createEventBand('event-band-day-2', ['member-1'], {
+        eventDayId: eventDays[1].id,
+      }),
     ],
     calculatedItems: [
       performance(
@@ -486,7 +564,9 @@ test('undecidedは該当EventDayの出演だけINFOにする', () => {
     ],
     eventBands: [
       createEventBand('event-band-day-1', ['member-1']),
-      createEventBand('event-band-day-2', ['member-1']),
+      createEventBand('event-band-day-2', ['member-1'], {
+        eventDayId: eventDays[1].id,
+      }),
     ],
     calculatedItems: [
       performance(
@@ -560,9 +640,15 @@ test('EventDayごとに異なるavailabilityWindowsを参照する', () => {
     ],
     eventBands: [
       createEventBand('event-band-day-1', ['member-1']),
-      createEventBand('event-band-before-15', ['member-1']),
-      createEventBand('event-band-unavailable', ['member-1']),
-      createEventBand('event-band-after-16', ['member-1']),
+      createEventBand('event-band-before-15', ['member-1'], {
+        eventDayId: eventDays[1].id,
+      }),
+      createEventBand('event-band-unavailable', ['member-1'], {
+        eventDayId: eventDays[1].id,
+      }),
+      createEventBand('event-band-after-16', ['member-1'], {
+        eventDayId: eventDays[1].id,
+      }),
     ],
     calculatedItems: [
       performance(
@@ -684,8 +770,12 @@ test('片側だけ指定したavailabilityWindowと半開区間の境界を判�
     eventBands: [
       createEventBand('event-band-before-from', ['member-1']),
       createEventBand('event-band-at-from', ['member-1']),
-      createEventBand('event-band-until', ['member-1']),
-      createEventBand('event-band-at-until', ['member-1']),
+      createEventBand('event-band-until', ['member-1'], {
+        eventDayId: eventDays[1].id,
+      }),
+      createEventBand('event-band-at-until', ['member-1'], {
+        eventDayId: eventDays[1].id,
+      }),
     ],
     calculatedItems: [
       performance(
@@ -747,12 +837,23 @@ test('空のavailabilityWindowsは出演可能時間なしとして扱う', () =
   assert.equal(findIssues(issues, 'OUTSIDE_MEMBER_AVAILABILITY').length, 1)
 })
 
-test('EventBand.availableTimeRange外の出演を検出する', () => {
+test('EventBand.availableTimeRangeを所属EventDay内の予定時刻で判定する', () => {
   const issues = detect({
     eventBands: [
       createEventBand('event-band-1', ['member-1'], {
+        eventDayId: eventDays[1].id,
         availableTimeRange: { from: '10:05', until: '11:00' },
       }),
+    ],
+    calculatedItems: [
+      performance(
+        'item-day-2',
+        'event-band-1',
+        600,
+        610,
+        'stage-day-2',
+        eventDays[1].id,
+      ),
     ],
   })
 
@@ -762,6 +863,7 @@ test('EventBand.availableTimeRange外の出演を検出する', () => {
   )
   assert.equal(outsideBandAvailability.length, 1)
   assert.equal(outsideBandAvailability[0].severity, 'ERROR')
+  assert.equal(findIssues(issues, 'EVENT_BAND_DAY_MISMATCH').length, 0)
 })
 
 test('個人のpreferredTimeRangeは出演するEventDayの設定だけを参照する', () => {
@@ -778,7 +880,9 @@ test('個人のpreferredTimeRangeは出演するEventDayの設定だけを参照
     ],
     eventBands: [
       createEventBand('event-band-day-1', ['member-1']),
-      createEventBand('event-band-day-2', ['member-1']),
+      createEventBand('event-band-day-2', ['member-1'], {
+        eventDayId: eventDays[1].id,
+      }),
     ],
     calculatedItems: [
       performance(

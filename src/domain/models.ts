@@ -102,6 +102,7 @@ export interface EventMemberDay {
 export interface EventBand {
   id: EventBandId
   eventId: EventId
+  eventDayId: EventDayId
   bandId: BandId
   memberIds: MemberId[]
   durationMinutes: number

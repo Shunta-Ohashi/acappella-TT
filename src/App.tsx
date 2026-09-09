@@ -77,6 +77,7 @@ const initialEventBands: EventBand[] = [
   {
     id: 'event-band-1',
     eventId: initialEvent.id,
+    eventDayId: eventDays[0].id,
     bandId: 'b-1',
     memberIds: ['m-1', 'm-2', 'm-3'],
     durationMinutes: 15,
@@ -198,6 +199,7 @@ function App() {
     const newEventBand: EventBand = {
       id: createId('event-band'),
       eventId: currentEvent.id,
+      eventDayId: currentStage.eventDayId,
       bandId: targetMaster.id,
       memberIds: [...targetMaster.defaultMemberIds],
       durationMinutes: targetMaster.defaultDurationMinutes,
