@@ -96,7 +96,7 @@ export function EventEditorShell({
             <span>{currentStep.description}</span>
           </header>
 
-          {activeStep === 7 ? (
+          {activeStep === 1 || activeStep === 7 ? (
             children
           ) : (
             <div className="step-placeholder">

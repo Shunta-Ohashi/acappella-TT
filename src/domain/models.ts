@@ -52,6 +52,7 @@ export interface Band {
 export interface Event {
   id: EventId
   name: string
+  description?: string
   timeZone: string
   defaultTransitionMinutes: number
   validationPolicy: {
