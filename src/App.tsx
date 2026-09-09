@@ -43,6 +43,7 @@ import {
 } from './components/EventEditorShell'
 import { CreateEventDialog } from './components/CreateEventDialog'
 import { EventBasicInfo } from './components/EventBasicInfo'
+import { EventStageSettings } from './components/EventStageSettings'
 import { EventList } from './components/EventList'
 import { IssuePanel } from './components/IssuePanel'
 import {
@@ -55,6 +56,12 @@ import {
   type EventBasicInfoDraft,
   type EventBasicInfoUpdateResult,
 } from './domain/eventBasicInfo'
+import {
+  canDeleteStage,
+  createEventStageSettingsUpdate,
+  type EventStageSettingsUpdateResult,
+  type StageSettingsDraft,
+} from './domain/eventStageSettings'
 import { getHighestSeverityByScheduleItem } from './ui/issuePresentation'
 import './App.css'
 
@@ -366,6 +373,48 @@ function App() {
     return result
   }
 
+  const handleSaveEventStageSettings = (
+    defaultTransitionMinutes: string,
+    stageDrafts: StageSettingsDraft[],
+  ): EventStageSettingsUpdateResult => {
+    if (!selectedEvent) {
+      return {
+        ok: false,
+        errors: {
+          stages: {},
+          form: '編集するイベントが見つかりません。',
+        },
+      }
+    }
+
+    const result = createEventStageSettingsUpdate({
+      event: selectedEvent,
+      eventDays: selectedEventDays,
+      stages: selectedStages,
+      draft: {
+        defaultTransitionMinutes,
+        stages: stageDrafts,
+      },
+      newStageIds: stageDrafts
+        .filter((stage) => !stage.stageId)
+        .map(() => createId('stage')),
+      sections: initialSections,
+      scheduleItems,
+    })
+
+    if (!result.ok) return result
+
+    setEvents((previous) => previous.map((event) =>
+      event.id === selectedEvent.id ? result.event : event,
+    ))
+    setStages((previous) => [
+      ...previous.filter((stage) => !selectedEventDayIds.has(stage.eventDayId)),
+      ...result.stages,
+    ])
+
+    return result
+  }
+
   // ==================== 🎴 プール・タイムテーブル操作ロジック ====================
 
   const handleAddSelectedBandToPool = (e: FormEvent<HTMLFormElement>) => {
@@ -627,6 +676,19 @@ function App() {
               )}
               onSave={handleSaveEventBasicInfo}
               onSaveAndNext={() => setActiveStep(2)}
+            />
+          ) : activeStep === 2 && selectedEvent ? (
+            <EventStageSettings
+              key={selectedEvent.id}
+              event={selectedEvent}
+              eventDays={selectedEventDays}
+              stages={selectedStages}
+              canDeleteStage={(stageId) => canDeleteStage(stageId, {
+                sections: initialSections,
+                scheduleItems,
+              })}
+              onSave={handleSaveEventStageSettings}
+              onSaveAndNext={() => setActiveStep(3)}
             />
           ) : currentStage && selectedEvent ? (
           <div className="timetable-workspace" style={containerStyle}>

@@ -834,6 +834,318 @@
   font-weight: 700;
 }
 
+.event-stage-settings {
+  width: min(100%, 900px);
+}
+
+.event-stage-settings > form {
+  display: grid;
+  gap: 20px;
+}
+
+.event-stage-settings__overview,
+.event-stage-settings__day-panel {
+  background: #fff;
+  border: 1px solid #e1e6ec;
+  border-radius: 12px;
+  box-shadow: 0 4px 18px rgba(24, 34, 48, 0.035);
+}
+
+.event-stage-settings__overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 28px;
+  padding: 24px 26px;
+}
+
+.event-stage-settings__days > p,
+.event-stage-settings__common-transition > label {
+  display: block;
+  margin: 0 0 10px;
+  color: #344154;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.event-day-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.event-day-tabs__button {
+  display: grid;
+  gap: 2px;
+  min-width: 132px;
+  padding: 9px 13px;
+  color: #344154;
+  background: #f7f9fb;
+  border: 1px solid #c8d1dc;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.event-day-tabs__button:hover {
+  background: #eef4fa;
+  border-color: #9bb1ca;
+}
+
+.event-day-tabs__button--active {
+  color: #fff;
+  background: #24578f;
+  border-color: #24578f;
+}
+
+.event-day-tabs__button--active:hover {
+  background: #1c4777;
+  border-color: #1c4777;
+}
+
+.event-day-tabs__button small {
+  color: inherit;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.event-stage-settings__common-transition {
+  min-width: 210px;
+}
+
+.event-stage-settings__common-transition > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.event-stage-settings__common-transition input {
+  width: 92px;
+  min-height: 42px;
+  padding: 9px 10px;
+  color: #26303d;
+  background: #fff;
+  border: 1px solid #aeb9c6;
+  border-radius: 7px;
+  font: inherit;
+}
+
+.event-stage-settings input[aria-invalid='true'] {
+  border-color: #b42318;
+  box-shadow: 0 0 0 1px #b42318;
+}
+
+.event-stage-settings__day-panel {
+  padding: 26px;
+}
+
+.event-stage-settings__day-header,
+.stage-settings-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.event-stage-settings__day-header {
+  padding-bottom: 20px;
+  border-bottom: 1px solid #e5e9ee;
+}
+
+.event-stage-settings__day-header p,
+.stage-settings-card__header p {
+  margin: 0 0 4px;
+  color: #596678;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.event-stage-settings__day-header h3,
+.stage-settings-card__header h4 {
+  margin: 0;
+  color: #182230;
+}
+
+.event-stage-settings__day-header h3 {
+  font-size: 19px;
+}
+
+.event-stage-settings__empty {
+  display: grid;
+  min-height: 220px;
+  place-content: center;
+  justify-items: center;
+  gap: 16px;
+  color: #4b596b;
+  text-align: center;
+}
+
+.event-stage-settings__empty p {
+  margin: 0;
+}
+
+.stage-settings-list {
+  display: grid;
+  gap: 18px;
+  padding-top: 22px;
+}
+
+.stage-settings-card {
+  display: grid;
+  gap: 22px;
+  padding: 22px;
+  background: #fbfcfd;
+  border: 1px solid #dce3ea;
+  border-radius: 10px;
+}
+
+.stage-settings-card__header {
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e5e9ee;
+}
+
+.stage-settings-card__header h4 {
+  font-size: 17px;
+}
+
+.stage-settings-card__delete {
+  padding: 7px 10px;
+  color: #8f2d25;
+  background: #fff;
+  border: 1px solid #d8b3af;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stage-settings-card__delete:hover {
+  background: #fff5f4;
+}
+
+.stage-settings-card__fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.stage-settings-field {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+}
+
+.stage-settings-field > label,
+.stage-settings-choice > legend {
+  padding: 0;
+  color: #344154;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.stage-settings-field input,
+.stage-settings-choice__value input {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  color: #26303d;
+  background: #fff;
+  border: 1px solid #aeb9c6;
+  border-radius: 7px;
+  font: inherit;
+}
+
+.stage-settings-field--time input {
+  max-width: 180px;
+}
+
+.stage-settings-choice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  min-width: 0;
+  margin: 0;
+  padding: 17px 0 0;
+  border: 0;
+  border-top: 1px solid #e5e9ee;
+}
+
+.stage-settings-choice > legend {
+  float: left;
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.stage-settings-choice > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #344154;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.stage-settings-choice input[type='radio'] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.stage-settings-choice__value {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px);
+  gap: 7px;
+  width: 100%;
+  padding-left: 24px;
+}
+
+.stage-settings-choice__value--minutes {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.stage-settings-choice__value--minutes input {
+  width: 92px;
+}
+
+.stage-settings-choice__value .form-error {
+  width: 100%;
+}
+
+.stage-settings-card__error,
+.event-stage-settings__form-error {
+  padding: 12px;
+  background: #fff5f4;
+  border: 1px solid #e4b9b5;
+  border-radius: 7px;
+  line-height: 1.55;
+}
+
+.event-stage-settings__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.event-stage-settings__actions > div {
+  display: flex;
+  gap: 10px;
+}
+
+.event-stage-settings__save-status {
+  min-height: 20px;
+  color: #25633d;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .issue-panel {
   margin-top: 20px;
   padding: 16px;
@@ -1052,6 +1364,45 @@
   }
 
   .event-basic-info__actions > div {
+    justify-content: flex-end;
+  }
+
+  .event-stage-settings__overview {
+    grid-template-columns: 1fr;
+    padding: 20px 18px;
+  }
+
+  .event-stage-settings__common-transition {
+    min-width: 0;
+  }
+
+  .event-stage-settings__day-panel {
+    padding: 20px 18px;
+  }
+
+  .event-stage-settings__day-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .event-stage-settings__day-header .secondary-button {
+    align-self: flex-start;
+  }
+
+  .stage-settings-card {
+    padding: 18px 14px;
+  }
+
+  .stage-settings-card__fields {
+    grid-template-columns: 1fr;
+  }
+
+  .event-stage-settings__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .event-stage-settings__actions > div {
     justify-content: flex-end;
   }
 
