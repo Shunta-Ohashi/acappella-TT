@@ -74,3 +74,12 @@ test('イベント名の空欄と実在しない日付を拒否する', () => {
   assert.equal(errors.name, 'イベント名を入力してください。')
   assert.equal(errors.dates, '有効な開催日を入力してください。')
 })
+
+test('HTMLの日付入力で表現できない年0を拒否する', () => {
+  const errors = validateNewEventDraft({
+    name: '年0テスト',
+    dates: ['0000-01-01'],
+  })
+
+  assert.equal(errors.dates, '有効な開催日を入力してください。')
+})

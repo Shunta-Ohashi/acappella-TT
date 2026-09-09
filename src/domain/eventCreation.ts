@@ -35,7 +35,11 @@ const isValidLocalDate = (value: LocalDate): boolean => {
   const day = Number(match[3])
   const maximumDay = new Date(Date.UTC(year, month, 0)).getUTCDate()
 
-  return month >= 1 && month <= 12 && day >= 1 && day <= maximumDay
+  return year >= 1 &&
+    month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= maximumDay
 }
 
 export const validateNewEventDraft = (
