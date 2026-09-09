@@ -42,6 +42,7 @@ const eventBands = [
   {
     id: 'event-band-1',
     eventId: event.id,
+    eventDayId: eventDays[0].id,
     bandId: 'band-1',
     memberIds: ['member-1'],
     durationMinutes: 15,
@@ -49,6 +50,7 @@ const eventBands = [
   {
     id: 'event-band-2',
     eventId: event.id,
+    eventDayId: eventDays[0].id,
     bandId: 'band-2',
     memberIds: ['member-2'],
     durationMinutes: 10,
@@ -191,9 +193,13 @@ test('StageごとにScheduleItemを独立して計算する', () => {
     performance('item-a', 'event-band-1', 0, { stageId: 'stage-a' }),
     performance('item-b', 'event-band-2', 0, { stageId: 'stage-b' }),
   ]
+  const eventBandsByDay = [
+    eventBands[0],
+    { ...eventBands[1], eventDayId: eventDays[1].id },
+  ]
 
-  const resultA = calculateStageTimeline({ event, stage: stageA, sections: [], scheduleItems, eventBands })
-  const resultB = calculateStageTimeline({ event, stage: stageB, sections: [], scheduleItems, eventBands })
+  const resultA = calculateStageTimeline({ event, stage: stageA, sections: [], scheduleItems, eventBands: eventBandsByDay })
+  const resultB = calculateStageTimeline({ event, stage: stageB, sections: [], scheduleItems, eventBands: eventBandsByDay })
 
   assert.deepEqual(resultA.map(item => item.scheduleItemId), ['item-a'])
   assert.deepEqual(resultB.map(item => item.scheduleItemId), ['item-b'])
