@@ -693,6 +693,147 @@
   line-height: 1.65;
 }
 
+.event-basic-info {
+  width: min(100%, 780px);
+}
+
+.event-basic-info > form {
+  display: grid;
+  gap: 20px;
+}
+
+.event-basic-info__card {
+  display: grid;
+  gap: 26px;
+  padding: 28px;
+  background: #fff;
+  border: 1px solid #e1e6ec;
+  border-radius: 12px;
+  box-shadow: 0 4px 18px rgba(24, 34, 48, 0.035);
+}
+
+.event-basic-info__field,
+.event-basic-info__dates {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.event-basic-info__field > label,
+.event-basic-info__dates > legend {
+  padding: 0;
+  color: #344154;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.event-basic-info__field input,
+.event-basic-info__field textarea,
+.event-basic-info__date-row input {
+  width: 100%;
+  padding: 10px 12px;
+  color: #26303d;
+  background: #fff;
+  border: 1px solid #aeb9c6;
+  border-radius: 7px;
+  font: inherit;
+}
+
+.event-basic-info__field input,
+.event-basic-info__date-row input {
+  min-height: 42px;
+}
+
+.event-basic-info__field textarea {
+  min-height: 116px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.event-basic-info input[aria-invalid='true'] {
+  border-color: #b42318;
+  box-shadow: 0 0 0 1px #b42318;
+}
+
+.event-basic-info__date-list {
+  display: grid;
+  gap: 9px;
+}
+
+.event-basic-info__date-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  gap: 8px;
+}
+
+.event-basic-info__remove-date {
+  min-height: 38px;
+  padding: 0;
+  color: #8f2d25;
+  background: #fff;
+  border: 1px solid #d8b3af;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 19px;
+}
+
+.event-basic-info__remove-date:hover {
+  background: #fff5f4;
+}
+
+.event-basic-info__add-date {
+  justify-self: start;
+  padding: 7px 2px;
+  color: #175397;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.event-basic-info__add-date:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.event-basic-info__help {
+  margin: 0;
+  color: #596678;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.event-basic-info__form-error {
+  padding: 12px;
+  background: #fff5f4;
+  border: 1px solid #e4b9b5;
+  border-radius: 7px;
+  line-height: 1.55;
+}
+
+.event-basic-info__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.event-basic-info__actions > div {
+  display: flex;
+  gap: 10px;
+}
+
+.event-basic-info__save-status {
+  min-height: 20px;
+  color: #25633d;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .issue-panel {
   margin-top: 20px;
   padding: 16px;
@@ -898,6 +1039,20 @@
 
   .create-event-form__header h2 {
     font-size: 21px;
+  }
+
+  .event-basic-info__card {
+    gap: 22px;
+    padding: 22px 18px;
+  }
+
+  .event-basic-info__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .event-basic-info__actions > div {
+    justify-content: flex-end;
   }
 
   .step-sidebar {

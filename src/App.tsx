@@ -42,12 +42,19 @@ import {
   type EventEditorStepId,
 } from './components/EventEditorShell'
 import { CreateEventDialog } from './components/CreateEventDialog'
+import { EventBasicInfo } from './components/EventBasicInfo'
 import { EventList } from './components/EventList'
 import { IssuePanel } from './components/IssuePanel'
 import {
   createEventData,
   type NewEventDraft,
 } from './domain/eventCreation'
+import {
+  canDeleteEventDay,
+  createEventBasicInfoUpdate,
+  type EventBasicInfoDraft,
+  type EventBasicInfoUpdateResult,
+} from './domain/eventBasicInfo'
 import { getHighestSeverityByScheduleItem } from './ui/issuePresentation'
 import './App.css'
 
@@ -324,6 +331,41 @@ function App() {
     ))
   }
 
+  const handleSaveEventBasicInfo = (
+    draft: EventBasicInfoDraft,
+  ): EventBasicInfoUpdateResult => {
+    if (!selectedEvent) {
+      return {
+        ok: false,
+        errors: { form: '編集するイベントが見つかりません。' },
+      }
+    }
+
+    const result = createEventBasicInfoUpdate({
+      event: selectedEvent,
+      eventDays: selectedEventDays,
+      draft,
+      newEventDayIds: draft.eventDays
+        .filter((eventDay) => !eventDay.eventDayId)
+        .map(() => createId('event-day')),
+      stages,
+      eventMemberDays: initialEventMemberDays,
+      eventBands,
+    })
+
+    if (!result.ok) return result
+
+    setEvents((previous) => previous.map((event) =>
+      event.id === selectedEvent.id ? result.event : event,
+    ))
+    setEventDays((previous) => [
+      ...previous.filter((eventDay) => eventDay.eventId !== selectedEvent.id),
+      ...result.eventDays,
+    ])
+
+    return result
+  }
+
   // ==================== 🎴 プール・タイムテーブル操作ロジック ====================
 
   const handleAddSelectedBandToPool = (e: FormEvent<HTMLFormElement>) => {
@@ -570,7 +612,23 @@ function App() {
           onStepChange={setActiveStep}
           onBackToEvents={() => setActiveView('events')}
         >
-          {currentStage && selectedEvent ? (
+          {activeStep === 1 && selectedEvent ? (
+            <EventBasicInfo
+              key={selectedEvent.id}
+              event={selectedEvent}
+              eventDays={selectedEventDays}
+              canDeleteEventDay={(eventDayId) => canDeleteEventDay(
+                eventDayId,
+                {
+                  stages,
+                  eventMemberDays: initialEventMemberDays,
+                  eventBands,
+                },
+              )}
+              onSave={handleSaveEventBasicInfo}
+              onSaveAndNext={() => setActiveStep(2)}
+            />
+          ) : currentStage && selectedEvent ? (
           <div className="timetable-workspace" style={containerStyle}>
 
       {/* ==================== 🗃️ データベース（マスタ）管理 ==================== */}
