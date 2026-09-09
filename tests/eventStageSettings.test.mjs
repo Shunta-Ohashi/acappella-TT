@@ -2,9 +2,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  canAddFirstSection,
+  canDeleteSection,
   canDeleteStage,
+  createEventStageSettingsDraft,
   createEventStageSettingsUpdate,
-  getStageErrorEventDayIds,
+  getEventStageSettingsErrorEventDayIds,
   isValidStageTimeRange,
   validateEventStageSettingsDraft,
 } from '../src/domain/eventStageSettings.ts'
@@ -36,6 +39,24 @@ const existingStage = {
   transitionMinutes: 3,
 }
 
+const secondStage = {
+  id: 'stage-second',
+  eventDayId: 'day-1',
+  name: 'Sub Stage',
+  order: 1,
+  plannedStartTime: '09:00',
+}
+
+const existingSection = {
+  id: 'section-existing',
+  stageId: existingStage.id,
+  name: '旧1部',
+  order: 4,
+  plannedStartTime: '10:30',
+  plannedEndTime: '12:00',
+  notes: '既存メモ',
+}
+
 const validStageDraft = (overrides = {}) => ({
   draftId: 'draft-stage',
   eventDayId: 'day-1',
@@ -48,6 +69,23 @@ const validStageDraft = (overrides = {}) => ({
   transitionMinutes: '',
   ...overrides,
 })
+
+const validSectionDraft = (overrides = {}) => ({
+  draftId: 'draft-section',
+  stageDraftId: 'draft-stage',
+  name: '1部',
+  startMode: 'automatic',
+  plannedStartTime: '',
+  endMode: 'automatic',
+  plannedEndTime: '',
+  ...overrides,
+})
+
+const settingsDraft = ({
+  defaultTransitionMinutes = '2',
+  stages = [validStageDraft()],
+  sections = [],
+} = {}) => ({ defaultTransitionMinutes, stages, sections })
 
 const noReferences = { sections: [], scheduleItems: [], eventBands: [] }
 
@@ -64,7 +102,7 @@ test('既存Stage IDを維持し、新規Stageを対応するEventDayへ生成�
     event,
     eventDays,
     stages: [existingStage],
-    draft: {
+    draft: settingsDraft({
       defaultTransitionMinutes: '4',
       stages: [
         validStageDraft({
@@ -84,8 +122,9 @@ test('既存Stage IDを維持し、新規Stageを対応するEventDayへ生成�
           name: 'Sub Stage',
         }),
       ],
-    },
+    }),
     newStageIds: ['stage-new'],
+    newSectionIds: [],
     ...noReferences,
   })
 
@@ -113,13 +152,13 @@ test('既存Stage IDを維持し、新規Stageを対応するEventDayへ生成�
       transitionMinutes: undefined,
     },
   ])
+  assert.deepEqual(result.sections, [])
 })
 
 test('空のStage名と空または不正な開始時刻を拒否する', () => {
-  const emptyErrors = validateEventStageSettingsDraft({
-    defaultTransitionMinutes: '2',
+  const emptyErrors = validateEventStageSettingsDraft(settingsDraft({
     stages: [validStageDraft({ name: '   ', plannedStartTime: '' })],
-  })
+  }))
 
   assert.equal(
     emptyErrors.stages['draft-stage'].name,
@@ -130,10 +169,9 @@ test('空のStage名と空または不正な開始時刻を拒否する', () => 
     '有効な開始時刻を入力してください。',
   )
 
-  const invalidErrors = validateEventStageSettingsDraft({
-    defaultTransitionMinutes: '2',
+  const invalidErrors = validateEventStageSettingsDraft(settingsDraft({
     stages: [validStageDraft({ plannedStartTime: '24:00' })],
-  })
+  }))
   assert.equal(
     invalidErrors.stages['draft-stage'].plannedStartTime,
     '有効な開始時刻を入力してください。',
@@ -141,23 +179,21 @@ test('空のStage名と空または不正な開始時刻を拒否する', () => 
 })
 
 test('固定終了時刻は開始時刻より後の場合だけ許可する', () => {
-  const validErrors = validateEventStageSettingsDraft({
-    defaultTransitionMinutes: '2',
+  const validErrors = validateEventStageSettingsDraft(settingsDraft({
     stages: [validStageDraft({
       endMode: 'fixed',
       plannedEndTime: '10:01',
     })],
-  })
+  }))
   assert.equal(validErrors.stages['draft-stage'], undefined)
 
   for (const plannedEndTime of ['10:00', '09:59']) {
-    const errors = validateEventStageSettingsDraft({
-      defaultTransitionMinutes: '2',
+    const errors = validateEventStageSettingsDraft(settingsDraft({
       stages: [validStageDraft({
         endMode: 'fixed',
         plannedEndTime,
       })],
-    })
+    }))
     assert.equal(
       errors.stages['draft-stage'].plannedEndTime,
       '終了時刻は開始時刻より後にしてください。',
@@ -165,21 +201,25 @@ test('固定終了時刻は開始時刻より後の場合だけ許可する', ()
   }
 })
 
-test('Stage errorがある開催日をdraft順で特定する', () => {
+test('StageまたはSection errorがある開催日をdraft順で特定する', () => {
   const stageDrafts = [
     validStageDraft({ draftId: 'day-1-stage', eventDayId: 'day-1' }),
-    validStageDraft({
-      draftId: 'day-2-stage',
-      eventDayId: 'day-2',
-      name: '',
-    }),
+    validStageDraft({ draftId: 'day-2-stage', eventDayId: 'day-2' }),
   ]
-  const errors = validateEventStageSettingsDraft({
-    defaultTransitionMinutes: '2',
+  const draft = settingsDraft({
     stages: stageDrafts,
+    sections: [validSectionDraft({
+      draftId: 'day-2-section',
+      stageDraftId: 'day-2-stage',
+      name: '',
+    })],
   })
+  const errors = validateEventStageSettingsDraft(draft)
 
-  assert.deepEqual(getStageErrorEventDayIds(stageDrafts, errors), ['day-2'])
+  assert.deepEqual(
+    getEventStageSettingsErrorEventDayIds(draft, errors),
+    ['day-2'],
+  )
 })
 
 test('終了時刻を自動にすると既存の固定終了時刻を削除する', () => {
@@ -187,14 +227,14 @@ test('終了時刻を自動にすると既存の固定終了時刻を削除す�
     event,
     eventDays,
     stages: [existingStage],
-    draft: {
-      defaultTransitionMinutes: '2',
+    draft: settingsDraft({
       stages: [validStageDraft({
         stageId: existingStage.id,
         plannedEndTime: existingStage.plannedEndTime,
       })],
-    },
+    }),
     newStageIds: [],
+    newSectionIds: [],
     ...noReferences,
   })
 
@@ -204,34 +244,34 @@ test('終了時刻を自動にすると既存の固定終了時刻を削除す�
 })
 
 test('Event共通とStage固有の転換時間は0以上の整数だけ許可する', () => {
-  const commonErrors = validateEventStageSettingsDraft({
+  const commonErrors = validateEventStageSettingsDraft(settingsDraft({
     defaultTransitionMinutes: '-1',
     stages: [],
-  })
+  }))
   assert.equal(
     commonErrors.defaultTransitionMinutes,
     '0以上の整数を入力してください。',
   )
 
-  const stageErrors = validateEventStageSettingsDraft({
+  const stageErrors = validateEventStageSettingsDraft(settingsDraft({
     defaultTransitionMinutes: '0',
     stages: [validStageDraft({
       transitionMode: 'stage-specific',
       transitionMinutes: '1.5',
     })],
-  })
+  }))
   assert.equal(
     stageErrors.stages['draft-stage'].transitionMinutes,
     '0以上の整数を入力してください。',
   )
 
-  const validErrors = validateEventStageSettingsDraft({
+  const validErrors = validateEventStageSettingsDraft(settingsDraft({
     defaultTransitionMinutes: '0',
     stages: [validStageDraft({
       transitionMode: 'stage-specific',
       transitionMinutes: '0',
     })],
-  })
+  }))
   assert.equal(validErrors.defaultTransitionMinutes, undefined)
   assert.equal(validErrors.stages['draft-stage'], undefined)
 })
@@ -265,8 +305,9 @@ test('未参照Stageは削除でき、参照中Stageは保存処理でも削除�
     event,
     eventDays,
     stages: [existingStage],
-    draft: { defaultTransitionMinutes: '2', stages: [] },
+    draft: settingsDraft({ stages: [] }),
     newStageIds: [],
+    newSectionIds: [],
     ...noReferences,
   })
   assert.equal(removable.ok, true)
@@ -276,8 +317,9 @@ test('未参照Stageは削除でき、参照中Stageは保存処理でも削除�
     event,
     eventDays,
     stages: [existingStage],
-    draft: { defaultTransitionMinutes: '2', stages: [] },
+    draft: settingsDraft({ stages: [] }),
     newStageIds: [],
+    newSectionIds: [],
     sections: [],
     scheduleItems: [{ stageId: existingStage.id }],
     eventBands: [],
@@ -291,15 +333,325 @@ test('固定配置から参照中のStageは保存処理でも削除をブロッ
     event,
     eventDays,
     stages: [existingStage],
-    draft: { defaultTransitionMinutes: '2', stages: [] },
+    draft: settingsDraft({ stages: [] }),
     newStageIds: [],
+    newSectionIds: [],
     sections: [],
     scheduleItems: [],
     eventBands: [{ fixedPlacement: { stageId: existingStage.id } }],
   })
 
   assert.equal(result.ok, false)
+  if (!result.ok) assert.match(result.errors.form ?? '', /固定配置/)
+})
+
+test('Section draftへ既存Sectionと自動・固定時刻を反映する', () => {
+  const draft = createEventStageSettingsDraft(
+    event,
+    eventDays,
+    [existingStage],
+    [existingSection],
+  )
+
+  assert.deepEqual(draft.sections, [{
+    draftId: `section-${existingSection.id}`,
+    sectionId: existingSection.id,
+    stageDraftId: `stage-${existingStage.id}`,
+    name: existingSection.name,
+    startMode: 'fixed',
+    plannedStartTime: '10:30',
+    endMode: 'fixed',
+    plannedEndTime: '12:00',
+  }])
+})
+
+test('Section名と固定時刻を検証し、自動時刻では入力値を要求しない', () => {
+  const automaticErrors = validateEventStageSettingsDraft(settingsDraft({
+    sections: [validSectionDraft({
+      plannedStartTime: 'invalid',
+      plannedEndTime: 'invalid',
+    })],
+  }))
+  assert.equal(automaticErrors.sections['draft-section'], undefined)
+
+  const invalidErrors = validateEventStageSettingsDraft(settingsDraft({
+    sections: [validSectionDraft({
+      name: '   ',
+      startMode: 'fixed',
+      plannedStartTime: '24:00',
+      endMode: 'fixed',
+      plannedEndTime: '',
+    })],
+  }))
+  assert.equal(
+    invalidErrors.sections['draft-section'].name,
+    'Section名を入力してください。',
+  )
+  assert.match(
+    invalidErrors.sections['draft-section'].plannedStartTime,
+    /有効な固定開始時刻/,
+  )
+  assert.match(
+    invalidErrors.sections['draft-section'].plannedEndTime,
+    /有効な固定終了時刻/,
+  )
+
+  for (const plannedEndTime of ['11:00', '10:59']) {
+    const errors = validateEventStageSettingsDraft(settingsDraft({
+      sections: [validSectionDraft({
+        startMode: 'fixed',
+        plannedStartTime: '11:00',
+        endMode: 'fixed',
+        plannedEndTime,
+      })],
+    }))
+    assert.match(
+      errors.sections['draft-section'].plannedEndTime,
+      /固定開始時刻より後/,
+    )
+  }
+})
+
+test('Section固定時刻をStageの時間範囲内に制限する', () => {
+  const fixedStage = validStageDraft({
+    endMode: 'fixed',
+    plannedEndTime: '17:00',
+  })
+  const validateSection = (section) => validateEventStageSettingsDraft(
+    settingsDraft({ stages: [fixedStage], sections: [section] }),
+  ).sections['draft-section']
+
+  assert.match(validateSection(validSectionDraft({
+    startMode: 'fixed',
+    plannedStartTime: '09:59',
+  })).plannedStartTime, /Stage開始時刻以降/)
+  assert.equal(validateSection(validSectionDraft({
+    startMode: 'fixed',
+    plannedStartTime: '10:00',
+  })), undefined)
+  assert.match(validateSection(validSectionDraft({
+    startMode: 'fixed',
+    plannedStartTime: '17:00',
+  })).plannedStartTime, /Stage終了時刻より前/)
+  assert.match(validateSection(validSectionDraft({
+    endMode: 'fixed',
+    plannedEndTime: '10:00',
+  })).plannedEndTime, /Stage開始時刻より後/)
+  assert.equal(validateSection(validSectionDraft({
+    endMode: 'fixed',
+    plannedEndTime: '17:00',
+  })), undefined)
+  assert.match(validateSection(validSectionDraft({
+    endMode: 'fixed',
+    plannedEndTime: '17:01',
+  })).plannedEndTime, /Stage終了時刻以前/)
+  assert.equal(validateSection(validSectionDraft({
+    startMode: 'fixed',
+    plannedStartTime: '10:30',
+    endMode: 'fixed',
+    plannedEndTime: '16:30',
+  })), undefined)
+})
+
+test('既存Section IDを維持し、新規IDだけを使ってStageごとにorderを正規化する', () => {
+  const result = createEventStageSettingsUpdate({
+    event,
+    eventDays,
+    stages: [existingStage, secondStage],
+    sections: [existingSection],
+    draft: settingsDraft({
+      stages: [
+        validStageDraft({
+          draftId: 'stage-one-draft',
+          stageId: existingStage.id,
+          endMode: 'fixed',
+          plannedEndTime: '17:00',
+        }),
+        validStageDraft({
+          draftId: 'stage-two-draft',
+          stageId: secondStage.id,
+          name: secondStage.name,
+          plannedStartTime: secondStage.plannedStartTime,
+        }),
+      ],
+      sections: [
+        validSectionDraft({
+          draftId: 'existing-section-draft',
+          sectionId: existingSection.id,
+          stageDraftId: 'stage-one-draft',
+          name: ' 1部 ',
+        }),
+        validSectionDraft({
+          draftId: 'new-one-draft',
+          stageDraftId: 'stage-one-draft',
+          name: '2部',
+        }),
+        validSectionDraft({
+          draftId: 'new-two-draft',
+          stageDraftId: 'stage-two-draft',
+          name: '別Stage 1部',
+        }),
+      ],
+    }),
+    newStageIds: [],
+    newSectionIds: ['section-new-one', 'section-new-two'],
+    scheduleItems: [],
+    eventBands: [],
+  })
+
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.deepEqual(result.sections, [
+    {
+      ...existingSection,
+      name: '1部',
+      order: 0,
+      plannedStartTime: undefined,
+      plannedEndTime: undefined,
+    },
+    {
+      id: 'section-new-one',
+      stageId: existingStage.id,
+      name: '2部',
+      order: 1,
+      plannedStartTime: undefined,
+      plannedEndTime: undefined,
+    },
+    {
+      id: 'section-new-two',
+      stageId: secondStage.id,
+      name: '別Stage 1部',
+      order: 0,
+      plannedStartTime: undefined,
+      plannedEndTime: undefined,
+    },
+  ])
+})
+
+test('ScheduleItemまたは固定配置から参照されるSectionだけ削除不可にする', () => {
+  const noSectionReferences = { scheduleItems: [], eventBands: [] }
+  assert.equal(canDeleteSection(existingSection.id, noSectionReferences), true)
+  assert.equal(canDeleteSection(existingSection.id, {
+    scheduleItems: [{ sectionId: existingSection.id }],
+    eventBands: [],
+  }), false)
+  assert.equal(canDeleteSection(existingSection.id, {
+    scheduleItems: [],
+    eventBands: [{
+      fixedPlacement: {
+        stageId: existingStage.id,
+        sectionId: existingSection.id,
+      },
+    }],
+  }), false)
+  assert.equal(canDeleteSection(existingSection.id, {
+    scheduleItems: [{ sectionId: 'another-section' }],
+    eventBands: [{
+      fixedPlacement: {
+        stageId: existingStage.id,
+        sectionId: 'another-section',
+      },
+    }],
+  }), true)
+})
+
+test('参照中Sectionをdraftから除いても保存処理で削除をブロックする', () => {
+  const result = createEventStageSettingsUpdate({
+    event,
+    eventDays,
+    stages: [existingStage],
+    sections: [existingSection],
+    draft: settingsDraft({
+      stages: [validStageDraft({
+        stageId: existingStage.id,
+        endMode: 'fixed',
+        plannedEndTime: existingStage.plannedEndTime,
+      })],
+    }),
+    newStageIds: [],
+    newSectionIds: [],
+    scheduleItems: [{
+      id: 'schedule-1',
+      stageId: existingStage.id,
+      sectionId: existingSection.id,
+      order: 0,
+      kind: 'break',
+      title: '休憩',
+      durationMinutes: 10,
+    }],
+    eventBands: [],
+  })
+
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.match(result.errors.form ?? '', /Section/)
+})
+
+test('未参照の最後のSectionは保存処理で削除できる', () => {
+  const result = createEventStageSettingsUpdate({
+    event,
+    eventDays,
+    stages: [existingStage],
+    sections: [existingSection],
+    draft: settingsDraft({
+      stages: [validStageDraft({
+        stageId: existingStage.id,
+        endMode: 'fixed',
+        plannedEndTime: existingStage.plannedEndTime,
+      })],
+    }),
+    newStageIds: [],
+    newSectionIds: [],
+    scheduleItems: [],
+    eventBands: [],
+  })
+
+  assert.equal(result.ok, true)
+  if (result.ok) assert.deepEqual(result.sections, [])
+})
+
+test('最初のSectionはScheduleItemがないStageにだけ追加できる', () => {
+  const scheduleItem = { stageId: existingStage.id }
+  assert.equal(canAddFirstSection(existingStage.id, [], []), true)
+  assert.equal(canAddFirstSection(existingStage.id, [], [scheduleItem]), false)
+  assert.equal(canAddFirstSection(
+    existingStage.id,
+    [{ stageId: existingStage.id }],
+    [scheduleItem],
+  ), true)
+})
+
+test('ScheduleItemがあるSectionなしStageへの最初のSection追加を保存処理でも拒否する', () => {
+  const result = createEventStageSettingsUpdate({
+    event,
+    eventDays,
+    stages: [existingStage],
+    sections: [],
+    draft: settingsDraft({
+      stages: [validStageDraft({
+        stageId: existingStage.id,
+        endMode: 'fixed',
+        plannedEndTime: existingStage.plannedEndTime,
+      })],
+      sections: [validSectionDraft()],
+    }),
+    newStageIds: [],
+    newSectionIds: ['section-new'],
+    scheduleItems: [{
+      id: 'schedule-1',
+      stageId: existingStage.id,
+      order: 0,
+      kind: 'break',
+      title: '休憩',
+      durationMinutes: 10,
+    }],
+    eventBands: [],
+  })
+
+  assert.equal(result.ok, false)
   if (!result.ok) {
-    assert.match(result.errors.form ?? '', /固定配置/)
+    assert.match(
+      result.errors.sections['draft-section'].form,
+      /先にタイムテーブルの配置を削除/,
+    )
   }
 })

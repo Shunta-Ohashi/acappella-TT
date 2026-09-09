@@ -6,6 +6,7 @@ import type {
   LocalTime,
   ScheduleItem,
   Section,
+  SectionId,
   Stage,
   StageId,
 } from './models'
@@ -16,6 +17,7 @@ import {
 
 export type StageEndMode = 'automatic' | 'fixed'
 export type StageTransitionMode = 'event-default' | 'stage-specific'
+export type SectionTimeMode = 'automatic' | 'fixed'
 
 export interface StageSettingsDraft {
   draftId: string
@@ -30,9 +32,21 @@ export interface StageSettingsDraft {
   transitionMinutes: string
 }
 
+export interface SectionSettingsDraft {
+  draftId: string
+  sectionId?: SectionId
+  stageDraftId: string
+  name: string
+  startMode: SectionTimeMode
+  plannedStartTime: LocalTime
+  endMode: SectionTimeMode
+  plannedEndTime: LocalTime
+}
+
 export interface EventStageSettingsDraft {
   defaultTransitionMinutes: string
   stages: StageSettingsDraft[]
+  sections: SectionSettingsDraft[]
 }
 
 export interface StageSettingsValidationErrors {
@@ -43,9 +57,17 @@ export interface StageSettingsValidationErrors {
   form?: string
 }
 
+export interface SectionSettingsValidationErrors {
+  name?: string
+  plannedStartTime?: string
+  plannedEndTime?: string
+  form?: string
+}
+
 export interface EventStageSettingsValidationErrors {
   defaultTransitionMinutes?: string
   stages: Record<string, StageSettingsValidationErrors>
+  sections: Record<string, SectionSettingsValidationErrors>
   form?: string
 }
 
@@ -55,16 +77,25 @@ export interface StageReferences {
   eventBands: Pick<EventBand, 'fixedPlacement'>[]
 }
 
-interface CreateEventStageSettingsUpdateInput extends StageReferences {
+export interface SectionReferences {
+  scheduleItems: Pick<ScheduleItem, 'sectionId'>[]
+  eventBands: Pick<EventBand, 'fixedPlacement'>[]
+}
+
+interface CreateEventStageSettingsUpdateInput {
   event: Event
   eventDays: EventDay[]
   stages: Stage[]
+  sections: Section[]
   draft: EventStageSettingsDraft
   newStageIds: StageId[]
+  newSectionIds: SectionId[]
+  scheduleItems: ScheduleItem[]
+  eventBands: EventBand[]
 }
 
 export type EventStageSettingsUpdateResult =
-  | { ok: true; event: Event; stages: Stage[] }
+  | { ok: true; event: Event; stages: Stage[]; sections: Section[] }
   | { ok: false; errors: EventStageSettingsValidationErrors }
 
 const isNonNegativeInteger = (value: string): boolean =>
@@ -76,6 +107,9 @@ const normalizeOptionalText = (value: string): string | undefined => {
 }
 
 const hasStageErrors = (errors: StageSettingsValidationErrors): boolean =>
+  Object.values(errors).some(Boolean)
+
+const hasSectionErrors = (errors: SectionSettingsValidationErrors): boolean =>
   Object.values(errors).some(Boolean)
 
 export const isValidStageTimeRange = (
@@ -94,6 +128,7 @@ export const createEventStageSettingsDraft = (
   event: Event,
   eventDays: EventDay[],
   stages: Stage[],
+  sections: Section[],
 ): EventStageSettingsDraft => {
   const orderedEventDays = eventDays
     .filter((eventDay) => eventDay.eventId === event.id)
@@ -105,32 +140,61 @@ export const createEventStageSettingsDraft = (
   const eventDayOrder = new Map(
     orderedEventDays.map((eventDay, index) => [eventDay.id, index]),
   )
+  const stageDrafts = stages
+    .filter((stage) => eventDayOrder.has(stage.eventDayId))
+    .sort((first, second) =>
+      (eventDayOrder.get(first.eventDayId) ?? 0) -
+        (eventDayOrder.get(second.eventDayId) ?? 0) ||
+      first.order - second.order ||
+      first.id.localeCompare(second.id),
+    )
+    .map((stage) => ({
+      draftId: `stage-${stage.id}`,
+      stageId: stage.id,
+      eventDayId: stage.eventDayId,
+      name: stage.name,
+      location: stage.location ?? '',
+      plannedStartTime: stage.plannedStartTime,
+      endMode: stage.plannedEndTime ? 'fixed' as const : 'automatic' as const,
+      plannedEndTime: stage.plannedEndTime ?? '',
+      transitionMode: stage.transitionMinutes === undefined
+        ? 'event-default' as const
+        : 'stage-specific' as const,
+      transitionMinutes: stage.transitionMinutes === undefined
+        ? ''
+        : String(stage.transitionMinutes),
+    }))
+  const stageDraftIdByStageId = new Map(
+    stageDrafts.flatMap((stage) =>
+      stage.stageId ? [[stage.stageId, stage.draftId] as const] : [],
+    ),
+  )
+  const stageOrder = new Map(
+    stageDrafts.flatMap((stage, index) =>
+      stage.stageId ? [[stage.stageId, index] as const] : [],
+    ),
+  )
 
   return {
     defaultTransitionMinutes: String(event.defaultTransitionMinutes),
-    stages: stages
-      .filter((stage) => eventDayOrder.has(stage.eventDayId))
+    stages: stageDrafts,
+    sections: sections
+      .filter((section) => stageDraftIdByStageId.has(section.stageId))
       .sort((first, second) =>
-        (eventDayOrder.get(first.eventDayId) ?? 0) -
-          (eventDayOrder.get(second.eventDayId) ?? 0) ||
+        (stageOrder.get(first.stageId) ?? 0) -
+          (stageOrder.get(second.stageId) ?? 0) ||
         first.order - second.order ||
         first.id.localeCompare(second.id),
       )
-      .map((stage) => ({
-        draftId: `stage-${stage.id}`,
-        stageId: stage.id,
-        eventDayId: stage.eventDayId,
-        name: stage.name,
-        location: stage.location ?? '',
-        plannedStartTime: stage.plannedStartTime,
-        endMode: stage.plannedEndTime ? 'fixed' : 'automatic',
-        plannedEndTime: stage.plannedEndTime ?? '',
-        transitionMode: stage.transitionMinutes === undefined
-          ? 'event-default'
-          : 'stage-specific',
-        transitionMinutes: stage.transitionMinutes === undefined
-          ? ''
-          : String(stage.transitionMinutes),
+      .map((section) => ({
+        draftId: `section-${section.id}`,
+        sectionId: section.id,
+        stageDraftId: stageDraftIdByStageId.get(section.stageId)!,
+        name: section.name,
+        startMode: section.plannedStartTime ? 'fixed' : 'automatic',
+        plannedStartTime: section.plannedStartTime ?? '',
+        endMode: section.plannedEndTime ? 'fixed' : 'automatic',
+        plannedEndTime: section.plannedEndTime ?? '',
       })),
   }
 }
@@ -138,7 +202,10 @@ export const createEventStageSettingsDraft = (
 export const validateEventStageSettingsDraft = (
   draft: EventStageSettingsDraft,
 ): EventStageSettingsValidationErrors => {
-  const errors: EventStageSettingsValidationErrors = { stages: {} }
+  const errors: EventStageSettingsValidationErrors = {
+    stages: {},
+    sections: {},
+  }
 
   if (!isNonNegativeInteger(draft.defaultTransitionMinutes)) {
     errors.defaultTransitionMinutes = '0以上の整数を入力してください。'
@@ -162,10 +229,7 @@ export const validateEventStageSettingsDraft = (
         stageErrors.plannedEndTime = '有効な終了時刻を入力してください。'
       } else if (
         startIsValid &&
-        !isValidStageTimeRange(
-          stage.plannedStartTime,
-          stage.plannedEndTime,
-        )
+        !isValidStageTimeRange(stage.plannedStartTime, stage.plannedEndTime)
       ) {
         stageErrors.plannedEndTime =
           '終了時刻は開始時刻より後にしてください。'
@@ -184,6 +248,99 @@ export const validateEventStageSettingsDraft = (
     }
   }
 
+  const stagesByDraftId = new Map(
+    draft.stages.map((stage) => [stage.draftId, stage]),
+  )
+
+  for (const section of draft.sections) {
+    const sectionErrors: SectionSettingsValidationErrors = {}
+    const stage = stagesByDraftId.get(section.stageDraftId)
+
+    if (!stage) {
+      sectionErrors.form =
+        '対象Stageが見つかりません。画面を開き直してください。'
+    }
+
+    if (!section.name.trim()) {
+      sectionErrors.name = 'Section名を入力してください。'
+    }
+
+    const stageStartIsValid = Boolean(
+      stage && isValidLocalTime(stage.plannedStartTime),
+    )
+    const stageStartMinute = stageStartIsValid
+      ? parseLocalTimeToMinute(stage!.plannedStartTime)
+      : undefined
+    const stageEndIsValid = Boolean(
+      stage &&
+      stage.endMode === 'fixed' &&
+      isValidLocalTime(stage.plannedEndTime),
+    )
+    const stageEndMinute = stageEndIsValid
+      ? parseLocalTimeToMinute(stage!.plannedEndTime)
+      : undefined
+
+    let sectionStartMinute: number | undefined
+    if (section.startMode === 'fixed') {
+      if (!isValidLocalTime(section.plannedStartTime)) {
+        sectionErrors.plannedStartTime =
+          '有効な固定開始時刻を入力してください。'
+      } else {
+        sectionStartMinute = parseLocalTimeToMinute(section.plannedStartTime)
+        if (
+          stageStartMinute !== undefined &&
+          sectionStartMinute < stageStartMinute
+        ) {
+          sectionErrors.plannedStartTime =
+            '固定開始時刻はStage開始時刻以降にしてください。'
+        } else if (
+          stageEndMinute !== undefined &&
+          sectionStartMinute >= stageEndMinute
+        ) {
+          sectionErrors.plannedStartTime =
+            '固定開始時刻はStage終了時刻より前にしてください。'
+        }
+      }
+    }
+
+    let sectionEndMinute: number | undefined
+    if (section.endMode === 'fixed') {
+      if (!isValidLocalTime(section.plannedEndTime)) {
+        sectionErrors.plannedEndTime =
+          '有効な固定終了時刻を入力してください。'
+      } else {
+        sectionEndMinute = parseLocalTimeToMinute(section.plannedEndTime)
+        if (
+          stageStartMinute !== undefined &&
+          sectionEndMinute <= stageStartMinute
+        ) {
+          sectionErrors.plannedEndTime =
+            '固定終了時刻はStage開始時刻より後にしてください。'
+        } else if (
+          stageEndMinute !== undefined &&
+          sectionEndMinute > stageEndMinute
+        ) {
+          sectionErrors.plannedEndTime =
+            '固定終了時刻はStage終了時刻以前にしてください。'
+        }
+      }
+    }
+
+    if (
+      sectionStartMinute !== undefined &&
+      sectionEndMinute !== undefined &&
+      sectionStartMinute >= sectionEndMinute &&
+      !sectionErrors.plannedEndTime
+    ) {
+      sectionErrors.plannedEndTime =
+        '固定終了時刻は固定開始時刻より後にしてください。'
+    }
+
+    if (hasSectionErrors(sectionErrors)) {
+      errors.sections[section.draftId] = sectionErrors
+    }
+  }
+
   return errors
 }
 
@@ -192,21 +349,27 @@ export const hasEventStageSettingsErrors = (
 ): boolean => Boolean(
   errors.defaultTransitionMinutes ||
   errors.form ||
-  Object.values(errors.stages).some(hasStageErrors),
+  Object.values(errors.stages).some(hasStageErrors) ||
+  Object.values(errors.sections).some(hasSectionErrors),
 )
 
-export const getStageErrorEventDayIds = (
-  stages: StageSettingsDraft[],
+export const getEventStageSettingsErrorEventDayIds = (
+  draft: EventStageSettingsDraft,
   errors: EventStageSettingsValidationErrors,
 ): EventDayId[] => {
   const eventDayIds: EventDayId[] = []
   const seenEventDayIds = new Set<EventDayId>()
 
-  for (const stage of stages) {
+  for (const stage of draft.stages) {
     const stageErrors = errors.stages[stage.draftId]
+    const hasRelatedSectionError = draft.sections.some((section) =>
+      section.stageDraftId === stage.draftId &&
+      hasSectionErrors(errors.sections[section.draftId] ?? {}),
+    )
+
     if (
-      stageErrors &&
-      hasStageErrors(stageErrors) &&
+      ((stageErrors && hasStageErrors(stageErrors)) ||
+        hasRelatedSectionError) &&
       !seenEventDayIds.has(stage.eventDayId)
     ) {
       eventDayIds.push(stage.eventDayId)
@@ -220,6 +383,12 @@ export const getStageErrorEventDayIds = (
 export const STAGE_DELETE_BLOCKED_MESSAGE =
   'このStageにはSection、タイムテーブル、または固定配置の設定があるため削除できません。関連する設定を先に解除してください。'
 
+export const SECTION_DELETE_BLOCKED_MESSAGE =
+  'このSectionにはタイムテーブルまたは固定配置の設定があるため削除できません。関連する設定を先に解除してください。'
+
+export const FIRST_SECTION_ADD_BLOCKED_MESSAGE =
+  'このStageにはすでにタイムテーブルが設定されています。Sectionを追加するには、先にタイムテーブルの配置を削除してください。'
+
 export const canDeleteStage = (
   stageId: StageId,
   { sections, scheduleItems, eventBands }: StageReferences,
@@ -230,13 +399,33 @@ export const canDeleteStage = (
     eventBand.fixedPlacement?.stageId === stageId,
   )
 
+export const canDeleteSection = (
+  sectionId: SectionId,
+  { scheduleItems, eventBands }: SectionReferences,
+): boolean =>
+  !scheduleItems.some((scheduleItem) =>
+    scheduleItem.sectionId === sectionId,
+  ) &&
+  !eventBands.some((eventBand) =>
+    eventBand.fixedPlacement?.sectionId === sectionId,
+  )
+
+export const canAddFirstSection = (
+  stageId: StageId,
+  sections: Pick<Section, 'stageId'>[],
+  scheduleItems: Pick<ScheduleItem, 'stageId'>[],
+): boolean =>
+  sections.some((section) => section.stageId === stageId) ||
+  !scheduleItems.some((scheduleItem) => scheduleItem.stageId === stageId)
+
 export const createEventStageSettingsUpdate = ({
   event,
   eventDays,
   stages,
+  sections,
   draft,
   newStageIds,
-  sections,
+  newSectionIds,
   scheduleItems,
   eventBands,
 }: CreateEventStageSettingsUpdateInput): EventStageSettingsUpdateResult => {
@@ -259,19 +448,25 @@ export const createEventStageSettingsUpdate = ({
   const currentStagesById = new Map(
     currentStages.map((stage) => [stage.id, stage]),
   )
+  const currentStageIds = new Set(currentStages.map((stage) => stage.id))
+  const currentSections = sections.filter((section) =>
+    currentStageIds.has(section.stageId),
+  )
+
   const retainedStageIds = new Set(
     draft.stages.flatMap((stage) => stage.stageId ? [stage.stageId] : []),
   )
-  const blockedDeletion = currentStages.find((stage) =>
+  const blockedStageDeletion = currentStages.find((stage) =>
     !retainedStageIds.has(stage.id) &&
     !canDeleteStage(stage.id, { sections, scheduleItems, eventBands }),
   )
 
-  if (blockedDeletion) {
+  if (blockedStageDeletion) {
     return {
       ok: false,
       errors: {
         stages: {},
+        sections: {},
         form: STAGE_DELETE_BLOCKED_MESSAGE,
       },
     }
@@ -282,6 +477,7 @@ export const createEventStageSettingsUpdate = ({
       ok: false,
       errors: {
         stages: {},
+        sections: {},
         form: '選択中のイベントに属さない開催日のStageは保存できません。',
       },
     }
@@ -292,9 +488,67 @@ export const createEventStageSettingsUpdate = ({
     throw new Error('A Stage ID is required for every new Stage')
   }
 
+  for (const stageDraft of draft.stages) {
+    if (!stageDraft.stageId) continue
+
+    const existingSectionCount = currentSections.filter(
+      (section) => section.stageId === stageDraft.stageId,
+    ).length
+    const stageSectionDrafts = draft.sections.filter(
+      (section) => section.stageDraftId === stageDraft.draftId,
+    )
+
+    if (
+      existingSectionCount === 0 &&
+      stageSectionDrafts.length > 0 &&
+      !canAddFirstSection(stageDraft.stageId, currentSections, scheduleItems)
+    ) {
+      return {
+        ok: false,
+        errors: {
+          stages: {},
+          sections: {
+            [stageSectionDrafts[0].draftId]: {
+              form: FIRST_SECTION_ADD_BLOCKED_MESSAGE,
+            },
+          },
+        },
+      }
+    }
+  }
+
+  const retainedSectionIds = new Set(
+    draft.sections.flatMap((section) =>
+      section.sectionId ? [section.sectionId] : [],
+    ),
+  )
+  const blockedSectionDeletion = currentSections.find((section) =>
+    !retainedSectionIds.has(section.id) &&
+    !canDeleteSection(section.id, { scheduleItems, eventBands }),
+  )
+
+  if (blockedSectionDeletion) {
+    return {
+      ok: false,
+      errors: {
+        stages: {},
+        sections: {},
+        form: SECTION_DELETE_BLOCKED_MESSAGE,
+      },
+    }
+  }
+
+  const newSectionCount = draft.sections.filter(
+    (section) => !section.sectionId,
+  ).length
+  if (newSectionIds.length !== newSectionCount) {
+    throw new Error('A Section ID is required for every new Section')
+  }
+
   let newStageIndex = 0
   const orderByEventDay = new Map<EventDayId, number>()
   const updatedStages: Stage[] = []
+  const stageIdByDraftId = new Map<string, StageId>()
 
   for (const stageDraft of draft.stages) {
     const order = orderByEventDay.get(stageDraft.eventDayId) ?? 0
@@ -321,22 +575,94 @@ export const createEventStageSettingsUpdate = ({
           ok: false,
           errors: {
             stages: {},
+            sections: {},
             form: 'Stageの情報が更新されたため保存できません。画面を開き直してください。',
           },
         }
       }
       updatedStages.push({ ...existingStage, ...values })
+      stageIdByDraftId.set(stageDraft.draftId, existingStage.id)
     } else {
-      updatedStages.push({
-        id: newStageIds[newStageIndex++],
-        ...values,
-      })
+      const stageId = newStageIds[newStageIndex++]
+      updatedStages.push({ id: stageId, ...values })
+      stageIdByDraftId.set(stageDraft.draftId, stageId)
     }
   }
 
   updatedStages.sort((first, second) =>
     (eventDayOrder.get(first.eventDayId) ?? 0) -
       (eventDayOrder.get(second.eventDayId) ?? 0) ||
+    first.order - second.order ||
+    first.id.localeCompare(second.id),
+  )
+
+  const currentSectionsById = new Map(
+    currentSections.map((section) => [section.id, section]),
+  )
+  const orderByStage = new Map<StageId, number>()
+  const updatedSections: Section[] = []
+  let newSectionIndex = 0
+
+  for (const sectionDraft of draft.sections) {
+    const stageId = stageIdByDraftId.get(sectionDraft.stageDraftId)
+    if (!stageId) {
+      return {
+        ok: false,
+        errors: {
+          stages: {},
+          sections: {
+            [sectionDraft.draftId]: {
+              form: '対象Stageが見つかりません。画面を開き直してください。',
+            },
+          },
+        },
+      }
+    }
+
+    const order = orderByStage.get(stageId) ?? 0
+    orderByStage.set(stageId, order + 1)
+    const values = {
+      stageId,
+      name: sectionDraft.name.trim(),
+      order,
+      plannedStartTime: sectionDraft.startMode === 'fixed'
+        ? sectionDraft.plannedStartTime
+        : undefined,
+      plannedEndTime: sectionDraft.endMode === 'fixed'
+        ? sectionDraft.plannedEndTime
+        : undefined,
+    }
+
+    if (sectionDraft.sectionId) {
+      const existingSection = currentSectionsById.get(sectionDraft.sectionId)
+      if (!existingSection || existingSection.stageId !== stageId) {
+        return {
+          ok: false,
+          errors: {
+            stages: {},
+            sections: {
+              [sectionDraft.draftId]: {
+                form: 'Sectionの情報が更新されたため保存できません。画面を開き直してください。',
+              },
+            },
+          },
+        }
+      }
+      updatedSections.push({ ...existingSection, ...values })
+    } else {
+      updatedSections.push({
+        id: newSectionIds[newSectionIndex++],
+        ...values,
+      })
+    }
+  }
+
+  const updatedStageOrder = new Map(
+    updatedStages.map((stage, index) => [stage.id, index]),
+  )
+  updatedSections.sort((first, second) =>
+    (updatedStageOrder.get(first.stageId) ?? 0) -
+      (updatedStageOrder.get(second.stageId) ?? 0) ||
     first.order - second.order ||
     first.id.localeCompare(second.id),
   )
@@ -348,5 +674,6 @@ export const createEventStageSettingsUpdate = ({
       defaultTransitionMinutes: Number(draft.defaultTransitionMinutes),
     },
     stages: updatedStages,
+    sections: updatedSections,
   }
 }
