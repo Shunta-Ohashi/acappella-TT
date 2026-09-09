@@ -1,4 +1,12 @@
-import type { EventBand, EventBandId, ScheduleItem, ScheduleItemId, StageId } from './models'
+import type {
+  EventBand,
+  EventBandId,
+  EventDayId,
+  EventId,
+  ScheduleItem,
+  ScheduleItemId,
+  StageId,
+} from './models'
 
 const reorder = <T,>(items: T[], sourceIndex: number, destinationIndex: number): T[] => {
   const reordered = [...items]
@@ -18,6 +26,15 @@ export const getEventBandById = (
   eventBands: EventBand[],
   eventBandId: EventBandId,
 ): EventBand | undefined => eventBands.find(eventBand => eventBand.id === eventBandId)
+
+export const getEventBandsForEventDay = (
+  eventBands: EventBand[],
+  eventId: EventId,
+  eventDayId: EventDayId,
+): EventBand[] => eventBands.filter(
+  eventBand => eventBand.eventId === eventId &&
+    eventBand.eventDayId === eventDayId,
+)
 
 export const getUnscheduledEventBands = (
   eventBands: EventBand[],

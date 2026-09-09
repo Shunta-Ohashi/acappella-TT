@@ -18,6 +18,7 @@ import type {
 } from './domain/models'
 import {
   getEventBandById,
+  getEventBandsForEventDay,
   getStageScheduleItems,
   getUnscheduledEventBands,
   insertStageScheduleItem,
@@ -70,15 +71,16 @@ const appSectionPlaceholders: Record<
 
 const createId = (prefix: string) => `${prefix}-${crypto.randomUUID()}`
 
-const replaceEventBandsForEvent = (
+const replaceEventBandsForEventDay = (
   allEventBands: EventBand[],
   eventId: EventId,
+  eventDayId: EventDay['id'],
   replacement: EventBand[],
 ): EventBand[] => {
   let replacementIndex = 0
 
   return allEventBands.map((eventBand) =>
-    eventBand.eventId === eventId
+    eventBand.eventId === eventId && eventBand.eventDayId === eventDayId
       ? replacement[replacementIndex++]
       : eventBand,
   )
@@ -204,6 +206,13 @@ function App() {
   const selectedEventBands = eventBands.filter(
     (eventBand) => eventBand.eventId === selectedEventId,
   )
+  const currentDayEventBands = currentStage
+    ? getEventBandsForEventDay(
+        eventBands,
+        selectedEventId,
+        currentStage.eventDayId,
+      )
+    : []
 
   // 4️⃣ 当日のタイムテーブル。出演項目はEventBandをIDで参照する
   const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>(initialScheduleItems)
@@ -238,7 +247,7 @@ function App() {
     ? getStageScheduleItems(selectedScheduleItems, currentStage.id)
     : []
   const poolEventBands = getUnscheduledEventBands(
-    selectedEventBands,
+    currentDayEventBands,
     selectedScheduleItems,
   )
 
@@ -386,19 +395,22 @@ function App() {
     if (sourceId === destId) {
       if (sourceId === 'pool-list') {
         setEventBands((previous) => {
-          const eventSpecificBands = previous.filter(
-            (eventBand) => eventBand.eventId === selectedEvent.id,
+          const daySpecificBands = getEventBandsForEventDay(
+            previous,
+            selectedEvent.id,
+            currentStage.eventDayId,
           )
           const reordered = reorderUnscheduledEventBands(
-            eventSpecificBands,
+            daySpecificBands,
             selectedScheduleItems,
             sourceIndex,
             destinationIndex,
           )
 
-          return replaceEventBandsForEvent(
+          return replaceEventBandsForEventDay(
             previous,
             selectedEvent.id,
+            currentStage.eventDayId,
             reordered,
           )
         })
@@ -416,7 +428,11 @@ function App() {
     // EventBandをタイムテーブルへ配置するときだけScheduleItemを新規作成する
     if (sourceId === 'pool-list' && destId === 'timetable-list') {
       const eventBand = poolEventBands[sourceIndex]
-      if (!eventBand) return
+      if (
+        !eventBand ||
+        eventBand.eventId !== selectedEvent.id ||
+        eventBand.eventDayId !== currentStage.eventDayId
+      ) return
 
       const newScheduleItem: PerformanceScheduleItem = {
         id: createId('schedule-performance'),
@@ -443,14 +459,16 @@ function App() {
       const remainingScheduleItems = removeScheduleItem(scheduleItems, scheduleItem.id)
       setScheduleItems(remainingScheduleItems)
       setEventBands(previous => {
-        const eventSpecificBands = previous.filter(
-          (eventBand) => eventBand.eventId === selectedEvent.id,
+        const daySpecificBands = getEventBandsForEventDay(
+          previous,
+          selectedEvent.id,
+          currentStage.eventDayId,
         )
         const remainingSelectedScheduleItems = remainingScheduleItems.filter(
           (item) => selectedStageIds.has(item.stageId),
         )
         const poolAfterRemoval = getUnscheduledEventBands(
-          eventSpecificBands,
+          daySpecificBands,
           remainingSelectedScheduleItems,
         )
         const returnedEventBandIndex = poolAfterRemoval.findIndex(
@@ -459,14 +477,15 @@ function App() {
         if (returnedEventBandIndex < 0) return previous
 
         const reordered = reorderUnscheduledEventBands(
-          eventSpecificBands,
+          daySpecificBands,
           remainingSelectedScheduleItems,
           returnedEventBandIndex,
           destinationIndex,
         )
-        return replaceEventBandsForEvent(
+        return replaceEventBandsForEventDay(
           previous,
           selectedEvent.id,
+          currentStage.eventDayId,
           reordered,
         )
       })
