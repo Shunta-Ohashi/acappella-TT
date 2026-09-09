@@ -30,11 +30,40 @@ import {
   isValidLocalTime,
 } from './domain/timeline'
 import { detectScheduleIssues } from './domain/issues'
+import {
+  AppSectionPlaceholder,
+  AppShell,
+  type AppSection,
+} from './components/AppShell'
+import {
+  EventEditorShell,
+  type EventEditorStepId,
+} from './components/EventEditorShell'
 import { IssuePanel } from './components/IssuePanel'
 import { getHighestSeverityByScheduleItem } from './ui/issuePresentation'
 import './App.css'
 
 const CURRENT_STAGE_ID = 'stage-1'
+
+type AppView = 'event-editor' | AppSection
+
+const appSectionPlaceholders: Record<
+  AppSection,
+  { title: string; description: string }
+> = {
+  events: {
+    title: 'イベント',
+    description: 'イベント一覧と新規作成は後続PRで実装します。',
+  },
+  'shared-data': {
+    title: '共通データ',
+    description: 'メンバーや固定バンドの共通データ管理は後続PRで実装します。',
+  },
+  settings: {
+    title: '設定',
+    description: 'アプリ全体の設定は後続PRで実装します。',
+  },
+}
 
 const createId = (prefix: string) => `${prefix}-${crypto.randomUUID()}`
 
@@ -113,6 +142,9 @@ const initialScheduleItems: ScheduleItem[] = [
 const initialSections: Section[] = []
 
 function App() {
+  const [activeView, setActiveView] = useState<AppView>('event-editor')
+  const [activeStep, setActiveStep] = useState<EventEditorStepId>(7)
+
   // ==================== 📦 各種状態（State）の管理 ====================
 
   // 現在は単一イベント・単一Stageだけを画面で扱う
@@ -368,7 +400,7 @@ function App() {
   })
 
   // 共通スタイル定義（可読性向上のためまとめる）
-  const containerStyle: React.CSSProperties = { padding: '20px', maxWidth: '1250px', margin: '0 auto', textAlign: 'left' }
+  const containerStyle: React.CSSProperties = { maxWidth: '1250px', margin: '0 auto', textAlign: 'left' }
   const sectionBase: React.CSSProperties = { padding: '15px', borderRadius: '8px', marginBottom: '20px' }
   const sectionLargeBase: React.CSSProperties = { padding: '20px', borderRadius: '12px', marginBottom: '25px' }
   const panelStyle: React.CSSProperties = { background: '#fff', padding: '15px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }
@@ -379,14 +411,24 @@ function App() {
   const badgeStyle: React.CSSProperties = { background: '#edf2f7', padding: '4px 8px', borderRadius: '12px', fontSize: '13px' }
 
   return (
-    <div style={containerStyle}>
-      <h1>🎤 アカペラ タイムテーブル 総合管理システム</h1>
+    <AppShell
+      activeSection={activeView === 'event-editor' ? 'events' : activeView}
+      onNavigate={(section) => setActiveView(section)}
+    >
+      {activeView === 'event-editor' ? (
+        <EventEditorShell
+          eventName={currentEvent.name}
+          activeStep={activeStep}
+          onStepChange={setActiveStep}
+          onBackToEvents={() => setActiveView('events')}
+        >
+          <div className="timetable-workspace" style={containerStyle}>
 
       {/* ==================== 🗃️ データベース（マスタ）管理 ==================== */}
       <section style={{ ...sectionLargeBase, background: '#f7fafc', border: '1px solid #e2e8f0', color: '#2d3748' }}>
         <h2 style={{ marginTop: 0, borderBottom: '2px solid #cbd5e0', paddingBottom: '8px' }}>🗃️ 1. データベース（マスタ）管理</h2>
         
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '30px', marginTop: '15px' }}>
+        <div className="timetable-master-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '30px', marginTop: '15px' }}>
           <div style={panelStyle}>
             <h3 style={{ marginTop: 0 }}>👥 サークル員の登録</h3>
             <form onSubmit={handleRegisterMember} style={{ display: 'flex', gap: '8px', marginBottom: '15px' }}>
@@ -438,7 +480,7 @@ function App() {
       {/* ==================== ⚙️ スケジュール基本設定 ==================== */}
       <section style={{ ...sectionBase, background: '#edf2f7', color: '#2d3748' }}>
         <h3 style={{ marginTop: 0 }}>⚙️ 2. スケジュール基本設定</h3>
-        <div style={{ display: 'flex', gap: '20px' }}>
+        <div className="timetable-settings" style={{ display: 'flex', gap: '20px' }}>
           <div>
             <label style={{ fontWeight: 'bold', display: 'block' }}>イベント開始時刻:</label>
             <input type="time" aria-label="イベント開始時刻" value={startTime} onChange={(e) => handleStageStartTimeChange(e.target.value)} style={{ padding: '6px', marginTop: '5px' }} />
@@ -452,7 +494,7 @@ function App() {
 
       {/* ==================== 🎴 ドラッグ＆ドロップ編成 ==================== */}
       <DragDropContext onDragEnd={handleOnDragEnd}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px' }}>
+        <div className="timetable-board" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px' }}>
           
           {/* 📁 左画面：出演候補プール */}
           <div>
@@ -561,7 +603,19 @@ function App() {
 
         </div>
       </DragDropContext>
-    </div>
+          </div>
+        </EventEditorShell>
+      ) : (
+        <AppSectionPlaceholder
+          title={appSectionPlaceholders[activeView].title}
+          description={appSectionPlaceholders[activeView].description}
+          actionLabel={activeView === 'events' ? '現在のイベントを開く' : undefined}
+          onAction={activeView === 'events'
+            ? () => setActiveView('event-editor')
+            : undefined}
+        />
+      )}
+    </AppShell>
   )
 }
 
