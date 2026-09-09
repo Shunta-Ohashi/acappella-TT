@@ -290,11 +290,6 @@
   gap: 6px;
 }
 
-.event-list-page__create > span {
-  color: #596678;
-  font-size: 11px;
-}
-
 .primary-button {
   padding: 10px 16px;
   color: #fff;
@@ -305,11 +300,176 @@
   font-weight: 700;
 }
 
+.primary-button:not(:disabled) {
+  cursor: pointer;
+}
+
+.primary-button:not(:disabled):hover {
+  background: #174f8e;
+  border-color: #174f8e;
+}
+
 .primary-button:disabled {
   color: #728094;
   background: #eef1f5;
   border-color: #dce2e9;
   cursor: not-allowed;
+}
+
+.create-event-dialog {
+  width: min(calc(100% - 32px), 560px);
+  max-height: calc(100vh - 48px);
+  padding: 0;
+  color: #26303d;
+  background: #fff;
+  border: 1px solid #d9e0e7;
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(20, 31, 45, 0.24);
+}
+
+.create-event-dialog::backdrop {
+  background: rgba(18, 28, 41, 0.48);
+  backdrop-filter: blur(2px);
+}
+
+.create-event-form {
+  display: grid;
+  gap: 24px;
+  padding: 28px;
+}
+
+.create-event-form__header {
+  padding-bottom: 20px;
+  border-bottom: 1px solid #e5e9ee;
+}
+
+.create-event-form__eyebrow {
+  margin-bottom: 6px;
+  color: #24578f;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.create-event-form__header h2 {
+  margin: 0 0 8px;
+  color: #182230;
+  font-size: 23px;
+  letter-spacing: -0.02em;
+}
+
+.create-event-form__header > p:last-child {
+  margin: 0;
+  color: #596678;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.create-event-form__field,
+.create-event-form__dates {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.create-event-form__field > label,
+.create-event-form__dates > legend {
+  padding: 0;
+  color: #344154;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.create-event-form__field input,
+.create-event-form__date-row input {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  color: #26303d;
+  background: #fff;
+  border: 1px solid #bac4d0;
+  border-radius: 7px;
+}
+
+.create-event-form input[aria-invalid='true'] {
+  border-color: #b42318;
+  box-shadow: 0 0 0 1px #b42318;
+}
+
+.create-event-form__date-list {
+  display: grid;
+  gap: 9px;
+}
+
+.create-event-form__date-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  gap: 8px;
+}
+
+.create-event-form__remove-date {
+  min-height: 36px;
+  padding: 0;
+  color: #8f2d25;
+  background: #fff;
+  border: 1px solid #d8b3af;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 19px;
+}
+
+.create-event-form__remove-date:hover {
+  background: #fff5f4;
+}
+
+.create-event-form__add-date {
+  justify-self: start;
+  padding: 7px 2px;
+  color: #175397;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.create-event-form__add-date:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.form-error {
+  margin: 0;
+  color: #9b2c2c;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.form-error::before {
+  content: '入力エラー: ';
+}
+
+.create-event-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 20px;
+  border-top: 1px solid #e5e9ee;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .event-list-grid {
@@ -511,6 +671,28 @@
   min-width: 0;
 }
 
+.timetable-empty-state {
+  padding: 56px 32px;
+  background: #fff;
+  border: 1px dashed #c4ced9;
+  border-radius: 12px;
+  text-align: center;
+}
+
+.timetable-empty-state h3 {
+  margin-bottom: 8px;
+  color: #26303d;
+  font-size: 19px;
+}
+
+.timetable-empty-state p {
+  max-width: 600px;
+  margin: 0 auto 20px;
+  color: #596678;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
 .issue-panel {
   margin-top: 20px;
   padding: 16px;
@@ -707,6 +889,15 @@
   .event-card {
     min-height: 270px;
     padding: 20px;
+  }
+
+  .create-event-form {
+    gap: 20px;
+    padding: 22px 18px;
+  }
+
+  .create-event-form__header h2 {
+    font-size: 21px;
   }
 
   .step-sidebar {
