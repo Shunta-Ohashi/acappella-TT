@@ -13,10 +13,9 @@ export type ScheduleItemId = string
 export type LocalDate = string // YYYY-MM-DD
 export type LocalTime = string // HH:mm
 
-export interface TimeRange {
-  from?: LocalTime
-  until?: LocalTime
-}
+export type TimeRange =
+  | { from: LocalTime; until?: LocalTime }
+  | { from?: LocalTime; until: LocalTime }
 
 export type ParticipationStatus = 'participating' | 'absent' | 'undecided'
 
