@@ -19,6 +19,11 @@ export type TimeRange =
 
 export type ParticipationStatus = 'participating' | 'absent' | 'undecided'
 
+export interface PaCapabilities {
+  main: boolean
+  sub: boolean
+}
+
 export type FixedPosition =
   | { kind: 'first' }
   | { kind: 'last' }
@@ -38,6 +43,7 @@ export interface Member {
   entryAcademicYear?: number
   notes?: string
   active: boolean
+  paCapabilities?: PaCapabilities
 }
 
 export interface Band {
