@@ -91,6 +91,23 @@ const breakItem = (
   plannedEndMinute: end,
 })
 
+const createStage = (id = 'stage-a', overrides = {}) => ({
+  id,
+  eventDayId: eventDays[0].id,
+  name: id,
+  order: 0,
+  plannedStartTime: '10:00',
+  ...overrides,
+})
+
+const createSection = (id, stageId = 'stage-a', order = 0, overrides = {}) => ({
+  id,
+  stageId,
+  name: id,
+  order,
+  ...overrides,
+})
+
 const detect = (options = {}) => {
   const event = options.event ?? createEvent()
   const eventMembers = options.eventMembers ?? [createEventMember('member-1')]
@@ -108,12 +125,21 @@ const detect = (options = {}) => {
       createEventMemberDay(eventMember.id, eventDayId),
     ),
   )
+  const stages = options.stages ?? [
+    ...new Map(calculatedItems.map((item) => [
+      item.stageId,
+      createStage(item.stageId, { eventDayId: item.eventDayId }),
+    ])).values(),
+  ]
+  const sections = options.sections ?? []
 
   return detectScheduleIssues({
     event,
     eventMembers,
     eventMemberDays,
     eventBands,
+    stages,
+    sections,
     calculatedItems,
   })
 }
@@ -928,4 +954,247 @@ test('EventMemberDayの個人希望とEventBandの希望時間外をINFOにす�
   const preferenceIssues = findIssues(issues, 'PREFERENCE_NOT_MET')
   assert.equal(preferenceIssues.length, 2)
   assert.ok(preferenceIssues.every((issue) => issue.severity === 'INFO'))
+})
+
+test('Stage固定終了が未設定・未満・一致の場合はIssueを返さない', () => {
+  const cases = [
+    {
+      stage: createStage('stage-a'),
+      calculatedItem: breakItem('break-before', 600, 1019),
+    },
+    {
+      stage: createStage('stage-a', {
+        plannedEndTime: '17:00',
+        transitionMinutes: 5,
+      }),
+      calculatedItem: performance(
+        'performance-equal',
+        'event-band-1',
+        1010,
+        1020,
+      ),
+    },
+    {
+      stage: createStage('stage-a', { plannedEndTime: '17:00' }),
+      calculatedItem: breakItem('break-before-fixed-end', 600, 1015),
+    },
+  ]
+
+  cases.forEach(({ stage, calculatedItem }) => {
+    const issues = detect({
+      stages: [stage],
+      calculatedItems: [calculatedItem],
+    })
+
+    assert.equal(findIssues(issues, 'STAGE_END_EXCEEDED').length, 0)
+  })
+})
+
+test('PerformanceがStage固定終了を超えると超過分を含むERRORをStageごとに1件返す', () => {
+  const issues = detect({
+    stages: [
+      createStage('stage-a', { name: 'Main Stage', plannedEndTime: '17:00' }),
+      createStage('stage-b', { name: 'Sub Stage' }),
+    ],
+    calculatedItems: [
+      performance('item-overrun', 'event-band-1', 1015, 1025),
+      breakItem('break-other-stage', 1000, 1100, 'stage-b'),
+    ],
+  })
+
+  const stageIssues = findIssues(issues, 'STAGE_END_EXCEEDED')
+  assert.equal(stageIssues.length, 1)
+  assert.equal(stageIssues[0].severity, 'ERROR')
+  assert.equal(stageIssues[0].overrunMinutes, 5)
+  assert.deepEqual(stageIssues[0].stageIds, ['stage-a'])
+  assert.deepEqual(stageIssues[0].scheduleItemIds, ['item-overrun'])
+})
+
+test('BreakによるStage固定終了超過も検出する', () => {
+  const issues = detect({
+    stages: [createStage('stage-a', { plannedEndTime: '17:00' })],
+    calculatedItems: [breakItem('break-overrun', 1015, 1028)],
+  })
+
+  const stageIssue = findIssues(issues, 'STAGE_END_EXCEEDED')[0]
+  assert.equal(stageIssue.overrunMinutes, 8)
+  assert.deepEqual(stageIssue.scheduleItemIds, ['break-overrun'])
+})
+
+test('Stage固定終了判定に別EventDayのCalculatedScheduleItemを混ぜない', () => {
+  const issues = detect({
+    stages: [
+      createStage('stage-a', {
+        eventDayId: eventDays[0].id,
+        plannedEndTime: '17:00',
+      }),
+    ],
+    calculatedItems: [
+      breakItem('break-day-1', 1000, 1020),
+      breakItem('break-day-2', 1000, 1080, 'stage-a', eventDays[1].id),
+    ],
+  })
+
+  assert.equal(findIssues(issues, 'STAGE_END_EXCEEDED').length, 0)
+})
+
+test('Section固定終了が未設定・一致・空の場合はIssueを返さない', () => {
+  const stage = createStage('stage-a')
+  const sections = [
+    createSection('section-no-end', stage.id, 0),
+    createSection('section-equal', stage.id, 1, { plannedEndTime: '12:00' }),
+    createSection('section-empty', stage.id, 2, { plannedEndTime: '13:00' }),
+  ]
+  const issues = detect({
+    stages: [stage],
+    sections,
+    calculatedItems: [
+      { ...breakItem('break-no-end', 600, 690), sectionId: 'section-no-end' },
+      { ...breakItem('break-equal', 690, 720), sectionId: 'section-equal' },
+    ],
+  })
+
+  assert.equal(findIssues(issues, 'SECTION_END_EXCEEDED').length, 0)
+})
+
+test('BreakがSection固定終了を超えると別Sectionを混ぜずに検出する', () => {
+  const stage = createStage('stage-a')
+  const issues = detect({
+    stages: [stage],
+    sections: [
+      createSection('section-1', stage.id, 0, { plannedEndTime: '12:00' }),
+      createSection('section-2', stage.id, 1),
+    ],
+    calculatedItems: [
+      { ...breakItem('break-overrun', 715, 725), sectionId: 'section-1' },
+      { ...breakItem('break-other-section', 725, 800), sectionId: 'section-2' },
+    ],
+  })
+
+  const sectionIssues = findIssues(issues, 'SECTION_END_EXCEEDED')
+  assert.equal(sectionIssues.length, 1)
+  assert.equal(sectionIssues[0].severity, 'ERROR')
+  assert.equal(sectionIssues[0].overrunMinutes, 5)
+  assert.deepEqual(sectionIssues[0].sectionIds, ['section-1'])
+  assert.deepEqual(sectionIssues[0].scheduleItemIds, ['break-overrun'])
+})
+
+test('PerformanceによるSection固定終了超過を検出する', () => {
+  const stage = createStage('stage-a')
+  const issues = detect({
+    stages: [stage],
+    sections: [
+      createSection('section-1', stage.id, 0, { plannedEndTime: '12:00' }),
+    ],
+    calculatedItems: [
+      {
+        ...performance('item-overrun', 'event-band-1', 715, 725),
+        sectionId: 'section-1',
+      },
+    ],
+  })
+
+  const sectionIssue = findIssues(issues, 'SECTION_END_EXCEEDED')[0]
+  assert.equal(sectionIssue.overrunMinutes, 5)
+  assert.deepEqual(sectionIssue.scheduleItemIds, ['item-overrun'])
+})
+
+test('Stage固定終了超過IssueをStageごとに区別する', () => {
+  const issues = detect({
+    stages: [
+      createStage('stage-a', { plannedEndTime: '17:00' }),
+      createStage('stage-b', { plannedEndTime: '17:00' }),
+    ],
+    calculatedItems: [
+      breakItem('break-stage-a', 1010, 1025, 'stage-a'),
+      breakItem('break-stage-b', 1010, 1030, 'stage-b'),
+    ],
+  })
+
+  const stageIssues = findIssues(issues, 'STAGE_END_EXCEEDED')
+  assert.equal(stageIssues.length, 2)
+  assert.deepEqual(
+    stageIssues.map((issue) => issue.stageIds),
+    [['stage-a'], ['stage-b']],
+  )
+})
+
+test('次Sectionの固定開始に対して前Section終了が未満・一致なら衝突しない', () => {
+  for (const [id, endMinute] of [['before', 779], ['equal', 780]]) {
+    const stage = createStage('stage-a')
+    const issues = detect({
+      stages: [stage],
+      sections: [
+        createSection('section-1', stage.id, 0),
+        createSection('section-2', stage.id, 1, { plannedStartTime: '13:00' }),
+      ],
+      calculatedItems: [
+        {
+          ...breakItem(`break-${id}`, 720, endMinute),
+          sectionId: 'section-1',
+        },
+      ],
+    })
+
+    assert.equal(findIssues(issues, 'SECTION_START_CONFLICT').length, 0)
+  }
+})
+
+test('前Sectionが次Sectionの固定開始を超えると固定開始ごとに1件検出する', () => {
+  const stage = createStage('stage-a')
+  const issues = detect({
+    stages: [stage],
+    sections: [
+      createSection('section-1', stage.id, 0),
+      createSection('section-2', stage.id, 1, { plannedStartTime: '13:00' }),
+    ],
+    calculatedItems: [
+      { ...breakItem('break-before-anchor', 750, 790), sectionId: 'section-1' },
+      { ...breakItem('break-after-anchor', 780, 800), sectionId: 'section-1' },
+    ],
+  })
+
+  const conflicts = findIssues(issues, 'SECTION_START_CONFLICT')
+  assert.equal(conflicts.length, 1)
+  assert.equal(conflicts[0].severity, 'ERROR')
+  assert.equal(conflicts[0].overrunMinutes, 20)
+  assert.deepEqual(conflicts[0].sectionIds, ['section-1', 'section-2'])
+  assert.deepEqual(conflicts[0].scheduleItemIds, [
+    'break-before-anchor',
+    'break-after-anchor',
+  ])
+})
+
+test('固定開始がないSectionや別StageのSectionとは開始衝突を判定しない', () => {
+  const stageA = createStage('stage-a')
+  const stageB = createStage('stage-b')
+  const issues = detect({
+    stages: [stageA, stageB],
+    sections: [
+      createSection('section-a', stageA.id, 0),
+      createSection('section-a-no-anchor', stageA.id, 1),
+      createSection('section-b', stageB.id, 0, { plannedStartTime: '13:00' }),
+    ],
+    calculatedItems: [
+      { ...breakItem('break-stage-a', 750, 800), sectionId: 'section-a' },
+    ],
+  })
+
+  assert.equal(findIssues(issues, 'SECTION_START_CONFLICT').length, 0)
+})
+
+test('Section固定終了超過とStage固定終了超過を同時に返す', () => {
+  const stage = createStage('stage-a', { plannedEndTime: '17:00' })
+  const issues = detect({
+    stages: [stage],
+    sections: [
+      createSection('section-1', stage.id, 0, { plannedEndTime: '16:55' }),
+    ],
+    calculatedItems: [
+      { ...breakItem('break-overrun', 1000, 1025), sectionId: 'section-1' },
+    ],
+  })
+
+  assert.equal(findIssues(issues, 'STAGE_END_EXCEEDED').length, 1)
+  assert.equal(findIssues(issues, 'SECTION_END_EXCEEDED').length, 1)
 })

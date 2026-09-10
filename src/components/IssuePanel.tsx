@@ -3,6 +3,7 @@ import type {
   Band,
   EventBand,
   Member,
+  Section,
   Stage,
 } from '../domain/models'
 import type { CalculatedScheduleItem } from '../domain/timeline'
@@ -17,6 +18,7 @@ interface IssuePanelProps {
   bands: Band[]
   eventBands: EventBand[]
   stages: Stage[]
+  sections: Section[]
   calculatedItems: CalculatedScheduleItem[]
 }
 
@@ -28,6 +30,7 @@ export function IssuePanel({
   bands,
   eventBands,
   stages,
+  sections,
   calculatedItems,
 }: IssuePanelProps) {
   const counts = countIssuesBySeverity(issues)
@@ -42,6 +45,9 @@ export function IssuePanel({
     ]),
   )
   const stageNameById = new Map(stages.map((stage) => [stage.id, stage.name]))
+  const sectionNameById = new Map(
+    sections.map((section) => [section.id, section.name]),
+  )
   const calculatedItemById = new Map(
     calculatedItems.map((item) => [item.scheduleItemId, item]),
   )
@@ -60,6 +66,17 @@ export function IssuePanel({
       message = message
         .replaceAll(`EventBand ${eventBandId}`, `バンド「${bandName}」`)
         .replaceAll(eventBandId, bandName)
+    })
+    issue.stageIds?.forEach((stageId) => {
+      const stageName = stageNameById.get(stageId) ?? '不明なStage'
+      message = message.replaceAll(`Stage ${stageId}`, `Stage「${stageName}」`)
+    })
+    issue.sectionIds?.forEach((sectionId) => {
+      const sectionName = sectionNameById.get(sectionId) ?? '不明なSection'
+      message = message.replaceAll(
+        `Section ${sectionId}`,
+        `Section「${sectionName}」`,
+      )
     })
 
     return message
@@ -102,12 +119,22 @@ export function IssuePanel({
               ),
             )
             const stageNames = uniqueNames(
-              (issue.scheduleItemIds ?? []).map((scheduleItemId) => {
-                const stageId = calculatedItemById.get(scheduleItemId)?.stageId
-                return stageId
-                  ? stageNameById.get(stageId) ?? '不明なStage'
-                  : '不明なStage'
-              }),
+              [
+                ...(issue.stageIds ?? []).map(
+                  stageId => stageNameById.get(stageId) ?? '不明なStage',
+                ),
+                ...(issue.scheduleItemIds ?? []).map((scheduleItemId) => {
+                  const stageId = calculatedItemById.get(scheduleItemId)?.stageId
+                  return stageId
+                    ? stageNameById.get(stageId) ?? '不明なStage'
+                    : '不明なStage'
+                }),
+              ],
+            )
+            const sectionNames = uniqueNames(
+              (issue.sectionIds ?? []).map(
+                sectionId => sectionNameById.get(sectionId) ?? '不明なSection',
+              ),
             )
             const targets = [
               memberNames.length > 0
@@ -119,6 +146,9 @@ export function IssuePanel({
               stageNames.length > 0
                 ? `Stage: ${stageNames.join('、')}`
                 : undefined,
+              sectionNames.length > 0
+                ? `Section: ${sectionNames.join('、')}`
+                : undefined,
             ].filter((target): target is string => target !== undefined)
             const metrics = [
               issue.gapBands !== undefined
@@ -126,6 +156,9 @@ export function IssuePanel({
                 : undefined,
               issue.restMinutes !== undefined
                 ? `休憩時間: ${issue.restMinutes}分`
+                : undefined,
+              issue.overrunMinutes !== undefined
+                ? `超過時間: ${issue.overrunMinutes}分`
                 : undefined,
             ].filter((metric): metric is string => metric !== undefined)
 
@@ -136,6 +169,8 @@ export function IssuePanel({
                   issue.memberIds?.join('-'),
                   issue.eventBandIds?.join('-'),
                   issue.scheduleItemIds?.join('-'),
+                  issue.stageIds?.join('-'),
+                  issue.sectionIds?.join('-'),
                   index,
                 ].join('|')}
                 className={`issue-list__item issue-list__item--${issue.severity.toLowerCase()}`}

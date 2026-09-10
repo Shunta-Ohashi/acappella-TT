@@ -8,6 +8,9 @@ import type {
   EventMemberId,
   MemberId,
   ScheduleItemId,
+  Section,
+  SectionId,
+  Stage,
   StageId,
   TimeRange,
 } from './models'
@@ -28,6 +31,9 @@ export type ScheduleIssueCode =
   | 'BACK_TO_BACK'
   | 'SHORT_GAP'
   | 'SHORT_REST'
+  | 'STAGE_END_EXCEEDED'
+  | 'SECTION_END_EXCEEDED'
+  | 'SECTION_START_CONFLICT'
   | 'PREFERENCE_NOT_MET'
 
 export interface ScheduleIssue {
@@ -37,8 +43,11 @@ export interface ScheduleIssue {
   memberIds?: MemberId[]
   eventBandIds?: EventBandId[]
   scheduleItemIds?: ScheduleItemId[]
+  stageIds?: StageId[]
+  sectionIds?: SectionId[]
   gapBands?: number
   restMinutes?: number
+  overrunMinutes?: number
 }
 
 export interface DetectScheduleIssuesInput {
@@ -46,6 +55,8 @@ export interface DetectScheduleIssuesInput {
   eventMembers: EventMember[]
   eventMemberDays: EventMemberDay[]
   eventBands: EventBand[]
+  stages: Stage[]
+  sections: Section[]
   calculatedItems: CalculatedScheduleItem[]
 }
 
@@ -88,7 +99,123 @@ const createIssueKey = (issue: ScheduleIssue): string =>
     [...(issue.memberIds ?? [])].sort().join(','),
     [...(issue.eventBandIds ?? [])].sort().join(','),
     [...(issue.scheduleItemIds ?? [])].sort().join(','),
+    [...(issue.stageIds ?? [])].sort().join(','),
+    [...(issue.sectionIds ?? [])].sort().join(','),
   ].join('|')
+
+const getLatestEndMinute = (
+  calculatedItems: CalculatedScheduleItem[],
+): number | undefined => calculatedItems.reduce<number | undefined>(
+  (latestEndMinute, item) =>
+    latestEndMinute === undefined || item.plannedEndMinute > latestEndMinute
+      ? item.plannedEndMinute
+      : latestEndMinute,
+  undefined,
+)
+
+const detectTimelineConstraintIssues = ({
+  stages,
+  sections,
+  calculatedItems,
+}: Pick<
+  DetectScheduleIssuesInput,
+  'stages' | 'sections' | 'calculatedItems'
+>): ScheduleIssue[] => {
+  const issues: ScheduleIssue[] = []
+  const calculatedItemsByStage = new Map<StageId, CalculatedScheduleItem[]>()
+
+  calculatedItems.forEach((item) => {
+    const stageItems = calculatedItemsByStage.get(item.stageId) ?? []
+    stageItems.push(item)
+    calculatedItemsByStage.set(item.stageId, stageItems)
+  })
+
+  stages.forEach((stage) => {
+    const stageItems = (calculatedItemsByStage.get(stage.id) ?? []).filter(
+      item => item.eventDayId === stage.eventDayId,
+    )
+
+    if (stage.plannedEndTime) {
+      const fixedEndMinute = parseLocalTimeToMinute(stage.plannedEndTime)
+      const actualEndMinute = getLatestEndMinute(stageItems)
+
+      if (actualEndMinute !== undefined && actualEndMinute > fixedEndMinute) {
+        issues.push({
+          severity: 'ERROR',
+          code: 'STAGE_END_EXCEEDED',
+          message: `Stage ${stage.id} が固定終了 ${stage.plannedEndTime} を ${actualEndMinute - fixedEndMinute} 分超過しています`,
+          stageIds: [stage.id],
+          scheduleItemIds: stageItems
+            .filter(item => item.plannedEndMinute > fixedEndMinute)
+            .map(item => item.scheduleItemId),
+          overrunMinutes: actualEndMinute - fixedEndMinute,
+        })
+      }
+    }
+
+    const stageSections = sections
+      .filter(section => section.stageId === stage.id)
+      .sort((first, second) =>
+        first.order - second.order || first.id.localeCompare(second.id),
+      )
+
+    stageSections.forEach((section) => {
+      if (!section.plannedEndTime) return
+
+      const sectionItems = stageItems.filter(
+        item => item.sectionId === section.id,
+      )
+      const actualEndMinute = getLatestEndMinute(sectionItems)
+      if (actualEndMinute === undefined) return
+
+      const fixedEndMinute = parseLocalTimeToMinute(section.plannedEndTime)
+      if (actualEndMinute <= fixedEndMinute) return
+
+      issues.push({
+        severity: 'ERROR',
+        code: 'SECTION_END_EXCEEDED',
+        message: `Section ${section.id} が固定終了 ${section.plannedEndTime} を ${actualEndMinute - fixedEndMinute} 分超過しています`,
+        stageIds: [stage.id],
+        sectionIds: [section.id],
+        scheduleItemIds: sectionItems
+          .filter(item => item.plannedEndMinute > fixedEndMinute)
+          .map(item => item.scheduleItemId),
+        overrunMinutes: actualEndMinute - fixedEndMinute,
+      })
+    })
+
+    for (let index = 1; index < stageSections.length; index += 1) {
+      const previousSection = stageSections[index - 1]
+      const nextSection = stageSections[index]
+      if (!nextSection.plannedStartTime) continue
+
+      const previousSectionItems = stageItems.filter(
+        item => item.sectionId === previousSection.id,
+      )
+      const previousEndMinute = getLatestEndMinute(previousSectionItems)
+      if (previousEndMinute === undefined) continue
+
+      const fixedStartMinute = parseLocalTimeToMinute(
+        nextSection.plannedStartTime,
+      )
+      if (previousEndMinute <= fixedStartMinute) continue
+
+      issues.push({
+        severity: 'ERROR',
+        code: 'SECTION_START_CONFLICT',
+        message: `前のSection ${previousSection.id} のタイムテーブルが Section ${nextSection.id} の固定開始 ${nextSection.plannedStartTime} を ${previousEndMinute - fixedStartMinute} 分超過しています`,
+        stageIds: [stage.id],
+        sectionIds: [previousSection.id, nextSection.id],
+        scheduleItemIds: previousSectionItems
+          .filter(item => item.plannedEndMinute > fixedStartMinute)
+          .map(item => item.scheduleItemId),
+        overrunMinutes: previousEndMinute - fixedStartMinute,
+      })
+    }
+  })
+
+  return issues
+}
 
 const compareAppearances = (
   first: PerformanceAppearance,
@@ -104,6 +231,8 @@ export const detectScheduleIssues = ({
   eventMembers,
   eventMemberDays,
   eventBands,
+  stages,
+  sections,
   calculatedItems,
 }: DetectScheduleIssuesInput): ScheduleIssue[] => {
   const issues: ScheduleIssue[] = []
@@ -115,6 +244,12 @@ export const detectScheduleIssues = ({
     issueKeys.add(key)
     issues.push(issue)
   }
+
+  detectTimelineConstraintIssues({
+    stages,
+    sections,
+    calculatedItems,
+  }).forEach(addIssue)
 
   const eventBandById = new Map(
     eventBands
