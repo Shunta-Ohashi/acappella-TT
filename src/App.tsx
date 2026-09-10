@@ -3,6 +3,7 @@ import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 import type { DropResult } from '@hello-pangea/dnd'
 import type {
   Band,
+  BandId,
   Event as TimetableEvent,
   EventBand,
   EventDay,
@@ -88,6 +89,11 @@ import {
   type CommonMemberDraft,
   type CommonMemberUpdateResult,
 } from './domain/commonMembers'
+import {
+  createCommonBandUpdate,
+  type CommonBandDraft,
+  type CommonBandUpdateResult,
+} from './domain/commonBands'
 import { getHighestSeverityByScheduleItem } from './ui/issuePresentation'
 import {
   getSectionDroppableId,
@@ -269,7 +275,7 @@ function App() {
   const [members, setMembers] = useState<Member[]>(initialMembers)
 
   // 2️⃣ バンドデータベース（初期データ）
-  const [bands] = useState<Band[]>([
+  const [bands, setBands] = useState<Band[]>([
     { id: 'b-1', name: 'あおぞら', defaultMemberIds: ['m-1', 'm-2', 'm-3'], defaultDurationMinutes: 15, active: true },
     { id: 'b-2', name: '夕焼けコーラス', defaultMemberIds: ['m-4', 'm-1'], defaultDurationMinutes: 10, active: true },
   ])
@@ -526,6 +532,35 @@ function App() {
       ? previous.map((member) =>
           member.id === existingMember.id ? result.member : member)
       : [...previous, result.member])
+    return result
+  }
+
+  const handleSaveCommonBand = (
+    bandId: BandId | undefined,
+    draft: CommonBandDraft,
+  ): CommonBandUpdateResult => {
+    const existingBand = bandId
+      ? bands.find((band) => band.id === bandId)
+      : undefined
+    if (bandId && !existingBand) {
+      return {
+        ok: false,
+        errors: { form: '編集する固定バンドが見つかりません。' },
+      }
+    }
+
+    const result = createCommonBandUpdate({
+      bandId: existingBand?.id ?? createId('band'),
+      existingBand,
+      draft,
+      members,
+    })
+    if (!result.ok) return result
+
+    setBands((previous) => existingBand
+      ? previous.map((band) =>
+          band.id === existingBand.id ? result.band : band)
+      : [...previous, result.band])
     return result
   }
 
@@ -1336,6 +1371,7 @@ function App() {
           members={members}
           bands={bands}
           onSaveMember={handleSaveCommonMember}
+          onSaveBand={handleSaveCommonBand}
         />
       ) : (
         <AppSectionPlaceholder
