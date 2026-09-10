@@ -52,6 +52,7 @@ import {
 } from './components/EventEditorShell'
 import { CreateEventDialog } from './components/CreateEventDialog'
 import { EventBasicInfo } from './components/EventBasicInfo'
+import { EventMemberSettings } from './components/EventMemberSettings'
 import { EventStageSettings } from './components/EventStageSettings'
 import { EventList } from './components/EventList'
 import { IssuePanel } from './components/IssuePanel'
@@ -75,6 +76,11 @@ import {
   type SectionSettingsDraft,
   type StageSettingsDraft,
 } from './domain/eventStageSettings'
+import {
+  createEventMemberSettingsUpdate,
+  type EventMemberSettingsDraft,
+  type EventMemberSettingsUpdateResult,
+} from './domain/eventMemberSettings'
 import { getHighestSeverityByScheduleItem } from './ui/issuePresentation'
 import {
   getSectionDroppableId,
@@ -267,6 +273,12 @@ function App() {
 
   // 3️⃣ このイベントに出演するバンド
   const [eventBands, setEventBands] = useState<EventBand[]>(initialEventBands)
+  const [eventMembers, setEventMembers] = useState<EventMember[]>(
+    initialEventMembers,
+  )
+  const [eventMemberDays, setEventMemberDays] = useState<EventMemberDay[]>(
+    initialEventMemberDays,
+  )
   const selectedEventBands = eventBands.filter(
     (eventBand) => eventBand.eventId === selectedEventId,
   )
@@ -293,13 +305,13 @@ function App() {
   const [selectedMasterBandId, setSelectedMasterBandId] = useState('')
   const [breakDuration, setBreakDuration] = useState<number>(10)
 
-  const selectedEventMembers = initialEventMembers.filter(
+  const selectedEventMembers = eventMembers.filter(
     (eventMember) => eventMember.eventId === selectedEventId,
   )
   const selectedEventMemberIds = new Set(
     selectedEventMembers.map((eventMember) => eventMember.id),
   )
-  const selectedEventMemberDays = initialEventMemberDays.filter(
+  const selectedEventMemberDays = eventMemberDays.filter(
     (eventMemberDay) => selectedEventMemberIds.has(eventMemberDay.eventMemberId),
   )
   const startTime = currentStage?.plannedStartTime ?? ''
@@ -456,7 +468,7 @@ function App() {
         .filter((eventDay) => !eventDay.eventDayId)
         .map(() => createId('event-day')),
       stages,
-      eventMemberDays: initialEventMemberDays,
+      eventMemberDays,
       eventBands,
     })
 
@@ -479,6 +491,46 @@ function App() {
     setSelectedTimetableEventDayId(nextTimetableSelection.eventDayId)
     setSelectedTimetableStageId(nextTimetableSelection.stageId)
 
+    return result
+  }
+
+  const handleSaveEventMemberSettings = (
+    draft: EventMemberSettingsDraft,
+  ): EventMemberSettingsUpdateResult => {
+    if (!selectedEvent) {
+      return {
+        ok: false,
+        errors: {
+          members: {},
+          days: {},
+          form: '編集するイベントが見つかりません。',
+        },
+      }
+    }
+
+    const newEventMemberIds = draft.members
+      .filter((memberDraft) => !memberDraft.eventMemberId)
+      .map(() => createId('event-member'))
+    const newEventMemberDayIds = draft.members.flatMap((memberDraft) =>
+      memberDraft.days
+        .filter((dayDraft) => !dayDraft.eventMemberDayId)
+        .map(() => createId('event-member-day')),
+    )
+    const result = createEventMemberSettingsUpdate({
+      event: selectedEvent,
+      eventDays,
+      members,
+      eventMembers,
+      eventMemberDays,
+      eventBands,
+      draft,
+      newEventMemberIds,
+      newEventMemberDayIds,
+    })
+    if (!result.ok) return result
+
+    setEventMembers(result.eventMembers)
+    setEventMemberDays(result.eventMemberDays)
     return result
   }
 
@@ -1001,7 +1053,7 @@ function App() {
                 eventDayId,
                 {
                   stages,
-                  eventMemberDays: initialEventMemberDays,
+                  eventMemberDays,
                   eventBands,
                 },
               )}
@@ -1031,6 +1083,19 @@ function App() {
               })}
               onSave={handleSaveEventStageSettings}
               onSaveAndNext={() => setActiveStep(3)}
+            />
+          ) : activeStep === 3 && selectedEvent ? (
+            <EventMemberSettings
+              key={selectedEvent.id}
+              event={selectedEvent}
+              eventDays={selectedEventDays}
+              members={members}
+              eventMembers={selectedEventMembers}
+              eventMemberDays={selectedEventMemberDays}
+              eventBands={selectedEventBands}
+              createDraftId={() => createId('event-member-draft')}
+              onSave={handleSaveEventMemberSettings}
+              onSaveAndNext={() => setActiveStep(4)}
             />
           ) : activeStep === 7 && selectedEvent ? (
           <div className="timetable-workspace" style={containerStyle}>

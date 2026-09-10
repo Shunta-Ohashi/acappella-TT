@@ -37,6 +37,7 @@ export function EventEditorShell({
   children,
 }: EventEditorShellProps) {
   const currentStep = eventEditorSteps.find((step) => step.id === activeStep)
+  const hasImplementedContent = [1, 2, 3, 7].includes(activeStep)
 
   if (!currentStep) {
     throw new Error(`Event editor step not found: ${activeStep}`)
@@ -96,7 +97,7 @@ export function EventEditorShell({
             <span>{currentStep.description}</span>
           </header>
 
-          {activeStep === 1 || activeStep === 2 || activeStep === 7 ? (
+          {hasImplementedContent ? (
             children
           ) : (
             <div className="step-placeholder">
