@@ -1915,32 +1915,38 @@
   box-shadow: 0 1px 3px rgba(24, 34, 48, 0.06);
 }
 
-.common-member-list {
+.common-member-list,
+.common-band-list {
   display: grid;
   gap: 18px;
 }
 
 .common-member-list__header,
-.common-member-list__filters {
+.common-member-list__filters,
+.common-band-list__header,
+.common-band-list__filters {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: 20px;
 }
 
-.common-member-list__header h2 {
+.common-member-list__header h2,
+.common-band-list__header h2 {
   margin: 0 0 5px;
   color: #182230;
   font-size: 22px;
 }
 
-.common-member-list__header p {
+.common-member-list__header p,
+.common-band-list__header p {
   margin: 0;
   color: #596678;
   font-size: 13px;
 }
 
-.common-member-list__filters {
+.common-member-list__filters,
+.common-band-list__filters {
   justify-content: flex-start;
   padding: 18px 20px;
   background: #fff;
@@ -1948,18 +1954,25 @@
   border-radius: 10px;
 }
 
-.common-member-list__filters > div {
+.common-member-list__filters > div,
+.common-band-list__filters > div {
   display: grid;
   gap: 6px;
 }
 
-.common-member-list__filters > div:first-child {
+.common-member-list__filters > div:first-child,
+.common-band-list__filters > div:first-child {
   width: min(100%, 420px);
 }
 
 .common-member-list__filters label,
+.common-band-list__filters label,
 .member-editor-field label,
-.member-editor-choice legend {
+.member-editor-choice legend,
+.band-editor-field label,
+.band-editor-choice legend,
+.band-editor-members legend,
+.band-editor-members__toolbar label {
   color: #344154;
   font-size: 13px;
   font-weight: 750;
@@ -1967,8 +1980,13 @@
 
 .common-member-list__filters input,
 .common-member-list__filters select,
+.common-band-list__filters input,
+.common-band-list__filters select,
 .member-editor-field input,
-.member-editor-field textarea {
+.member-editor-field textarea,
+.band-editor-field input,
+.band-editor-field textarea,
+.band-editor-members__toolbar input {
   min-height: 42px;
   padding: 9px 11px;
   color: #26303d;
@@ -1978,15 +1996,18 @@
   font: inherit;
 }
 
-.common-member-list__filters input {
+.common-member-list__filters input,
+.common-band-list__filters input {
   width: 100%;
 }
 
-.common-member-list__filters select {
+.common-member-list__filters select,
+.common-band-list__filters select {
   min-width: 130px;
 }
 
-.common-member-list__table-card {
+.common-member-list__table-card,
+.common-band-list__table-card {
   overflow: hidden;
   background: #fff;
   border: 1px solid #e1e6ec;
@@ -1994,11 +2015,13 @@
   box-shadow: 0 4px 18px rgba(24, 34, 48, 0.035);
 }
 
-.common-member-list__table-scroll {
+.common-member-list__table-scroll,
+.common-band-list__table-scroll {
   overflow-x: auto;
 }
 
-.common-member-list__table {
+.common-member-list__table,
+.common-band-list__table {
   width: 100%;
   min-width: 900px;
   border-collapse: collapse;
@@ -2007,14 +2030,17 @@
 }
 
 .common-member-list__table th,
-.common-member-list__table td {
+.common-member-list__table td,
+.common-band-list__table th,
+.common-band-list__table td {
   padding: 14px 15px;
   border-bottom: 1px solid #e5e9ee;
   text-align: left;
   vertical-align: middle;
 }
 
-.common-member-list__table thead th {
+.common-member-list__table thead th,
+.common-band-list__table thead th {
   color: #526174;
   background: #f7f9fb;
   font-size: 11px;
@@ -2023,18 +2049,22 @@
   white-space: nowrap;
 }
 
-.common-member-list__table tbody th {
+.common-member-list__table tbody th,
+.common-band-list__table tbody th {
   min-width: 130px;
   color: #182230;
   font-weight: 750;
 }
 
 .common-member-list__table tbody tr:last-child th,
-.common-member-list__table tbody tr:last-child td {
+.common-member-list__table tbody tr:last-child td,
+.common-band-list__table tbody tr:last-child th,
+.common-band-list__table tbody tr:last-child td {
   border-bottom: 0;
 }
 
-.common-member-list__table td > small {
+.common-member-list__table td > small,
+.common-band-list__table td > small {
   display: block;
   max-width: 250px;
   margin-top: 3px;
@@ -2043,7 +2073,8 @@
   line-height: 1.45;
 }
 
-.common-member-status {
+.common-member-status,
+.common-band-status {
   display: inline-flex;
   padding: 4px 8px;
   border: 1px solid;
@@ -2053,19 +2084,22 @@
   white-space: nowrap;
 }
 
-.common-member-status--active {
+.common-member-status--active,
+.common-band-status--active {
   color: #25633d;
   background: #f0f9f3;
   border-color: #acd5b9;
 }
 
-.common-member-status--inactive {
+.common-member-status--inactive,
+.common-band-status--inactive {
   color: #596678;
   background: #f5f6f8;
   border-color: #cdd4dc;
 }
 
-.common-member-list__edit {
+.common-member-list__edit,
+.common-band-list__edit {
   padding: 7px 10px;
   color: #174b8c;
   background: #fff;
@@ -2076,11 +2110,13 @@
   font-weight: 700;
 }
 
-.common-member-list__edit:hover {
+.common-member-list__edit:hover,
+.common-band-list__edit:hover {
   background: #f3f7fc;
 }
 
-.common-member-list__empty {
+.common-member-list__empty,
+.common-band-list__empty {
   display: grid;
   gap: 5px;
   padding: 52px 24px;
@@ -2089,28 +2125,13 @@
   text-align: center;
 }
 
-.common-member-list__empty strong {
+.common-member-list__empty strong,
+.common-band-list__empty strong {
   color: #344154;
 }
 
-.common-data-placeholder {
-  min-height: 300px;
-  padding: 48px;
-  background: #fff;
-  border: 1px solid #e1e6ec;
-  border-radius: 12px;
-}
-
-.common-data-placeholder h2 {
-  margin: 0 0 8px;
-  color: #182230;
-}
-
-.common-data-placeholder p {
-  color: #596678;
-}
-
-.member-editor-dialog {
+.member-editor-dialog,
+.band-editor-dialog {
   width: min(calc(100% - 32px), 680px);
   max-height: calc(100vh - 48px);
   padding: 0;
@@ -2121,23 +2142,27 @@
   box-shadow: 0 24px 70px rgba(20, 31, 45, 0.24);
 }
 
-.member-editor-dialog::backdrop {
+.member-editor-dialog::backdrop,
+.band-editor-dialog::backdrop {
   background: rgba(18, 28, 41, 0.48);
   backdrop-filter: blur(2px);
 }
 
-.member-editor-form {
+.member-editor-form,
+.band-editor-form {
   display: grid;
   gap: 22px;
   padding: 28px;
 }
 
-.member-editor-form__header {
+.member-editor-form__header,
+.band-editor-form__header {
   padding-bottom: 18px;
   border-bottom: 1px solid #e5e9ee;
 }
 
-.member-editor-form__header > p {
+.member-editor-form__header > p,
+.band-editor-form__header > p {
   margin: 0 0 5px;
   color: #24578f;
   font-size: 11px;
@@ -2146,50 +2171,60 @@
   text-transform: uppercase;
 }
 
-.member-editor-form__header h2 {
+.member-editor-form__header h2,
+.band-editor-form__header h2 {
   margin: 0 0 7px;
   color: #182230;
   font-size: 22px;
 }
 
-.member-editor-form__header > span {
+.member-editor-form__header > span,
+.band-editor-form__header > span {
   color: #596678;
   font-size: 13px;
 }
 
-.member-editor-form__grid {
+.member-editor-form__grid,
+.band-editor-form__grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
 }
 
-.member-editor-field {
+.member-editor-field,
+.band-editor-field {
   display: grid;
   align-content: start;
   gap: 7px;
 }
 
 .member-editor-field input,
-.member-editor-field textarea {
+.member-editor-field textarea,
+.band-editor-field input,
+.band-editor-field textarea {
   width: 100%;
 }
 
-.member-editor-field textarea {
+.member-editor-field textarea,
+.band-editor-field textarea {
   resize: vertical;
 }
 
-.member-editor-field input[aria-invalid='true'] {
+.member-editor-field input[aria-invalid='true'],
+.band-editor-field input[aria-invalid='true'] {
   border-color: #b42318;
   box-shadow: 0 0 0 1px #b42318;
 }
 
-.member-editor-field__help {
+.member-editor-field__help,
+.band-editor-field__help {
   color: #596678;
   font-size: 11px;
   line-height: 1.45;
 }
 
-.member-editor-choice {
+.member-editor-choice,
+.band-editor-choice {
   display: flex;
   flex-wrap: wrap;
   gap: 10px 22px;
@@ -2199,12 +2234,14 @@
   border: 0;
 }
 
-.member-editor-choice legend {
+.member-editor-choice legend,
+.band-editor-choice legend {
   width: 100%;
   margin-bottom: 7px;
 }
 
-.member-editor-choice label {
+.member-editor-choice label,
+.band-editor-choice label {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -2213,7 +2250,8 @@
   font-size: 13px;
 }
 
-.member-editor-choice input {
+.member-editor-choice input,
+.band-editor-choice input {
   width: 17px;
   height: 17px;
   margin: 0;
@@ -2226,19 +2264,159 @@
   border-radius: 9px;
 }
 
-.member-editor-form__error {
+.member-editor-form__error,
+.band-editor-form__error {
   padding: 10px 12px;
   background: #fff5f4;
   border: 1px solid #e4b9b5;
   border-radius: 7px;
 }
 
-.member-editor-form__actions {
+.member-editor-form__actions,
+.band-editor-form__actions {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
   padding-top: 18px;
   border-top: 1px solid #e5e9ee;
+}
+
+.band-editor-field__duration {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.band-editor-field__duration input {
+  width: 120px;
+}
+
+.band-editor-field__duration > span {
+  color: #526174;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.band-editor-members {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 18px;
+  background: #f7f9fb;
+  border: 1px solid #dce3ea;
+  border-radius: 10px;
+}
+
+.band-editor-members legend {
+  padding: 0 5px;
+}
+
+.band-editor-members__toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.band-editor-members__toolbar > div {
+  display: grid;
+  flex: 1;
+  gap: 6px;
+}
+
+.band-editor-members__toolbar input {
+  width: 100%;
+}
+
+.band-editor-members__toolbar > strong {
+  flex: 0 0 auto;
+  padding-bottom: 10px;
+  color: #344154;
+  font-size: 12px;
+}
+
+.band-editor-members__list,
+.band-editor-members__missing {
+  display: grid;
+  max-height: min(300px, 36vh);
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #dce3ea;
+  border-radius: 8px;
+}
+
+.band-editor-members__missing {
+  max-height: none;
+  background: #fff8ed;
+  border-color: #d7b980;
+}
+
+.band-editor-members__missing > p {
+  margin: 0;
+  padding: 10px 12px;
+  color: #744a12;
+  border-bottom: 1px solid #ead7b3;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.band-editor-members__option,
+.band-editor-members__missing label {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  color: #344154;
+  border-bottom: 1px solid #e5e9ee;
+  cursor: pointer;
+}
+
+.band-editor-members__option:last-child,
+.band-editor-members__missing label:last-child {
+  border-bottom: 0;
+}
+
+.band-editor-members__option:hover,
+.band-editor-members__missing label:hover {
+  background: #f4f7fa;
+}
+
+.band-editor-members__option input,
+.band-editor-members__missing input {
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  margin: 0;
+}
+
+.band-editor-members__option > span,
+.band-editor-members__missing label > span {
+  display: grid;
+  gap: 2px;
+}
+
+.band-editor-members__option strong,
+.band-editor-members__missing strong {
+  color: #182230;
+  font-size: 13px;
+}
+
+.band-editor-members__option small,
+.band-editor-members__missing small {
+  color: #596678;
+  font-size: 11px;
+}
+
+.band-editor-members__empty {
+  margin: 0;
+  padding: 32px 18px;
+  color: #526174;
+  text-align: center;
+}
+
+.band-editor-members > .form-error {
+  margin: 0;
 }
 
 .issue-panel {
@@ -2543,16 +2721,21 @@
   }
 
   .common-member-list__header,
-  .common-member-list__filters {
+  .common-member-list__filters,
+  .common-band-list__header,
+  .common-band-list__filters,
+  .band-editor-members__toolbar {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .common-member-list__header .primary-button {
+  .common-member-list__header .primary-button,
+  .common-band-list__header .primary-button {
     align-self: flex-start;
   }
 
-  .common-member-list__filters > div:first-child {
+  .common-member-list__filters > div:first-child,
+  .common-band-list__filters > div:first-child {
     width: 100%;
   }
 
@@ -2565,13 +2748,18 @@
     min-width: 120px;
   }
 
-  .common-data-placeholder,
-  .member-editor-form {
+  .member-editor-form,
+  .band-editor-form {
     padding: 22px 18px;
   }
 
-  .member-editor-form__grid {
+  .member-editor-form__grid,
+  .band-editor-form__grid {
     grid-template-columns: 1fr;
+  }
+
+  .band-editor-members__toolbar > strong {
+    padding-bottom: 0;
   }
 
   .step-sidebar {

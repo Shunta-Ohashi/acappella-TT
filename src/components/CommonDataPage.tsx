@@ -1,5 +1,9 @@
 import { useState } from 'react'
-import type { Band, Member, MemberId } from '../domain/models'
+import type { Band, BandId, Member, MemberId } from '../domain/models'
+import type {
+  CommonBandDraft,
+  CommonBandUpdateResult,
+} from '../domain/commonBands'
 import {
   filterCommonMembers,
   getBandsForMember,
@@ -8,6 +12,7 @@ import {
   type CommonMemberUpdateResult,
 } from '../domain/commonMembers'
 import { MemberEditorDialog } from './MemberEditorDialog'
+import { CommonBandList } from './CommonBandList'
 
 interface CommonDataPageProps {
   members: Member[]
@@ -16,6 +21,10 @@ interface CommonDataPageProps {
     memberId: MemberId | undefined,
     draft: CommonMemberDraft,
   ) => CommonMemberUpdateResult
+  onSaveBand: (
+    bandId: BandId | undefined,
+    draft: CommonBandDraft,
+  ) => CommonBandUpdateResult
 }
 
 type CommonDataSection = 'members' | 'bands'
@@ -37,6 +46,7 @@ export function CommonDataPage({
   members,
   bands,
   onSaveMember,
+  onSaveBand,
 }: CommonDataPageProps) {
   const [activeSection, setActiveSection] =
     useState<CommonDataSection>('members')
@@ -204,10 +214,11 @@ export function CommonDataPage({
           </div>
         </section>
       ) : (
-        <section className="common-data-placeholder">
-          <h2>固定バンド</h2>
-          <p>固定バンド管理は次の対応で実装します。</p>
-        </section>
+        <CommonBandList
+          bands={bands}
+          members={members}
+          onSaveBand={onSaveBand}
+        />
       )}
 
       {memberEditor && (
