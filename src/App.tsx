@@ -248,6 +248,10 @@ function App() {
   const timetableStages = timetableSelection.eventDayId
     ? getStagesForEventDay(stages, timetableSelection.eventDayId)
     : []
+  const timetableStageIds = new Set(timetableStages.map(stage => stage.id))
+  const timetableSections = selectedSections.filter(section =>
+    timetableStageIds.has(section.stageId),
+  )
   const currentStage = timetableStages.find(
     stage => stage.id === timetableSelection.stageId,
   )
@@ -306,7 +310,7 @@ function App() {
     ? getStageScheduleItems(selectedScheduleItems, currentStage.id)
     : []
   const currentStageSections = currentStage
-    ? getSectionsForStage(selectedSections, currentStage.id)
+    ? getSectionsForStage(timetableSections, currentStage.id)
     : []
   const currentStageUsesSections = currentStageSections.length > 0
   const currentEventDayScheduleItems = timetableSelection.eventDayId
@@ -806,7 +810,7 @@ function App() {
         event: selectedEvent,
         eventDayId: timetableSelection.eventDayId,
         stages: timetableStages,
-        sections: selectedSections,
+        sections: timetableSections,
         scheduleItems: currentEventDayScheduleItems,
         eventBands: selectedEventBands,
       })
@@ -821,6 +825,8 @@ function App() {
         eventMembers: selectedEventMembers,
         eventMemberDays: selectedEventMemberDays,
         eventBands: selectedEventBands,
+        stages: timetableStages,
+        sections: timetableSections,
         calculatedItems,
       })
     : []
@@ -1306,6 +1312,7 @@ function App() {
               bands={bands}
               eventBands={selectedEventBands}
               stages={timetableStages}
+              sections={timetableSections}
               calculatedItems={calculatedItems}
             />
           </div>
