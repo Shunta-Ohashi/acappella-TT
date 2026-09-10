@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { calculateStageTimeline, isValidLocalTime } from '../src/domain/timeline.ts'
+import { calculateEventDayTimelines } from '../src/domain/timetable.ts'
 
 const eventDays = [
   {
@@ -257,4 +258,70 @@ test('Sectionありで有効なSectionに所属するScheduleItemは従来どお
 test('空文字はStage.plannedStartTimeへ保存できる時刻として扱わない', () => {
   assert.equal(isValidLocalTime(''), false)
   assert.equal(isValidLocalTime('13:00'), true)
+})
+
+test('Issue用Timelineは同じEventDayの複数Stageを集約し、別日を混ぜない', () => {
+  const stages = [
+    createStage({ id: 'stage-day-1-a', plannedStartTime: '10:00' }),
+    createStage({ id: 'stage-day-1-b', plannedStartTime: '11:00' }),
+    createStage({
+      id: 'stage-day-2',
+      eventDayId: eventDays[1].id,
+      plannedStartTime: '12:00',
+    }),
+  ]
+  const bands = [
+    eventBands[0],
+    eventBands[1],
+    {
+      ...eventBands[1],
+      id: 'event-band-day-2',
+      eventDayId: eventDays[1].id,
+    },
+  ]
+  const result = calculateEventDayTimelines({
+    event,
+    eventDayId: eventDays[0].id,
+    stages,
+    sections: [],
+    scheduleItems: [
+      performance('item-a', 'event-band-1', 0, { stageId: 'stage-day-1-a' }),
+      performance('item-b', 'event-band-2', 0, { stageId: 'stage-day-1-b' }),
+      performance('item-day-2', 'event-band-day-2', 0, { stageId: 'stage-day-2' }),
+    ],
+    eventBands: bands,
+  })
+
+  assert.deepEqual(
+    result.calculatedItems.map(item => item.scheduleItemId),
+    ['item-a', 'item-b'],
+  )
+  assert.deepEqual(result.invalidStages, [])
+})
+
+test('不正なSection所属を持つStageは集約時に記録し、他Stageの計算を継続する', () => {
+  const validStage = createStage({ id: 'stage-valid' })
+  const invalidStage = createStage({ id: 'stage-invalid', order: 1 })
+  const result = calculateEventDayTimelines({
+    event,
+    eventDayId: eventDays[0].id,
+    stages: [validStage, invalidStage],
+    sections: [
+      { id: 'section-invalid', stageId: invalidStage.id, name: '1部', order: 0 },
+    ],
+    scheduleItems: [
+      performance('item-valid', 'event-band-1', 0, { stageId: validStage.id }),
+      performance('item-invalid', 'event-band-2', 0, { stageId: invalidStage.id }),
+    ],
+    eventBands,
+  })
+
+  assert.deepEqual(
+    result.calculatedItems.map(item => item.scheduleItemId),
+    ['item-valid'],
+  )
+  assert.deepEqual(result.invalidStages, [{
+    stageId: invalidStage.id,
+    scheduleItemIds: ['item-invalid'],
+  }])
 })
