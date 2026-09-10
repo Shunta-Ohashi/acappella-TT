@@ -11,6 +11,7 @@ import type {
   EventMember,
   EventMemberDay,
   Member,
+  MemberId,
   ScheduleItem,
   Section,
   SectionId,
@@ -52,6 +53,7 @@ import {
 } from './components/EventEditorShell'
 import { CreateEventDialog } from './components/CreateEventDialog'
 import { EventBasicInfo } from './components/EventBasicInfo'
+import { CommonDataPage } from './components/CommonDataPage'
 import { EventMemberSettings } from './components/EventMemberSettings'
 import { EventStageSettings } from './components/EventStageSettings'
 import { EventList } from './components/EventList'
@@ -81,6 +83,11 @@ import {
   type EventMemberSettingsDraft,
   type EventMemberSettingsUpdateResult,
 } from './domain/eventMemberSettings'
+import {
+  createCommonMemberUpdate,
+  type CommonMemberDraft,
+  type CommonMemberUpdateResult,
+} from './domain/commonMembers'
 import { getHighestSeverityByScheduleItem } from './ui/issuePresentation'
 import {
   getSectionDroppableId,
@@ -96,13 +103,9 @@ const CURRENT_STAGE_ID = 'stage-1'
 type AppView = 'event-editor' | AppSection
 
 const appSectionPlaceholders: Record<
-  Exclude<AppSection, 'events'>,
+  Exclude<AppSection, 'events' | 'shared-data'>,
   { title: string; description: string }
 > = {
-  'shared-data': {
-    title: '共通データ',
-    description: 'メンバーや固定バンドの共通データ管理は後続PRで実装します。',
-  },
   settings: {
     title: '設定',
     description: 'アプリ全体の設定は後続PRで実装します。',
@@ -266,7 +269,7 @@ function App() {
   const [members, setMembers] = useState<Member[]>(initialMembers)
 
   // 2️⃣ バンドデータベース（初期データ）
-  const [bands, setBands] = useState<Band[]>([
+  const [bands] = useState<Band[]>([
     { id: 'b-1', name: 'あおぞら', defaultMemberIds: ['m-1', 'm-2', 'm-3'], defaultDurationMinutes: 15, active: true },
     { id: 'b-2', name: '夕焼けコーラス', defaultMemberIds: ['m-4', 'm-1'], defaultDurationMinutes: 10, active: true },
   ])
@@ -295,12 +298,6 @@ function App() {
   const selectedScheduleItems = scheduleItems.filter((scheduleItem) =>
     selectedStageIds.has(scheduleItem.stageId),
   )
-
-  // ✍️ 各種フォームの入力状態
-  const [newMemberName, setNewMemberName] = useState('')
-  const [newBandName, setNewBandName] = useState('')
-  const [newBandDuration, setNewBandDuration] = useState<number>(15)
-  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([])
 
   const [selectedMasterBandId, setSelectedMasterBandId] = useState('')
   const [breakDuration, setBreakDuration] = useState<number>(10)
@@ -350,36 +347,6 @@ function App() {
     : []
   const currentStageHasInvalidSectionAssignments =
     invalidCurrentStageScheduleItemIds.length > 0
-
-  // ==================== 🛠️ データベース（マスタ）操作ロジック ====================
-
-  const handleRegisterMember = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    if (!newMemberName.trim()) return
-    const newMember: Member = { id: createId('member'), realName: newMemberName.trim(), active: true }
-    setMembers([...members, newMember])
-    setNewMemberName('')
-  }
-
-  const handleRegisterMasterBand = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    if (!newBandName.trim() || newBandDuration <= 0) return
-    const newBand: Band = {
-      id: createId('band'),
-      name: newBandName.trim(),
-      defaultMemberIds: selectedMemberIds,
-      defaultDurationMinutes: newBandDuration,
-      active: true,
-    }
-    setBands([...bands, newBand])
-    setNewBandName('')
-    setNewBandDuration(15)
-    setSelectedMemberIds([])
-  }
-
-  const handleToggleMemberSelection = (memberId: string) => {
-    setSelectedMemberIds(prev => prev.includes(memberId) ? prev.filter(id => id !== memberId) : [...prev, memberId])
-  }
 
   const handleStageStartTimeChange = (value: string) => {
     if (
@@ -534,6 +501,34 @@ function App() {
     return result
   }
 
+  const handleSaveCommonMember = (
+    memberId: MemberId | undefined,
+    draft: CommonMemberDraft,
+  ): CommonMemberUpdateResult => {
+    const existingMember = memberId
+      ? members.find((member) => member.id === memberId)
+      : undefined
+    if (memberId && !existingMember) {
+      return {
+        ok: false,
+        errors: { form: '編集するメンバーが見つかりません。' },
+      }
+    }
+
+    const result = createCommonMemberUpdate({
+      memberId: existingMember?.id ?? createId('member'),
+      existingMember,
+      draft,
+    })
+    if (!result.ok) return result
+
+    setMembers((previous) => existingMember
+      ? previous.map((member) =>
+          member.id === existingMember.id ? result.member : member)
+      : [...previous, result.member])
+    return result
+  }
+
   const handleSaveEventStageSettings = (
     defaultTransitionMinutes: string,
     stageDrafts: StageSettingsDraft[],
@@ -652,12 +647,6 @@ function App() {
 
   const handleDeletePoolEventBand = (id: string) => {
     setEventBands(prev => prev.filter(eventBand => eventBand.id !== id))
-  }
-
-  // メンバー削除（登録ミスに対応）
-  const handleDeleteMember = (id: string) => {
-    setMembers(prev => prev.filter(m => m.id !== id))
-    // BandとEventBandのメンバー参照は既存挙動に合わせてそのまま残す
   }
 
   // 演奏項目を削除すると、参照先のEventBandが算出プールへ戻る。休憩はそのまま削除する
@@ -909,13 +898,10 @@ function App() {
   // 共通スタイル定義（可読性向上のためまとめる）
   const containerStyle: React.CSSProperties = { maxWidth: '1250px', margin: '0 auto', textAlign: 'left' }
   const sectionBase: React.CSSProperties = { padding: '15px', borderRadius: '8px', marginBottom: '20px' }
-  const sectionLargeBase: React.CSSProperties = { padding: '20px', borderRadius: '12px', marginBottom: '25px' }
-  const panelStyle: React.CSSProperties = { background: '#fff', padding: '15px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }
   const inputStyle: React.CSSProperties = { width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box' }
   const baseButton: React.CSSProperties = { border: 'none', padding: '8px 12px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }
   const listItemBase: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', borderRadius: '4px', color: '#333', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }
   const listContainerBase: React.CSSProperties = { listStyle: 'none', minHeight: '300px', padding: '10px', borderRadius: '8px', border: '2px dashed #cbd5e0' }
-  const badgeStyle: React.CSSProperties = { background: '#edf2f7', padding: '4px 8px', borderRadius: '12px', fontSize: '13px' }
 
   const renderScheduleLane = (
     lane: ScheduleLane,
@@ -1177,59 +1163,6 @@ function App() {
             ) : (
               <>
 
-      {/* ==================== 🗃️ データベース（マスタ）管理 ==================== */}
-      <section style={{ ...sectionLargeBase, background: '#f7fafc', border: '1px solid #e2e8f0', color: '#2d3748' }}>
-        <h2 style={{ marginTop: 0, borderBottom: '2px solid #cbd5e0', paddingBottom: '8px' }}>🗃️ 1. データベース（マスタ）管理</h2>
-        
-        <div className="timetable-master-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '30px', marginTop: '15px' }}>
-          <div style={panelStyle}>
-            <h3 style={{ marginTop: 0 }}>👥 サークル員の登録</h3>
-            <form onSubmit={handleRegisterMember} style={{ display: 'flex', gap: '8px', marginBottom: '15px' }}>
-              <input type="text" aria-label="サークル員氏名" placeholder="氏名（例: 山田）" value={newMemberName} onChange={(e) => setNewMemberName(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
-              <button type="submit" style={{ ...baseButton, background: '#4a5568', color: '#fff', padding: '8px 12px' }}>登録</button>
-            </form>
-            <div style={{ maxHeight: '150px', overflowY: 'auto', border: '1px solid #edf2f7', padding: '8px', borderRadius: '4px' }}>
-              <strong>現在のサークル員一覧 ({members.length}名):</strong>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
-                {members.map(m => (
-                  <span key={m.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', marginRight: '6px' }}>
-                    <span style={badgeStyle}>{m.realName}</span>
-                    <button onClick={() => handleDeleteMember(m.id)} aria-label={`delete-${m.realName}`} style={{ ...baseButton, background: '#fff', color: '#e53e3e', padding: '4px 6px', borderRadius: '6px', fontSize: '12px' }}>×</button>
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div style={panelStyle}>
-            <h3 style={{ marginTop: 0 }}>🎸 固定バンドの登録</h3>
-            <form onSubmit={handleRegisterMasterBand} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-              <div>
-                <div style={{ marginBottom: '10px' }}>
-                  <input type="text" aria-label="登録するバンド名" placeholder="バンド名" value={newBandName} onChange={(e) => setNewBandName(e.target.value)} style={inputStyle} />
-                </div>
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 'bold' }}>デフォルト演奏時間 (分):</label>
-                  <input type="number" aria-label="デフォルト演奏時間" value={newBandDuration} onChange={(e) => setNewBandDuration(Number(e.target.value))} style={{ ...inputStyle, marginTop: '4px' }} />
-                </div>
-                <button type="submit" style={{ ...baseButton, width: '100%', background: '#3182ce', color: '#fff', padding: '10px', marginTop: '15px' }}>データベースに保存</button>
-              </div>
-              <div>
-                <label style={{ fontSize: '13px', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>👥 所属メンバーを選択:</label>
-                <div style={{ maxHeight: '110px', overflowY: 'auto', border: '1px solid #ccc', padding: '8px', borderRadius: '4px' }}>
-                  {members.map(m => (
-                    <label key={m.id} style={{ display: 'block', fontSize: '13px', marginBottom: '4px', cursor: 'pointer' }}>
-                      <input type="checkbox" checked={selectedMemberIds.includes(m.id)} onChange={() => handleToggleMemberSelection(m.id)} style={{ marginRight: '6px' }} />
-                      {m.realName}
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </form>
-          </div>
-        </div>
-      </section>
-
       {/* ==================== ⚙️ スケジュール基本設定 ==================== */}
       <section style={{ ...sectionBase, background: '#edf2f7', color: '#2d3748' }}>
         <h3 style={{ marginTop: 0 }}>⚙️ 2. スケジュール基本設定</h3>
@@ -1397,6 +1330,12 @@ function App() {
           eventBands={eventBands}
           onOpenEvent={handleOpenEvent}
           onCreateEvent={() => setIsCreateEventDialogOpen(true)}
+        />
+      ) : activeView === 'shared-data' ? (
+        <CommonDataPage
+          members={members}
+          bands={bands}
+          onSaveMember={handleSaveCommonMember}
         />
       ) : (
         <AppSectionPlaceholder
