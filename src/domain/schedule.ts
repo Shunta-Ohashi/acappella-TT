@@ -240,17 +240,19 @@ export const getInvalidSectionScheduleItemIds = (
   stageSections: Section[],
   scheduleItems: ScheduleItem[],
 ): ScheduleItemId[] => {
-  if (stageSections.length === 0) return []
-
   const sectionIds = new Set(
     stageSections
       .filter(section => section.stageId === stage.id)
       .map(section => section.id),
   )
+  const stageUsesSections = sectionIds.size > 0
+
   return scheduleItems
     .filter(item =>
       item.stageId === stage.id &&
-      (!item.sectionId || !sectionIds.has(item.sectionId)),
+      (stageUsesSections
+        ? !item.sectionId || !sectionIds.has(item.sectionId)
+        : item.sectionId !== undefined),
     )
     .map(item => item.id)
 }

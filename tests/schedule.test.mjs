@@ -5,6 +5,7 @@ import {
   createBreakScheduleItemForLane,
   createPerformanceScheduleItemForLane,
   getEventBandsForEventDay,
+  getInvalidSectionScheduleItemIds,
   getSectionsForStage,
   getStagesForEventDay,
   getUnscheduledEventBandsForEventDay,
@@ -196,6 +197,105 @@ test('SectionなしStageへの項目追加ではsectionIdを持たない', () =>
     title: '休憩',
     durationMinutes: 10,
   })
+})
+
+test('SectionなしStageのsectionIdなしScheduleItemは正常と判定する', () => {
+  const stage = stages[1]
+
+  assert.deepEqual(getInvalidSectionScheduleItemIds(stage, [], [
+    {
+      id: 'performance-without-section',
+      stageId: stage.id,
+      order: 0,
+      kind: 'performance',
+      eventBandId: 'band-a',
+    },
+    {
+      id: 'break-without-section',
+      stageId: stage.id,
+      order: 1,
+      kind: 'break',
+      title: '休憩',
+      durationMinutes: 10,
+    },
+  ]), [])
+})
+
+test('SectionなしStageのsectionId付きPerformanceとBreakを不正と判定する', () => {
+  const stage = stages[1]
+
+  assert.deepEqual(getInvalidSectionScheduleItemIds(stage, [], [
+    {
+      id: 'performance-with-stale-section',
+      stageId: stage.id,
+      sectionId: 'deleted-section',
+      order: 0,
+      kind: 'performance',
+      eventBandId: 'band-a',
+    },
+    {
+      id: 'break-with-stale-section',
+      stageId: stage.id,
+      sectionId: 'deleted-section',
+      order: 1,
+      kind: 'break',
+      title: '休憩',
+      durationMinutes: 10,
+    },
+  ]), [
+    'performance-with-stale-section',
+    'break-with-stale-section',
+  ])
+})
+
+test('SectionありStageでは有効な所属だけを許可し、未所属と別StageのSectionを不正にする', () => {
+  const stage = stages[1]
+  const validSection = {
+    id: 'valid-section',
+    stageId: stage.id,
+    name: '1部',
+    order: 0,
+  }
+  const anotherStageSection = {
+    id: 'another-stage-section',
+    stageId: 'stage-day-1-b',
+    name: '別Stageの1部',
+    order: 0,
+  }
+
+  assert.deepEqual(getInvalidSectionScheduleItemIds(
+    stage,
+    [validSection, anotherStageSection],
+    [
+      {
+        id: 'valid-item',
+        stageId: stage.id,
+        sectionId: validSection.id,
+        order: 0,
+        kind: 'performance',
+        eventBandId: 'band-a',
+      },
+      {
+        id: 'item-without-section',
+        stageId: stage.id,
+        order: 1,
+        kind: 'performance',
+        eventBandId: 'band-b',
+      },
+      {
+        id: 'item-in-another-stage-section',
+        stageId: stage.id,
+        sectionId: anotherStageSection.id,
+        order: 2,
+        kind: 'break',
+        title: '休憩',
+        durationMinutes: 10,
+      },
+    ],
+  ), [
+    'item-without-section',
+    'item-in-another-stage-section',
+  ])
 })
 
 test('SectionありStageへのPerformanceとBreak追加ではsectionIdを付与する', () => {
