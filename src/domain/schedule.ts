@@ -263,7 +263,7 @@ const replaceStageScheduleItems = (
   stageItems: ScheduleItem[],
 ): ScheduleItem[] => [
   ...scheduleItems.filter(item => item.stageId !== stageId),
-  ...stageItems.map((item, order) => setItemLane(item, { stageId }, order)),
+  ...stageItems.map((item, order) => ({ ...item, stageId, order })),
 ]
 
 export const reorderStageScheduleItems = (

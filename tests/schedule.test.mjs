@@ -9,9 +9,11 @@ import {
   getSectionsForStage,
   getStagesForEventDay,
   getUnscheduledEventBandsForEventDay,
+  insertStageScheduleItem,
   moveScheduleItemWithinStage,
   removeScheduleItem,
   reorderScheduleLaneItems,
+  reorderStageScheduleItems,
   resolveTimetableSelection,
 } from '../src/domain/schedule.ts'
 import {
@@ -197,6 +199,107 @@ test('SectionなしStageへの項目追加ではsectionIdを持たない', () =>
     title: '休憩',
     durationMinutes: 10,
   })
+})
+
+test('legacy Stage並べ替えでも既存ScheduleItemのsectionIdを維持する', () => {
+  const scheduleItems = [
+    {
+      id: 'section-item-a',
+      stageId: 'stage-day-1-a',
+      sectionId: 'section-1',
+      order: 0,
+      kind: 'performance',
+      eventBandId: 'band-a',
+    },
+    {
+      id: 'section-item-b',
+      stageId: 'stage-day-1-a',
+      sectionId: 'section-2',
+      order: 1,
+      kind: 'break',
+      title: '休憩',
+      durationMinutes: 10,
+    },
+  ]
+  const reordered = reorderStageScheduleItems(
+    scheduleItems,
+    'stage-day-1-a',
+    1,
+    0,
+  )
+
+  assert.equal(
+    reordered.find(item => item.id === 'section-item-a').sectionId,
+    'section-1',
+  )
+  assert.equal(
+    reordered.find(item => item.id === 'section-item-b').sectionId,
+    'section-2',
+  )
+})
+
+test('legacy Stage挿入でも既存ScheduleItemのsectionIdを維持する', () => {
+  const existing = {
+    id: 'existing-section-item',
+    stageId: 'stage-day-1-a',
+    sectionId: 'section-1',
+    order: 0,
+    kind: 'performance',
+    eventBandId: 'band-a',
+  }
+  const inserted = insertStageScheduleItem(
+    [existing],
+    'stage-day-1-a',
+    {
+      id: 'inserted-section-item',
+      stageId: 'stage-day-1-a',
+      sectionId: 'section-2',
+      order: 0,
+      kind: 'performance',
+      eventBandId: 'band-b',
+    },
+    0,
+  )
+
+  assert.equal(
+    inserted.find(item => item.id === existing.id).sectionId,
+    'section-1',
+  )
+  assert.equal(
+    inserted.find(item => item.id === 'inserted-section-item').sectionId,
+    'section-2',
+  )
+})
+
+test('legacy Stage helperはSectionなしScheduleItemを従来どおり並べ替える', () => {
+  const scheduleItems = [
+    {
+      id: 'item-a',
+      stageId: 'stage-day-1-a',
+      order: 0,
+      kind: 'performance',
+      eventBandId: 'band-a',
+    },
+    {
+      id: 'item-b',
+      stageId: 'stage-day-1-a',
+      order: 1,
+      kind: 'performance',
+      eventBandId: 'band-b',
+    },
+  ]
+  const reordered = reorderStageScheduleItems(
+    scheduleItems,
+    'stage-day-1-a',
+    1,
+    0,
+  ).sort((left, right) => left.order - right.order)
+
+  assert.deepEqual(reordered.map(item => [item.id, item.order]), [
+    ['item-b', 0],
+    ['item-a', 1],
+  ])
+  assert.ok(reordered.every(item => item.sectionId === undefined))
 })
 
 test('SectionなしStageのsectionIdなしScheduleItemは正常と判定する', () => {
