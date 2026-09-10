@@ -17,13 +17,16 @@ import {
   EVENT_MEMBER_DELETE_BLOCKED_MESSAGE,
   getEventBandCountByMember,
   getEventMemberDayDraftErrorKey,
+  getFirstEventMemberDayErrorTarget,
   hasEventMemberSettingsErrors,
   validateEventMemberSettingsDraft,
   type EventMemberSettingsDraft,
   type EventMemberSettingsUpdateResult,
   type EventMemberSettingsValidationErrors,
 } from '../domain/eventMemberSettings'
+import { getEventMemberDayConditionSummary } from '../domain/eventMemberDayDetails'
 import { AddEventMembersDialog } from './AddEventMembersDialog'
+import { EventMemberDayDetailsDialog } from './EventMemberDayDetailsDialog'
 
 interface EventMemberSettingsProps {
   event: Event
@@ -50,6 +53,11 @@ const emptyErrors = (): EventMemberSettingsValidationErrors => ({
   members: {},
   days: {},
 })
+
+interface MemberDetailsEditorState {
+  memberDraftId: string
+  initialEventDayId: EventDayId
+}
 
 const formatEventDay = (eventDay: EventDay): string => {
   if (eventDay.label?.trim()) return eventDay.label.trim()
@@ -85,6 +93,8 @@ export function EventMemberSettings({
   ))
   const [searchText, setSearchText] = useState('')
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
+  const [detailsEditor, setDetailsEditor] =
+    useState<MemberDetailsEditorState>()
   const [errors, setErrors] = useState<EventMemberSettingsValidationErrors>(
     emptyErrors,
   )
@@ -117,10 +127,57 @@ export function EventMemberSettings({
     (member) =>
       !savedEventMemberIds.has(member.id) && !draftMemberIds.has(member.id),
   )
+  const detailsMemberDraft = detailsEditor
+    ? draft.members.find(
+        (memberDraft) => memberDraft.draftId === detailsEditor.memberDraftId,
+      )
+    : undefined
+  const detailsMember = detailsMemberDraft
+    ? memberById.get(detailsMemberDraft.memberId)
+    : undefined
 
   const clearFeedback = () => {
     setSaveMessage('')
     setErrors((previous) => ({ ...previous, form: undefined }))
+  }
+
+  const presentValidationErrors = (
+    validationErrors: EventMemberSettingsValidationErrors,
+  ) => {
+    const target = getFirstEventMemberDayErrorTarget(
+      validationErrors,
+      draft,
+      orderedEventDays,
+    )
+    if (!target) {
+      setErrors(validationErrors)
+      return
+    }
+
+    const memberDraft = draft.members.find(
+      (candidate) => candidate.draftId === target.memberDraftId,
+    )
+    const member = memberDraft
+      ? memberById.get(memberDraft.memberId)
+      : undefined
+    const eventDay = orderedEventDays.find(
+      (candidate) => candidate.id === target.eventDayId,
+    )
+    setErrors({
+      ...validationErrors,
+      form: `${member?.realName ?? '不明なメンバー'} / ${
+        eventDay ? formatEventDay(eventDay) : '不明な開催日'
+      }：${target.message}`,
+    })
+
+    if (memberDraft?.days.some(
+      (day) => day.eventDayId === target.eventDayId,
+    )) {
+      setDetailsEditor({
+        memberDraftId: target.memberDraftId,
+        initialEventDayId: target.eventDayId,
+      })
+    }
   }
 
   const updateParticipationStatus = (
@@ -204,6 +261,30 @@ export function EventMemberSettings({
     setSaveMessage('')
   }
 
+  const handleApplyMemberDayDetails = (
+    memberDraftId: string,
+    days: EventMemberSettingsDraft['members'][number]['days'],
+  ) => {
+    setDraft((previous) => ({
+      members: previous.members.map((memberDraft) =>
+        memberDraft.draftId === memberDraftId
+          ? { ...memberDraft, days }
+          : memberDraft,
+      ),
+    }))
+    setErrors((previous) => {
+      const nextDayErrors = { ...previous.days }
+      Object.keys(nextDayErrors).forEach((errorKey) => {
+        if (errorKey.startsWith(`${memberDraftId}:`)) {
+          delete nextDayErrors[errorKey]
+        }
+      })
+      return { ...previous, days: nextDayErrors, form: undefined }
+    })
+    setSaveMessage('')
+    setDetailsEditor(undefined)
+  }
+
   const save = (moveToNext: boolean) => {
     const validationErrors = validateEventMemberSettingsDraft({
       event,
@@ -213,13 +294,15 @@ export function EventMemberSettings({
       eventMemberDays,
       draft,
     })
-    setErrors(validationErrors)
     setSaveMessage('')
-    if (hasEventMemberSettingsErrors(validationErrors)) return
+    if (hasEventMemberSettingsErrors(validationErrors)) {
+      presentValidationErrors(validationErrors)
+      return
+    }
 
     const result = onSave(draft)
     if (!result.ok) {
-      setErrors(result.errors)
+      presentValidationErrors(result.errors)
       return
     }
 
@@ -312,6 +395,9 @@ export function EventMemberSettings({
                           eventDay.id,
                         )
                         const dayError = errors.days[errorKey]
+                        const conditionSummary = dayDraft
+                          ? getEventMemberDayConditionSummary(dayDraft)
+                          : undefined
 
                         return (
                           <td key={eventDay.id}>
@@ -334,6 +420,21 @@ export function EventMemberSettings({
                                     </option>
                                   ))}
                                 </select>
+                                {conditionSummary && (
+                                  <div className="event-member-settings__day-summary">
+                                    <span>
+                                      {dayDraft.participationStatus === 'absent'
+                                        ? '時間条件は不使用'
+                                        : conditionSummary.availabilityLabel}
+                                    </span>
+                                    {conditionSummary.hasDetails && (
+                                      <strong>条件あり</strong>
+                                    )}
+                                    {conditionSummary.supplementaryLabel && (
+                                      <small>{conditionSummary.supplementaryLabel}</small>
+                                    )}
+                                  </div>
+                                )}
                                 {dayError && (
                                   <span className="event-member-settings__cell-error" role="alert">
                                     {dayError}
@@ -349,17 +450,34 @@ export function EventMemberSettings({
                         )
                       })}
                       <td>
-                        <button
-                          type="button"
-                          className="event-member-settings__delete"
-                          aria-label={`${memberName}をイベントから削除`}
-                          onClick={() => handleRemoveMember(
-                            memberDraft.memberId,
-                            memberDraft.draftId,
-                          )}
-                        >
-                          削除
-                        </button>
+                        <div className="event-member-settings__row-actions">
+                          <button
+                            type="button"
+                            className="event-member-settings__details"
+                            disabled={memberDraft.days.length === 0 || !member}
+                            aria-label={`${memberName}の日別詳細を設定`}
+                            onClick={() => {
+                              clearFeedback()
+                              setDetailsEditor({
+                                memberDraftId: memberDraft.draftId,
+                                initialEventDayId: memberDraft.days[0].eventDayId,
+                              })
+                            }}
+                          >
+                            詳細設定
+                          </button>
+                          <button
+                            type="button"
+                            className="event-member-settings__delete"
+                            aria-label={`${memberName}をイベントから削除`}
+                            onClick={() => handleRemoveMember(
+                              memberDraft.memberId,
+                              memberDraft.draftId,
+                            )}
+                          >
+                            削除
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   )
@@ -436,6 +554,27 @@ export function EventMemberSettings({
           members={addableMembers}
           onCancel={() => setIsAddDialogOpen(false)}
           onAdd={handleAddMembers}
+        />
+      )}
+      {detailsEditor && detailsMemberDraft && detailsMember && (
+        <EventMemberDayDetailsDialog
+          key={`${detailsEditor.memberDraftId}:${detailsEditor.initialEventDayId}`}
+          member={detailsMember}
+          memberDraft={detailsMemberDraft}
+          eventDays={orderedEventDays}
+          initialEventDayId={detailsEditor.initialEventDayId}
+          dayErrors={Object.fromEntries(orderedEventDays.map((eventDay) => [
+            eventDay.id,
+            errors.days[getEventMemberDayDraftErrorKey(
+              detailsMemberDraft.draftId,
+              eventDay.id,
+            )],
+          ]))}
+          onCancel={() => setDetailsEditor(undefined)}
+          onApply={(days) => handleApplyMemberDayDetails(
+            detailsMemberDraft.draftId,
+            days,
+          )}
         />
       )}
     </section>

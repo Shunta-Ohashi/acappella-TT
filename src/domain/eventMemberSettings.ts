@@ -11,12 +11,22 @@ import type {
   Member,
   MemberId,
   ParticipationStatus,
+  TimeRange,
 } from './models'
+import {
+  normalizeTimeRange,
+  normalizeTimeRanges,
+  validateAvailabilityWindows,
+  validatePreferredTimeRange,
+} from './eventMemberDayDetails.ts'
 
 export interface EventMemberDaySettingsDraft {
   eventMemberDayId?: EventMemberDayId
   eventDayId: EventDayId
   participationStatus: ParticipationStatus
+  availabilityWindows?: TimeRange[]
+  preferredTimeRange?: TimeRange
+  notes?: string
 }
 
 export interface EventMemberSettingsMemberDraft {
@@ -93,6 +103,37 @@ export const getEventMemberDayDraftErrorKey = (
   eventDayId: EventDayId,
 ): string => `${memberDraftId}:${eventDayId}`
 
+export interface EventMemberDayErrorTarget {
+  memberDraftId: string
+  eventDayId: EventDayId
+  message: string
+}
+
+export const getFirstEventMemberDayErrorTarget = (
+  errors: EventMemberSettingsValidationErrors,
+  draft: EventMemberSettingsDraft,
+  eventDays: EventDay[],
+): EventMemberDayErrorTarget | undefined => {
+  for (const memberDraft of draft.members) {
+    for (const eventDay of eventDays) {
+      const errorKey = getEventMemberDayDraftErrorKey(
+        memberDraft.draftId,
+        eventDay.id,
+      )
+      const message = errors.days[errorKey]
+      if (!message) continue
+
+      return {
+        memberDraftId: memberDraft.draftId,
+        eventDayId: eventDay.id,
+        message,
+      }
+    }
+  }
+
+  return undefined
+}
+
 export const createEventMemberSettingsDraft = (
   event: Event,
   eventDays: EventDay[],
@@ -124,6 +165,19 @@ export const createEventMemberSettingsDraft = (
             eventDayId: eventDay.id,
             participationStatus:
               existing?.participationStatus ?? 'undecided',
+            ...(existing?.availabilityWindows !== undefined
+              ? {
+                  availabilityWindows: existing.availabilityWindows.map(
+                    (window) => ({ ...window }),
+                  ),
+                }
+              : {}),
+            ...(existing?.preferredTimeRange
+              ? { preferredTimeRange: { ...existing.preferredTimeRange } }
+              : {}),
+            ...(existing?.notes !== undefined
+              ? { notes: existing.notes }
+              : {}),
           }
         }),
       })),
@@ -297,6 +351,16 @@ export const validateEventMemberSettingsDraft = ({
         errors.days[errorKey] = '参加状況が正しくありません。'
       }
 
+      const detailErrors = [
+        validateAvailabilityWindows(dayDraft.availabilityWindows),
+        dayDraft.preferredTimeRange
+          ? validatePreferredTimeRange(dayDraft.preferredTimeRange)
+          : undefined,
+      ].filter((error): error is string => error !== undefined)
+      if (detailErrors.length > 0) {
+        errors.days[errorKey] = detailErrors.join(' ')
+      }
+
       if (dayDraft.eventMemberDayId) {
         const existing = eventMemberDayById.get(dayDraft.eventMemberDayId)
         if (
@@ -397,6 +461,41 @@ export const createEventMemberSettingsUpdate = ({
   const updatedEventMembers: EventMember[] = []
   const updatedEventMemberDays: EventMemberDay[] = []
 
+  const applyDayDraft = (
+    eventMemberDay: EventMemberDay,
+    dayDraft: EventMemberDaySettingsDraft,
+  ): EventMemberDay => {
+    const updatedDay: EventMemberDay = {
+      ...eventMemberDay,
+      participationStatus: dayDraft.participationStatus,
+    }
+
+    if (dayDraft.availabilityWindows === undefined) {
+      delete updatedDay.availabilityWindows
+    } else {
+      updatedDay.availabilityWindows = normalizeTimeRanges(
+        dayDraft.availabilityWindows,
+      )
+    }
+
+    if (dayDraft.preferredTimeRange === undefined) {
+      delete updatedDay.preferredTimeRange
+    } else {
+      updatedDay.preferredTimeRange = normalizeTimeRange(
+        dayDraft.preferredTimeRange,
+      )
+    }
+
+    const notes = dayDraft.notes?.trim()
+    if (notes) {
+      updatedDay.notes = notes
+    } else {
+      delete updatedDay.notes
+    }
+
+    return updatedDay
+  }
+
   draft.members.forEach((memberDraft) => {
     const existingEventMember = memberDraft.eventMemberId
       ? currentEventMemberById.get(memberDraft.eventMemberId)
@@ -417,17 +516,13 @@ export const createEventMemberSettingsUpdate = ({
       const existingEventMemberDay = dayDraft.eventMemberDayId
         ? existingEventMemberDayById.get(dayDraft.eventMemberDayId)
         : undefined
-      updatedEventMemberDays.push(existingEventMemberDay
-        ? {
-            ...existingEventMemberDay,
-            participationStatus: dayDraft.participationStatus,
-          }
-        : {
+      const baseEventMemberDay: EventMemberDay = existingEventMemberDay ?? {
             id: newEventMemberDayIds[newEventMemberDayIndex++],
             eventMemberId: eventMember.id,
             eventDayId: eventDay.id,
             participationStatus: dayDraft.participationStatus,
-          })
+          }
+      updatedEventMemberDays.push(applyDayDraft(baseEventMemberDay, dayDraft))
     })
   })
 
