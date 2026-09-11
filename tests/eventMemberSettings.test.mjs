@@ -8,6 +8,8 @@ import {
   createEventMemberSettingsUpdate,
   EVENT_MEMBER_DELETE_BLOCKED_MESSAGE,
   getEventBandCountByMember,
+  getEventMemberDayDraftErrorKey,
+  getFirstEventMemberDayErrorTarget,
   hasEventMemberSettingsErrors,
   validateEventMemberSettingsDraft,
 } from '../src/domain/eventMemberSettings.ts'
@@ -414,4 +416,235 @@ test('重複Member・不正参照・不正statusを保存前validationで拒否�
   assert.ok(errors.members['invalid-existing'])
   assert.ok(errors.members['duplicate-member'])
   assert.ok(Object.keys(errors.days).length > 0)
+})
+
+test('日別詳細をdraftへ読み込み、既存EventMemberDay IDと他条件を維持して更新する', () => {
+  const eventMember = createEventMember('event-member-1', 'member-1')
+  const existingDay = createEventMemberDay(
+    'event-member-day-1',
+    eventMember.id,
+    'day-1',
+    'participating',
+    {
+      availabilityWindows: [{ from: '10:00', until: '12:00' }],
+      preferredTimeRange: { from: '10:30' },
+      notes: '既存メモ',
+    },
+  )
+  const draft = createEventMemberSettingsDraft(
+    event,
+    [eventDays[1]],
+    [eventMember],
+    [existingDay],
+  )
+
+  assert.deepEqual(draft.members[0].days[0], {
+    eventMemberDayId: existingDay.id,
+    eventDayId: 'day-1',
+    participationStatus: 'participating',
+    availabilityWindows: [{ from: '10:00', until: '12:00' }],
+    preferredTimeRange: { from: '10:30' },
+    notes: '既存メモ',
+  })
+  draft.members[0].days[0].availabilityWindows = [
+    { from: '15:00', until: '17:00' },
+  ]
+
+  const result = createEventMemberSettingsUpdate({
+    event,
+    eventDays: [eventDays[1]],
+    members,
+    eventMembers: [eventMember],
+    eventMemberDays: [existingDay],
+    eventBands: [],
+    draft,
+    newEventMemberIds: [],
+    newEventMemberDayIds: [],
+  })
+
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.deepEqual(result.eventMemberDays[0], {
+    ...existingDay,
+    availabilityWindows: [{ from: '15:00', until: '17:00' }],
+  })
+})
+
+test('不足EventMemberDayにも日別詳細を付けて新規IDで保存する', () => {
+  const eventMember = createEventMember('event-member-1', 'member-1')
+  const draft = createEventMemberSettingsDraft(
+    event,
+    [eventDays[1]],
+    [eventMember],
+    [],
+  )
+  Object.assign(draft.members[0].days[0], {
+    participationStatus: 'participating',
+    availabilityWindows: [{ until: '15:00' }, { from: '16:00' }],
+    preferredTimeRange: { from: '10:00', until: '12:00' },
+    notes: '  新規の日別メモ  ',
+  })
+
+  const result = createEventMemberSettingsUpdate({
+    event,
+    eventDays: [eventDays[1]],
+    members,
+    eventMembers: [eventMember],
+    eventMemberDays: [],
+    eventBands: [],
+    draft,
+    newEventMemberIds: [],
+    newEventMemberDayIds: ['new-event-member-day'],
+  })
+
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.deepEqual(result.eventMemberDays, [{
+    id: 'new-event-member-day',
+    eventMemberId: eventMember.id,
+    eventDayId: 'day-1',
+    participationStatus: 'participating',
+    availabilityWindows: [{ until: '15:00' }, { from: '16:00' }],
+    preferredTimeRange: { from: '10:00', until: '12:00' },
+    notes: '新規の日別メモ',
+  }])
+})
+
+test('absentへの変更では日別時間条件を削除せず、参加へ戻しても維持する', () => {
+  const eventMember = createEventMember('event-member-1', 'member-1')
+  const existingDay = createEventMemberDay(
+    'event-member-day-1',
+    eventMember.id,
+    'day-1',
+    'participating',
+    {
+      availabilityWindows: [{ from: '13:00' }],
+      preferredTimeRange: { until: '17:00' },
+      notes: '保持するメモ',
+    },
+  )
+  const draft = createEventMemberSettingsDraft(
+    event,
+    [eventDays[1]],
+    [eventMember],
+    [existingDay],
+  )
+  draft.members[0].days[0].participationStatus = 'absent'
+
+  const absentResult = createEventMemberSettingsUpdate({
+    event,
+    eventDays: [eventDays[1]],
+    members,
+    eventMembers: [eventMember],
+    eventMemberDays: [existingDay],
+    eventBands: [],
+    draft,
+    newEventMemberIds: [],
+    newEventMemberDayIds: [],
+  })
+
+  assert.equal(absentResult.ok, true)
+  if (!absentResult.ok) return
+  assert.deepEqual(absentResult.eventMemberDays[0], {
+    ...existingDay,
+    participationStatus: 'absent',
+  })
+
+  const restoredDraft = createEventMemberSettingsDraft(
+    event,
+    [eventDays[1]],
+    [eventMember],
+    absentResult.eventMemberDays,
+  )
+  restoredDraft.members[0].days[0].participationStatus = 'participating'
+  assert.deepEqual(
+    restoredDraft.members[0].days[0].availabilityWindows,
+    existingDay.availabilityWindows,
+  )
+  assert.deepEqual(
+    restoredDraft.members[0].days[0].preferredTimeRange,
+    existingDay.preferredTimeRange,
+  )
+})
+
+test('日別詳細の不正TimeRangeを保存前に検出し、最初のMemberとEventDayを特定する', () => {
+  const eventMember = createEventMember('event-member-1', 'member-1')
+  const draft = createEventMemberSettingsDraft(
+    event,
+    eventDays,
+    [eventMember],
+    [],
+  )
+  draft.members[0].days[1].availabilityWindows = [
+    { from: '17:00', until: '15:00' },
+  ]
+  const errors = validateEventMemberSettingsDraft({
+    event,
+    eventDays,
+    members,
+    eventMembers: [eventMember],
+    eventMemberDays: [],
+    draft,
+  })
+  const errorKey = getEventMemberDayDraftErrorKey(
+    draft.members[0].draftId,
+    'day-2',
+  )
+
+  assert.match(errors.days[errorKey], /開始時刻は終了時刻より前/)
+  assert.deepEqual(
+    getFirstEventMemberDayErrorTarget(errors, draft, [
+      eventDays[1],
+      eventDays[0],
+    ]),
+    {
+      memberDraftId: draft.members[0].draftId,
+      eventDayId: 'day-2',
+      message: errors.days[errorKey],
+    },
+  )
+})
+
+test('選択Eventの詳細保存で別EventのEventMemberDayを変更しない', () => {
+  const eventMember = createEventMember('event-member-1', 'member-1')
+  const otherEventMember = createEventMember(
+    'event-member-other',
+    'member-2',
+    otherEvent.id,
+  )
+  const selectedDay = createEventMemberDay(
+    'selected-day',
+    eventMember.id,
+    'day-1',
+  )
+  const otherDay = createEventMemberDay(
+    'other-day-data',
+    otherEventMember.id,
+    'other-day',
+    'participating',
+    { notes: '別イベントのメモ' },
+  )
+  const draft = createEventMemberSettingsDraft(
+    event,
+    [eventDays[1]],
+    [eventMember],
+    [selectedDay],
+  )
+  draft.members[0].days[0].notes = '選択イベントのメモ'
+
+  const result = createEventMemberSettingsUpdate({
+    event,
+    eventDays: [eventDays[1]],
+    members,
+    eventMembers: [eventMember, otherEventMember],
+    eventMemberDays: [selectedDay, otherDay],
+    eventBands: [],
+    draft,
+    newEventMemberIds: [],
+    newEventMemberDayIds: [],
+  })
+
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.ok(result.eventMemberDays.some((day) => day === otherDay))
 })
