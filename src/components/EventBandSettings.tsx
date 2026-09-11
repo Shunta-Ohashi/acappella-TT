@@ -96,12 +96,8 @@ export function EventBandSettings({
     setSaveMessage('')
   }
 
-  const handleApplyItems = (
-    items: EventBandSettingsItemDraft[],
-    performanceSlotMinutes: number[],
-  ) => {
+  const handleApplyItems = (items: EventBandSettingsItemDraft[]) => {
     setDraft((previous) => ({
-      performanceSlotMinutes,
       items: items.length === 1 && previous.items.some(
         (candidate) => candidate.draftId === items[0].draftId,
       )
@@ -166,7 +162,7 @@ export function EventBandSettings({
       return
     }
 
-    setDraft(createEventBandSettingsDraft(result.event, result.eventBands))
+    setDraft(createEventBandSettingsDraft(event, result.eventBands))
     setErrors(emptyErrors())
     if (moveToNext) {
       onSaveAndNext()
@@ -293,12 +289,6 @@ export function EventBandSettings({
         )}
 
         {errors.form && <p className="form-error" role="alert">{errors.form}</p>}
-        {errors.performanceSlotMinutes && (
-          <p className="form-error" role="alert">
-            {errors.performanceSlotMinutes}
-          </p>
-        )}
-
         <footer className="event-band-settings__footer">
           <span role="status">{saveMessage}</span>
           <div>
@@ -324,7 +314,7 @@ export function EventBandSettings({
             ? editorItem?.eventDayId ?? orderedEventDays[0].id
             : editor.eventDayId}
           item={editorItem}
-          performanceSlotMinutes={draft.performanceSlotMinutes}
+          performanceSlotMinutes={event.performanceSlotMinutes}
           createDraftId={createDraftId}
           onCancel={() => setEditor(undefined)}
           onApply={handleApplyItems}

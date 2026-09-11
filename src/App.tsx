@@ -544,9 +544,6 @@ function App() {
     })
     if (!result.ok) return result
 
-    setEvents((previous) => previous.map((event) =>
-      event.id === selectedEvent.id ? result.event : event,
-    ))
     setEventBands(result.eventBands)
     return result
   }
@@ -610,6 +607,7 @@ function App() {
 
   const handleSaveEventStageSettings = (
     defaultTransitionMinutes: string,
+    performanceSlotMinutes: number[],
     stageDrafts: StageSettingsDraft[],
     sectionDrafts: SectionSettingsDraft[],
   ): EventStageSettingsUpdateResult => {
@@ -631,6 +629,7 @@ function App() {
       sections: selectedSections,
       draft: {
         defaultTransitionMinutes,
+        performanceSlotMinutes,
         stages: stageDrafts,
         sections: sectionDrafts,
       },

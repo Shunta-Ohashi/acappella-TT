@@ -1051,13 +1051,18 @@
 
 .event-stage-settings__overview {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(210px, 0.45fr);
   gap: 28px;
   padding: 24px 26px;
 }
 
+.event-stage-settings__days {
+  grid-row: span 2;
+}
+
 .event-stage-settings__days > p,
-.event-stage-settings__common-transition > label {
+.event-stage-settings__common-transition > label,
+.event-stage-settings__common-slots > p {
   display: block;
   margin: 0 0 10px;
   color: #344154;
@@ -2955,6 +2960,10 @@
     padding: 20px 18px;
   }
 
+  .event-stage-settings__days {
+    grid-row: auto;
+  }
+
   .event-stage-settings__common-transition {
     min-width: 0;
   }
@@ -3385,6 +3394,71 @@
   font: inherit;
 }
 
+.event-stage-settings__common-slots > p {
+  font-weight: 700;
+}
+
+.event-stage-settings__slot-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.event-stage-settings__slot-list > span {
+  padding: 5px 9px;
+  border: 1px solid #ccd6e2;
+  border-radius: 999px;
+  background: #f7f9fc;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.event-stage-settings__add-slot {
+  margin-top: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #315f8c;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.event-stage-settings__custom-slot {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.event-stage-settings__custom-slot > label {
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.event-stage-settings__custom-slot > div {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) auto auto;
+  gap: 6px;
+}
+
+.event-stage-settings__custom-slot input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 9px;
+  border: 1px solid #cbd4df;
+  border-radius: 7px;
+  background: #fff;
+  color: #1f2937;
+}
+
 .event-band-form__fixed-list,
 .event-band-form__member-list {
   display: grid;
@@ -3437,35 +3511,6 @@
 
 .event-band-form__minutes input {
   max-width: 110px;
-}
-
-.event-band-form__add-slot {
-  justify-self: start;
-  margin-top: 4px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: #315f8c;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.event-band-form__custom-slot {
-  display: grid;
-  gap: 6px;
-  margin-top: 6px;
-  padding: 10px;
-  border: 1px solid #d7dee8;
-  border-radius: 8px;
-  background: #f8fafc;
-}
-
-.event-band-form__custom-slot > div {
-  display: grid;
-  grid-template-columns: minmax(80px, 1fr) auto auto;
-  gap: 6px;
 }
 
 .event-band-form__help,

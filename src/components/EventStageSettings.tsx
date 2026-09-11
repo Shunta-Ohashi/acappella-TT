@@ -10,6 +10,7 @@ import type {
 } from '../domain/models'
 import {
   createEventStageSettingsDraft,
+  addPerformanceSlotMinute,
   FIRST_SECTION_ADD_BLOCKED_MESSAGE,
   getEventStageSettingsErrorEventDayIds,
   hasEventStageSettingsErrors,
@@ -33,6 +34,7 @@ interface EventStageSettingsProps {
   canDeleteSection: (sectionId: SectionId) => boolean
   onSave: (
     defaultTransitionMinutes: string,
+    performanceSlotMinutes: number[],
     stages: StageSettingsDraft[],
     sections: SectionSettingsDraft[],
   ) => EventStageSettingsUpdateResult
@@ -74,6 +76,12 @@ export function EventStageSettings({
   const [defaultTransitionMinutes, setDefaultTransitionMinutes] = useState(
     initialDraft.defaultTransitionMinutes,
   )
+  const [performanceSlotMinutes, setPerformanceSlotMinutes] = useState(
+    initialDraft.performanceSlotMinutes,
+  )
+  const [isAddingPerformanceSlot, setIsAddingPerformanceSlot] = useState(false)
+  const [newPerformanceSlotMinute, setNewPerformanceSlotMinute] = useState('')
+  const [performanceSlotInputError, setPerformanceSlotInputError] = useState('')
   const [stageDrafts, setStageDrafts] = useState(initialDraft.stages)
   const [sectionDrafts, setSectionDrafts] = useState(initialDraft.sections)
   const [nextStageDraftKey, setNextStageDraftKey] = useState(0)
@@ -99,6 +107,7 @@ export function EventStageSettings({
     getEventStageSettingsErrorEventDayIds(
       {
         defaultTransitionMinutes,
+        performanceSlotMinutes,
         stages: stageDrafts,
         sections: sectionDrafts,
       },
@@ -109,6 +118,28 @@ export function EventStageSettings({
   const clearFeedback = () => {
     setSaveMessage('')
     setErrors((previous) => ({ ...previous, form: undefined }))
+  }
+
+  const handleAddPerformanceSlot = () => {
+    const result = addPerformanceSlotMinute(
+      performanceSlotMinutes,
+      newPerformanceSlotMinute,
+    )
+    if (!result.ok) {
+      setPerformanceSlotInputError(result.error)
+      return
+    }
+
+    setPerformanceSlotMinutes(result.performanceSlotMinutes)
+    setNewPerformanceSlotMinute('')
+    setPerformanceSlotInputError('')
+    setIsAddingPerformanceSlot(false)
+    setErrors((previous) => ({
+      ...previous,
+      performanceSlotMinutes: undefined,
+      form: undefined,
+    }))
+    setSaveMessage('')
   }
 
   const updateStage = (
@@ -280,6 +311,7 @@ export function EventStageSettings({
   const save = (moveToNext: boolean) => {
     const draft = {
       defaultTransitionMinutes,
+      performanceSlotMinutes,
       stages: stageDrafts,
       sections: sectionDrafts,
     }
@@ -300,6 +332,7 @@ export function EventStageSettings({
 
     const result = onSave(
       defaultTransitionMinutes,
+      performanceSlotMinutes,
       stageDrafts,
       sectionDrafts,
     )
@@ -322,6 +355,7 @@ export function EventStageSettings({
       result.sections,
     )
     setDefaultTransitionMinutes(savedDraft.defaultTransitionMinutes)
+    setPerformanceSlotMinutes(savedDraft.performanceSlotMinutes)
     setStageDrafts(savedDraft.stages)
     setSectionDrafts(savedDraft.sections)
 
@@ -410,6 +444,80 @@ export function EventStageSettings({
                 role="alert"
               >
                 {errors.defaultTransitionMinutes}
+              </p>
+            )}
+          </div>
+
+          <div className="event-stage-settings__common-slots">
+            <p>このイベントで使用する出演枠</p>
+            <div className="event-stage-settings__slot-list" aria-label="設定済みの出演枠">
+              {performanceSlotMinutes.map((minutes) => (
+                <span key={minutes}>{minutes}分枠</span>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="event-stage-settings__add-slot"
+              onClick={() => {
+                setIsAddingPerformanceSlot(true)
+                setPerformanceSlotInputError('')
+              }}
+            >
+              <span aria-hidden="true">＋</span> 出演枠を追加
+            </button>
+            {isAddingPerformanceSlot && (
+              <div className="event-stage-settings__custom-slot">
+                <label htmlFor="event-stage-new-slot">追加する出演枠（分）</label>
+                <div>
+                  <input
+                    id="event-stage-new-slot"
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={newPerformanceSlotMinute}
+                    aria-invalid={performanceSlotInputError ? 'true' : undefined}
+                    aria-describedby={performanceSlotInputError
+                      ? 'event-stage-new-slot-error'
+                      : undefined}
+                    onChange={(changeEvent) => {
+                      setNewPerformanceSlotMinute(changeEvent.target.value)
+                      setPerformanceSlotInputError('')
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => {
+                      setIsAddingPerformanceSlot(false)
+                      setNewPerformanceSlotMinute('')
+                      setPerformanceSlotInputError('')
+                    }}
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    aria-label="出演枠を追加"
+                    onClick={handleAddPerformanceSlot}
+                  >
+                    追加
+                  </button>
+                </div>
+                {performanceSlotInputError && (
+                  <p
+                    id="event-stage-new-slot-error"
+                    className="form-error"
+                    role="alert"
+                  >
+                    {performanceSlotInputError}
+                  </p>
+                )}
+              </div>
+            )}
+            {errors.performanceSlotMinutes && (
+              <p className="form-error" role="alert">
+                {errors.performanceSlotMinutes}
               </p>
             )}
           </div>

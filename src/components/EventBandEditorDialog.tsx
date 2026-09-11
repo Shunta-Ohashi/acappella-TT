@@ -12,14 +12,12 @@ import type {
   TimeRange,
 } from '../domain/models'
 import {
-  addPerformanceSlotMinute,
   canChangeEventBandDay,
   createEventOnlyBandDraft,
   createFixedBandDraft,
   getEventBandDayFeasibility,
   getEventBandSourceLabel,
   hasEventBandSettingsItemErrors,
-  normalizePerformanceSlotMinutes,
   validateEventBandSettingsItem,
   type EventBandSettingsItemDraft,
   type EventBandSettingsItemErrors,
@@ -41,7 +39,6 @@ interface EventBandEditorDialogProps {
   onCancel: () => void
   onApply: (
     items: EventBandSettingsItemDraft[],
-    performanceSlotMinutes: number[],
   ) => void
 }
 
@@ -90,7 +87,7 @@ export function EventBandEditorDialog({
   scheduleItems,
   initialEventDayId,
   item,
-  performanceSlotMinutes: initialPerformanceSlotMinutes,
+  performanceSlotMinutes,
   createDraftId,
   onCancel,
   onApply,
@@ -112,12 +109,6 @@ export function EventBandEditorDialog({
   const [unregisteredDefaultMemberIds, setUnregisteredDefaultMemberIds] =
     useState<MemberId[]>([])
   const [errors, setErrors] = useState<EventBandSettingsItemErrors>({})
-  const [performanceSlotMinutes, setPerformanceSlotMinutes] = useState(
-    initialPerformanceSlotMinutes,
-  )
-  const [isAddingPerformanceSlot, setIsAddingPerformanceSlot] = useState(false)
-  const [newPerformanceSlotMinute, setNewPerformanceSlotMinute] = useState('')
-  const [performanceSlotError, setPerformanceSlotError] = useState('')
   const memberById = new Map(members.map((member) => [member.id, member]))
   const selectedEventMembers = eventMembers.filter((eventMember) =>
     eventMember.eventId === event.id,
@@ -141,12 +132,6 @@ export function EventBandEditorDialog({
     scheduleItems,
   )
   const durationMinutes = Number(draft?.durationMinutes)
-  const selectablePerformanceSlotMinutes = normalizePerformanceSlotMinutes([
-    ...performanceSlotMinutes,
-    ...(isEditing && Number.isSafeInteger(durationMinutes) && durationMinutes > 0
-      ? [durationMinutes]
-      : []),
-  ])
   const feasibilityByEventDayId = new Map<EventDayId, EventBandDayFeasibility>(
     selectedEventDayIds.map((eventDayId) => [
       eventDayId,
@@ -243,22 +228,6 @@ export function EventBandEditorDialog({
     clearError('memberIds')
   }
 
-  const handleAddPerformanceSlot = () => {
-    const result = addPerformanceSlotMinute(
-      performanceSlotMinutes,
-      newPerformanceSlotMinute,
-    )
-    if (!result.ok) {
-      setPerformanceSlotError(result.error)
-      return
-    }
-
-    setPerformanceSlotMinutes(result.performanceSlotMinutes)
-    setNewPerformanceSlotMinute('')
-    setPerformanceSlotError('')
-    setIsAddingPerformanceSlot(false)
-  }
-
   const handleSubmit = (submitEvent: FormEvent<HTMLFormElement>) => {
     submitEvent.preventDefault()
     if (!draft) {
@@ -282,24 +251,27 @@ export function EventBandEditorDialog({
       bands,
       performanceSlotMinutes,
     })
-    const blockingDays = isEditing
-      ? []
-      : targetEventDayIds.filter((eventDayId) =>
-          feasibilityByEventDayId.get(eventDayId)?.status === 'blocked'
-        )
+    const blockingDays = targetEventDayIds.filter((eventDayId) =>
+      getEventBandDayFeasibility({
+        event,
+        eventDayId,
+        memberIds: draft.memberIds,
+        durationMinutes,
+        members,
+        eventMembers,
+        eventMemberDays,
+      }).status === 'blocked'
+    )
     if (blockingDays.length > 0) {
       validationErrors.form = '出演できない開催日があります。日付選択またはメンバー構成を確認してください。'
     }
     setErrors(validationErrors)
     if (hasEventBandSettingsItemErrors(validationErrors)) return
-    onApply(
-      targetEventDayIds.map((eventDayId, index) => ({
-        ...draft,
-        draftId: index === 0 ? draft.draftId : createDraftId(),
-        eventDayId,
-      })),
-      performanceSlotMinutes,
-    )
+    onApply(targetEventDayIds.map((eventDayId, index) => ({
+      ...draft,
+      draftId: index === 0 ? draft.draftId : createDraftId(),
+      eventDayId,
+    })))
   }
 
   const getParticipationLabel = (memberId: MemberId): string => {
@@ -508,62 +480,13 @@ export function EventBandEditorDialog({
                     }}
                   >
                   <option value="">出演枠を選択</option>
-                  {selectablePerformanceSlotMinutes.map((minutes) => (
+                  {performanceSlotMinutes.map((minutes) => (
                     <option key={minutes} value={minutes}>{minutes}分枠</option>
                   ))}
                 </select>
-                <button
-                  type="button"
-                  className="event-band-form__add-slot"
-                  onClick={() => {
-                    setIsAddingPerformanceSlot(true)
-                    setPerformanceSlotError('')
-                  }}
-                >
-                  <span aria-hidden="true">＋</span> 出演枠を追加
-                </button>
-                {isAddingPerformanceSlot && (
-                  <div className="event-band-form__custom-slot">
-                    <label htmlFor="event-band-new-slot">追加する出演枠（分）</label>
-                    <div>
-                      <input
-                        id="event-band-new-slot"
-                        type="number"
-                        min="1"
-                        step="1"
-                        value={newPerformanceSlotMinute}
-                        aria-invalid={performanceSlotError ? 'true' : undefined}
-                        onChange={(changeEvent) => {
-                          setNewPerformanceSlotMinute(changeEvent.target.value)
-                          setPerformanceSlotError('')
-                        }}
-                      />
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={() => {
-                          setIsAddingPerformanceSlot(false)
-                          setNewPerformanceSlotMinute('')
-                          setPerformanceSlotError('')
-                        }}
-                      >
-                        キャンセル
-                      </button>
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={handleAddPerformanceSlot}
-                      >
-                        追加
-                      </button>
-                    </div>
-                    {performanceSlotError && (
-                      <p className="form-error" role="alert">
-                        {performanceSlotError}
-                      </p>
-                    )}
-                  </div>
-                )}
+                <p className="event-band-form__help">
+                  必要な出演枠がない場合はStep 2で追加してください。
+                </p>
                 {errors.durationMinutes && (
                   <p className="form-error" role="alert">{errors.durationMinutes}</p>
                 )}

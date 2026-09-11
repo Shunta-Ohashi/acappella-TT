@@ -2,7 +2,6 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  addPerformanceSlotMinute,
   canChangeEventBandDay,
   canDeleteEventBand,
   createEventBandSettingsDraft,
@@ -12,9 +11,12 @@ import {
   getEventBandDayFeasibility,
   getEventBandSourceLabel,
   hasEventBandSettingsErrors,
-  normalizePerformanceSlotMinutes,
   validateEventBandSettingsDraft,
 } from '../src/domain/eventBandSettings.ts'
+import {
+  addPerformanceSlotMinute,
+  normalizePerformanceSlotMinutes,
+} from '../src/domain/eventStageSettings.ts'
 
 const event = {
   id: 'event-1',
@@ -87,12 +89,13 @@ const createDraftItem = (overrides = {}) => ({
 
 const update = ({
   draft,
+  configuredEvent = event,
   eventBands = [],
   eventMemberDays = defaultEventMemberDays,
   scheduleItems = [],
   newEventBandIds = [],
 }) => createEventBandSettingsUpdate({
-  event,
+  event: configuredEvent,
   eventDays,
   members,
   bands,
@@ -100,10 +103,7 @@ const update = ({
   eventMembers,
   eventMemberDays,
   scheduleItems,
-  draft: {
-    performanceSlotMinutes: event.performanceSlotMinutes,
-    ...draft,
-  },
+  draft,
   newEventBandIds,
 })
 
@@ -166,7 +166,8 @@ test('イベント限定EventBandをbandIdなしで作成・保存できる', ()
     durationMinutes: '7',
   }
   const result = update({
-    draft: { performanceSlotMinutes: [5, 7, 10, 15], items: [draftItem] },
+    configuredEvent: { ...event, performanceSlotMinutes: [5, 7, 10, 15] },
+    draft: { items: [draftItem] },
     newEventBandIds: ['event-band-new'],
   })
 
@@ -186,24 +187,18 @@ test('イベント限定EventBandをbandIdなしで作成・保存できる', ()
 test('新規EventBandはEventの出演枠から選び、custom枠もdurationへ保存する', () => {
   for (const durationMinutes of [5, 10, 9]) {
     const result = update({
-      draft: {
-        performanceSlotMinutes: [5, 9, 10, 15],
-        items: [createDraftItem({ durationMinutes: String(durationMinutes) })],
-      },
+      configuredEvent: { ...event, performanceSlotMinutes: [5, 9, 10, 15] },
+      draft: { items: [createDraftItem({ durationMinutes: String(durationMinutes) })] },
       newEventBandIds: [`event-band-${durationMinutes}`],
     })
     assert.equal(result.ok, true)
     if (result.ok) {
       assert.equal(result.eventBands[0].durationMinutes, durationMinutes)
-      assert.deepEqual(result.event.performanceSlotMinutes, [5, 9, 10, 15])
     }
   }
 
   const unconfigured = update({
-    draft: {
-      performanceSlotMinutes: [5, 10, 15],
-      items: [createDraftItem({ durationMinutes: '9' })],
-    },
+    draft: { items: [createDraftItem({ durationMinutes: '9' })] },
     newEventBandIds: ['event-band-invalid-slot'],
   })
   assert.equal(unconfigured.ok, false)
@@ -214,7 +209,6 @@ test('新規EventBandはEventの出演枠から選び、custom枠もdurationへ�
 
 test('空name・不正duration・0人・Member重複・不正EventDayを拒否する', () => {
   const draft = {
-    performanceSlotMinutes: event.performanceSlotMinutes,
     items: [createDraftItem({
       name: '   ',
       durationMinutes: '0',
@@ -239,7 +233,6 @@ test('空name・不正duration・0人・Member重複・不正EventDayを拒否�
 
   const duplicateErrors = validateEventBandSettingsDraft({
     draft: {
-      performanceSlotMinutes: event.performanceSlotMinutes,
       items: [createDraftItem({ memberIds: ['member-1', 'member-1'] })],
     },
     event,
@@ -275,7 +268,7 @@ test('編集でIDとbandIdと既存条件を維持し、snapshot項目だけ変�
   Object.assign(draft.items[0], {
     name: '今回だけ5人編成',
     memberIds: ['member-1'],
-    durationMinutes: '12',
+    durationMinutes: '15',
   })
   const result = update({ draft, eventBands: [existing] })
 
@@ -285,27 +278,32 @@ test('編集でIDとbandIdと既存条件を維持し、snapshot項目だけ変�
     ...existing,
     name: '今回だけ5人編成',
     memberIds: ['member-1'],
-    durationMinutes: 12,
+    durationMinutes: 15,
   })
 })
 
-test('optionにない既存durationもdraft化・保存でき、作成後は個別変更できる', () => {
-  const dayOne = createExistingEventBand({ durationMinutes: 9 })
-  const dayTwo = createExistingEventBand({
-    id: 'event-band-2',
-    eventDayId: 'day-2',
-    durationMinutes: 9,
-  })
-  const draft = createEventBandSettingsDraft(event, [dayOne, dayTwo])
-  assert.deepEqual(draft.performanceSlotMinutes, [5, 10, 15])
-  assert.equal(draft.items[0].durationMinutes, '9')
-  draft.items[0].durationMinutes = '5'
+test('既存EventBandも設定済み出演枠だけへ変更でき、option外durationを拒否する', () => {
+  const existing = createExistingEventBand()
+  const validDraft = createEventBandSettingsDraft(event, [existing])
+  validDraft.items[0].durationMinutes = '15'
+  const valid = update({ draft: validDraft, eventBands: [existing] })
+  assert.equal(valid.ok, true)
+  if (valid.ok) assert.equal(valid.eventBands[0].durationMinutes, 15)
 
-  const result = update({ draft, eventBands: [dayOne, dayTwo] })
-  assert.equal(result.ok, true)
-  if (!result.ok) return
-  assert.equal(result.eventBands[0].durationMinutes, 5)
-  assert.equal(result.eventBands[1].durationMinutes, 9)
+  const invalidDraft = createEventBandSettingsDraft(event, [existing])
+  invalidDraft.items[0].durationMinutes = '13'
+  const invalid = update({ draft: invalidDraft, eventBands: [existing] })
+  assert.equal(invalid.ok, false)
+  if (!invalid.ok) {
+    assert.match(invalid.errors.items[invalidDraft.items[0].draftId].durationMinutes, /出演枠/)
+  }
+
+  const inconsistent = createExistingEventBand({ durationMinutes: 9 })
+  const inconsistentResult = update({
+    draft: createEventBandSettingsDraft(event, [inconsistent]),
+    eventBands: [inconsistent],
+  })
+  assert.equal(inconsistentResult.ok, false)
 })
 
 test('未配置なら出演日を変更でき、配置済みならUI判定と保存処理で拒否する', () => {
@@ -434,8 +432,8 @@ test('固定Bandとイベント限定Bandを複数日へ別IDのEventBandとし�
     durationMinutes: '8',
   }
   const eventOnlyResult = update({
+    configuredEvent: { ...event, performanceSlotMinutes: [5, 8, 10, 15] },
     draft: {
-      performanceSlotMinutes: [5, 8, 10, 15],
       items: [
         eventOnly,
         { ...eventOnly, draftId: 'event-only-day-2', eventDayId: 'day-2' },
@@ -709,4 +707,70 @@ test('新規EventBandの保存でも日別blockを拒否し、undecided警告だ
     newEventBandIds: ['warning-band'],
   })
   assert.equal(allowed.ok, true)
+})
+
+test('既存EventBand編集でもduration・Member・出演日のfeasibilityを再判定する', () => {
+  const existing = createExistingEventBand({ durationMinutes: 5 })
+
+  const longerDraft = createEventBandSettingsDraft(event, [existing])
+  longerDraft.items[0].durationMinutes = '15'
+  const longer = update({
+    draft: longerDraft,
+    eventBands: [existing],
+    eventMemberDays: eventMemberDaysFor([
+      {
+        eventMemberId: 'event-member-1',
+        eventDayId: 'day-1',
+        availabilityWindows: [{ from: '10:00', until: '10:10' }],
+      },
+      { eventMemberId: 'event-member-2', eventDayId: 'day-1' },
+    ]),
+  })
+  assert.equal(longer.ok, false)
+
+  const absentDraft = createEventBandSettingsDraft(event, [existing])
+  const absent = update({
+    draft: absentDraft,
+    eventBands: [existing],
+    eventMemberDays: eventMemberDaysFor([
+      { eventMemberId: 'event-member-1', eventDayId: 'day-1' },
+      {
+        eventMemberId: 'event-member-2',
+        eventDayId: 'day-1',
+        participationStatus: 'absent',
+      },
+    ]),
+  })
+  assert.equal(absent.ok, false)
+
+  const movedDraft = createEventBandSettingsDraft(event, [existing])
+  movedDraft.items[0].eventDayId = 'day-2'
+  const moved = update({
+    draft: movedDraft,
+    eventBands: [existing],
+    eventMemberDays: eventMemberDaysFor([
+      {
+        eventMemberId: 'event-member-1',
+        eventDayId: 'day-2',
+        participationStatus: 'absent',
+      },
+      { eventMemberId: 'event-member-2', eventDayId: 'day-2' },
+    ]),
+  })
+  assert.equal(moved.ok, false)
+
+  const undecidedDraft = createEventBandSettingsDraft(event, [existing])
+  const undecided = update({
+    draft: undecidedDraft,
+    eventBands: [existing],
+    eventMemberDays: eventMemberDaysFor([
+      {
+        eventMemberId: 'event-member-1',
+        eventDayId: 'day-1',
+        participationStatus: 'undecided',
+      },
+      { eventMemberId: 'event-member-2', eventDayId: 'day-1' },
+    ]),
+  })
+  assert.equal(undecided.ok, true)
 })

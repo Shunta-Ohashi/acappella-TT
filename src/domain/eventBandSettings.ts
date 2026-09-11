@@ -31,7 +31,6 @@ export interface EventBandSettingsItemDraft {
 
 export interface EventBandSettingsDraft {
   items: EventBandSettingsItemDraft[]
-  performanceSlotMinutes: number[]
 }
 
 export interface EventBandSettingsItemErrors {
@@ -44,12 +43,11 @@ export interface EventBandSettingsItemErrors {
 
 export interface EventBandSettingsValidationErrors {
   items: Record<string, EventBandSettingsItemErrors>
-  performanceSlotMinutes?: string
   form?: string
 }
 
 export type EventBandSettingsUpdateResult =
-  | { ok: true; event: Event; eventBands: EventBand[] }
+  | { ok: true; eventBands: EventBand[] }
   | { ok: false; errors: EventBandSettingsValidationErrors }
 
 export interface FixedBandDraftResult {
@@ -73,54 +71,6 @@ interface MinuteWindow {
 }
 
 const MINUTES_PER_DAY = 24 * 60
-
-const isValidPerformanceSlotMinute = (value: number): boolean =>
-  Number.isFinite(value) && Number.isSafeInteger(value) && value > 0
-
-export const normalizePerformanceSlotMinutes = (
-  values: number[],
-): number[] => [...new Set(values)].sort((first, second) => first - second)
-
-export type AddPerformanceSlotMinuteResult =
-  | { ok: true; performanceSlotMinutes: number[] }
-  | { ok: false; error: string }
-
-export const addPerformanceSlotMinute = (
-  performanceSlotMinutes: number[],
-  rawValue: string,
-): AddPerformanceSlotMinuteResult => {
-  const normalizedValue = rawValue.trim()
-  const value = Number(normalizedValue)
-
-  if (
-    !/^\d+$/.test(normalizedValue) ||
-    !isValidPerformanceSlotMinute(value)
-  ) {
-    return { ok: false, error: '出演枠は1分以上の整数で入力してください。' }
-  }
-  if (performanceSlotMinutes.includes(value)) {
-    return { ok: false, error: `${value}分枠はすでに登録されています。` }
-  }
-
-  return {
-    ok: true,
-    performanceSlotMinutes: normalizePerformanceSlotMinutes([
-      ...performanceSlotMinutes,
-      value,
-    ]),
-  }
-}
-
-const validatePerformanceSlotMinutes = (values: number[]): string | undefined => {
-  if (values.length === 0) return '出演枠を1件以上設定してください。'
-  if (values.some((value) => !isValidPerformanceSlotMinute(value))) {
-    return '出演枠は1分以上の整数で設定してください。'
-  }
-  if (new Set(values).size !== values.length) {
-    return '同じ出演枠を重複して設定できません。'
-  }
-  return undefined
-}
 
 const toMinuteWindows = (
   windows: TimeRange[] | undefined,
@@ -288,9 +238,6 @@ export const createEventBandSettingsDraft = (
   event: Event,
   eventBands: EventBand[],
 ): EventBandSettingsDraft => ({
-  performanceSlotMinutes: normalizePerformanceSlotMinutes(
-    event.performanceSlotMinutes,
-  ),
   items: eventBands
     .filter((eventBand) => eventBand.eventId === event.id)
     .map((eventBand) => ({
@@ -399,7 +346,6 @@ export const validateEventBandSettingsItem = ({
   ) {
     errors.durationMinutes = '出演時間は1分以上の整数で入力してください。'
   } else if (
-    !item.eventBandId &&
     !performanceSlotMinutes.includes(durationMinutes)
   ) {
     errors.durationMinutes = 'イベントに設定された出演枠を選択してください。'
@@ -441,9 +387,6 @@ export const validateEventBandSettingsDraft = ({
 }): EventBandSettingsValidationErrors => {
   const errors: EventBandSettingsValidationErrors = {
     items: {},
-    performanceSlotMinutes: validatePerformanceSlotMinutes(
-      draft.performanceSlotMinutes,
-    ),
   }
   const draftIds = new Set<string>()
   const eventBandIds = new Set<EventBandId>()
@@ -455,12 +398,12 @@ export const validateEventBandSettingsDraft = ({
       eventDays,
       members,
       bands,
-      performanceSlotMinutes: draft.performanceSlotMinutes,
+      performanceSlotMinutes: event.performanceSlotMinutes,
     })
     if (hasEventBandSettingsItemErrors(itemErrors)) {
       errors.items[item.draftId] = itemErrors
     }
-    if (!item.eventBandId && !hasEventBandSettingsItemErrors(itemErrors)) {
+    if (!hasEventBandSettingsItemErrors(itemErrors)) {
       const feasibility = getEventBandDayFeasibility({
         event,
         eventDayId: item.eventDayId,
@@ -496,8 +439,7 @@ export const validateEventBandSettingsDraft = ({
 
 export const hasEventBandSettingsErrors = (
   errors: EventBandSettingsValidationErrors,
-): boolean => Boolean(errors.form || errors.performanceSlotMinutes) ||
-  Object.keys(errors.items).length > 0
+): boolean => Boolean(errors.form) || Object.keys(errors.items).length > 0
 
 export const createEventBandSettingsUpdate = ({
   event,
@@ -620,12 +562,6 @@ export const createEventBandSettingsUpdate = ({
 
   return {
     ok: true,
-    event: {
-      ...event,
-      performanceSlotMinutes: normalizePerformanceSlotMinutes(
-        draft.performanceSlotMinutes,
-      ),
-    },
     eventBands: [
       ...eventBands.filter((eventBand) => eventBand.eventId !== event.id),
       ...updatedForEvent,
