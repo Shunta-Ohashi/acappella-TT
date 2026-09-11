@@ -14,8 +14,8 @@ import type {
   TimeRange,
 } from './models'
 import {
+  normalizeAvailabilityWindows,
   normalizeTimeRange,
-  normalizeTimeRanges,
   validateAvailabilityWindows,
   validatePreferredTimeRange,
 } from './eventMemberDayDetails.ts'
@@ -473,9 +473,14 @@ export const createEventMemberSettingsUpdate = ({
     if (dayDraft.availabilityWindows === undefined) {
       delete updatedDay.availabilityWindows
     } else {
-      updatedDay.availabilityWindows = normalizeTimeRanges(
+      const availabilityWindows = normalizeAvailabilityWindows(
         dayDraft.availabilityWindows,
       )
+      if (availabilityWindows === undefined) {
+        delete updatedDay.availabilityWindows
+      } else {
+        updatedDay.availabilityWindows = availabilityWindows
+      }
     }
 
     if (dayDraft.preferredTimeRange === undefined) {

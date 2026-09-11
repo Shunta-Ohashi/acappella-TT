@@ -6,6 +6,7 @@ import {
   createEventMemberDayDetailsDraft,
   getEventMemberDayConditionSummary,
   getTimeRangeValidationError,
+  normalizeAvailabilityWindows,
   normalizeTimeRanges,
   unavailableRangesToAvailabilityWindows,
   validateAvailabilityWindows,
@@ -61,6 +62,53 @@ test('参加可能時間を開始順に並べ、重複・接する区間・open-
     { until: '13:00' },
     { from: '15:00' },
   ])
+})
+
+test('全日を覆うavailabilityはundefinedへ正規化し、空配列と穴のある時間帯は維持する', () => {
+  assert.equal(
+    normalizeAvailabilityWindows([{ from: '00:00' }]),
+    undefined,
+  )
+  assert.equal(
+    normalizeAvailabilityWindows([
+      { until: '12:00' },
+      { from: '12:00' },
+    ]),
+    undefined,
+  )
+  assert.equal(
+    normalizeAvailabilityWindows([
+      { until: '10:00' },
+      { from: '10:00', until: '15:00' },
+      { from: '15:00' },
+    ]),
+    undefined,
+  )
+  assert.deepEqual(
+    normalizeAvailabilityWindows([
+      { until: '10:00' },
+      { from: '11:00' },
+    ]),
+    [{ until: '10:00' }, { from: '11:00' }],
+  )
+  assert.deepEqual(normalizeAvailabilityWindows([]), [])
+})
+
+test('available入力で全日を覆う場合は保存値をundefinedにする', () => {
+  const result = applyEventMemberDayDetails(createDay(), {
+    availabilityMode: 'available',
+    availabilityRanges: [
+      { from: '', until: '12:00' },
+      { from: '12:00', until: '' },
+    ],
+    preferredTimeMode: 'none',
+    preferredTimeRange: { from: '', until: '' },
+    notes: '',
+  })
+
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.equal(result.day.availabilityWindows, undefined)
 })
 
 test('参加不可時間を正規化して参加可能時間の補集合へ変換する', () => {
@@ -226,5 +274,22 @@ test('一覧用サマリーで終日・参加不可・複数条件・希望・�
     availabilityLabel: '10:00〜12:00 他1件',
     hasDetails: true,
     supplementaryLabel: '希望あり / メモあり',
+  })
+})
+
+test('legacyの全日availabilityをサマリーでは終日として扱う', () => {
+  assert.deepEqual(getEventMemberDayConditionSummary(createDay({
+    availabilityWindows: [{ from: '00:00' }],
+  })), {
+    availabilityLabel: '終日',
+    hasDetails: false,
+  })
+  assert.deepEqual(getEventMemberDayConditionSummary(createDay({
+    availabilityWindows: [{ from: '00:00' }],
+    notes: 'メモ',
+  })), {
+    availabilityLabel: '終日',
+    hasDetails: true,
+    supplementaryLabel: 'メモあり',
   })
 })

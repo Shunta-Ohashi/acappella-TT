@@ -150,6 +150,18 @@ export const normalizeTimeRanges = (ranges: TimeRange[]): TimeRange[] => {
   return mergedRanges.map(fromMinuteRange)
 }
 
+export const normalizeAvailabilityWindows = (
+  ranges: TimeRange[],
+): TimeRange[] | undefined => {
+  const normalizedRanges = normalizeTimeRanges(ranges)
+  if (normalizedRanges.length !== 1) return normalizedRanges
+
+  const normalizedRange = toMinuteRange(normalizedRanges[0])
+  return normalizedRange.start === 0 && normalizedRange.end === MINUTES_PER_DAY
+    ? undefined
+    : normalizedRanges
+}
+
 export const unavailableRangesToAvailabilityWindows = (
   unavailableRanges: TimeRange[],
 ): TimeRange[] | undefined => {
@@ -233,7 +245,7 @@ export const applyEventMemberDayDetails = (
     ? undefined
     : details.availabilityMode === 'unavailable'
       ? unavailableRangesToAvailabilityWindows(inputRanges)
-      : normalizeTimeRanges(inputRanges)
+      : normalizeAvailabilityWindows(inputRanges)
   const preferredTimeRange = details.preferredTimeMode === 'specified'
     ? createTimeRange(details.preferredTimeRange)
     : undefined
@@ -262,14 +274,18 @@ const formatTimeRange = (range: TimeRange): string => {
 export const getEventMemberDayConditionSummary = (
   day: EventMemberDaySettingsDraft,
 ): EventMemberDayConditionSummary => {
+  const availabilityWindows = day.availabilityWindows !== undefined &&
+    validateAvailabilityWindows(day.availabilityWindows) === undefined
+    ? normalizeAvailabilityWindows(day.availabilityWindows)
+    : day.availabilityWindows
   let availabilityLabel = '終日'
-  if (day.availabilityWindows !== undefined) {
-    if (day.availabilityWindows.length === 0) {
+  if (availabilityWindows !== undefined) {
+    if (availabilityWindows.length === 0) {
       availabilityLabel = '参加可能時間なし'
     } else {
-      availabilityLabel = formatTimeRange(day.availabilityWindows[0])
-      if (day.availabilityWindows.length > 1) {
-        availabilityLabel += ` 他${day.availabilityWindows.length - 1}件`
+      availabilityLabel = formatTimeRange(availabilityWindows[0])
+      if (availabilityWindows.length > 1) {
+        availabilityLabel += ` 他${availabilityWindows.length - 1}件`
       }
     }
   }
@@ -281,7 +297,7 @@ export const getEventMemberDayConditionSummary = (
 
   return {
     availabilityLabel,
-    hasDetails: day.availabilityWindows !== undefined ||
+    hasDetails: availabilityWindows !== undefined ||
       day.preferredTimeRange !== undefined ||
       Boolean(day.notes?.trim()),
     ...(supplementaryLabels.length > 0
