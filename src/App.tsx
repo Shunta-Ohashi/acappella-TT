@@ -56,11 +56,13 @@ import { CreateEventDialog } from './components/CreateEventDialog'
 import { EventBasicInfo } from './components/EventBasicInfo'
 import { CommonDataPage } from './components/CommonDataPage'
 import { EventMemberSettings } from './components/EventMemberSettings'
+import { EventBandSettings } from './components/EventBandSettings'
 import { EventStageSettings } from './components/EventStageSettings'
 import { EventList } from './components/EventList'
 import { IssuePanel } from './components/IssuePanel'
 import {
   createEventData,
+  DEFAULT_PERFORMANCE_SLOT_MINUTES,
   type NewEventDraft,
 } from './domain/eventCreation'
 import {
@@ -94,6 +96,11 @@ import {
   type CommonBandDraft,
   type CommonBandUpdateResult,
 } from './domain/commonBands'
+import {
+  createEventBandSettingsUpdate,
+  type EventBandSettingsDraft,
+  type EventBandSettingsUpdateResult,
+} from './domain/eventBandSettings'
 import { getHighestSeverityByScheduleItem } from './ui/issuePresentation'
 import {
   getSectionDroppableId,
@@ -163,6 +170,7 @@ const initialMembers: Member[] = [
 const initialEvent: TimetableEvent = {
   id: 'event-1',
   name: '現在のイベント',
+  performanceSlotMinutes: [...DEFAULT_PERFORMANCE_SLOT_MINUTES],
   ...DEFAULT_EVENT_SETTINGS,
 }
 
@@ -189,6 +197,7 @@ const initialEventBands: EventBand[] = [
     eventId: initialEvent.id,
     eventDayId: initialEventDays[0].id,
     bandId: 'b-1',
+    name: 'あおぞら',
     memberIds: ['m-1', 'm-2', 'm-3'],
     durationMinutes: 15,
   },
@@ -276,8 +285,8 @@ function App() {
 
   // 2️⃣ バンドデータベース（初期データ）
   const [bands, setBands] = useState<Band[]>([
-    { id: 'b-1', name: 'あおぞら', defaultMemberIds: ['m-1', 'm-2', 'm-3'], defaultDurationMinutes: 15, active: true },
-    { id: 'b-2', name: '夕焼けコーラス', defaultMemberIds: ['m-4', 'm-1'], defaultDurationMinutes: 10, active: true },
+    { id: 'b-1', name: 'あおぞら', defaultMemberIds: ['m-1', 'm-2', 'm-3'], active: true },
+    { id: 'b-2', name: '夕焼けコーラス', defaultMemberIds: ['m-4', 'm-1'], active: true },
   ])
 
   // 3️⃣ このイベントに出演するバンド
@@ -305,7 +314,6 @@ function App() {
     selectedStageIds.has(scheduleItem.stageId),
   )
 
-  const [selectedMasterBandId, setSelectedMasterBandId] = useState('')
   const [breakDuration, setBreakDuration] = useState<number>(10)
 
   const selectedEventMembers = eventMembers.filter(
@@ -507,6 +515,39 @@ function App() {
     return result
   }
 
+  const handleSaveEventBandSettings = (
+    draft: EventBandSettingsDraft,
+  ): EventBandSettingsUpdateResult => {
+    if (!selectedEvent) {
+      return {
+        ok: false,
+        errors: {
+          items: {},
+          form: '編集するイベントが見つかりません。',
+        },
+      }
+    }
+
+    const result = createEventBandSettingsUpdate({
+      event: selectedEvent,
+      eventDays,
+      members,
+      bands,
+      eventBands,
+      eventMembers,
+      eventMemberDays,
+      scheduleItems,
+      draft,
+      newEventBandIds: draft.items
+        .filter((item) => !item.eventBandId)
+        .map(() => createId('event-band')),
+    })
+    if (!result.ok) return result
+
+    setEventBands(result.eventBands)
+    return result
+  }
+
   const handleSaveCommonMember = (
     memberId: MemberId | undefined,
     draft: CommonMemberDraft,
@@ -566,6 +607,7 @@ function App() {
 
   const handleSaveEventStageSettings = (
     defaultTransitionMinutes: string,
+    performanceSlotMinutes: number[],
     stageDrafts: StageSettingsDraft[],
     sectionDrafts: SectionSettingsDraft[],
   ): EventStageSettingsUpdateResult => {
@@ -587,6 +629,7 @@ function App() {
       sections: selectedSections,
       draft: {
         defaultTransitionMinutes,
+        performanceSlotMinutes,
         stages: stageDrafts,
         sections: sectionDrafts,
       },
@@ -628,24 +671,6 @@ function App() {
 
   // ==================== 🎴 プール・タイムテーブル操作ロジック ====================
 
-  const handleAddSelectedBandToPool = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    if (!selectedEvent || !currentStage) return
-
-    const targetMaster = bands.find(b => b.id === selectedMasterBandId)
-    if (!targetMaster) return
-
-    const newEventBand: EventBand = {
-      id: createId('event-band'),
-      eventId: selectedEvent.id,
-      eventDayId: currentStage.eventDayId,
-      bandId: targetMaster.id,
-      memberIds: [...targetMaster.defaultMemberIds],
-      durationMinutes: targetMaster.defaultDurationMinutes,
-    }
-    setEventBands(prev => [...prev, newEventBand])
-  }
-
   const handleAddBreak = (
     e: FormEvent<HTMLFormElement>,
     sectionId?: SectionId,
@@ -678,10 +703,6 @@ function App() {
       getScheduleLaneItems(prev, lane).length,
     ))
     setBreakDuration(10)
-  }
-
-  const handleDeletePoolEventBand = (id: string) => {
-    setEventBands(prev => prev.filter(eventBand => eventBand.id !== id))
   }
 
   // 演奏項目を削除すると、参照先のEventBandが算出プールへ戻る。休憩はそのまま削除する
@@ -874,7 +895,7 @@ function App() {
 
   const getBandNameByEventBand = (eventBand?: EventBand) => {
     if (!eventBand) return '不明なバンド'
-    return bands.find(band => band.id === eventBand.bandId)?.name ?? '不明なバンド'
+    return eventBand.name
   }
 
   // 選択日の全StageをIssue判定へ渡し、表示は選択中Stageだけに絞る
@@ -933,7 +954,6 @@ function App() {
   // 共通スタイル定義（可読性向上のためまとめる）
   const containerStyle: React.CSSProperties = { maxWidth: '1250px', margin: '0 auto', textAlign: 'left' }
   const sectionBase: React.CSSProperties = { padding: '15px', borderRadius: '8px', marginBottom: '20px' }
-  const inputStyle: React.CSSProperties = { width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box' }
   const baseButton: React.CSSProperties = { border: 'none', padding: '8px 12px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }
   const listItemBase: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', borderRadius: '4px', color: '#333', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }
   const listContainerBase: React.CSSProperties = { listStyle: 'none', minHeight: '300px', padding: '10px', borderRadius: '8px', border: '2px dashed #cbd5e0' }
@@ -1118,6 +1138,21 @@ function App() {
               onSave={handleSaveEventMemberSettings}
               onSaveAndNext={() => setActiveStep(4)}
             />
+          ) : activeStep === 4 && selectedEvent ? (
+            <EventBandSettings
+              key={selectedEvent.id}
+              event={selectedEvent}
+              eventDays={selectedEventDays}
+              bands={bands}
+              members={members}
+              eventMembers={selectedEventMembers}
+              eventMemberDays={selectedEventMemberDays}
+              eventBands={selectedEventBands}
+              scheduleItems={scheduleItems}
+              createDraftId={() => createId('event-band-draft')}
+              onSave={handleSaveEventBandSettings}
+              onSaveAndNext={() => setActiveStep(5)}
+            />
           ) : activeStep === 7 && selectedEvent ? (
           <div className="timetable-workspace" style={containerStyle}>
             <section className="timetable-scope" aria-label="表示するタイムテーブル">
@@ -1219,22 +1254,6 @@ function App() {
           
           {/* 📁 左画面：出演候補プール */}
           <div>
-            <section style={{ background: '#e2e8f0', padding: '15px', borderRadius: '8px', color: '#333', marginBottom: '20px' }}>
-              <h3 style={{ marginTop: 0 }}>📥 DBからプールに追加</h3>
-              <form onSubmit={handleAddSelectedBandToPool} style={{ display: 'flex', gap: '10px', alignItems: 'flex-end' }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '12px', fontWeight: 'bold' }}>登録済みバンドから選択:</label>
-                  <select aria-label="プールに追加するバンドを選択" value={selectedMasterBandId} onChange={(e) => setSelectedMasterBandId(e.target.value)} style={{ ...inputStyle, marginTop: '5px' }}>
-                    <option value="">-- バンドを選択 --</option>
-                    {bands.map(b => (
-                      <option key={b.id} value={b.id}>{b.name} ({b.defaultDurationMinutes}分 / 👥 {getMemberNamesByIds(b.defaultMemberIds)})</option>
-                    ))}
-                  </select>
-                </div>
-                <button type="submit" disabled={!selectedMasterBandId} style={{ background: '#4a5568', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: selectedMasterBandId ? 'pointer' : 'not-allowed', fontWeight: 'bold', height: '37px' }}>追加</button>
-              </form>
-            </section>
-
             <h3>📁 出演候補バンド一覧（プール）</h3>
             <Droppable droppableId={TIMETABLE_POOL_DROPPABLE_ID}>
               {(provided) => (
@@ -1245,10 +1264,9 @@ function App() {
                         <li ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps} style={{ ...listItemBase, background: '#fff', ...provided.draggableProps.style }}>
                           <div>
                             <span style={{ marginRight: '10px', color: '#aaa', cursor: 'grab' }}>☰</span>
-                            <span style={{ fontWeight: 'bold' }}>🎵 {getBandNameByEventBand(eventBand)}</span> ({eventBand.durationMinutes}分)
+                            <span style={{ fontWeight: 'bold' }}>🎵 {eventBand.name}</span> ({eventBand.durationMinutes}分)
                             <div style={{ fontSize: '11px', color: '#718096', marginTop: '4px' }}>👥 メンバー: {getMemberNamesByIds(eventBand.memberIds)}</div>
                           </div>
-                          <button onClick={() => handleDeletePoolEventBand(eventBand.id)} style={{ ...baseButton, background: '#edf2f7', color: '#e53e3e', padding: '4px 8px', fontSize: '12px' }}>完全に消す</button>
                         </li>
                       )}
                     </Draggable>
@@ -1256,7 +1274,7 @@ function App() {
                   {poolEventBands.length === 0 && (
                     <li className="timetable-lane__empty">
                       {currentDayEventBands.length === 0
-                        ? 'この開催日に登録されている出演バンドはありません。'
+                        ? '出演バンドがまだ登録されていません。Step 4で出演バンドを追加してください。'
                         : 'すべての出演バンドが配置されています。'}
                     </li>
                   )}
@@ -1342,7 +1360,6 @@ function App() {
             <IssuePanel
               issues={scheduleIssues}
               members={members}
-              bands={bands}
               eventBands={selectedEventBands}
               stages={timetableStages}
               sections={timetableSections}

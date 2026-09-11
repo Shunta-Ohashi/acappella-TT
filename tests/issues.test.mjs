@@ -54,6 +54,7 @@ const createEventBand = (id, memberIds, overrides = {}) => ({
   eventId: 'event-1',
   eventDayId: eventDays[0].id,
   bandId: `band-${id}`,
+  name: `バンド ${id}`,
   memberIds,
   durationMinutes: 10,
   ...overrides,

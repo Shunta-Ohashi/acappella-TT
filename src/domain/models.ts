@@ -50,7 +50,6 @@ export interface Band {
   id: BandId
   name: string
   defaultMemberIds: MemberId[]
-  defaultDurationMinutes: number
   notes?: string
   active: boolean
 }
@@ -65,6 +64,7 @@ export interface Event {
     minimumGapBands: number
     minimumRestMinutes: number
   }
+  performanceSlotMinutes: number[]
   notes?: string
 }
 
@@ -110,7 +110,8 @@ export interface EventBand {
   id: EventBandId
   eventId: EventId
   eventDayId: EventDayId
-  bandId: BandId
+  bandId?: BandId
+  name: string
   memberIds: MemberId[]
   durationMinutes: number
   availableTimeRange?: TimeRange

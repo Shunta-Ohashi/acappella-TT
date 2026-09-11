@@ -16,6 +16,7 @@ const event = {
     minimumGapBands: 1,
     minimumRestMinutes: 10,
   },
+  performanceSlotMinutes: [5, 7, 10, 15],
 }
 
 const eventDays = [
@@ -63,6 +64,7 @@ test('基本情報更新で既存EventDay IDを維持し、新規日と日付順
   assert.equal(result.event.name, '2027 学園祭')
   assert.equal(result.event.description, 'イベント説明')
   assert.equal(result.event.notes, '運営メモ')
+  assert.deepEqual(result.event.performanceSlotMinutes, [5, 7, 10, 15])
   assert.deepEqual(result.eventDays, [
     { ...eventDays[1], order: 0 },
     {

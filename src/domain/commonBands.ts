@@ -9,7 +9,6 @@ export type CommonBandStatusFilter = 'active' | 'inactive' | 'all'
 
 export interface CommonBandDraft {
   name: string
-  defaultDurationMinutes: string
   defaultMemberIds: MemberId[]
   active: boolean
   notes: string
@@ -17,7 +16,6 @@ export interface CommonBandDraft {
 
 export interface CommonBandValidationErrors {
   name?: string
-  defaultDurationMinutes?: string
   defaultMemberIds?: string
   form?: string
 }
@@ -52,7 +50,6 @@ const uniqueMemberIds = (memberIds: MemberId[]): MemberId[] =>
 
 export const createCommonBandDraft = (band?: Band): CommonBandDraft => ({
   name: band?.name ?? '',
-  defaultDurationMinutes: band?.defaultDurationMinutes.toString() ?? '10',
   defaultMemberIds: uniqueMemberIds(band?.defaultMemberIds ?? []),
   active: band?.active ?? true,
   notes: band?.notes ?? '',
@@ -64,21 +61,10 @@ export const validateCommonBandDraft = (
   existingBand?: Band,
 ): CommonBandValidationErrors => {
   const errors: CommonBandValidationErrors = {}
-  const normalizedDuration = draft.defaultDurationMinutes.trim()
-  const duration = Number(normalizedDuration)
   const normalizedMemberIds = uniqueMemberIds(draft.defaultMemberIds)
 
   if (!draft.name.trim()) {
     errors.name = 'バンド名を入力してください。'
-  }
-
-  if (
-    !/^\d+$/.test(normalizedDuration) ||
-    !Number.isSafeInteger(duration) ||
-    duration <= 0
-  ) {
-    errors.defaultDurationMinutes =
-      '標準出演時間は1以上の整数で入力してください。'
   }
 
   if (normalizedMemberIds.length === 0) {
@@ -109,7 +95,6 @@ export const createCommonBandUpdate = ({
   const errors = validateCommonBandDraft(draft, members, existingBand)
   if (
     errors.name ||
-    errors.defaultDurationMinutes ||
     errors.defaultMemberIds
   ) {
     return { ok: false, errors }
@@ -122,7 +107,6 @@ export const createCommonBandUpdate = ({
       id: existingBand?.id ?? bandId,
       name: draft.name.trim(),
       defaultMemberIds: uniqueMemberIds(draft.defaultMemberIds),
-      defaultDurationMinutes: Number(draft.defaultDurationMinutes.trim()),
       notes: normalizeOptionalText(draft.notes),
       active: existingBand ? draft.active : true,
     },

@@ -30,6 +30,7 @@ test('非連続の複数開催日を日付昇順に並べてorderを付ける', 
     id: 'event-new',
     name: '2027 学園祭',
     ...defaults,
+    performanceSlotMinutes: [5, 10, 15],
   })
   assert.deepEqual(created.eventDays, [
     {

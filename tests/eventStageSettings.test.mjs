@@ -21,6 +21,7 @@ const event = {
     minimumGapBands: 1,
     minimumRestMinutes: 10,
   },
+  performanceSlotMinutes: [5, 10, 15],
 }
 
 const eventDays = [
@@ -83,9 +84,15 @@ const validSectionDraft = (overrides = {}) => ({
 
 const settingsDraft = ({
   defaultTransitionMinutes = '2',
+  performanceSlotMinutes = event.performanceSlotMinutes,
   stages = [validStageDraft()],
   sections = [],
-} = {}) => ({ defaultTransitionMinutes, stages, sections })
+} = {}) => ({
+  defaultTransitionMinutes,
+  performanceSlotMinutes,
+  stages,
+  sections,
+})
 
 const noReferences = { sections: [], scheduleItems: [], eventBands: [] }
 
@@ -95,6 +102,46 @@ test('Stage開始時刻は自動終了または固定終了より前の場合だ
   assert.equal(isValidStageTimeRange('17:00', '17:00'), false)
   assert.equal(isValidStageTimeRange('18:00', '17:00'), false)
   assert.equal(isValidStageTimeRange('24:00', '17:00'), false)
+})
+
+test('出演枠はStep 2 draftで編集し、保存時だけEventへ昇順で反映する', () => {
+  const draft = createEventStageSettingsDraft(event, eventDays, [], [])
+  draft.performanceSlotMinutes = [15, 7, 10, 5]
+
+  assert.deepEqual(event.performanceSlotMinutes, [5, 10, 15])
+
+  const result = createEventStageSettingsUpdate({
+    event,
+    eventDays,
+    stages: [],
+    sections: [],
+    draft,
+    newStageIds: [],
+    newSectionIds: [],
+    ...noReferences,
+  })
+
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.deepEqual(result.event.performanceSlotMinutes, [5, 7, 10, 15])
+  assert.deepEqual(event.performanceSlotMinutes, [5, 10, 15])
+})
+
+test('Step 2は空・重複・不正な出演枠optionを拒否する', () => {
+  for (const performanceSlotMinutes of [
+    [],
+    [5, 10, 10],
+    [0, 5],
+    [-1, 5],
+    [1.5, 5],
+    [Number.POSITIVE_INFINITY, 5],
+  ]) {
+    const errors = validateEventStageSettingsDraft(settingsDraft({
+      performanceSlotMinutes,
+      stages: [],
+    }))
+    assert.ok(errors.performanceSlotMinutes)
+  }
 })
 
 test('既存Stage IDを維持し、新規Stageを対応するEventDayへ生成する', () => {
@@ -132,6 +179,7 @@ test('既存Stage IDを維持し、新規Stageを対応するEventDayへ生成�
   if (!result.ok) return
 
   assert.equal(result.event.defaultTransitionMinutes, 4)
+  assert.deepEqual(result.event.performanceSlotMinutes, [5, 10, 15])
   assert.deepEqual(result.stages, [
     {
       ...existingStage,

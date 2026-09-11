@@ -45,6 +45,7 @@ export interface SectionSettingsDraft {
 
 export interface EventStageSettingsDraft {
   defaultTransitionMinutes: string
+  performanceSlotMinutes: number[]
   stages: StageSettingsDraft[]
   sections: SectionSettingsDraft[]
 }
@@ -66,6 +67,7 @@ export interface SectionSettingsValidationErrors {
 
 export interface EventStageSettingsValidationErrors {
   defaultTransitionMinutes?: string
+  performanceSlotMinutes?: string
   stages: Record<string, StageSettingsValidationErrors>
   sections: Record<string, SectionSettingsValidationErrors>
   form?: string
@@ -100,6 +102,56 @@ export type EventStageSettingsUpdateResult =
 
 const isNonNegativeInteger = (value: string): boolean =>
   /^\d+$/.test(value) && Number.isSafeInteger(Number(value))
+
+const isValidPerformanceSlotMinute = (value: number): boolean =>
+  Number.isFinite(value) && Number.isSafeInteger(value) && value > 0
+
+export const normalizePerformanceSlotMinutes = (
+  values: number[],
+): number[] => [...new Set(values)].sort((first, second) => first - second)
+
+export type AddPerformanceSlotMinuteResult =
+  | { ok: true; performanceSlotMinutes: number[] }
+  | { ok: false; error: string }
+
+export const addPerformanceSlotMinute = (
+  performanceSlotMinutes: number[],
+  rawValue: string,
+): AddPerformanceSlotMinuteResult => {
+  const normalizedValue = rawValue.trim()
+  const value = Number(normalizedValue)
+
+  if (
+    !/^\d+$/.test(normalizedValue) ||
+    !isValidPerformanceSlotMinute(value)
+  ) {
+    return { ok: false, error: '出演枠は1分以上の整数で入力してください。' }
+  }
+  if (performanceSlotMinutes.includes(value)) {
+    return { ok: false, error: `${value}分枠はすでに登録されています。` }
+  }
+
+  return {
+    ok: true,
+    performanceSlotMinutes: normalizePerformanceSlotMinutes([
+      ...performanceSlotMinutes,
+      value,
+    ]),
+  }
+}
+
+export const validatePerformanceSlotMinutes = (
+  values: number[],
+): string | undefined => {
+  if (values.length === 0) return '出演枠を1件以上設定してください。'
+  if (values.some((value) => !isValidPerformanceSlotMinute(value))) {
+    return '出演枠は1分以上の整数で設定してください。'
+  }
+  if (new Set(values).size !== values.length) {
+    return '同じ出演枠を重複して設定できません。'
+  }
+  return undefined
+}
 
 const normalizeOptionalText = (value: string): string | undefined => {
   const normalized = value.trim()
@@ -177,6 +229,9 @@ export const createEventStageSettingsDraft = (
 
   return {
     defaultTransitionMinutes: String(event.defaultTransitionMinutes),
+    performanceSlotMinutes: normalizePerformanceSlotMinutes(
+      event.performanceSlotMinutes,
+    ),
     stages: stageDrafts,
     sections: sections
       .filter((section) => stageDraftIdByStageId.has(section.stageId))
@@ -210,6 +265,10 @@ export const validateEventStageSettingsDraft = (
   if (!isNonNegativeInteger(draft.defaultTransitionMinutes)) {
     errors.defaultTransitionMinutes = '0以上の整数を入力してください。'
   }
+
+  errors.performanceSlotMinutes = validatePerformanceSlotMinutes(
+    draft.performanceSlotMinutes,
+  )
 
   for (const stage of draft.stages) {
     const stageErrors: StageSettingsValidationErrors = {}
@@ -348,6 +407,7 @@ export const hasEventStageSettingsErrors = (
   errors: EventStageSettingsValidationErrors,
 ): boolean => Boolean(
   errors.defaultTransitionMinutes ||
+  errors.performanceSlotMinutes ||
   errors.form ||
   Object.values(errors.stages).some(hasStageErrors) ||
   Object.values(errors.sections).some(hasSectionErrors),
@@ -672,6 +732,9 @@ export const createEventStageSettingsUpdate = ({
     event: {
       ...event,
       defaultTransitionMinutes: Number(draft.defaultTransitionMinutes),
+      performanceSlotMinutes: normalizePerformanceSlotMinutes(
+        draft.performanceSlotMinutes,
+      ),
     },
     stages: updatedStages,
     sections: updatedSections,
