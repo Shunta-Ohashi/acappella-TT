@@ -232,11 +232,11 @@ export function EventBandSettings({
             <table className="event-band-settings__table">
               <thead>
                 <tr>
-                  <th>バンド名</th>
-                  <th>種別</th>
-                  <th>メンバー</th>
-                  <th>出演枠</th>
-                  <th>操作</th>
+                  <th scope="col">バンド名</th>
+                  <th scope="col">種別</th>
+                  <th scope="col">メンバー</th>
+                  <th scope="col">出演枠</th>
+                  <th scope="col">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -244,7 +244,7 @@ export function EventBandSettings({
                   const itemErrors = errors.items[item.draftId]
                   return (
                     <tr key={item.draftId}>
-                      <td><strong>{item.name || '名称未入力'}</strong></td>
+                      <th scope="row"><strong>{item.name || '名称未入力'}</strong></th>
                       <td>{getEventBandSourceLabel(item)}</td>
                       <td>
                         <span>{item.memberIds.length}人</span>

@@ -80,6 +80,40 @@ const formatCommonAvailability = (
     ? 'なし'
     : windows.map(formatTimeRange).join(' / ')
 
+function EventBandFeasibilityFeedback({
+  feasibility,
+}: {
+  feasibility: EventBandDayFeasibility
+}) {
+  return (
+    <span
+      className={`event-band-form__feasibility event-band-form__feasibility--${feasibility.status}`}
+    >
+      <b>
+        {feasibility.status === 'blocked'
+          ? '出演不可'
+          : feasibility.status === 'warning'
+            ? '注意'
+            : '出演可能'}
+      </b>
+      {feasibility.blockingReasons.map((reason) => (
+        <small key={reason}>{reason}</small>
+      ))}
+      {feasibility.warnings.map((warning) => (
+        <small key={warning}>{warning}</small>
+      ))}
+      {(feasibility.commonAvailabilityWindows === undefined ||
+        feasibility.commonAvailabilityWindows.length > 0) && (
+        <small>
+          共通時間：{formatCommonAvailability(
+            feasibility.commonAvailabilityWindows,
+          )}
+        </small>
+      )}
+    </span>
+  )
+}
+
 export function EventBandEditorDialog({
   event,
   eventDays,
@@ -139,8 +173,17 @@ export function EventBandEditorDialog({
     canChangeEventBandDay(existingEventBand, scheduleItems)
   )
   const durationMinutes = Number(draft?.durationMinutes)
+  const canShowFeasibility = Boolean(
+    draft &&
+    draft.memberIds.length > 0 &&
+    Number.isSafeInteger(durationMinutes) &&
+    durationMinutes > 0,
+  )
+  const feasibilityEventDayIds = isEditing
+    ? [selectedEventDayId]
+    : selectedEventDayIds
   const feasibilityByEventDayId = new Map<EventDayId, EventBandDayFeasibility>(
-    selectedEventDayIds.map((eventDayId) => [
+    feasibilityEventDayIds.map((eventDayId) => [
       eventDayId,
       getEventBandDayFeasibility({
         event,
@@ -153,6 +196,12 @@ export function EventBandEditorDialog({
       }),
     ]),
   )
+  const editingFeasibility = isEditing
+    ? feasibilityByEventDayId.get(selectedEventDayId)
+    : undefined
+  const editingEventDay = isEditing
+    ? eventDays.find((eventDay) => eventDay.id === selectedEventDayId)
+    : undefined
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -345,12 +394,6 @@ export function EventBandEditorDialog({
               {eventDays.map((eventDay) => {
                 const isSelected = selectedEventDayIds.includes(eventDay.id)
                 const feasibility = feasibilityByEventDayId.get(eventDay.id)
-                const canShowFeasibility = Boolean(
-                  draft &&
-                  draft.memberIds.length > 0 &&
-                  Number.isSafeInteger(durationMinutes) &&
-                  durationMinutes > 0,
-                )
                 return (
                   <label key={eventDay.id}>
                     <input
@@ -361,29 +404,7 @@ export function EventBandEditorDialog({
                     <span className="event-band-form__day-content">
                       <strong>{formatEventDay(eventDay)}</strong>
                       {isSelected && canShowFeasibility && feasibility && (
-                        <span className={`event-band-form__feasibility event-band-form__feasibility--${feasibility.status}`}>
-                          <b>
-                            {feasibility.status === 'blocked'
-                              ? '出演不可'
-                              : feasibility.status === 'warning'
-                                ? '注意'
-                                : '出演可能'}
-                          </b>
-                          {feasibility.blockingReasons.map((reason) => (
-                            <small key={reason}>{reason}</small>
-                          ))}
-                          {feasibility.warnings.map((warning) => (
-                            <small key={warning}>{warning}</small>
-                          ))}
-                          {(feasibility.commonAvailabilityWindows === undefined ||
-                            feasibility.commonAvailabilityWindows.length > 0) && (
-                            <small>
-                              共通時間：{formatCommonAvailability(
-                                feasibility.commonAvailabilityWindows,
-                              )}
-                            </small>
-                          )}
-                        </span>
+                        <EventBandFeasibilityFeedback feasibility={feasibility} />
                       )}
                     </span>
                   </label>
@@ -501,6 +522,21 @@ export function EventBandEditorDialog({
                 )}
               </div>
             </div>
+
+            {isEditing && canShowFeasibility && editingFeasibility && (
+              <section
+                className="event-band-form__edit-feasibility"
+                aria-label="出演可否"
+                aria-live="polite"
+              >
+                <strong>
+                  {editingEventDay
+                    ? `${formatEventDay(editingEventDay)}の出演可否`
+                    : '選択中の開催日の出演可否'}
+                </strong>
+                <EventBandFeasibilityFeedback feasibility={editingFeasibility} />
+              </section>
+            )}
 
             {unregisteredDefaultMemberIds.length > 0 && (
               <p className="event-band-form__notice" role="status">
