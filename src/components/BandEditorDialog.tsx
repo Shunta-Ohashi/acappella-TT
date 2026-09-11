@@ -67,7 +67,6 @@ export function BandEditorDialog({
     setErrors(validationErrors)
     if (
       validationErrors.name ||
-      validationErrors.defaultDurationMinutes ||
       validationErrors.defaultMemberIds
     ) return
 
@@ -122,45 +121,6 @@ export function BandEditorDialog({
             {errors.name && (
               <p id="band-editor-name-error" className="form-error" role="alert">
                 {errors.name}
-              </p>
-            )}
-          </div>
-
-          <div className="band-editor-field">
-            <label htmlFor="band-editor-duration">
-              標準出演時間 <span aria-hidden="true">*</span>
-            </label>
-            <div className="band-editor-field__duration">
-              <input
-                id="band-editor-duration"
-                type="number"
-                min="1"
-                step="1"
-                required
-                value={draft.defaultDurationMinutes}
-                aria-invalid={errors.defaultDurationMinutes ? 'true' : undefined}
-                aria-describedby={errors.defaultDurationMinutes
-                  ? 'band-editor-duration-error'
-                  : 'band-editor-duration-help'}
-                onChange={(event) => {
-                  setDraft((previous) => ({
-                    ...previous,
-                    defaultDurationMinutes: event.target.value,
-                  }))
-                  setErrors((previous) => ({
-                    ...previous,
-                    defaultDurationMinutes: undefined,
-                  }))
-                }}
-              />
-              <span>分</span>
-            </div>
-            <span id="band-editor-duration-help" className="band-editor-field__help">
-              EventBand作成時の初期値として使用します。
-            </span>
-            {errors.defaultDurationMinutes && (
-              <p id="band-editor-duration-error" className="form-error" role="alert">
-                {errors.defaultDurationMinutes}
               </p>
             )}
           </div>

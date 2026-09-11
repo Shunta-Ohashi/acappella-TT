@@ -109,7 +109,6 @@ export function CommonBandList({
               <tr>
                 <th scope="col">バンド名</th>
                 <th scope="col">メンバー</th>
-                <th scope="col">標準枠</th>
                 <th scope="col">状態</th>
                 <th scope="col"><span className="visually-hidden">操作</span></th>
               </tr>
@@ -125,7 +124,6 @@ export function CommonBandList({
                       <strong>{memberCount}人</strong>
                       <small>{formatMemberSummary(band, members)}</small>
                     </td>
-                    <td>{band.defaultDurationMinutes}分</td>
                     <td>
                       <span className={band.active
                         ? 'common-band-status common-band-status--active'

@@ -1,6 +1,5 @@
 import type { ScheduleIssue } from '../domain/issues'
 import type {
-  Band,
   EventBand,
   Member,
   Section,
@@ -15,7 +14,6 @@ import {
 interface IssuePanelProps {
   issues: ScheduleIssue[]
   members: Member[]
-  bands: Band[]
   eventBands: EventBand[]
   stages: Stage[]
   sections: Section[]
@@ -27,7 +25,6 @@ const uniqueNames = (names: string[]) => [...new Set(names)]
 export function IssuePanel({
   issues,
   members,
-  bands,
   eventBands,
   stages,
   sections,
@@ -37,11 +34,10 @@ export function IssuePanel({
   const memberNameById = new Map(
     members.map((member) => [member.id, member.realName]),
   )
-  const bandNameById = new Map(bands.map((band) => [band.id, band.name]))
   const eventBandNameById = new Map(
     eventBands.map((eventBand) => [
       eventBand.id,
-      bandNameById.get(eventBand.bandId) ?? '不明なバンド',
+      eventBand.name,
     ]),
   )
   const stageNameById = new Map(stages.map((stage) => [stage.id, stage.name]))

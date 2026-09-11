@@ -26,6 +26,8 @@ interface CreateEventDataInput {
   >
 }
 
+export const DEFAULT_PERFORMANCE_SLOT_MINUTES = [5, 10, 15]
+
 const isValidLocalDate = (value: LocalDate): boolean => {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
   if (!match) return false
@@ -87,6 +89,7 @@ export const createEventData = ({
       timeZone: defaults.timeZone,
       defaultTransitionMinutes: defaults.defaultTransitionMinutes,
       validationPolicy: { ...defaults.validationPolicy },
+      performanceSlotMinutes: [...DEFAULT_PERFORMANCE_SLOT_MINUTES],
     },
     eventDays: orderedDates.map((date, order) => ({
       id: eventDayIds[order],

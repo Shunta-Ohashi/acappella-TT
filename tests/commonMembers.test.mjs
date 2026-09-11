@@ -182,14 +182,12 @@ test('固定バンド所属をBand.defaultMemberIdsからBand単位で逆引き�
       id: 'band-1',
       name: 'あおぞら',
       defaultMemberIds: ['member-1'],
-      defaultDurationMinutes: 10,
       active: true,
     },
     {
       id: 'band-2',
       name: '夕焼けコーラス',
       defaultMemberIds: ['member-1', 'member-1', 'member-2'],
-      defaultDurationMinutes: 15,
       active: false,
     },
   ]
