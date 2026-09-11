@@ -85,6 +85,9 @@ export function EventBandSettings({
   const editorItem = editor?.mode === 'edit'
     ? draft.items.find((item) => item.draftId === editor.draftId)
     : undefined
+  const editorEventBand = editorItem?.eventBandId
+    ? eventBands.find((eventBand) => eventBand.id === editorItem.eventBandId)
+    : undefined
   const errorDayIds = new Set(
     draft.items.flatMap((item) => errors.items[item.draftId]
       ? [item.eventDayId]
@@ -314,6 +317,7 @@ export function EventBandSettings({
             ? editorItem?.eventDayId ?? orderedEventDays[0].id
             : editor.eventDayId}
           item={editorItem}
+          existingEventBand={editorEventBand}
           performanceSlotMinutes={event.performanceSlotMinutes}
           createDraftId={createDraftId}
           onCancel={() => setEditor(undefined)}

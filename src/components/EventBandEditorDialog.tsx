@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import type {
   Band,
   Event,
+  EventBand,
   EventDay,
   EventDayId,
   EventMember,
@@ -16,6 +17,7 @@ import {
   createEventOnlyBandDraft,
   createFixedBandDraft,
   getEventBandDayFeasibility,
+  getEventBandDayChangeBlockReason,
   getEventBandSourceLabel,
   hasEventBandSettingsItemErrors,
   validateEventBandSettingsItem,
@@ -34,6 +36,7 @@ interface EventBandEditorDialogProps {
   scheduleItems: ScheduleItem[]
   initialEventDayId: EventDayId
   item?: EventBandSettingsItemDraft
+  existingEventBand?: EventBand
   performanceSlotMinutes: number[]
   createDraftId: () => string
   onCancel: () => void
@@ -87,6 +90,7 @@ export function EventBandEditorDialog({
   scheduleItems,
   initialEventDayId,
   item,
+  existingEventBand,
   performanceSlotMinutes,
   createDraftId,
   onCancel,
@@ -127,9 +131,12 @@ export function EventBandEditorDialog({
     matchesSearch([band.name], bandSearch),
   )
   const isEditing = Boolean(item)
-  const mayChangeEventDay = !item?.eventBandId || canChangeEventBandDay(
-    item.eventBandId,
-    scheduleItems,
+  const eventDayChangeBlockReason = existingEventBand
+    ? getEventBandDayChangeBlockReason(existingEventBand, scheduleItems)
+    : undefined
+  const mayChangeEventDay = !item?.eventBandId || (
+    existingEventBand !== undefined &&
+    canChangeEventBandDay(existingEventBand, scheduleItems)
   )
   const durationMinutes = Number(draft?.durationMinutes)
   const feasibilityByEventDayId = new Map<EventDayId, EventBandDayFeasibility>(
@@ -458,7 +465,9 @@ export function EventBandEditorDialog({
                   </select>
                   {!mayChangeEventDay && (
                     <p className="event-band-form__help">
-                      タイムテーブルに配置済みのため出演日を変更できません。先にStep 7でPoolへ戻してください。
+                      {eventDayChangeBlockReason === 'fixed-placement'
+                        ? '固定配置が設定されているため出演日を変更できません。先にStep 5の出演条件で固定配置を解除してください。'
+                        : 'タイムテーブルに配置済みのため出演日を変更できません。先にStep 7でPoolへ戻してください。'}
                     </p>
                   )}
                   {errors.eventDayId && <p className="form-error" role="alert">{errors.eventDayId}</p>}

@@ -307,7 +307,7 @@ test('既存EventBandも設定済み出演枠だけへ変更でき、option外du
 })
 
 test('未配置なら出演日を変更でき、配置済みならUI判定と保存処理で拒否する', () => {
-  const existing = createExistingEventBand()
+  const existing = createExistingEventBand({ fixedPlacement: undefined })
   const scheduleItems = [{
     id: 'schedule-1',
     stageId: 'stage-1',
@@ -315,8 +315,8 @@ test('未配置なら出演日を変更でき、配置済みならUI判定と保
     kind: 'performance',
     eventBandId: existing.id,
   }]
-  assert.equal(canChangeEventBandDay(existing.id, []), true)
-  assert.equal(canChangeEventBandDay(existing.id, scheduleItems), false)
+  assert.equal(canChangeEventBandDay(existing, []), true)
+  assert.equal(canChangeEventBandDay(existing, scheduleItems), false)
 
   const draft = createEventBandSettingsDraft(event, [existing])
   draft.items[0].eventDayId = 'day-2'
@@ -327,6 +327,34 @@ test('未配置なら出演日を変更でき、配置済みならUI判定と保
   const placed = update({ draft, eventBands: [existing], scheduleItems })
   assert.equal(placed.ok, false)
   if (!placed.ok) assert.ok(placed.errors.items[draft.items[0].draftId].eventDayId)
+})
+
+test('fixedPlacementがある既存EventBandは出演日変更を拒否し、同日の編集では設定を維持する', () => {
+  const existing = createExistingEventBand()
+  assert.equal(canChangeEventBandDay(existing, []), false)
+
+  const movedDraft = createEventBandSettingsDraft(event, [existing])
+  movedDraft.items[0].eventDayId = 'day-2'
+  const moved = update({ draft: movedDraft, eventBands: [existing] })
+  assert.equal(moved.ok, false)
+  if (!moved.ok) {
+    assert.match(
+      moved.errors.items[movedDraft.items[0].draftId].eventDayId,
+      /固定配置/,
+    )
+  }
+
+  const editedDraft = createEventBandSettingsDraft(event, [existing])
+  Object.assign(editedDraft.items[0], {
+    name: '固定配置を維持する編集',
+    memberIds: ['member-1'],
+    durationMinutes: '15',
+  })
+  const edited = update({ draft: editedDraft, eventBands: [existing] })
+  assert.equal(edited.ok, true)
+  if (!edited.ok) return
+  assert.deepEqual(edited.eventBands[0].fixedPlacement, existing.fixedPlacement)
+  assert.equal(edited.eventBands[0].eventDayId, existing.eventDayId)
 })
 
 test('未配置EventBandだけ削除でき、配置済み削除は保存処理でも拒否する', () => {

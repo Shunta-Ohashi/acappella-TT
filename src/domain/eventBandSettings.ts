@@ -228,7 +228,26 @@ export const canDeleteEventBand = (
   scheduleItems: ScheduleItem[],
 ): boolean => !isEventBandScheduled(eventBandId, scheduleItems)
 
-export const canChangeEventBandDay = canDeleteEventBand
+export type EventBandDayChangeBlockReason =
+  | 'scheduled'
+  | 'fixed-placement'
+
+export const getEventBandDayChangeBlockReason = (
+  eventBand: Pick<EventBand, 'id' | 'fixedPlacement'>,
+  scheduleItems: ScheduleItem[],
+): EventBandDayChangeBlockReason | undefined => {
+  if (isEventBandScheduled(eventBand.id, scheduleItems)) return 'scheduled'
+  if (eventBand.fixedPlacement) return 'fixed-placement'
+  return undefined
+}
+
+export const canChangeEventBandDay = (
+  eventBand: Pick<EventBand, 'id' | 'fixedPlacement'>,
+  scheduleItems: ScheduleItem[],
+): boolean => getEventBandDayChangeBlockReason(
+  eventBand,
+  scheduleItems,
+) === undefined
 
 export const getEventBandSourceLabel = (
   eventBand: Pick<EventBand, 'bandId'>,
@@ -509,13 +528,15 @@ export const createEventBandSettingsUpdate = ({
         form: '作成元の固定バンドは変更できません。',
       }
     }
-    if (
-      existing.eventDayId !== item.eventDayId &&
-      isEventBandScheduled(existing.id, scheduleItems)
-    ) {
+    const dayChangeBlockReason = existing.eventDayId !== item.eventDayId
+      ? getEventBandDayChangeBlockReason(existing, scheduleItems)
+      : undefined
+    if (dayChangeBlockReason) {
       errors.items[item.draftId] = {
         ...errors.items[item.draftId],
-        eventDayId: 'タイムテーブルに配置済みのため出演日を変更できません。先にStep 7でPoolへ戻してください。',
+        eventDayId: dayChangeBlockReason === 'scheduled'
+          ? 'タイムテーブルに配置済みのため出演日を変更できません。先にStep 7でPoolへ戻してください。'
+          : '固定配置が設定されているため出演日を変更できません。先にStep 5の出演条件で固定配置を解除してください。',
       }
     }
   }
