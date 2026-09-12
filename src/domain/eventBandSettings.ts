@@ -116,6 +116,31 @@ const fromMinuteWindow = ({ start, end }: MinuteWindow): TimeRange => {
   }
 }
 
+export const intersectAvailabilityWindows = (
+  leftWindows: TimeRange[] | undefined,
+  rightWindows: TimeRange[] | undefined,
+): TimeRange[] | undefined => {
+  const intersections = intersectMinuteWindows(
+    toMinuteWindows(leftWindows),
+    toMinuteWindows(rightWindows),
+  )
+
+  return intersections.length === 1 &&
+    intersections[0].start === 0 &&
+    intersections[0].end === MINUTES_PER_DAY
+    ? undefined
+    : intersections.map(fromMinuteWindow)
+}
+
+export const hasAvailabilityWindowForDuration = (
+  windows: TimeRange[] | undefined,
+  durationMinutes: number,
+): boolean => Number.isSafeInteger(durationMinutes) &&
+  durationMinutes > 0 &&
+  toMinuteWindows(windows).some((window) =>
+    window.end - window.start >= durationMinutes,
+  )
+
 export const getEventBandDayFeasibility = ({
   event,
   eventDayId,
@@ -251,7 +276,7 @@ export const canChangeEventBandDay = (
 
 export const getEventBandSourceLabel = (
   eventBand: Pick<EventBand, 'bandId'>,
-): string => eventBand.bandId ? '固定バンド由来' : 'イベント限定'
+): string => eventBand.bandId ? '固定バンド' : '企画バンド'
 
 export const createEventBandSettingsDraft = (
   event: Event,

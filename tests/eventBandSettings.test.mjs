@@ -145,6 +145,7 @@ test('固定Bandから名前・登録済みMemberだけをsnapshotし、出演�
     durationMinutes: '',
   })
   assert.deepEqual(result.unregisteredDefaultMemberIds, ['member-3'])
+  assert.equal(getEventBandSourceLabel(result.draft), '固定バンド')
   assert.deepEqual(sourceBand, bands[0])
 
   sourceBand.name = 'New Choir'
@@ -154,7 +155,7 @@ test('固定Bandから名前・登録済みMemberだけをsnapshotし、出演�
   assert.equal(result.draft.durationMinutes, '')
 })
 
-test('イベント限定EventBandをbandIdなしで作成・保存できる', () => {
+test('企画バンドをbandIdなしのEventBandとして作成・保存できる', () => {
   const draftItem = {
     ...createEventOnlyBandDraft({
       draftId: 'event-only',
@@ -181,7 +182,7 @@ test('イベント限定EventBandをbandIdなしで作成・保存できる', ()
     memberIds: ['member-1', 'member-2'],
     durationMinutes: 7,
   }])
-  assert.equal(getEventBandSourceLabel(result.eventBands[0]), 'イベント限定')
+  assert.equal(getEventBandSourceLabel(result.eventBands[0]), '企画バンド')
 })
 
 test('新規EventBandはEventの出演枠から選び、custom枠もdurationへ保存する', () => {
@@ -398,7 +399,7 @@ test('選択Eventだけdraft化し、保存しても別EventのEventBandを維�
   assert.equal(result.eventBands.find((item) => item.id === existing.id)?.name, '編集後')
 })
 
-test('固定Bandとイベント限定Bandを複数日へ別IDのEventBandとして一括保存する', () => {
+test('固定バンドと企画バンドを複数日へ別IDのEventBandとして一括保存する', () => {
   const fixed = {
     ...createFixedBandDraft({
     draftId: 'fixed-day-1',
