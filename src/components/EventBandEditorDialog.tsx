@@ -365,7 +365,7 @@ export function EventBandEditorDialog({
 
         {!isEditing && (
           <fieldset className="event-band-form__source-choice">
-            <legend>追加方法</legend>
+            <legend>バンド種別</legend>
             <label>
               <input
                 type="radio"
@@ -373,7 +373,7 @@ export function EventBandEditorDialog({
                 checked={addMode === 'fixed'}
                 onChange={() => selectAddMode('fixed')}
               />
-              固定バンドから追加
+              固定バンド（共通データに登録されているバンド）
             </label>
             <label>
               <input
@@ -382,7 +382,7 @@ export function EventBandEditorDialog({
                 checked={addMode === 'event-only'}
                 onChange={() => selectAddMode('event-only')}
               />
-              このイベントだけのバンドを作成
+              企画バンド（このイベント内でのみ使用するバンド）
             </label>
           </fieldset>
         )}
