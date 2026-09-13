@@ -10,6 +10,7 @@ import type {
   PaRole,
   ScheduleItem,
   Stage,
+  StageId,
 } from '../domain/models'
 import type { CalculatedScheduleItem } from '../domain/timeline'
 import { formatMinuteAsLocalTime } from '../domain/timeline'
@@ -27,6 +28,7 @@ import {
 import { PaAssignmentEditorDialog } from './PaAssignmentEditorDialog'
 
 interface PaSettingsProps {
+  formId: string
   event: Event
   eventDays: EventDay[]
   stages: Stage[]
@@ -37,6 +39,9 @@ interface PaSettingsProps {
   scheduleItems: ScheduleItem[]
   calculatedItems: CalculatedScheduleItem[]
   paAssignments: Parameters<typeof createPaAssignmentsDraft>[1]
+  selectedEventDayId?: EventDayId
+  selectedStageId?: StageId
+  onSelectScope: (eventDayId: EventDayId, stageId: StageId) => void
   createDraftId: () => string
   onSave: (draft: PaAssignmentsDraft) => PaAssignmentsUpdateResult
   onSaveAndNext: () => void
@@ -50,13 +55,8 @@ interface EditorState {
 const emptyErrors = (): PaAssignmentsValidationErrors => ({ items: {} })
 const roleLabel = (role: PaRole) => role === 'main' ? 'Main PA' : 'Sub PA'
 
-const formatEventDay = (eventDay: EventDay): string => {
-  if (eventDay.label?.trim()) return eventDay.label.trim()
-  const [, month, day] = eventDay.date.split('-')
-  return `${Number(month)}月${Number(day)}日`
-}
-
 export function PaSettings({
+  formId,
   event,
   eventDays,
   stages,
@@ -67,18 +67,16 @@ export function PaSettings({
   scheduleItems,
   calculatedItems,
   paAssignments,
+  selectedEventDayId,
+  selectedStageId,
+  onSelectScope,
   createDraftId,
   onSave,
   onSaveAndNext,
 }: PaSettingsProps) {
-  const orderedEventDays = [...eventDays].sort((first, second) =>
-    first.order - second.order || first.date.localeCompare(second.date),
-  )
   const [draft, setDraft] = useState(() =>
     createPaAssignmentsDraft(event, paAssignments),
   )
-  const [selectedEventDayId, setSelectedEventDayId] =
-    useState<EventDayId | undefined>(orderedEventDays[0]?.id)
   const [editor, setEditor] = useState<EditorState>()
   const [errors, setErrors] = useState<PaAssignmentsValidationErrors>(
     emptyErrors,
@@ -92,13 +90,10 @@ export function PaSettings({
     eventBands.map((eventBand) => [eventBand.id, eventBand]),
   )
   const selectedStages = stages
-    .filter((stage) => stage.eventDayId === selectedEventDayId)
+    .filter((stage) =>
+      stage.eventDayId === selectedEventDayId && stage.id === selectedStageId,
+    )
     .sort((first, second) => first.order - second.order)
-  const errorDayIds = new Set(
-    draft.items.flatMap((item) =>
-      errors.items[item.draftId] ? [item.eventDayId] : [],
-    ),
-  )
 
   const getBoundaryLabel = (item: PaAssignmentDraftItem) => {
     const describe = (boundary: PaAssignmentDraftItem['from']) => {
@@ -149,7 +144,9 @@ export function PaSettings({
     const firstInvalid = draft.items.find((item) =>
       validationErrors.items[item.draftId],
     )
-    if (firstInvalid) setSelectedEventDayId(firstInvalid.eventDayId)
+    if (firstInvalid) {
+      onSelectScope(firstInvalid.eventDayId, firstInvalid.stageId)
+    }
   }
 
   const save = (moveToNext: boolean) => {
@@ -182,42 +179,20 @@ export function PaSettings({
 
   const handleSubmit = (submitEvent: FormEvent<HTMLFormElement>) => {
     submitEvent.preventDefault()
-    save(false)
+    const submitter = (submitEvent.nativeEvent as SubmitEvent).submitter
+    save(
+      submitter instanceof HTMLButtonElement &&
+        submitter.value === 'save-and-next',
+    )
   }
 
   return (
     <section className="pa-settings" aria-label="PA設定">
-      <form noValidate onSubmit={handleSubmit}>
-        <div className="pa-settings__days">
-          <p>開催日</p>
-          <div className="event-day-tabs">
-            {orderedEventDays.map((eventDay) => {
-              const isSelected = eventDay.id === selectedEventDayId
-              return (
-                <button
-                  key={eventDay.id}
-                  type="button"
-                  className={isSelected
-                    ? 'event-day-tabs__button event-day-tabs__button--active'
-                    : 'event-day-tabs__button'}
-                  aria-pressed={isSelected}
-                  onClick={() => setSelectedEventDayId(eventDay.id)}
-                >
-                  <span>{formatEventDay(eventDay)}</span>
-                  {isSelected && <small>選択中</small>}
-                  {errorDayIds.has(eventDay.id) && (
-                    <small className="event-day-tabs__error">エラーあり</small>
-                  )}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
+      <form id={formId} noValidate onSubmit={handleSubmit}>
         {selectedStages.length === 0 ? (
           <div className="pa-settings__empty">
-            <p>この開催日にはStageがありません。</p>
-            <span>先にStep 2で会場・Stageを設定してください。</span>
+            <p>選択中のStageがありません。</p>
+            <span>共通のStage選択から設定対象を選んでください。</span>
           </div>
         ) : selectedStages.map((stage) => {
           const stageItems = calculatedItems.filter((item) =>
@@ -238,6 +213,7 @@ export function PaSettings({
                   <button
                     type="button"
                     className="secondary-button"
+                    aria-label={`${stage.name}にMain PAを追加`}
                     disabled={stageItems.length === 0}
                     onClick={() => openNew(stage, 'main')}
                   >
@@ -246,6 +222,7 @@ export function PaSettings({
                   <button
                     type="button"
                     className="secondary-button"
+                    aria-label={`${stage.name}にSub PAを追加`}
                     disabled={stageItems.length === 0}
                     onClick={() => openNew(stage, 'sub')}
                   >
@@ -263,70 +240,68 @@ export function PaSettings({
                 <p className="pa-stage-card__empty">PA担当はまだ設定されていません。</p>
               )}
               {assignments.length > 0 && (
-                <div className="pa-settings__table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th scope="col">Role</th>
-                        <th scope="col">Member</th>
-                        <th scope="col">担当範囲</th>
-                        <th scope="col">実時間</th>
-                        <th scope="col">操作</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {assignments.map((item) => (
-                        <tr key={item.draftId}>
-                          <th scope="row">{roleLabel(item.role)}</th>
-                          <td>{memberById.get(item.memberId)?.realName ?? '未設定'}</td>
-                          <td>{getBoundaryLabel(item)}</td>
-                          <td>{getTimeLabel(item)}</td>
-                          <td>
-                            <div className="pa-settings__row-actions">
-                              <button
-                                type="button"
-                                className="secondary-button"
-                                onClick={() => setEditor({
-                                  item: {
-                                    ...item,
-                                    from: { ...item.from },
-                                    until: { ...item.until },
-                                  },
-                                  isNew: false,
-                                })}
-                              >
-                                編集
-                              </button>
-                              <button
-                                type="button"
-                                className="danger-button"
-                                aria-label={`${stage.name}の${roleLabel(item.role)}担当を削除`}
-                                onClick={() => {
-                                  setDraft((previous) => ({
-                                    items: previous.items.filter((candidate) =>
-                                      candidate.draftId !== item.draftId,
-                                    ),
-                                  }))
-                                  setErrors(emptyErrors())
-                                  setSaveMessage('')
-                                }}
-                              >
-                                削除
-                              </button>
-                            </div>
-                            {errors.items[item.draftId] && (
-                              <p className="form-error" role="alert">
-                                {Object.values(errors.items[item.draftId])
-                                  .filter(Boolean)
-                                  .join(' ')}
-                              </p>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <ul className="pa-assignment-list">
+                  {assignments.map((item) => (
+                    <li className="pa-assignment-card" key={item.draftId}>
+                      <header>
+                        <strong>{roleLabel(item.role)}</strong>
+                        <span>
+                          {memberById.get(item.memberId)?.realName ?? '未設定'}
+                        </span>
+                      </header>
+                      <dl>
+                        <div>
+                          <dt>担当範囲</dt>
+                          <dd>{getBoundaryLabel(item)}</dd>
+                        </div>
+                        <div>
+                          <dt>実時間</dt>
+                          <dd>{getTimeLabel(item)}</dd>
+                        </div>
+                      </dl>
+                      <div className="pa-settings__row-actions">
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          aria-label={`${stage.name}の${roleLabel(item.role)}担当を編集`}
+                          onClick={() => setEditor({
+                            item: {
+                              ...item,
+                              from: { ...item.from },
+                              until: { ...item.until },
+                            },
+                            isNew: false,
+                          })}
+                        >
+                          編集
+                        </button>
+                        <button
+                          type="button"
+                          className="danger-button"
+                          aria-label={`${stage.name}の${roleLabel(item.role)}担当を削除`}
+                          onClick={() => {
+                            setDraft((previous) => ({
+                              items: previous.items.filter((candidate) =>
+                                candidate.draftId !== item.draftId,
+                              ),
+                            }))
+                            setErrors(emptyErrors())
+                            setSaveMessage('')
+                          }}
+                        >
+                          削除
+                        </button>
+                      </div>
+                      {errors.items[item.draftId] && (
+                        <p className="form-error" role="alert">
+                          {Object.values(errors.items[item.draftId])
+                            .filter(Boolean)
+                            .join(' ')}
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
               )}
             </section>
           )
@@ -336,9 +311,19 @@ export function PaSettings({
         <footer className="pa-settings__footer">
           <span role="status">{saveMessage}</span>
           <div>
-            <button type="submit" className="secondary-button">保存</button>
-            <button type="button" className="primary-button" onClick={() => save(true)}>
-              保存して次へ <span aria-hidden="true">→</span>
+            <button
+              type="submit"
+              className="secondary-button"
+              value="save"
+            >
+              PA設定を保存
+            </button>
+            <button
+              type="submit"
+              className="primary-button"
+              value="save-and-next"
+            >
+              PA設定を保存して次へ <span aria-hidden="true">→</span>
             </button>
           </div>
         </footer>
