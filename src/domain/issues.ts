@@ -19,6 +19,7 @@ import type {
 } from './models'
 import type { CalculatedScheduleItem } from './timeline'
 import { parseLocalTimeToMinute } from './timeline.ts'
+import { isIntervalWithinAvailabilityWindows } from './eventBandSettings.ts'
 import {
   getOverlappingMemberPerformances,
   intervalsOverlap,
@@ -561,13 +562,11 @@ export const detectScheduleIssues = ({
         }
         if (
           resolution.ok &&
-          !memberDay.availabilityWindows?.some((window) =>
-            isWithinTimeRange(
-              resolution.interval.fromMinute,
-              resolution.interval.untilMinute,
-              window,
-            ),
-          ) && memberDay.availabilityWindows !== undefined
+          !isIntervalWithinAvailabilityWindows(
+            memberDay.availabilityWindows,
+            resolution.interval.fromMinute,
+            resolution.interval.untilMinute,
+          )
         ) {
           addIssue({
             severity: 'ERROR',

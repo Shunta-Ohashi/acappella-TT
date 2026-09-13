@@ -175,6 +175,57 @@ const detect = ({
 
 const findIssues = (issues, code) => issues.filter((issue) => issue.code === code)
 
+const evaluatePaAvailability = ({
+  startMinute,
+  endMinute,
+  availabilityWindows,
+}) => {
+  const item = createItem({
+    from: { scheduleItemId: 'availability-range', edge: 'start' },
+    until: { scheduleItemId: 'availability-range', edge: 'end' },
+  })
+  const items = [{
+    scheduleItemId: 'availability-range',
+    eventDayId: 'day-1',
+    stageId: 'stage-a',
+    kind: 'break',
+    plannedStartMinute: startMinute,
+    plannedEndMinute: endMinute,
+  }]
+  const configuredMemberDays = createMemberDays({
+    'member-main': availabilityWindows === undefined
+      ? {}
+      : { availabilityWindows },
+  })
+  const step6Errors = validatePaAssignmentDraftItem({
+    item,
+    event,
+    eventDays,
+    stages,
+    members,
+    eventMembers,
+    eventMemberDays: configuredMemberDays,
+    eventBands,
+    calculatedItems: items,
+  })
+  const step7Issues = detect({
+    paAssignments: [assignment('pa-availability', {
+      from: item.from,
+      until: item.until,
+    })],
+    configuredMemberDays,
+    items,
+  })
+
+  return {
+    step6Errors,
+    step7AvailabilityIssues: findIssues(
+      step7Issues,
+      'PA_OUTSIDE_MEMBER_AVAILABILITY',
+    ),
+  }
+}
+
 test('Main/Sub capabilityを持つEventMemberだけをrole候補にする', () => {
   const mainCandidates = getPaMemberCandidates({
     event,
@@ -312,6 +363,63 @@ test('PA区間全体がavailabilityの1つのwindowに含まれる場合だけ�
   assert.ok(validate(createItem(), outside).availability)
   assert.equal(validate(createItem(), multiple).availability, undefined)
   assert.ok(validate(createItem(), crossing).availability)
+})
+
+test('終日availabilityでは13:00〜17:00をStep 6・7の両方で許可する', () => {
+  const result = evaluatePaAvailability({
+    startMinute: 13 * 60,
+    endMinute: 17 * 60,
+    availabilityWindows: undefined,
+  })
+
+  assert.equal(result.step6Errors.availability, undefined)
+  assert.equal(result.step7AvailabilityIssues.length, 0)
+})
+
+test('終日availabilityでは23:30〜24:00をStep 6・7の両方で許可する', () => {
+  const result = evaluatePaAvailability({
+    startMinute: 23 * 60 + 30,
+    endMinute: 24 * 60,
+    availabilityWindows: undefined,
+  })
+
+  assert.equal(result.step6Errors.availability, undefined)
+  assert.equal(result.step7AvailabilityIssues.length, 0)
+})
+
+test('終日availabilityでも24:00を超えるPA区間をStep 6・7の両方で拒否する', () => {
+  const result = evaluatePaAvailability({
+    startMinute: 23 * 60 + 30,
+    endMinute: 24 * 60 + 30,
+    availabilityWindows: undefined,
+  })
+
+  assert.ok(result.step6Errors.availability)
+  assert.equal(result.step7AvailabilityIssues.length, 1)
+  assert.equal(result.step7AvailabilityIssues[0].severity, 'ERROR')
+})
+
+test('明示availability内のPA区間をStep 6・7の両方で許可する', () => {
+  const result = evaluatePaAvailability({
+    startMinute: 14 * 60,
+    endMinute: 16 * 60,
+    availabilityWindows: [{ from: '13:00', until: '17:00' }],
+  })
+
+  assert.equal(result.step6Errors.availability, undefined)
+  assert.equal(result.step7AvailabilityIssues.length, 0)
+})
+
+test('明示availability外のPA区間をStep 6・7の両方で拒否する', () => {
+  const result = evaluatePaAvailability({
+    startMinute: 12 * 60,
+    endMinute: 14 * 60,
+    availabilityWindows: [{ from: '13:00', until: '17:00' }],
+  })
+
+  assert.ok(result.step6Errors.availability)
+  assert.equal(result.step7AvailabilityIssues.length, 1)
+  assert.equal(result.step7AvailabilityIssues[0].severity, 'ERROR')
 })
 
 test('Timeline更新により同じScheduleBoundaryから導出するPA実時間が変わる', () => {
