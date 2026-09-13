@@ -27,6 +27,10 @@ export type ScheduleIssueCode =
   | 'OUTSIDE_MEMBER_AVAILABILITY'
   | 'OUTSIDE_BAND_AVAILABILITY'
   | 'EVENT_BAND_DAY_MISMATCH'
+  | 'FIXED_STAGE_MISMATCH'
+  | 'FIXED_SECTION_MISMATCH'
+  | 'FIXED_POSITION_MISMATCH'
+  | 'FIXED_START_TIME_MISMATCH'
   | 'PERFORMANCE_OVERLAP'
   | 'BACK_TO_BACK'
   | 'SHORT_GAP'
@@ -359,6 +363,97 @@ export const detectScheduleIssues = ({
         message: `EventBand ${eventBand.id} の出演希望時間外です`,
         eventBandIds: [eventBand.id],
         scheduleItemIds: [calculatedItem.scheduleItemId],
+      })
+    }
+
+    const fixedPlacement = eventBand.fixedPlacement
+    if (!fixedPlacement) return
+
+    const stageMatches = fixedPlacement.stageId === calculatedItem.stageId
+    if (!stageMatches) {
+      addIssue({
+        severity: 'ERROR',
+        code: 'FIXED_STAGE_MISMATCH',
+        message: `EventBand ${eventBand.id} は Stage ${fixedPlacement.stageId} に固定されています`,
+        eventBandIds: [eventBand.id],
+        scheduleItemIds: [calculatedItem.scheduleItemId],
+        stageIds: [fixedPlacement.stageId, calculatedItem.stageId],
+      })
+    }
+
+    const fixedSectionId = fixedPlacement.sectionId
+    const sectionMatches = fixedSectionId === undefined ||
+      fixedSectionId === calculatedItem.sectionId
+    if (
+      stageMatches && fixedSectionId !== undefined &&
+      fixedSectionId !== calculatedItem.sectionId
+    ) {
+      addIssue({
+        severity: 'ERROR',
+        code: 'FIXED_SECTION_MISMATCH',
+        message: `EventBand ${eventBand.id} は Section ${fixedSectionId} に固定されています`,
+        eventBandIds: [eventBand.id],
+        scheduleItemIds: [calculatedItem.scheduleItemId],
+        stageIds: [calculatedItem.stageId],
+        sectionIds: [
+          fixedSectionId,
+          ...(calculatedItem.sectionId ? [calculatedItem.sectionId] : []),
+        ],
+      })
+    }
+
+    if (stageMatches && sectionMatches && fixedPlacement.position) {
+      const lanePerformances = resolvedPerformances.filter(
+        ({ calculatedItem: candidate }) =>
+          candidate.stageId === fixedPlacement.stageId &&
+          (fixedPlacement.sectionId === undefined ||
+            candidate.sectionId === fixedPlacement.sectionId),
+      )
+      const actualIndex = lanePerformances.findIndex(
+        ({ calculatedItem: candidate }) =>
+          candidate.scheduleItemId === calculatedItem.scheduleItemId,
+      )
+      const positionMatches = fixedPlacement.position.kind === 'first'
+        ? actualIndex === 0
+        : fixedPlacement.position.kind === 'last'
+          ? actualIndex === lanePerformances.length - 1
+          : actualIndex === fixedPlacement.position.index
+
+      if (!positionMatches) {
+        const positionLabel = fixedPlacement.position.kind === 'first'
+          ? '最初'
+          : fixedPlacement.position.kind === 'last'
+            ? '最後'
+            : `${fixedPlacement.position.index + 1}番目`
+        addIssue({
+          severity: 'ERROR',
+          code: 'FIXED_POSITION_MISMATCH',
+          message: `EventBand ${eventBand.id} は対象レーンの${positionLabel}に固定されています`,
+          eventBandIds: [eventBand.id],
+          scheduleItemIds: [calculatedItem.scheduleItemId],
+          stageIds: [calculatedItem.stageId],
+          ...(calculatedItem.sectionId
+            ? { sectionIds: [calculatedItem.sectionId] }
+            : {}),
+        })
+      }
+    }
+
+    if (
+      fixedPlacement.plannedStartTime &&
+      parseLocalTimeToMinute(fixedPlacement.plannedStartTime) !==
+        calculatedItem.plannedStartMinute
+    ) {
+      addIssue({
+        severity: 'ERROR',
+        code: 'FIXED_START_TIME_MISMATCH',
+        message: `EventBand ${eventBand.id} の固定開始時刻は${fixedPlacement.plannedStartTime}です`,
+        eventBandIds: [eventBand.id],
+        scheduleItemIds: [calculatedItem.scheduleItemId],
+        stageIds: [calculatedItem.stageId],
+        ...(calculatedItem.sectionId
+          ? { sectionIds: [calculatedItem.sectionId] }
+          : {}),
       })
     }
   })

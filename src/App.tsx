@@ -57,12 +57,12 @@ import { EventBasicInfo } from './components/EventBasicInfo'
 import { CommonDataPage } from './components/CommonDataPage'
 import { EventMemberSettings } from './components/EventMemberSettings'
 import { EventBandSettings } from './components/EventBandSettings'
+import { EventBandConditions } from './components/EventBandConditions'
 import { EventStageSettings } from './components/EventStageSettings'
 import { EventList } from './components/EventList'
 import { IssuePanel } from './components/IssuePanel'
 import {
   createEventData,
-  DEFAULT_PERFORMANCE_SLOT_MINUTES,
   type NewEventDraft,
 } from './domain/eventCreation'
 import {
@@ -101,6 +101,11 @@ import {
   type EventBandSettingsDraft,
   type EventBandSettingsUpdateResult,
 } from './domain/eventBandSettings'
+import {
+  createEventBandConditionsUpdate,
+  type EventBandConditionsDraft,
+  type EventBandConditionsUpdateResult,
+} from './domain/eventBandConditions'
 import { getHighestSeverityByScheduleItem } from './ui/issuePresentation'
 import {
   getSectionDroppableId,
@@ -109,9 +114,8 @@ import {
   resolveScheduleLane,
   TIMETABLE_POOL_DROPPABLE_ID,
 } from './ui/timetableDnd'
+import { createDemoData } from './data/demoData'
 import './App.css'
-
-const CURRENT_STAGE_ID = 'stage-1'
 
 type AppView = 'event-editor' | AppSection
 
@@ -160,93 +164,26 @@ const DEFAULT_EVENT_SETTINGS = {
   'timeZone' | 'defaultTransitionMinutes' | 'validationPolicy'
 >
 
-const initialMembers: Member[] = [
-  { id: 'm-1', realName: '佐藤', active: true },
-  { id: 'm-2', realName: '鈴木', active: true },
-  { id: 'm-3', realName: '高橋', active: true },
-  { id: 'm-4', realName: '田中', active: true },
-]
-
-const initialEvent: TimetableEvent = {
-  id: 'event-1',
-  name: '現在のイベント',
-  performanceSlotMinutes: [...DEFAULT_PERFORMANCE_SLOT_MINUTES],
-  ...DEFAULT_EVENT_SETTINGS,
-}
-
-const initialEventDays: EventDay[] = [
-  {
-    id: 'event-day-1',
-    eventId: initialEvent.id,
-    date: '2026-01-01',
-    order: 0,
-  },
-]
-
-const initialStage: Stage = {
-  id: CURRENT_STAGE_ID,
-  eventDayId: initialEventDays[0].id,
-  name: 'メインステージ',
-  order: 0,
-  plannedStartTime: '13:00',
-}
-
-const initialEventBands: EventBand[] = [
-  {
-    id: 'event-band-1',
-    eventId: initialEvent.id,
-    eventDayId: initialEventDays[0].id,
-    bandId: 'b-1',
-    name: 'あおぞら',
-    memberIds: ['m-1', 'm-2', 'm-3'],
-    durationMinutes: 15,
-  },
-]
-
-const initialEventMembers: EventMember[] = initialMembers.map((member) => ({
-  id: `event-member-${member.id}`,
-  eventId: initialEvent.id,
-  memberId: member.id,
-}))
-
-const initialEventMemberDays: EventMemberDay[] = initialEventMembers.map((
-  eventMember,
-) => ({
-  id: `event-member-day-${eventMember.memberId}`,
-  eventMemberId: eventMember.id,
-  eventDayId: initialEventDays[0].id,
-  participationStatus: 'participating',
-}))
-
-const initialScheduleItems: ScheduleItem[] = [
-  {
-    id: 'schedule-break-1',
-    stageId: CURRENT_STAGE_ID,
-    order: 0,
-    kind: 'break',
-    title: '中間休憩',
-    durationMinutes: 10,
-  },
-]
-
-const initialSections: Section[] = []
+const initialDemoData = createDemoData()
 
 function App() {
   const [activeView, setActiveView] = useState<AppView>('events')
   const [activeStep, setActiveStep] = useState<EventEditorStepId>(7)
-  const [selectedEventId, setSelectedEventId] = useState<EventId>(initialEvent.id)
+  const [selectedEventId, setSelectedEventId] = useState<EventId>(
+    initialDemoData.initialEventId,
+  )
   const [selectedTimetableEventDayId, setSelectedTimetableEventDayId] =
-    useState<EventDayId | undefined>(initialEventDays[0].id)
+    useState<EventDayId | undefined>(initialDemoData.initialEventDayId)
   const [selectedTimetableStageId, setSelectedTimetableStageId] =
-    useState<StageId | undefined>(initialStage.id)
+    useState<StageId | undefined>(initialDemoData.initialStageId)
   const [isCreateEventDialogOpen, setIsCreateEventDialogOpen] = useState(false)
 
   // ==================== 📦 各種状態（State）の管理 ====================
 
-  const [events, setEvents] = useState<TimetableEvent[]>([initialEvent])
-  const [eventDays, setEventDays] = useState<EventDay[]>(initialEventDays)
-  const [stages, setStages] = useState<Stage[]>([initialStage])
-  const [sections, setSections] = useState<Section[]>(initialSections)
+  const [events, setEvents] = useState<TimetableEvent[]>(initialDemoData.events)
+  const [eventDays, setEventDays] = useState<EventDay[]>(initialDemoData.eventDays)
+  const [stages, setStages] = useState<Stage[]>(initialDemoData.stages)
+  const [sections, setSections] = useState<Section[]>(initialDemoData.sections)
   const selectedEvent = events.find((event) => event.id === selectedEventId)
   const selectedEventDays = getEventDaysForEvent(eventDays, selectedEventId)
   const selectedEventDayIds = new Set(
@@ -281,21 +218,20 @@ function App() {
   )
 
   // 1️⃣ サークル員データベース（初期データ）
-  const [members, setMembers] = useState<Member[]>(initialMembers)
+  const [members, setMembers] = useState<Member[]>(initialDemoData.members)
 
   // 2️⃣ バンドデータベース（初期データ）
-  const [bands, setBands] = useState<Band[]>([
-    { id: 'b-1', name: 'あおぞら', defaultMemberIds: ['m-1', 'm-2', 'm-3'], active: true },
-    { id: 'b-2', name: '夕焼けコーラス', defaultMemberIds: ['m-4', 'm-1'], active: true },
-  ])
+  const [bands, setBands] = useState<Band[]>(initialDemoData.bands)
 
   // 3️⃣ このイベントに出演するバンド
-  const [eventBands, setEventBands] = useState<EventBand[]>(initialEventBands)
+  const [eventBands, setEventBands] = useState<EventBand[]>(
+    initialDemoData.eventBands,
+  )
   const [eventMembers, setEventMembers] = useState<EventMember[]>(
-    initialEventMembers,
+    initialDemoData.eventMembers,
   )
   const [eventMemberDays, setEventMemberDays] = useState<EventMemberDay[]>(
-    initialEventMemberDays,
+    initialDemoData.eventMemberDays,
   )
   const selectedEventBands = eventBands.filter(
     (eventBand) => eventBand.eventId === selectedEventId,
@@ -309,7 +245,9 @@ function App() {
     : []
 
   // 4️⃣ 当日のタイムテーブル。出演項目はEventBandをIDで参照する
-  const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>(initialScheduleItems)
+  const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>(
+    initialDemoData.scheduleItems,
+  )
   const selectedScheduleItems = scheduleItems.filter((scheduleItem) =>
     selectedStageIds.has(scheduleItem.stageId),
   )
@@ -541,6 +479,36 @@ function App() {
       newEventBandIds: draft.items
         .filter((item) => !item.eventBandId)
         .map(() => createId('event-band')),
+    })
+    if (!result.ok) return result
+
+    setEventBands(result.eventBands)
+    return result
+  }
+
+  const handleSaveEventBandConditions = (
+    draft: EventBandConditionsDraft,
+  ): EventBandConditionsUpdateResult => {
+    if (!selectedEvent) {
+      return {
+        ok: false,
+        errors: {
+          items: {},
+          form: '編集するイベントが見つかりません。',
+        },
+      }
+    }
+
+    const result = createEventBandConditionsUpdate({
+      event: selectedEvent,
+      eventDays: selectedEventDays,
+      eventBands,
+      stages,
+      sections,
+      members,
+      eventMembers,
+      eventMemberDays,
+      draft,
     })
     if (!result.ok) return result
 
@@ -1152,6 +1120,20 @@ function App() {
               createDraftId={() => createId('event-band-draft')}
               onSave={handleSaveEventBandSettings}
               onSaveAndNext={() => setActiveStep(5)}
+            />
+          ) : activeStep === 5 && selectedEvent ? (
+            <EventBandConditions
+              key={selectedEvent.id}
+              event={selectedEvent}
+              eventDays={selectedEventDays}
+              eventBands={selectedEventBands}
+              stages={selectedStages}
+              sections={selectedSections}
+              members={members}
+              eventMembers={selectedEventMembers}
+              eventMemberDays={selectedEventMemberDays}
+              onSave={handleSaveEventBandConditions}
+              onSaveAndNext={() => setActiveStep(6)}
             />
           ) : activeStep === 7 && selectedEvent ? (
           <div className="timetable-workspace" style={containerStyle}>

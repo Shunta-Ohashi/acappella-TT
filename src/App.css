@@ -3386,6 +3386,328 @@
   color: #b42318;
 }
 
+/* Step 5: EventBand conditions */
+.event-band-conditions > form {
+  display: grid;
+  gap: 24px;
+}
+
+.event-band-conditions__toolbar,
+.event-band-conditions__footer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.event-band-conditions__toolbar > div > p {
+  margin: 0 0 8px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.event-band-conditions__guide {
+  max-width: 440px;
+  margin: 0;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.event-band-conditions__empty {
+  padding: 36px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #475569;
+  text-align: center;
+}
+
+.event-band-conditions__empty p {
+  margin: 0 0 6px;
+  color: #334155;
+  font-weight: 700;
+}
+
+.event-band-conditions__table-wrap {
+  overflow-x: auto;
+  border: 1px solid #dbe2ea;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.event-band-conditions__table {
+  width: 100%;
+  min-width: 880px;
+  border-collapse: collapse;
+}
+
+.event-band-conditions__table th,
+.event-band-conditions__table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid #e5eaf0;
+  color: #334155;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: left;
+  vertical-align: top;
+}
+
+.event-band-conditions__table thead th {
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+}
+
+.event-band-conditions__table tbody th {
+  color: #1e293b;
+  font-weight: 700;
+}
+
+.event-band-conditions__table tr:last-child th,
+.event-band-conditions__table tr:last-child td {
+  border-bottom: 0;
+}
+
+.event-band-conditions__warning {
+  display: block;
+  max-width: 260px;
+  margin-top: 7px;
+  color: #854d0e;
+  line-height: 1.45;
+}
+
+.event-band-conditions__footer {
+  padding-top: 18px;
+  border-top: 1px solid #e5eaf0;
+}
+
+.event-band-conditions__footer > span {
+  color: #166534;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.event-band-conditions__footer > div,
+.event-band-condition-form__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.event-band-condition-dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 0;
+  overflow: auto;
+  border: 0;
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgb(15 23 42 / 24%);
+}
+
+.event-band-condition-dialog::backdrop {
+  background: rgb(15 23 42 / 52%);
+}
+
+.event-band-condition-form {
+  display: grid;
+  gap: 20px;
+  padding: 26px;
+  color: #1e293b;
+}
+
+.event-band-condition-form > header p,
+.event-band-condition-form > header h2,
+.event-band-condition-form > header span {
+  margin: 0;
+}
+
+.event-band-condition-form > header p {
+  color: #526175;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.event-band-condition-form > header h2 {
+  margin: 5px 0 8px;
+  font-size: 22px;
+}
+
+.event-band-condition-form > header strong {
+  margin-right: 9px;
+}
+
+.event-band-condition-form > header span {
+  color: #526175;
+  font-size: 13px;
+}
+
+.event-band-condition-form__group {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 18px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.event-band-condition-form__group--soft {
+  background: #f8fafc;
+}
+
+.event-band-condition-form__group legend {
+  padding: 0 7px;
+  color: #1e293b;
+  font-weight: 800;
+}
+
+.event-band-condition-form__group > p {
+  margin: 0;
+  color: #526175;
+  font-size: 13px;
+}
+
+.event-band-condition-form__range {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) repeat(2, minmax(150px, 1fr));
+  align-items: end;
+  gap: 12px;
+}
+
+.event-band-condition-form__range > span,
+.event-band-condition-form__placement-grid label {
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.event-band-condition-form__availability-card {
+  display: grid;
+  gap: 5px;
+  padding: 13px 15px;
+  border: 1px solid #dbe2ea;
+  border-radius: 9px;
+  background: #f8fafc;
+}
+
+.event-band-condition-form__availability-card > span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.event-band-condition-form__availability-card > strong {
+  color: #1e293b;
+  font-size: 15px;
+}
+
+.event-band-condition-form__availability-card > p {
+  margin: 0;
+  color: #526175;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.event-band-condition-form__availability-card > small {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.event-band-condition-form__availability-card > .is-blocked {
+  color: #b42318;
+}
+
+.event-band-condition-form__availability-card > .has-warning {
+  color: #854d0e;
+}
+
+.event-band-condition-form__range label,
+.event-band-condition-form__placement-grid > div {
+  display: grid;
+  gap: 6px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.event-band-condition-form__placement-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.event-band-condition-form input[type='time'],
+.event-band-condition-form select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid #b8c2cf;
+  border-radius: 8px;
+  background: #fff;
+  color: #1e293b;
+  font: inherit;
+}
+
+.event-band-condition-form input:disabled,
+.event-band-condition-form select:disabled {
+  background: #eef2f6;
+  color: #64748b;
+  cursor: not-allowed;
+}
+
+.event-band-condition-form__feasibility {
+  display: grid;
+  gap: 4px;
+  padding: 13px 15px;
+  border: 1px solid #d8dee8;
+  border-radius: 9px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.event-band-condition-form__feasibility--available strong {
+  color: #166534;
+}
+
+.event-band-condition-form__feasibility--warning strong {
+  color: #854d0e;
+}
+
+.event-band-condition-form__feasibility--blocked strong {
+  color: #b42318;
+}
+
+.event-band-condition-form__actions {
+  justify-content: flex-end;
+  padding-top: 16px;
+  border-top: 1px solid #e5eaf0;
+}
+
+@media (max-width: 760px) {
+  .event-band-conditions__toolbar,
+  .event-band-conditions__footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .event-band-conditions__footer > div {
+    justify-content: flex-end;
+  }
+
+  .event-band-condition-form {
+    padding: 22px 18px;
+  }
+
+  .event-band-condition-form__range,
+  .event-band-condition-form__placement-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .event-band-form__fixed-bands,
 .event-band-form__members {
   display: grid;
