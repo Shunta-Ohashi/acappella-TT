@@ -4,6 +4,7 @@ import type {
   EventDay,
   EventDayId,
   LocalTime,
+  PaAssignment,
   ScheduleItem,
   Section,
   SectionId,
@@ -77,6 +78,7 @@ export interface StageReferences {
   sections: Pick<Section, 'stageId'>[]
   scheduleItems: Pick<ScheduleItem, 'stageId'>[]
   eventBands: Pick<EventBand, 'fixedPlacement'>[]
+  paAssignments: Pick<PaAssignment, 'stageId'>[]
 }
 
 export interface SectionReferences {
@@ -94,6 +96,7 @@ interface CreateEventStageSettingsUpdateInput {
   newSectionIds: SectionId[]
   scheduleItems: ScheduleItem[]
   eventBands: EventBand[]
+  paAssignments: PaAssignment[]
 }
 
 export type EventStageSettingsUpdateResult =
@@ -441,7 +444,7 @@ export const getEventStageSettingsErrorEventDayIds = (
 }
 
 export const STAGE_DELETE_BLOCKED_MESSAGE =
-  'このStageにはSection、タイムテーブル、または固定配置の設定があるため削除できません。関連する設定を先に解除してください。'
+  'このStageにはSection、タイムテーブル、固定配置、またはPA担当の設定があるため削除できません。関連する設定を先に解除してください。'
 
 export const SECTION_DELETE_BLOCKED_MESSAGE =
   'このSectionにはタイムテーブルまたは固定配置の設定があるため削除できません。関連する設定を先に解除してください。'
@@ -451,13 +454,14 @@ export const FIRST_SECTION_ADD_BLOCKED_MESSAGE =
 
 export const canDeleteStage = (
   stageId: StageId,
-  { sections, scheduleItems, eventBands }: StageReferences,
+  { sections, scheduleItems, eventBands, paAssignments }: StageReferences,
 ): boolean =>
   !sections.some((section) => section.stageId === stageId) &&
   !scheduleItems.some((scheduleItem) => scheduleItem.stageId === stageId) &&
   !eventBands.some((eventBand) =>
     eventBand.fixedPlacement?.stageId === stageId,
-  )
+  ) &&
+  !paAssignments.some((assignment) => assignment.stageId === stageId)
 
 export const canDeleteSection = (
   sectionId: SectionId,
@@ -488,6 +492,7 @@ export const createEventStageSettingsUpdate = ({
   newSectionIds,
   scheduleItems,
   eventBands,
+  paAssignments,
 }: CreateEventStageSettingsUpdateInput): EventStageSettingsUpdateResult => {
   const errors = validateEventStageSettingsDraft(draft)
   if (hasEventStageSettingsErrors(errors)) return { ok: false, errors }
@@ -518,7 +523,12 @@ export const createEventStageSettingsUpdate = ({
   )
   const blockedStageDeletion = currentStages.find((stage) =>
     !retainedStageIds.has(stage.id) &&
-    !canDeleteStage(stage.id, { sections, scheduleItems, eventBands }),
+    !canDeleteStage(stage.id, {
+      sections,
+      scheduleItems,
+      eventBands,
+      paAssignments,
+    }),
   )
 
   if (blockedStageDeletion) {

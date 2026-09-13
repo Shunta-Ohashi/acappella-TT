@@ -17,6 +17,7 @@ test('demoDataは想定件数と全EventDayのdomain invariantを満たす', () 
     stages: data.stages.length,
     sections: data.sections.length,
     scheduleItems: data.scheduleItems.length,
+    paAssignments: data.paAssignments.length,
   }, {
     events: 2,
     eventDays: 3,
@@ -26,6 +27,7 @@ test('demoDataは想定件数と全EventDayのdomain invariantを満たす', () 
     stages: 5,
     sections: 5,
     scheduleItems: 6,
+    paAssignments: 2,
   })
 
   for (const eventDay of data.eventDays) {
@@ -57,6 +59,7 @@ test('demoDataは想定件数と全EventDayのdomain invariantを満たす', () 
 
     const errors = detectScheduleIssues({
       event,
+      members: data.members,
       eventMembers: data.eventMembers.filter((eventMember) =>
         eventMember.eventId === event.id,
       ),
@@ -64,6 +67,10 @@ test('demoDataは想定件数と全EventDayのdomain invariantを満たす', () 
       eventBands,
       stages,
       sections: data.sections,
+      paAssignments: data.paAssignments.filter((assignment) =>
+        assignment.eventId === event.id &&
+        assignment.eventDayId === eventDay.id,
+      ),
       calculatedItems: timelines.calculatedItems,
     }).filter((issue) => issue.severity === 'ERROR')
 

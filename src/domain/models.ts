@@ -8,6 +8,7 @@ export type StageId = string
 export type SectionId = string
 export type EventBandId = string
 export type ScheduleItemId = string
+export type PaAssignmentId = string
 
 // Values are stored as ISO-like strings and validated at the input boundary.
 export type LocalDate = string // YYYY-MM-DD
@@ -22,6 +23,13 @@ export type ParticipationStatus = 'participating' | 'absent' | 'undecided'
 export interface PaCapabilities {
   main: boolean
   sub: boolean
+}
+
+export type PaRole = 'main' | 'sub'
+
+export interface ScheduleBoundary {
+  scheduleItemId: ScheduleItemId
+  edge: 'start' | 'end'
 }
 
 export type FixedPosition =
@@ -149,3 +157,14 @@ export interface BreakScheduleItem extends ScheduleItemBase {
 }
 
 export type ScheduleItem = PerformanceScheduleItem | BreakScheduleItem
+
+export interface PaAssignment {
+  id: PaAssignmentId
+  eventId: EventId
+  eventDayId: EventDayId
+  stageId: StageId
+  memberId: MemberId
+  role: PaRole
+  from: ScheduleBoundary
+  until: ScheduleBoundary
+}

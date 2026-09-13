@@ -136,11 +136,13 @@ const detect = (options = {}) => {
 
   return detectScheduleIssues({
     event,
+    members: options.members ?? [],
     eventMembers,
     eventMemberDays,
     eventBands,
     stages,
     sections,
+    paAssignments: options.paAssignments ?? [],
     calculatedItems,
   })
 }
