@@ -5,6 +5,7 @@ import type {
   EventDayId,
   EventMemberDay,
   LocalDate,
+  PaAssignment,
   Stage,
 } from './models'
 import {
@@ -33,6 +34,7 @@ export interface EventDayReferences {
   stages: Pick<Stage, 'eventDayId'>[]
   eventMemberDays: Pick<EventMemberDay, 'eventDayId'>[]
   eventBands: Pick<EventBand, 'eventDayId'>[]
+  paAssignments?: Pick<PaAssignment, 'eventDayId'>[]
 }
 
 interface CreateEventBasicInfoUpdateInput extends EventDayReferences {
@@ -79,12 +81,13 @@ export const validateEventBasicInfoDraft = (
 
 export const canDeleteEventDay = (
   eventDayId: EventDayId,
-  { stages, eventMemberDays, eventBands }: EventDayReferences,
+  { stages, eventMemberDays, eventBands, paAssignments = [] }: EventDayReferences,
 ): boolean =>
   !stages.some((stage) => stage.eventDayId === eventDayId) &&
   !eventMemberDays.some((eventMemberDay) =>
     eventMemberDay.eventDayId === eventDayId) &&
-  !eventBands.some((eventBand) => eventBand.eventDayId === eventDayId)
+  !eventBands.some((eventBand) => eventBand.eventDayId === eventDayId) &&
+  !paAssignments.some((assignment) => assignment.eventDayId === eventDayId)
 
 export const createEventBasicInfoUpdate = ({
   event,
@@ -94,6 +97,7 @@ export const createEventBasicInfoUpdate = ({
   stages,
   eventMemberDays,
   eventBands,
+  paAssignments = [],
 }: CreateEventBasicInfoUpdateInput): EventBasicInfoUpdateResult => {
   const errors = validateEventBasicInfoDraft(draft)
   if (errors.name || errors.dates) return { ok: false, errors }
@@ -110,7 +114,12 @@ export const createEventBasicInfoUpdate = ({
   )
   const blockedDeletion = currentEventDays.find((eventDay) =>
     !retainedEventDayIds.has(eventDay.id) &&
-    !canDeleteEventDay(eventDay.id, { stages, eventMemberDays, eventBands }),
+    !canDeleteEventDay(eventDay.id, {
+      stages,
+      eventMemberDays,
+      eventBands,
+      paAssignments,
+    }),
   )
 
   if (blockedDeletion) {

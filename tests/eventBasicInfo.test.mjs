@@ -121,6 +121,10 @@ test('関連データがないEventDayだけ削除可能と判定する', () => 
     ...noReferences,
     eventBands: [{ eventDayId: 'day-a' }],
   }), false)
+  assert.equal(canDeleteEventDay('day-a', {
+    ...noReferences,
+    paAssignments: [{ eventDayId: 'day-a' }],
+  }), false)
 })
 
 test('関連データがないEventDayを基本情報更新で削除できる', () => {

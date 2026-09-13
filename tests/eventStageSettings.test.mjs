@@ -324,7 +324,7 @@ test('Event共通とStage固有の転換時間は0以上の整数だけ許可す
   assert.equal(validErrors.stages['draft-stage'], undefined)
 })
 
-test('ScheduleItem、Section、または固定配置から参照されるStageは削除不可にする', () => {
+test('ScheduleItem、Section、固定配置、またはPA担当から参照されるStageは削除不可にする', () => {
   assert.equal(canDeleteStage(existingStage.id, noReferences), true)
   assert.equal(canDeleteStage(existingStage.id, {
     sections: [],
@@ -346,6 +346,12 @@ test('ScheduleItem、Section、または固定配置から参照されるStage�
     scheduleItems: [],
     eventBands: [{ fixedPlacement: { stageId: 'another-stage' } }],
   }), true)
+  assert.equal(canDeleteStage(existingStage.id, {
+    sections: [],
+    scheduleItems: [],
+    eventBands: [],
+    paAssignments: [{ stageId: existingStage.id }],
+  }), false)
 })
 
 test('未参照Stageは削除でき、参照中Stageは保存処理でも削除をブロックする', () => {
@@ -391,6 +397,24 @@ test('固定配置から参照中のStageは保存処理でも削除をブロッ
 
   assert.equal(result.ok, false)
   if (!result.ok) assert.match(result.errors.form ?? '', /固定配置/)
+})
+
+test('PA担当から参照中のStageは保存処理でも削除をブロックする', () => {
+  const result = createEventStageSettingsUpdate({
+    event,
+    eventDays,
+    stages: [existingStage],
+    draft: settingsDraft({ stages: [] }),
+    newStageIds: [],
+    newSectionIds: [],
+    sections: [],
+    scheduleItems: [],
+    eventBands: [],
+    paAssignments: [{ stageId: existingStage.id }],
+  })
+
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.match(result.errors.form ?? '', /PA担当/)
 })
 
 test('Section draftへ既存Sectionと自動・固定時刻を反映する', () => {

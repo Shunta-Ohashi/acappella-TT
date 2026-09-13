@@ -167,6 +167,7 @@ export function IssuePanel({
                   issue.scheduleItemIds?.join('-'),
                   issue.stageIds?.join('-'),
                   issue.sectionIds?.join('-'),
+                  issue.paAssignmentIds?.join('-'),
                   index,
                 ].join('|')}
                 className={`issue-list__item issue-list__item--${issue.severity.toLowerCase()}`}

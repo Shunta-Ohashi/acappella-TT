@@ -6,6 +6,7 @@ import type {
   EventMember,
   EventMemberDay,
   Member,
+  PaAssignment,
   ScheduleItem,
   Section,
   Stage,
@@ -22,6 +23,7 @@ export interface DemoData {
   eventMemberDays: EventMemberDay[]
   eventBands: EventBand[]
   scheduleItems: ScheduleItem[]
+  paAssignments: PaAssignment[]
   initialEventId: string
   initialEventDayId: string
   initialStageId: string
@@ -557,6 +559,41 @@ const scheduleItems: ScheduleItem[] = [
   },
 ]
 
+const paAssignments: PaAssignment[] = [
+  {
+    id: 'pa-assignment-demo-main-day1-main',
+    eventId: 'event-demo-main',
+    eventDayId: 'event-day-demo-main-01',
+    stageId: 'stage-demo-main-day1',
+    memberId: 'member-demo-03',
+    role: 'main',
+    from: {
+      scheduleItemId: 'schedule-demo-main-day1-break',
+      edge: 'start',
+    },
+    until: {
+      scheduleItemId: 'schedule-demo-main-day1-break',
+      edge: 'end',
+    },
+  },
+  {
+    id: 'pa-assignment-demo-sub-day1-sub',
+    eventId: 'event-demo-main',
+    eventDayId: 'event-day-demo-main-01',
+    stageId: 'stage-demo-sub-day1',
+    memberId: 'member-demo-06',
+    role: 'sub',
+    from: {
+      scheduleItemId: 'schedule-demo-sub-day1-performance',
+      edge: 'start',
+    },
+    until: {
+      scheduleItemId: 'schedule-demo-sub-day1-performance',
+      edge: 'end',
+    },
+  },
+]
+
 export const createDemoData = (): DemoData => ({
   events: events.map((event) => ({
     ...event,
@@ -611,6 +648,11 @@ export const createDemoData = (): DemoData => ({
       : {}),
   })),
   scheduleItems: scheduleItems.map((scheduleItem) => ({ ...scheduleItem })),
+  paAssignments: paAssignments.map((assignment) => ({
+    ...assignment,
+    from: { ...assignment.from },
+    until: { ...assignment.until },
+  })),
   initialEventId: 'event-demo-main',
   initialEventDayId: 'event-day-demo-main-01',
   initialStageId: 'stage-demo-main-day1',

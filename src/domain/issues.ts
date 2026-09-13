@@ -6,7 +6,10 @@ import type {
   EventMember,
   EventMemberDay,
   EventMemberId,
+  Member,
   MemberId,
+  PaAssignment,
+  PaAssignmentId,
   ScheduleItemId,
   Section,
   SectionId,
@@ -16,6 +19,12 @@ import type {
 } from './models'
 import type { CalculatedScheduleItem } from './timeline'
 import { parseLocalTimeToMinute } from './timeline.ts'
+import {
+  getOverlappingMemberPerformances,
+  intervalsOverlap,
+  resolvePaAssignmentInterval,
+  type ResolvedPaAssignmentInterval,
+} from './paAssignments.ts'
 
 export type IssueSeverity = 'ERROR' | 'WARNING' | 'INFO'
 
@@ -31,6 +40,14 @@ export type ScheduleIssueCode =
   | 'FIXED_SECTION_MISMATCH'
   | 'FIXED_POSITION_MISMATCH'
   | 'FIXED_START_TIME_MISMATCH'
+  | 'PA_CAPABILITY_MISMATCH'
+  | 'PA_MEMBER_NOT_CONFIGURED'
+  | 'PA_MEMBER_ABSENT'
+  | 'PA_MEMBER_UNDECIDED'
+  | 'PA_INVALID_BOUNDARY'
+  | 'PA_OUTSIDE_MEMBER_AVAILABILITY'
+  | 'PA_MEMBER_PERFORMANCE_OVERLAP'
+  | 'PA_ASSIGNMENT_OVERLAP'
   | 'PERFORMANCE_OVERLAP'
   | 'BACK_TO_BACK'
   | 'SHORT_GAP'
@@ -49,6 +66,7 @@ export interface ScheduleIssue {
   scheduleItemIds?: ScheduleItemId[]
   stageIds?: StageId[]
   sectionIds?: SectionId[]
+  paAssignmentIds?: PaAssignmentId[]
   gapBands?: number
   restMinutes?: number
   overrunMinutes?: number
@@ -56,11 +74,13 @@ export interface ScheduleIssue {
 
 export interface DetectScheduleIssuesInput {
   event: Event
+  members: Member[]
   eventMembers: EventMember[]
   eventMemberDays: EventMemberDay[]
   eventBands: EventBand[]
   stages: Stage[]
   sections: Section[]
+  paAssignments: PaAssignment[]
   calculatedItems: CalculatedScheduleItem[]
 }
 
@@ -105,6 +125,7 @@ const createIssueKey = (issue: ScheduleIssue): string =>
     [...(issue.scheduleItemIds ?? [])].sort().join(','),
     [...(issue.stageIds ?? [])].sort().join(','),
     [...(issue.sectionIds ?? [])].sort().join(','),
+    [...(issue.paAssignmentIds ?? [])].sort().join(','),
   ].join('|')
 
 const getLatestEndMinute = (
@@ -232,11 +253,13 @@ const compareAppearances = (
 
 export const detectScheduleIssues = ({
   event,
+  members,
   eventMembers,
   eventMemberDays,
   eventBands,
   stages,
   sections,
+  paAssignments,
   calculatedItems,
 }: DetectScheduleIssuesInput): ScheduleIssue[] => {
   const issues: ScheduleIssue[] = []
@@ -260,6 +283,8 @@ export const detectScheduleIssues = ({
       .filter((eventBand) => eventBand.eventId === event.id)
       .map((eventBand) => [eventBand.id, eventBand]),
   )
+  const memberById = new Map(members.map((member) => [member.id, member]))
+  const stageById = new Map(stages.map((stage) => [stage.id, stage]))
   const eventMemberByMemberId = new Map(
     eventMembers
       .filter((eventMember) => eventMember.eventId === event.id)
@@ -457,6 +482,156 @@ export const detectScheduleIssues = ({
       })
     }
   })
+
+  const resolvedPaAssignments: Array<{
+    assignment: PaAssignment
+    interval: ResolvedPaAssignmentInterval
+  }> = []
+
+  paAssignments
+    .filter((assignment) => assignment.eventId === event.id)
+    .forEach((assignment) => {
+      const stage = stageById.get(assignment.stageId)
+      const resolution = stage?.eventDayId === assignment.eventDayId
+        ? resolvePaAssignmentInterval(assignment, calculatedItems)
+        : { ok: false as const, reason: 'PA担当のStageまたは開催日が正しくありません。' }
+
+      if (!resolution.ok) {
+        addIssue({
+          severity: 'ERROR',
+          code: 'PA_INVALID_BOUNDARY',
+          message: `Stage ${assignment.stageId} のPA担当範囲が無効です。${resolution.reason}`,
+          memberIds: [assignment.memberId],
+          stageIds: [assignment.stageId],
+          paAssignmentIds: [assignment.id],
+        })
+      } else {
+        resolvedPaAssignments.push({
+          assignment,
+          interval: resolution.interval,
+        })
+      }
+
+      const member = memberById.get(assignment.memberId)
+      if (!member?.paCapabilities?.[assignment.role]) {
+        addIssue({
+          severity: 'ERROR',
+          code: 'PA_CAPABILITY_MISMATCH',
+          message: `メンバー ${assignment.memberId} は${assignment.role === 'main' ? 'Main' : 'Sub'} PAを担当できません`,
+          memberIds: [assignment.memberId],
+          stageIds: [assignment.stageId],
+          paAssignmentIds: [assignment.id],
+        })
+      }
+
+      const eventMember = eventMemberByMemberId.get(assignment.memberId)
+      const memberDay = eventMember
+        ? eventMemberDayByEventMemberId
+            .get(eventMember.id)
+            ?.get(assignment.eventDayId)
+        : undefined
+      if (!memberDay) {
+        addIssue({
+          severity: 'ERROR',
+          code: 'PA_MEMBER_NOT_CONFIGURED',
+          message: `メンバー ${assignment.memberId} のこの開催日のPA参加情報が設定されていません`,
+          memberIds: [assignment.memberId],
+          stageIds: [assignment.stageId],
+          paAssignmentIds: [assignment.id],
+        })
+      } else if (memberDay.participationStatus === 'absent') {
+        addIssue({
+          severity: 'ERROR',
+          code: 'PA_MEMBER_ABSENT',
+          message: `不参加のメンバー ${assignment.memberId} がPA担当に設定されています`,
+          memberIds: [assignment.memberId],
+          stageIds: [assignment.stageId],
+          paAssignmentIds: [assignment.id],
+        })
+      } else {
+        if (memberDay.participationStatus === 'undecided') {
+          addIssue({
+            severity: 'INFO',
+            code: 'PA_MEMBER_UNDECIDED',
+            message: `メンバー ${assignment.memberId} の参加状態が未定のままPA担当に設定されています`,
+            memberIds: [assignment.memberId],
+            stageIds: [assignment.stageId],
+            paAssignmentIds: [assignment.id],
+          })
+        }
+        if (
+          resolution.ok &&
+          !memberDay.availabilityWindows?.some((window) =>
+            isWithinTimeRange(
+              resolution.interval.fromMinute,
+              resolution.interval.untilMinute,
+              window,
+            ),
+          ) && memberDay.availabilityWindows !== undefined
+        ) {
+          addIssue({
+            severity: 'ERROR',
+            code: 'PA_OUTSIDE_MEMBER_AVAILABILITY',
+            message: `メンバー ${assignment.memberId} のPA担当時間が出演可能時間外です`,
+            memberIds: [assignment.memberId],
+            stageIds: [assignment.stageId],
+            paAssignmentIds: [assignment.id],
+          })
+        }
+      }
+
+      if (resolution.ok) {
+        getOverlappingMemberPerformances({
+          memberId: assignment.memberId,
+          eventDayId: assignment.eventDayId,
+          interval: resolution.interval,
+          eventBands,
+          calculatedItems,
+        }).forEach((performance) => {
+          if (!performance.eventBandId) return
+          addIssue({
+            severity: 'ERROR',
+            code: 'PA_MEMBER_PERFORMANCE_OVERLAP',
+            message: `メンバー ${assignment.memberId} は Stage ${assignment.stageId} の${assignment.role === 'main' ? 'Main' : 'Sub'} PA担当中に EventBand ${performance.eventBandId} へ出演しています`,
+            memberIds: [assignment.memberId],
+            eventBandIds: [performance.eventBandId],
+            scheduleItemIds: [performance.scheduleItemId],
+            stageIds: [assignment.stageId, performance.stageId],
+            paAssignmentIds: [assignment.id],
+          })
+        })
+      }
+    })
+
+  for (
+    let firstIndex = 0;
+    firstIndex < resolvedPaAssignments.length;
+    firstIndex += 1
+  ) {
+    const first = resolvedPaAssignments[firstIndex]
+    for (
+      let secondIndex = firstIndex + 1;
+      secondIndex < resolvedPaAssignments.length;
+      secondIndex += 1
+    ) {
+      const second = resolvedPaAssignments[secondIndex]
+      if (
+        first.assignment.memberId !== second.assignment.memberId ||
+        first.assignment.eventDayId !== second.assignment.eventDayId ||
+        !intervalsOverlap(first.interval, second.interval)
+      ) {
+        continue
+      }
+      addIssue({
+        severity: 'ERROR',
+        code: 'PA_ASSIGNMENT_OVERLAP',
+        message: `メンバー ${first.assignment.memberId} のPA担当時間が重複しています`,
+        memberIds: [first.assignment.memberId],
+        stageIds: [first.assignment.stageId, second.assignment.stageId],
+        paAssignmentIds: [first.assignment.id, second.assignment.id],
+      })
+    }
+  }
 
   appearancesByMember.forEach((appearances, memberId) => {
     const eventMember = eventMemberByMemberId.get(memberId)

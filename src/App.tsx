@@ -13,6 +13,7 @@ import type {
   EventMemberDay,
   Member,
   MemberId,
+  PaAssignment,
   ScheduleItem,
   Section,
   SectionId,
@@ -59,6 +60,7 @@ import { EventMemberSettings } from './components/EventMemberSettings'
 import { EventBandSettings } from './components/EventBandSettings'
 import { EventBandConditions } from './components/EventBandConditions'
 import { EventStageSettings } from './components/EventStageSettings'
+import { PaSettings } from './components/PaSettings'
 import { EventList } from './components/EventList'
 import { IssuePanel } from './components/IssuePanel'
 import {
@@ -106,6 +108,11 @@ import {
   type EventBandConditionsDraft,
   type EventBandConditionsUpdateResult,
 } from './domain/eventBandConditions'
+import {
+  createPaAssignmentsUpdate,
+  type PaAssignmentsDraft,
+  type PaAssignmentsUpdateResult,
+} from './domain/paAssignments'
 import { getHighestSeverityByScheduleItem } from './ui/issuePresentation'
 import {
   getSectionDroppableId,
@@ -233,6 +240,9 @@ function App() {
   const [eventMemberDays, setEventMemberDays] = useState<EventMemberDay[]>(
     initialDemoData.eventMemberDays,
   )
+  const [paAssignments, setPaAssignments] = useState<PaAssignment[]>(
+    initialDemoData.paAssignments,
+  )
   const selectedEventBands = eventBands.filter(
     (eventBand) => eventBand.eventId === selectedEventId,
   )
@@ -263,6 +273,19 @@ function App() {
   const selectedEventMemberDays = eventMemberDays.filter(
     (eventMemberDay) => selectedEventMemberIds.has(eventMemberDay.eventMemberId),
   )
+  const selectedEventPaAssignments = paAssignments.filter(
+    (assignment) => assignment.eventId === selectedEventId,
+  )
+  const selectedEventCalculatedItems = selectedEvent
+    ? selectedEventDays.flatMap((eventDay) => calculateEventDayTimelines({
+        event: selectedEvent,
+        eventDayId: eventDay.id,
+        stages: selectedStages,
+        sections: selectedSections,
+        scheduleItems: selectedScheduleItems,
+        eventBands: selectedEventBands,
+      }).calculatedItems)
+    : []
   const startTime = currentStage?.plannedStartTime ?? ''
   const intervalTime = currentStage?.transitionMinutes ??
     selectedEvent?.defaultTransitionMinutes ??
@@ -389,6 +412,7 @@ function App() {
       stages,
       eventMemberDays,
       eventBands,
+      paAssignments,
     })
 
     if (!result.ok) return result
@@ -516,6 +540,35 @@ function App() {
     return result
   }
 
+  const handleSavePaAssignments = (
+    draft: PaAssignmentsDraft,
+  ): PaAssignmentsUpdateResult => {
+    if (!selectedEvent) {
+      return {
+        ok: false,
+        errors: { items: {}, form: '編集するイベントが見つかりません。' },
+      }
+    }
+    const result = createPaAssignmentsUpdate({
+      event: selectedEvent,
+      eventDays: selectedEventDays,
+      stages: selectedStages,
+      members,
+      eventMembers: selectedEventMembers,
+      eventMemberDays: selectedEventMemberDays,
+      eventBands: selectedEventBands,
+      calculatedItems: selectedEventCalculatedItems,
+      paAssignments,
+      draft,
+      newPaAssignmentIds: draft.items
+        .filter((item) => !item.paAssignmentId)
+        .map(() => createId('pa-assignment')),
+    })
+    if (!result.ok) return result
+    setPaAssignments(result.paAssignments)
+    return result
+  }
+
   const handleSaveCommonMember = (
     memberId: MemberId | undefined,
     draft: CommonMemberDraft,
@@ -609,6 +662,7 @@ function App() {
         .map(() => createId('section')),
       scheduleItems,
       eventBands,
+      paAssignments,
     })
 
     if (!result.ok) return result
@@ -887,11 +941,15 @@ function App() {
   const scheduleIssues = selectedEvent
     ? detectScheduleIssues({
         event: selectedEvent,
+        members,
         eventMembers: selectedEventMembers,
         eventMemberDays: selectedEventMemberDays,
         eventBands: selectedEventBands,
         stages: timetableStages,
         sections: timetableSections,
+        paAssignments: selectedEventPaAssignments.filter((assignment) =>
+          assignment.eventDayId === timetableSelection.eventDayId,
+        ),
         calculatedItems,
       })
     : []
@@ -1064,6 +1122,7 @@ function App() {
                   stages,
                   eventMemberDays,
                   eventBands,
+                  paAssignments,
                 },
               )}
               onSave={handleSaveEventBasicInfo}
@@ -1085,6 +1144,7 @@ function App() {
                 sections,
                 scheduleItems,
                 eventBands,
+                paAssignments,
               })}
               canDeleteSection={(sectionId) => canDeleteSection(sectionId, {
                 scheduleItems,
@@ -1134,6 +1194,23 @@ function App() {
               eventMemberDays={selectedEventMemberDays}
               onSave={handleSaveEventBandConditions}
               onSaveAndNext={() => setActiveStep(6)}
+            />
+          ) : activeStep === 6 && selectedEvent ? (
+            <PaSettings
+              key={selectedEvent.id}
+              event={selectedEvent}
+              eventDays={selectedEventDays}
+              stages={selectedStages}
+              members={members}
+              eventMembers={selectedEventMembers}
+              eventMemberDays={selectedEventMemberDays}
+              eventBands={selectedEventBands}
+              scheduleItems={selectedScheduleItems}
+              calculatedItems={selectedEventCalculatedItems}
+              paAssignments={selectedEventPaAssignments}
+              createDraftId={() => createId('pa-assignment-draft')}
+              onSave={handleSavePaAssignments}
+              onSaveAndNext={() => setActiveStep(7)}
             />
           ) : activeStep === 7 && selectedEvent ? (
           <div className="timetable-workspace" style={containerStyle}>
