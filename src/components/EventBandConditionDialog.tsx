@@ -116,8 +116,14 @@ export function EventBandConditionDialog({
     }
   }, [])
 
-  const clearError = (field: keyof EventBandConditionItemErrors) => {
-    setErrors((previous) => ({ ...previous, [field]: undefined }))
+  const clearConditionError = (
+    field: keyof EventBandConditionItemErrors,
+  ) => {
+    setErrors((previous) => ({
+      ...previous,
+      [field]: undefined,
+      feasibility: undefined,
+    }))
   }
 
   const updateRange = (
@@ -129,7 +135,7 @@ export function EventBandConditionDialog({
       ...previous,
       [field]: { ...previous[field], [boundary]: value },
     }))
-    clearError(field)
+    clearConditionError(field)
   }
 
   const handleStageChange = (stageId: string) => {
@@ -148,7 +154,7 @@ export function EventBandConditionDialog({
             plannedStartTime: '',
           },
     }))
-    clearError('fixedPlacement')
+    clearConditionError('fixedPlacement')
   }
 
   const handlePositionChange = (positionMode: FixedPositionMode) => {
@@ -162,7 +168,7 @@ export function EventBandConditionDialog({
           : {}),
       },
     }))
-    clearError('fixedPlacement')
+    clearConditionError('fixedPlacement')
   }
 
   const handleSubmit = (submitEvent: FormEvent<HTMLFormElement>) => {
@@ -307,7 +313,7 @@ export function EventBandConditionDialog({
                       sectionId: changeEvent.target.value,
                     },
                   }))
-                  clearError('fixedPlacement')
+                  clearConditionError('fixedPlacement')
                 }}
               >
                 <option value="">
@@ -359,7 +365,7 @@ export function EventBandConditionDialog({
                       plannedStartTime: changeEvent.target.value,
                     },
                   }))
-                  clearError('fixedPlacement')
+                  clearConditionError('fixedPlacement')
                 }}
               />
             </div>
