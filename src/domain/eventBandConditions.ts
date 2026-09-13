@@ -289,12 +289,20 @@ export const getEventBandConditionFeasibility = ({
       effectiveAvailabilityWindows,
       [preferredTimeRange],
     )
-    if (
-      !hasAvailabilityWindowForDuration(
+    const fixedStartMinute = fixedStartTime && isValidLocalTime(fixedStartTime)
+      ? parseLocalTimeToMinute(fixedStartTime)
+      : undefined
+    const meetsPreference = fixedStartMinute !== undefined
+      ? isIntervalWithinAvailabilityWindows(
+        preferredWindows,
+        fixedStartMinute,
+        fixedStartMinute + eventBand.durationMinutes,
+      )
+      : hasAvailabilityWindowForDuration(
         preferredWindows,
         eventBand.durationMinutes,
       )
-    ) {
+    if (!meetsPreference) {
       warnings.push(
         `希望時間内に出演時間${eventBand.durationMinutes}分を確保できません。`,
       )

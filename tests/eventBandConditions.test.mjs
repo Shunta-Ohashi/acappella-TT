@@ -294,6 +294,94 @@ test('固定開始なしでは従来どおりdurationを確保できるwindowが
   assert.deepEqual(result.blockingReasons, [])
 })
 
+test('固定開始からの出演区間全体が希望時間内ならwarningを返さない', () => {
+  const result = feasibility({
+    item: createItem({
+      preferredTimeRange: { from: '15:00', until: '16:00' },
+      fixedPlacement: {
+        stageId: 'stage-1',
+        sectionId: 'section-1',
+        positionMode: 'none',
+        plannedStartTime: '15:30',
+      },
+    }),
+    eventBand: createEventBand({ memberIds: ['member-2'] }),
+    eventMemberDays: [participatingDays[1]],
+  })
+
+  assert.equal(result.status, 'available')
+  assert.deepEqual(result.warnings, [])
+})
+
+test('固定開始が希望時間より前ならwarningを返す', () => {
+  const result = feasibility({
+    item: createItem({
+      preferredTimeRange: { from: '15:00', until: '16:00' },
+      fixedPlacement: {
+        stageId: 'stage-1',
+        sectionId: 'section-1',
+        positionMode: 'none',
+        plannedStartTime: '10:00',
+      },
+    }),
+    eventBand: createEventBand({ memberIds: ['member-2'] }),
+    eventMemberDays: [participatingDays[1]],
+  })
+
+  assert.equal(result.status, 'warning')
+  assert.match(result.warnings[0], /希望時間内/)
+})
+
+test('固定開始からの出演区間が希望時間の開始境界をまたぐとwarningを返す', () => {
+  const result = feasibility({
+    item: createItem({
+      preferredTimeRange: { from: '15:00', until: '16:00' },
+      fixedPlacement: {
+        stageId: 'stage-1',
+        sectionId: 'section-1',
+        positionMode: 'none',
+        plannedStartTime: '14:55',
+      },
+    }),
+    eventBand: createEventBand({ memberIds: ['member-2'] }),
+    eventMemberDays: [participatingDays[1]],
+  })
+
+  assert.equal(result.status, 'warning')
+  assert.match(result.warnings[0], /希望時間内/)
+})
+
+test('固定開始なしでは従来どおり希望時間内のどこかに出演枠があればwarningなし', () => {
+  const result = feasibility({
+    item: createItem({
+      preferredTimeRange: { from: '15:00', until: '16:00' },
+    }),
+    eventBand: createEventBand({ memberIds: ['member-2'] }),
+    eventMemberDays: [participatingDays[1]],
+  })
+
+  assert.equal(result.status, 'available')
+  assert.deepEqual(result.warnings, [])
+})
+
+test('preferredTimeRangeなしでは固定開始があっても希望warningを返さない', () => {
+  const result = feasibility({
+    item: createItem({
+      fixedPlacement: {
+        stageId: 'stage-1',
+        sectionId: 'section-1',
+        positionMode: 'none',
+        plannedStartTime: '10:00',
+      },
+    }),
+    eventBand: createEventBand({ memberIds: ['member-2'] }),
+    eventMemberDays: [participatingDays[1]],
+  })
+
+  assert.equal(result.status, 'available')
+  assert.deepEqual(result.warnings, [])
+})
+
 test('複数のMember共通windowをBand条件で絞ったeffective availabilityを返す', () => {
   const configuredDays = [
     {
