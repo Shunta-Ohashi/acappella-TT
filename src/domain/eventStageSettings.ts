@@ -78,7 +78,7 @@ export interface StageReferences {
   sections: Pick<Section, 'stageId'>[]
   scheduleItems: Pick<ScheduleItem, 'stageId'>[]
   eventBands: Pick<EventBand, 'fixedPlacement'>[]
-  paAssignments?: Pick<PaAssignment, 'stageId'>[]
+  paAssignments: Pick<PaAssignment, 'stageId'>[]
 }
 
 export interface SectionReferences {
@@ -96,7 +96,7 @@ interface CreateEventStageSettingsUpdateInput {
   newSectionIds: SectionId[]
   scheduleItems: ScheduleItem[]
   eventBands: EventBand[]
-  paAssignments?: PaAssignment[]
+  paAssignments: PaAssignment[]
 }
 
 export type EventStageSettingsUpdateResult =
@@ -454,7 +454,7 @@ export const FIRST_SECTION_ADD_BLOCKED_MESSAGE =
 
 export const canDeleteStage = (
   stageId: StageId,
-  { sections, scheduleItems, eventBands, paAssignments = [] }: StageReferences,
+  { sections, scheduleItems, eventBands, paAssignments }: StageReferences,
 ): boolean =>
   !sections.some((section) => section.stageId === stageId) &&
   !scheduleItems.some((scheduleItem) => scheduleItem.stageId === stageId) &&
@@ -492,7 +492,7 @@ export const createEventStageSettingsUpdate = ({
   newSectionIds,
   scheduleItems,
   eventBands,
-  paAssignments = [],
+  paAssignments,
 }: CreateEventStageSettingsUpdateInput): EventStageSettingsUpdateResult => {
   const errors = validateEventStageSettingsDraft(draft)
   if (hasEventStageSettingsErrors(errors)) return { ok: false, errors }

@@ -94,7 +94,12 @@ const settingsDraft = ({
   sections,
 })
 
-const noReferences = { sections: [], scheduleItems: [], eventBands: [] }
+const noReferences = {
+  sections: [],
+  scheduleItems: [],
+  eventBands: [],
+  paAssignments: [],
+}
 
 test('Stage開始時刻は自動終了または固定終了より前の場合だけ変更可能にする', () => {
   assert.equal(isValidStageTimeRange('16:59'), true)
@@ -330,21 +335,25 @@ test('ScheduleItem、Section、固定配置、またはPA担当から参照さ�
     sections: [],
     scheduleItems: [{ stageId: existingStage.id }],
     eventBands: [],
+    paAssignments: [],
   }), false)
   assert.equal(canDeleteStage(existingStage.id, {
     sections: [{ stageId: existingStage.id }],
     scheduleItems: [],
     eventBands: [],
+    paAssignments: [],
   }), false)
   assert.equal(canDeleteStage(existingStage.id, {
     sections: [],
     scheduleItems: [],
     eventBands: [{ fixedPlacement: { stageId: existingStage.id } }],
+    paAssignments: [],
   }), false)
   assert.equal(canDeleteStage(existingStage.id, {
     sections: [],
     scheduleItems: [],
     eventBands: [{ fixedPlacement: { stageId: 'another-stage' } }],
+    paAssignments: [],
   }), true)
   assert.equal(canDeleteStage(existingStage.id, {
     sections: [],
@@ -352,6 +361,10 @@ test('ScheduleItem、Section、固定配置、またはPA担当から参照さ�
     eventBands: [],
     paAssignments: [{ stageId: existingStage.id }],
   }), false)
+  assert.equal(canDeleteStage(existingStage.id, {
+    ...noReferences,
+    paAssignments: [{ stageId: 'another-stage' }],
+  }), true)
 })
 
 test('未参照Stageは削除でき、参照中Stageは保存処理でも削除をブロックする', () => {
@@ -377,6 +390,7 @@ test('未参照Stageは削除でき、参照中Stageは保存処理でも削除�
     sections: [],
     scheduleItems: [{ stageId: existingStage.id }],
     eventBands: [],
+    paAssignments: [],
   })
   assert.equal(blocked.ok, false)
   if (!blocked.ok) assert.match(blocked.errors.form ?? '', /削除できません/)
@@ -393,6 +407,7 @@ test('固定配置から参照中のStageは保存処理でも削除をブロッ
     sections: [],
     scheduleItems: [],
     eventBands: [{ fixedPlacement: { stageId: existingStage.id } }],
+    paAssignments: [],
   })
 
   assert.equal(result.ok, false)
@@ -569,6 +584,7 @@ test('既存Section IDを維持し、新規IDだけを使ってStageごとにord
     newSectionIds: ['section-new-one', 'section-new-two'],
     scheduleItems: [],
     eventBands: [],
+    paAssignments: [],
   })
 
   assert.equal(result.ok, true)
@@ -652,6 +668,7 @@ test('参照中Sectionをdraftから除いても保存処理で削除をブロ�
       durationMinutes: 10,
     }],
     eventBands: [],
+    paAssignments: [],
   })
 
   assert.equal(result.ok, false)
@@ -675,6 +692,7 @@ test('未参照の最後のSectionは保存処理で削除できる', () => {
     newSectionIds: [],
     scheduleItems: [],
     eventBands: [],
+    paAssignments: [],
   })
 
   assert.equal(result.ok, true)
@@ -717,6 +735,7 @@ test('ScheduleItemがあるSectionなしStageへの最初のSection追加を保�
       durationMinutes: 10,
     }],
     eventBands: [],
+    paAssignments: [],
   })
 
   assert.equal(result.ok, false)

@@ -38,6 +38,7 @@ const noReferences = {
   stages: [],
   eventMemberDays: [],
   eventBands: [],
+  paAssignments: [],
 }
 
 test('基本情報更新で既存EventDay IDを維持し、新規日と日付順のorderを反映する', () => {
@@ -125,6 +126,10 @@ test('関連データがないEventDayだけ削除可能と判定する', () => 
     ...noReferences,
     paAssignments: [{ eventDayId: 'day-a' }],
   }), false)
+  assert.equal(canDeleteEventDay('day-a', {
+    ...noReferences,
+    paAssignments: [{ eventDayId: 'day-b' }],
+  }), true)
 })
 
 test('関連データがないEventDayを基本情報更新で削除できる', () => {
@@ -160,6 +165,7 @@ test('関連データがあるEventDayの削除を保存処理でもブロック
     stages: [{ eventDayId: 'day-b' }],
     eventMemberDays: [],
     eventBands: [],
+    paAssignments: [],
   })
 
   assert.equal(result.ok, false)

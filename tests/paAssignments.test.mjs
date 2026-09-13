@@ -446,9 +446,22 @@ test('Boundary参照先がなくなってもAssignmentを消さずPA_INVALID_BOU
 
 test('PA draftの追加・編集・削除を保存し、別EventのAssignmentを維持する', () => {
   const existing = assignment('pa-existing')
+  const removed = assignment('pa-removed', {
+    memberId: 'member-sub',
+    role: 'sub',
+    from: { scheduleItemId: 'break-a', edge: 'start' },
+    until: { scheduleItemId: 'break-a', edge: 'end' },
+  })
   const otherEvent = assignment('pa-other', { eventId: 'event-other' })
-  const draft = createPaAssignmentsDraft(event, [existing, otherEvent])
-  draft.items[0].until = { scheduleItemId: 'performance-a', edge: 'end' }
+  const draft = createPaAssignmentsDraft(event, [existing, removed, otherEvent])
+  draft.items = draft.items.filter((item) =>
+    item.paAssignmentId !== removed.id,
+  )
+  const existingDraft = draft.items.find((item) =>
+    item.paAssignmentId === existing.id,
+  )
+  assert.ok(existingDraft)
+  existingDraft.until = { scheduleItemId: 'performance-a', edge: 'end' }
   draft.items.push({
     ...createItem({ draftId: 'draft-new', memberId: 'member-sub', role: 'sub' }),
     from: { scheduleItemId: 'break-a', edge: 'start' },
@@ -463,14 +476,24 @@ test('PA draftの追加・編集・削除を保存し、別EventのAssignmentを
     eventMemberDays: createMemberDays(),
     eventBands,
     calculatedItems,
-    paAssignments: [existing, otherEvent],
+    paAssignments: [existing, removed, otherEvent],
     draft,
     newPaAssignmentIds: ['pa-new'],
   })
 
   assert.equal(result.ok, true)
   if (!result.ok) return
-  assert.ok(result.paAssignments.some((item) => item.id === 'pa-existing'))
+  const updatedExisting = result.paAssignments.find((item) =>
+    item.id === existing.id,
+  )
+  assert.deepEqual(updatedExisting?.until, {
+    scheduleItemId: 'performance-a',
+    edge: 'end',
+  })
   assert.ok(result.paAssignments.some((item) => item.id === 'pa-new'))
-  assert.ok(result.paAssignments.some((item) => item.id === 'pa-other'))
+  assert.equal(result.paAssignments.some((item) => item.id === removed.id), false)
+  assert.deepEqual(
+    result.paAssignments.find((item) => item.id === otherEvent.id),
+    otherEvent,
+  )
 })
