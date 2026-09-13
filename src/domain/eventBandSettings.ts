@@ -545,7 +545,7 @@ export const createEventBandSettingsUpdate = ({
       !retainedIds.has(eventBand.id) &&
       isEventBandScheduled(eventBand.id, scheduleItems)
     ) {
-      errors.form = `「${eventBand.name}」はタイムテーブルに配置されているため削除できません。先にStep 7でPoolへ戻してください。`
+      errors.form = `「${eventBand.name}」はタイムテーブルに配置されているため削除できません。先にStep 6でPoolへ戻してください。`
       break
     }
   }
@@ -573,7 +573,7 @@ export const createEventBandSettingsUpdate = ({
       errors.items[item.draftId] = {
         ...errors.items[item.draftId],
         eventDayId: dayChangeBlockReason === 'scheduled'
-          ? 'タイムテーブルに配置済みのため出演日を変更できません。先にStep 7でPoolへ戻してください。'
+          ? 'タイムテーブルに配置済みのため出演日を変更できません。先にStep 6でPoolへ戻してください。'
           : '固定配置が設定されているため出演日を変更できません。先にStep 5の出演条件で固定配置を解除してください。',
       }
     }

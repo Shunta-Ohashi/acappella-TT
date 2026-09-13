@@ -61,6 +61,7 @@ import { EventBandSettings } from './components/EventBandSettings'
 import { EventBandConditions } from './components/EventBandConditions'
 import { EventStageSettings } from './components/EventStageSettings'
 import { PaSettings } from './components/PaSettings'
+import { TimetableOperationsWorkspace } from './components/TimetableOperationsWorkspace'
 import { EventList } from './components/EventList'
 import { IssuePanel } from './components/IssuePanel'
 import {
@@ -113,7 +114,11 @@ import {
   type PaAssignmentsDraft,
   type PaAssignmentsUpdateResult,
 } from './domain/paAssignments'
-import { getHighestSeverityByScheduleItem } from './ui/issuePresentation'
+import {
+  getHighestSeverityByScheduleItem,
+  getIssuesForStage,
+} from './ui/issuePresentation'
+import { getEventBandMemberDisplayNames } from './ui/eventBandPresentation'
 import {
   getSectionDroppableId,
   getStageDroppableId,
@@ -137,12 +142,6 @@ const appSectionPlaceholders: Record<
 }
 
 const createId = (prefix: string) => `${prefix}-${crypto.randomUUID()}`
-
-const formatEventDayLabel = (eventDay: EventDay): string => {
-  if (eventDay.label?.trim()) return eventDay.label.trim()
-  const [, month, day] = eventDay.date.split('-')
-  return `${Number(month)}月${Number(day)}日`
-}
 
 const replaceEventBandsForEventDay = (
   allEventBands: EventBand[],
@@ -175,7 +174,7 @@ const initialDemoData = createDemoData()
 
 function App() {
   const [activeView, setActiveView] = useState<AppView>('events')
-  const [activeStep, setActiveStep] = useState<EventEditorStepId>(7)
+  const [activeStep, setActiveStep] = useState<EventEditorStepId>(6)
   const [selectedEventId, setSelectedEventId] = useState<EventId>(
     initialDemoData.initialEventId,
   )
@@ -910,9 +909,9 @@ function App() {
     }
   }
 
-  const getMemberNamesByIds = (ids?: string[]) => {
-    if (!ids) return '未登録'
-    return ids.map(id => members.find(m => m.id === id)?.realName || '不明').join(', ')
+  const getEventBandMemberLabel = (eventBand?: EventBand) => {
+    if (!eventBand || eventBand.memberIds.length === 0) return '未登録'
+    return getEventBandMemberDisplayNames(eventBand, members).join(' / ')
   }
 
   const getBandNameByEventBand = (eventBand?: EventBand) => {
@@ -953,8 +952,15 @@ function App() {
         calculatedItems,
       })
     : []
+  const currentStageIssues = currentStage
+    ? getIssuesForStage(
+        scheduleIssues,
+        currentStage.id,
+        currentEventDayScheduleItems,
+      )
+    : []
   const highestSeverityByScheduleItem =
-    getHighestSeverityByScheduleItem(scheduleIssues)
+    getHighestSeverityByScheduleItem(currentStageIssues)
   const calculatedTimetable = currentStageCalculatedItems.map(calculatedItem => {
     const scheduleItem = currentStageScheduleItemsById.get(calculatedItem.scheduleItemId)
     if (!scheduleItem) {
@@ -978,7 +984,6 @@ function App() {
   )
 
   // 共通スタイル定義（可読性向上のためまとめる）
-  const containerStyle: React.CSSProperties = { maxWidth: '1250px', margin: '0 auto', textAlign: 'left' }
   const sectionBase: React.CSSProperties = { padding: '15px', borderRadius: '8px', marginBottom: '20px' }
   const baseButton: React.CSSProperties = { border: 'none', padding: '8px 12px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }
   const listItemBase: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', borderRadius: '4px', color: '#333', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }
@@ -1067,7 +1072,7 @@ function App() {
                         )}
                         {scheduleItem.kind === 'performance' && (
                           <div className="timetable-item-members">
-                            メンバー: {getMemberNamesByIds(eventBand?.memberIds)}
+                            メンバー: {getEventBandMemberLabel(eventBand)}
                           </div>
                         )}
                       </div>
@@ -1196,241 +1201,252 @@ function App() {
               onSaveAndNext={() => setActiveStep(6)}
             />
           ) : activeStep === 6 && selectedEvent ? (
-            <PaSettings
-              key={selectedEvent.id}
-              event={selectedEvent}
-              eventDays={selectedEventDays}
-              stages={selectedStages}
-              members={members}
-              eventMembers={selectedEventMembers}
-              eventMemberDays={selectedEventMemberDays}
-              eventBands={selectedEventBands}
-              scheduleItems={selectedScheduleItems}
-              calculatedItems={selectedEventCalculatedItems}
-              paAssignments={selectedEventPaAssignments}
-              createDraftId={() => createId('pa-assignment-draft')}
-              onSave={handleSavePaAssignments}
-              onSaveAndNext={() => setActiveStep(7)}
-            />
-          ) : activeStep === 7 && selectedEvent ? (
-          <div className="timetable-workspace" style={containerStyle}>
-            <section className="timetable-scope" aria-label="表示するタイムテーブル">
-              <div className="timetable-scope__group">
-                <p>開催日</p>
-                <div className="timetable-scope__choices">
-                  {selectedEventDays.map((eventDay) => {
-                    const isSelected = eventDay.id === timetableSelection.eventDayId
-                    return (
-                      <button
-                        key={eventDay.id}
-                        type="button"
-                        className={isSelected
-                          ? 'timetable-scope__button timetable-scope__button--active'
-                          : 'timetable-scope__button'}
-                        aria-pressed={isSelected}
-                        onClick={() => handleSelectTimetableEventDay(eventDay.id)}
-                      >
-                        {formatEventDayLabel(eventDay)}
-                        {isSelected && <small>選択中</small>}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {timetableEventDay && (
-                <div className="timetable-scope__group">
-                  <p>Stage</p>
-                  <div className="timetable-scope__choices">
-                    {timetableStages.map((stage) => {
-                      const isSelected = stage.id === currentStage?.id
-                      return (
-                        <button
-                          key={stage.id}
-                          type="button"
-                          className={isSelected
-                            ? 'timetable-scope__button timetable-scope__button--active'
-                            : 'timetable-scope__button'}
-                          aria-pressed={isSelected}
-                          onClick={() => handleSelectTimetableStage(stage.id)}
-                        >
-                          {stage.name}
-                          {isSelected && <small>選択中</small>}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-            </section>
-
-            {!timetableEventDay ? (
-              <section className="timetable-empty-state">
-                <h3>開催日が設定されていません</h3>
-                <p>Step 1で開催日を設定してください。</p>
-              </section>
-            ) : !currentStage ? (
-              <section className="timetable-empty-state">
-                <h3>この開催日にはStageがありません</h3>
-                <p>タイムテーブルを作成するには、Step 2でStageを設定してください。</p>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => setActiveStep(2)}
-                >
-                  Step 2 会場・Stageへ
-                </button>
-              </section>
-            ) : currentStageHasInvalidSectionAssignments ? (
-              <section className="timetable-data-error" role="alert">
-                <h3>このStageのタイムテーブルを編集できません</h3>
-                <p>
-                  有効なSectionに所属していない項目があります。データを確認してから再度開いてください。
-                </p>
-                <p>対象項目: {invalidCurrentStageScheduleItemIds.join('、')}</p>
-              </section>
-            ) : (
-              <>
-
-      {/* ==================== ⚙️ スケジュール基本設定 ==================== */}
-      <section style={{ ...sectionBase, background: '#edf2f7', color: '#2d3748' }}>
-        <h3 style={{ marginTop: 0 }}>⚙️ 2. スケジュール基本設定</h3>
-        <div className="timetable-settings" style={{ display: 'flex', gap: '20px' }}>
-          <div>
-            <label style={{ fontWeight: 'bold', display: 'block' }}>イベント開始時刻:</label>
-            <input type="time" aria-label="イベント開始時刻" value={startTime} onChange={(e) => handleStageStartTimeChange(e.target.value)} style={{ padding: '6px', marginTop: '5px' }} />
-          </div>
-          <div>
-            <label style={{ fontWeight: 'bold', display: 'block' }}>転換時間 (分):</label>
-            <input type="number" min="0" aria-label="転換時間" value={intervalTime} onChange={(e) => handleStageTransitionMinutesChange(e.target.value)} style={{ padding: '6px', width: '60px', marginTop: '5px' }} />
-          </div>
-        </div>
-      </section>
-
-      {/* ==================== 🎴 ドラッグ＆ドロップ編成 ==================== */}
-      <DragDropContext onDragEnd={handleOnDragEnd}>
-        <div className="timetable-board" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px' }}>
-          
-          {/* 📁 左画面：出演候補プール */}
-          <div>
-            <h3>📁 出演候補バンド一覧（プール）</h3>
-            <Droppable droppableId={TIMETABLE_POOL_DROPPABLE_ID}>
-              {(provided) => (
-                <ul {...provided.droppableProps} ref={provided.innerRef} style={{ ...listContainerBase, background: '#f7fafc' }}>
-                  {poolEventBands.map((eventBand, index) => (
-                    <Draggable key={eventBand.id} draggableId={eventBand.id} index={index}>
-                      {(provided) => (
-                        <li ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps} style={{ ...listItemBase, background: '#fff', ...provided.draggableProps.style }}>
-                          <div>
-                            <span style={{ marginRight: '10px', color: '#aaa', cursor: 'grab' }}>☰</span>
-                            <span style={{ fontWeight: 'bold' }}>🎵 {eventBand.name}</span> ({eventBand.durationMinutes}分)
-                            <div style={{ fontSize: '11px', color: '#718096', marginTop: '4px' }}>👥 メンバー: {getMemberNamesByIds(eventBand.memberIds)}</div>
-                          </div>
-                        </li>
-                      )}
-                    </Draggable>
-                  ))}
-                  {poolEventBands.length === 0 && (
-                    <li className="timetable-lane__empty">
-                      {currentDayEventBands.length === 0
-                        ? '出演バンドがまだ登録されていません。Step 4で出演バンドを追加してください。'
-                        : 'すべての出演バンドが配置されています。'}
-                    </li>
-                  )}
-                  {provided.placeholder}
-                </ul>
-              )}
-            </Droppable>
-          </div>
-
-          {/* 📅 右画面：当日のタイムテーブル */}
-          <div>
-            {currentStageUsesSections ? (
-              <div className="timetable-section-list">
-                {currentStageSections.map((section) => (
-                  <section key={section.id} className="timetable-section-lane">
-                    <header className="timetable-section-lane__header">
-                      <div>
-                        <p>SECTION {section.order + 1}</p>
-                        <h3>{section.name}</h3>
-                        {(section.plannedStartTime || section.plannedEndTime) && (
-                          <span>
-                            {section.plannedStartTime
-                              ? `固定開始 ${section.plannedStartTime}`
-                              : '開始は前Sectionから継続'}
-                            {section.plannedEndTime
-                              ? ` / 固定終了 ${section.plannedEndTime}`
-                              : ''}
-                          </span>
-                        )}
-                      </div>
-                      <form
-                        className="timetable-section-lane__break-form"
-                        onSubmit={(event) => handleAddBreak(event, section.id)}
-                      >
-                        <label htmlFor={`break-duration-${section.id}`}>
-                          休憩時間（分）
-                        </label>
-                        <input
-                          id={`break-duration-${section.id}`}
-                          type="number"
-                          min="1"
-                          value={breakDuration}
-                          onChange={(event) => setBreakDuration(Number(event.target.value))}
-                        />
-                        <button
-                          type="submit"
-                          aria-label={`${section.name}に休憩を追加`}
-                        >
-                          ＋ 休憩を追加
-                        </button>
-                      </form>
-                    </header>
-                    {renderScheduleLane(
-                      { stageId: currentStage.id, sectionId: section.id },
-                      getSectionDroppableId(section.id),
-                      'このSectionにはまだ項目がありません。',
-                      '120px',
-                    )}
+            <DragDropContext onDragEnd={handleOnDragEnd}>
+              <TimetableOperationsWorkspace
+                eventDays={selectedEventDays}
+                stages={timetableStages}
+                selectedEventDayId={timetableSelection.eventDayId}
+                selectedStageId={timetableSelection.stageId}
+                onSelectEventDay={handleSelectTimetableEventDay}
+                onSelectStage={handleSelectTimetableStage}
+                unavailableContent={!timetableEventDay ? (
+                  <section className="timetable-empty-state">
+                    <h3>開催日が設定されていません</h3>
+                    <p>Step 1で開催日を設定してください。</p>
                   </section>
-                ))}
-              </div>
-            ) : (
-              <>
-                <section style={{ ...sectionBase, background: '#e6fffa', color: '#234e52' }}>
-                  <h3 style={{ marginTop: 0 }}>☕ 休憩枠を直接差し込む</h3>
-                  <form onSubmit={(event) => handleAddBreak(event)} style={{ display: 'flex', gap: '10px', alignItems: 'flex-end' }}>
-                    <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: '12px', fontWeight: 'bold' }}>休憩時間 (分):</label>
-                      <input type="number" min="1" aria-label="休憩時間" value={breakDuration} onChange={(e) => setBreakDuration(Number(e.target.value))} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', marginTop: '5px', boxSizing: 'border-box' }} />
-                    </div>
-                    <button type="submit" style={{ background: '#319795', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', height: '37px' }}>休憩を追加</button>
-                  </form>
-                </section>
+                ) : !currentStage ? (
+                  <section className="timetable-empty-state">
+                    <h3>この開催日にはStageがありません</h3>
+                    <p>タイムテーブルを作成するには、Step 2でStageを設定してください。</p>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => setActiveStep(2)}
+                    >
+                      Step 2 会場・Stageへ
+                    </button>
+                  </section>
+                ) : currentStageHasInvalidSectionAssignments ? (
+                  <section className="timetable-data-error" role="alert">
+                    <h3>このStageのタイムテーブルを編集できません</h3>
+                    <p>
+                      有効なSectionに所属していない項目があります。データを確認してから再度開いてください。
+                    </p>
+                    <p>対象項目: {invalidCurrentStageScheduleItemIds.join('、')}</p>
+                  </section>
+                ) : undefined}
+                pool={currentStage ? (
+                  <>
+                    <h3>出演候補Pool</h3>
+                    <Droppable droppableId={TIMETABLE_POOL_DROPPABLE_ID}>
+                      {(provided) => (
+                        <ul
+                          {...provided.droppableProps}
+                          ref={provided.innerRef}
+                          style={{ ...listContainerBase, background: '#f7fafc' }}
+                        >
+                          {poolEventBands.map((eventBand, index) => (
+                            <Draggable
+                              key={eventBand.id}
+                              draggableId={eventBand.id}
+                              index={index}
+                            >
+                              {(provided) => (
+                                <li
+                                  ref={provided.innerRef}
+                                  {...provided.draggableProps}
+                                  {...provided.dragHandleProps}
+                                  style={{
+                                    ...listItemBase,
+                                    background: '#fff',
+                                    ...provided.draggableProps.style,
+                                  }}
+                                >
+                                  <div>
+                                    <span className="timetable-drag-handle" aria-hidden="true">☰</span>
+                                    <span className="timetable-pool-band-name">
+                                      {eventBand.name}
+                                    </span>
+                                    <div className="timetable-item-members">
+                                      {getEventBandMemberLabel(eventBand)}
+                                    </div>
+                                    <div className="timetable-item-duration">
+                                      {eventBand.durationMinutes}分枠
+                                    </div>
+                                  </div>
+                                </li>
+                              )}
+                            </Draggable>
+                          ))}
+                          {poolEventBands.length === 0 && (
+                            <li className="timetable-lane__empty">
+                              {currentDayEventBands.length === 0
+                                ? '出演バンドがまだ登録されていません。Step 4で出演バンドを追加してください。'
+                                : 'すべての出演バンドが配置されています。'}
+                            </li>
+                          )}
+                          {provided.placeholder}
+                        </ul>
+                      )}
+                    </Droppable>
+                  </>
+                ) : null}
+                timetable={currentStage ? (
+                  <>
+                    <section
+                      className="timetable-quick-settings"
+                      style={{ ...sectionBase, background: '#edf2f7', color: '#2d3748' }}
+                    >
+                      <h3>スケジュール設定</h3>
+                      <div className="timetable-settings">
+                        <label>
+                          開始時刻
+                          <input
+                            type="time"
+                            value={startTime}
+                            onChange={(event) => handleStageStartTimeChange(event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          転換時間（分）
+                          <input
+                            type="number"
+                            min="0"
+                            value={intervalTime}
+                            onChange={(event) => handleStageTransitionMinutesChange(event.target.value)}
+                          />
+                        </label>
+                      </div>
+                    </section>
 
-                <h3>📅 {currentStage.name}のタイムテーブル</h3>
-                {renderScheduleLane(
-                  { stageId: currentStage.id },
-                  getStageDroppableId(currentStage.id),
-                  'タイムテーブルに項目を配置してください。',
+                    {currentStageUsesSections ? (
+                      <div className="timetable-section-list">
+                        {currentStageSections.map((section) => (
+                          <section key={section.id} className="timetable-section-lane">
+                            <header className="timetable-section-lane__header">
+                              <div>
+                                <p>SECTION {section.order + 1}</p>
+                                <h3>{section.name}</h3>
+                                {(section.plannedStartTime || section.plannedEndTime) && (
+                                  <span>
+                                    {section.plannedStartTime
+                                      ? `固定開始 ${section.plannedStartTime}`
+                                      : '開始は前Sectionから継続'}
+                                    {section.plannedEndTime
+                                      ? ` / 固定終了 ${section.plannedEndTime}`
+                                      : ''}
+                                  </span>
+                                )}
+                              </div>
+                              <form
+                                className="timetable-section-lane__break-form"
+                                onSubmit={(event) => handleAddBreak(event, section.id)}
+                              >
+                                <label htmlFor={`break-duration-${section.id}`}>
+                                  休憩時間（分）
+                                </label>
+                                <input
+                                  id={`break-duration-${section.id}`}
+                                  type="number"
+                                  min="1"
+                                  value={breakDuration}
+                                  onChange={(event) => setBreakDuration(Number(event.target.value))}
+                                />
+                                <button
+                                  type="submit"
+                                  aria-label={`${section.name}に休憩を追加`}
+                                >
+                                  ＋ 休憩を追加
+                                </button>
+                              </form>
+                            </header>
+                            {renderScheduleLane(
+                              { stageId: currentStage.id, sectionId: section.id },
+                              getSectionDroppableId(section.id),
+                              'このSectionにはまだ項目がありません。',
+                              '120px',
+                            )}
+                          </section>
+                        ))}
+                      </div>
+                    ) : (
+                      <>
+                        <section
+                          className="timetable-break-control"
+                          style={{ ...sectionBase, background: '#e6fffa', color: '#234e52' }}
+                        >
+                          <h3>休憩枠を追加</h3>
+                          <form onSubmit={(event) => handleAddBreak(event)}>
+                            <label>
+                              休憩時間（分）
+                              <input
+                                type="number"
+                                min="1"
+                                value={breakDuration}
+                                onChange={(event) => setBreakDuration(Number(event.target.value))}
+                              />
+                            </label>
+                            <button type="submit">休憩を追加</button>
+                          </form>
+                        </section>
+                        <h3>{currentStage.name}のタイムテーブル</h3>
+                        {renderScheduleLane(
+                          { stageId: currentStage.id },
+                          getStageDroppableId(currentStage.id),
+                          'タイムテーブルに項目を配置してください。',
+                        )}
+                      </>
+                    )}
+                  </>
+                ) : null}
+                issuePanel={(
+                  <IssuePanel
+                    issues={currentStageIssues}
+                    members={members}
+                    eventBands={selectedEventBands}
+                    stages={timetableStages}
+                    sections={timetableSections}
+                    calculatedItems={calculatedItems}
+                  />
                 )}
-              </>
-            )}
-            <IssuePanel
-              issues={scheduleIssues}
-              members={members}
-              eventBands={selectedEventBands}
-              stages={timetableStages}
-              sections={timetableSections}
-              calculatedItems={calculatedItems}
-            />
-          </div>
-
-        </div>
-      </DragDropContext>
-              </>
-            )}
-          </div>
+                renderPaPanel={(onValidationFailed) => currentStage ? (
+                  <PaSettings
+                    key={selectedEvent.id}
+                    event={selectedEvent}
+                    eventDays={selectedEventDays}
+                    stages={selectedStages}
+                    members={members}
+                    eventMembers={selectedEventMembers}
+                    eventMemberDays={selectedEventMemberDays}
+                    eventBands={selectedEventBands}
+                    scheduleItems={selectedScheduleItems}
+                    calculatedItems={selectedEventCalculatedItems}
+                    paAssignments={selectedEventPaAssignments}
+                    selectedEventDayId={timetableSelection.eventDayId}
+                    selectedStageId={currentStage.id}
+                    onSelectScope={(eventDayId, stageId) => {
+                      setSelectedTimetableEventDayId(eventDayId)
+                      setSelectedTimetableStageId(stageId)
+                    }}
+                    onValidationFailed={onValidationFailed}
+                    createDraftId={() => createId('pa-assignment-draft')}
+                    formId={`pa-settings-${selectedEvent.id}`}
+                    onSave={handleSavePaAssignments}
+                    onSaveAndNext={() => setActiveStep(7)}
+                  />
+                ) : null}
+                footer={(
+                  <button
+                    type="submit"
+                    className="primary-button"
+                    form={`pa-settings-${selectedEvent.id}`}
+                    value="save-and-next"
+                  >
+                    保存して次へ <span aria-hidden="true">→</span>
+                  </button>
+                )}
+              />
+            </DragDropContext>
           ) : null}
         </EventEditorShell>
       ) : activeView === 'events' ? (

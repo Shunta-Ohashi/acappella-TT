@@ -488,7 +488,7 @@ export function EventBandEditorDialog({
                     <p className="event-band-form__help">
                       {eventDayChangeBlockReason === 'fixed-placement'
                         ? '固定配置が設定されているため出演日を変更できません。先にStep 5の出演条件で固定配置を解除してください。'
-                        : 'タイムテーブルに配置済みのため出演日を変更できません。先にStep 7でPoolへ戻してください。'}
+                        : 'タイムテーブルに配置済みのため出演日を変更できません。先にStep 6でPoolへ戻してください。'}
                     </p>
                   )}
                   {errors.eventDayId && <p className="form-error" role="alert">{errors.eventDayId}</p>}

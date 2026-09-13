@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import {
   countIssuesBySeverity,
   getHighestSeverityByScheduleItem,
+  getIssuesForStage,
 } from '../src/ui/issuePresentation.ts'
 
 const createIssue = (severity, scheduleItemIds = undefined) => ({
@@ -44,4 +45,51 @@ test('Issueなしの場合は全件数が0でScheduleItem severityも空にな�
     INFO: 0,
   })
   assert.equal(getHighestSeverityByScheduleItem([]).size, 0)
+})
+
+test('Issue一覧を選択中Stageとの関連で絞り込む', () => {
+  const mainOnly = {
+    ...createIssue('ERROR'),
+    message: 'Main StageだけのIssue',
+    stageIds: ['stage-main'],
+  }
+  const subOnly = {
+    ...createIssue('WARNING'),
+    message: 'Sub StageだけのIssue',
+    stageIds: ['stage-sub'],
+  }
+  const crossStage = {
+    ...createIssue('ERROR'),
+    message: 'MainとSubにまたがるIssue',
+    stageIds: ['stage-main', 'stage-sub'],
+  }
+  const scheduleItemOnly = {
+    ...createIssue('INFO', ['item-main']),
+    message: 'ScheduleItemからMainとの関連が分かるIssue',
+  }
+  const scheduleItems = [
+    { id: 'item-main', stageId: 'stage-main' },
+    { id: 'item-sub', stageId: 'stage-sub' },
+  ]
+
+  assert.deepEqual(
+    getIssuesForStage(
+      [mainOnly, subOnly, crossStage, scheduleItemOnly],
+      'stage-main',
+      scheduleItems,
+    ).map((issue) => issue.message),
+    [
+      'Main StageだけのIssue',
+      'MainとSubにまたがるIssue',
+      'ScheduleItemからMainとの関連が分かるIssue',
+    ],
+  )
+  assert.deepEqual(
+    getIssuesForStage(
+      [mainOnly, subOnly, crossStage, scheduleItemOnly],
+      'stage-sub',
+      scheduleItems,
+    ).map((issue) => issue.message),
+    ['Sub StageだけのIssue', 'MainとSubにまたがるIssue'],
+  )
 })

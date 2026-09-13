@@ -120,7 +120,7 @@ export function EventBandSettings({
         items: {
           ...previous.items,
           [item.draftId]: {
-            form: 'タイムテーブルに配置されているため削除できません。先にStep 7でPoolへ戻してください。',
+            form: 'タイムテーブルに配置されているため削除できません。先にStep 6でPoolへ戻してください。',
           },
         },
       }))
