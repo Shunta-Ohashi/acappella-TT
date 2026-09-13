@@ -14,7 +14,7 @@ interface TimetableOperationsWorkspaceProps {
   pool: ReactNode
   timetable: ReactNode
   issuePanel: ReactNode
-  paPanel: ReactNode
+  renderPaPanel: (onValidationFailed: () => void) => ReactNode
   footer: ReactNode
 }
 
@@ -41,7 +41,7 @@ export function TimetableOperationsWorkspace({
   pool,
   timetable,
   issuePanel,
-  paPanel,
+  renderPaPanel,
   footer,
 }: TimetableOperationsWorkspaceProps) {
   const [activePanel, setActivePanel] = useState<OperationsPanel>('issues')
@@ -131,7 +131,7 @@ export function TimetableOperationsWorkspace({
                 {issuePanel}
               </div>
               <div className="operations-panel-content" hidden={activePanel !== 'pa'}>
-                {paPanel}
+                {renderPaPanel(() => setActivePanel('pa'))}
               </div>
               <div className="operations-panel-content" hidden={activePanel !== 'operations'}>
                 <section className="operations-placeholder">

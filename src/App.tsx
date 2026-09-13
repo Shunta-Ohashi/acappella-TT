@@ -114,7 +114,10 @@ import {
   type PaAssignmentsDraft,
   type PaAssignmentsUpdateResult,
 } from './domain/paAssignments'
-import { getHighestSeverityByScheduleItem } from './ui/issuePresentation'
+import {
+  getHighestSeverityByScheduleItem,
+  getIssuesForStage,
+} from './ui/issuePresentation'
 import { getEventBandMemberDisplayNames } from './ui/eventBandPresentation'
 import {
   getSectionDroppableId,
@@ -949,8 +952,15 @@ function App() {
         calculatedItems,
       })
     : []
+  const currentStageIssues = currentStage
+    ? getIssuesForStage(
+        scheduleIssues,
+        currentStage.id,
+        currentEventDayScheduleItems,
+      )
+    : []
   const highestSeverityByScheduleItem =
-    getHighestSeverityByScheduleItem(scheduleIssues)
+    getHighestSeverityByScheduleItem(currentStageIssues)
   const calculatedTimetable = currentStageCalculatedItems.map(calculatedItem => {
     const scheduleItem = currentStageScheduleItemsById.get(calculatedItem.scheduleItemId)
     if (!scheduleItem) {
@@ -1391,7 +1401,7 @@ function App() {
                 ) : null}
                 issuePanel={(
                   <IssuePanel
-                    issues={scheduleIssues}
+                    issues={currentStageIssues}
                     members={members}
                     eventBands={selectedEventBands}
                     stages={timetableStages}
@@ -1399,7 +1409,7 @@ function App() {
                     calculatedItems={calculatedItems}
                   />
                 )}
-                paPanel={currentStage ? (
+                renderPaPanel={(onValidationFailed) => currentStage ? (
                   <PaSettings
                     key={selectedEvent.id}
                     event={selectedEvent}
@@ -1418,6 +1428,7 @@ function App() {
                       setSelectedTimetableEventDayId(eventDayId)
                       setSelectedTimetableStageId(stageId)
                     }}
+                    onValidationFailed={onValidationFailed}
                     createDraftId={() => createId('pa-assignment-draft')}
                     formId={`pa-settings-${selectedEvent.id}`}
                     onSave={handleSavePaAssignments}

@@ -3600,7 +3600,7 @@
   border-top: 1px solid #d9e0e7;
 }
 
-@media (max-width: 1240px) {
+@media (max-width: 1300px) {
   .timetable-operations-grid {
     grid-template-columns: minmax(210px, 0.7fr) minmax(390px, 1.3fr);
   }
@@ -3624,7 +3624,7 @@
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   .timetable-operations-grid {
     grid-template-columns: 1fr;
   }

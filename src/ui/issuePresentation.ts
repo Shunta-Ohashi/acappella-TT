@@ -1,5 +1,9 @@
 import type { IssueSeverity, ScheduleIssue } from '../domain/issues'
-import type { ScheduleItemId } from '../domain/models'
+import type {
+  ScheduleItem,
+  ScheduleItemId,
+  StageId,
+} from '../domain/models'
 
 export const ISSUE_SEVERITIES: IssueSeverity[] = [
   'ERROR',
@@ -49,4 +53,21 @@ export const getHighestSeverityByScheduleItem = (
   })
 
   return severityByScheduleItem
+}
+
+export const getIssuesForStage = (
+  issues: ScheduleIssue[],
+  stageId: StageId,
+  scheduleItems: Pick<ScheduleItem, 'id' | 'stageId'>[],
+): ScheduleIssue[] => {
+  const scheduleItemStageById = new Map(
+    scheduleItems.map((scheduleItem) => [scheduleItem.id, scheduleItem.stageId]),
+  )
+
+  return issues.filter((issue) =>
+    issue.stageIds?.includes(stageId) === true ||
+    issue.scheduleItemIds?.some(
+      (scheduleItemId) => scheduleItemStageById.get(scheduleItemId) === stageId,
+    ) === true,
+  )
 }

@@ -42,6 +42,7 @@ interface PaSettingsProps {
   selectedEventDayId?: EventDayId
   selectedStageId?: StageId
   onSelectScope: (eventDayId: EventDayId, stageId: StageId) => void
+  onValidationFailed: () => void
   createDraftId: () => string
   onSave: (draft: PaAssignmentsDraft) => PaAssignmentsUpdateResult
   onSaveAndNext: () => void
@@ -70,6 +71,7 @@ export function PaSettings({
   selectedEventDayId,
   selectedStageId,
   onSelectScope,
+  onValidationFailed,
   createDraftId,
   onSave,
   onSaveAndNext,
@@ -141,6 +143,7 @@ export function PaSettings({
 
   const presentErrors = (validationErrors: PaAssignmentsValidationErrors) => {
     setErrors(validationErrors)
+    onValidationFailed()
     const firstInvalid = draft.items.find((item) =>
       validationErrors.items[item.draftId],
     )
