@@ -218,6 +218,82 @@ test('Member共通availabilityとHard条件の積集合へ出演時間を確保�
   assert.equal(short.status, 'blocked')
 })
 
+test('固定開始15:00からの出演枠がeffective availability内に収まれば出演可能', () => {
+  const result = feasibility({
+    item: createItem({
+      fixedPlacement: {
+        stageId: 'stage-1',
+        sectionId: 'section-1',
+        positionMode: 'none',
+        plannedStartTime: '15:00',
+      },
+    }),
+    eventBand: createEventBand({ memberIds: ['member-1'] }),
+    eventMemberDays: [{
+      ...participatingDays[0],
+      availabilityWindows: [{ from: '13:00', until: '17:00' }],
+    }],
+  })
+
+  assert.equal(result.status, 'available')
+  assert.deepEqual(result.blockingReasons, [])
+})
+
+test('固定開始からの出演枠がeffective availabilityの終了を超えるとblocking', () => {
+  const result = feasibility({
+    item: createItem({
+      fixedPlacement: {
+        stageId: 'stage-1',
+        sectionId: 'section-1',
+        positionMode: 'none',
+        plannedStartTime: '16:55',
+      },
+    }),
+    eventBand: createEventBand({ memberIds: ['member-1'] }),
+    eventMemberDays: [{
+      ...participatingDays[0],
+      availabilityWindows: [{ from: '13:00', until: '17:00' }],
+    }],
+  })
+
+  assert.equal(result.status, 'blocked')
+  assert.match(result.blockingReasons[0], /固定開始時刻16:55/)
+})
+
+test('固定開始がeffective availabilityより前ならblocking', () => {
+  const result = feasibility({
+    item: createItem({
+      fixedPlacement: {
+        stageId: 'stage-1',
+        sectionId: 'section-1',
+        positionMode: 'none',
+        plannedStartTime: '10:00',
+      },
+    }),
+    eventBand: createEventBand({ memberIds: ['member-1'] }),
+    eventMemberDays: [{
+      ...participatingDays[0],
+      availabilityWindows: [{ from: '13:00', until: '17:00' }],
+    }],
+  })
+
+  assert.equal(result.status, 'blocked')
+  assert.match(result.blockingReasons[0], /固定開始時刻10:00/)
+})
+
+test('固定開始なしでは従来どおりdurationを確保できるwindowがあれば出演可能', () => {
+  const result = feasibility({
+    eventBand: createEventBand({ memberIds: ['member-1'] }),
+    eventMemberDays: [{
+      ...participatingDays[0],
+      availabilityWindows: [{ from: '13:00', until: '13:10' }],
+    }],
+  })
+
+  assert.equal(result.status, 'available')
+  assert.deepEqual(result.blockingReasons, [])
+})
+
 test('複数のMember共通windowをBand条件で絞ったeffective availabilityを返す', () => {
   const configuredDays = [
     {

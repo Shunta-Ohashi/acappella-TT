@@ -1199,3 +1199,252 @@ test('Section固定終了超過とStage固定終了超過を同時に返す', ()
   assert.equal(findIssues(issues, 'STAGE_END_EXCEEDED').length, 1)
   assert.equal(findIssues(issues, 'SECTION_END_EXCEEDED').length, 1)
 })
+
+test('固定Stageと実際のStageが一致すればIssueを返さない', () => {
+  const issues = detect({
+    eventBands: [createEventBand('event-band-1', ['member-1'], {
+      fixedPlacement: { stageId: 'stage-a' },
+    })],
+  })
+
+  assert.equal(findIssues(issues, 'FIXED_STAGE_MISMATCH').length, 0)
+})
+
+test('固定Stageと実際のStageが異なればERRORを返しSectionと位置のcascadeを抑える', () => {
+  const issues = detect({
+    eventBands: [createEventBand('event-band-1', ['member-1'], {
+      fixedPlacement: {
+        stageId: 'stage-b',
+        sectionId: 'section-b',
+        position: { kind: 'first' },
+      },
+    })],
+    stages: [createStage('stage-a'), createStage('stage-b')],
+  })
+
+  assert.equal(findIssues(issues, 'FIXED_STAGE_MISMATCH').length, 1)
+  assert.equal(findIssues(issues, 'FIXED_SECTION_MISMATCH').length, 0)
+  assert.equal(findIssues(issues, 'FIXED_POSITION_MISMATCH').length, 0)
+})
+
+test('固定Sectionと実際のSectionが一致すればIssueを返さない', () => {
+  const issues = detect({
+    eventBands: [createEventBand('event-band-1', ['member-1'], {
+      fixedPlacement: { stageId: 'stage-a', sectionId: 'section-1' },
+    })],
+    sections: [createSection('section-1')],
+    calculatedItems: [{
+      ...performance('item-1', 'event-band-1', 600, 610),
+      sectionId: 'section-1',
+    }],
+  })
+
+  assert.equal(findIssues(issues, 'FIXED_SECTION_MISMATCH').length, 0)
+})
+
+test('固定Sectionと実際のSectionが異なればERRORを返す', () => {
+  const issues = detect({
+    eventBands: [createEventBand('event-band-1', ['member-1'], {
+      fixedPlacement: { stageId: 'stage-a', sectionId: 'section-1' },
+    })],
+    sections: [createSection('section-1'), createSection('section-2')],
+    calculatedItems: [{
+      ...performance('item-1', 'event-band-1', 600, 610),
+      sectionId: 'section-2',
+    }],
+  })
+
+  assert.equal(findIssues(issues, 'FIXED_SECTION_MISMATCH').length, 1)
+})
+
+test('固定開始時刻と実際の開始が一致すればIssueを返さない', () => {
+  const issues = detect({
+    eventBands: [createEventBand('event-band-1', ['member-1'], {
+      fixedPlacement: { stageId: 'stage-a', plannedStartTime: '10:00' },
+    })],
+  })
+
+  assert.equal(findIssues(issues, 'FIXED_START_TIME_MISMATCH').length, 0)
+})
+
+test('固定開始時刻と実際の開始が異なればERRORを返す', () => {
+  const issues = detect({
+    eventBands: [createEventBand('event-band-1', ['member-1'], {
+      fixedPlacement: { stageId: 'stage-a', plannedStartTime: '10:01' },
+    })],
+  })
+
+  assert.equal(findIssues(issues, 'FIXED_START_TIME_MISMATCH').length, 1)
+})
+
+test('first固定は対象laneの最初なら正常で、途中ならERROR', () => {
+  const eventBands = [
+    createEventBand('event-band-first', ['member-1'], {
+      fixedPlacement: { stageId: 'stage-a', position: { kind: 'first' } },
+    }),
+    createEventBand('event-band-other', ['member-2']),
+  ]
+  const eventMembers = [
+    createEventMember('member-1'),
+    createEventMember('member-2'),
+  ]
+  const correct = detect({
+    eventBands,
+    eventMembers,
+    calculatedItems: [
+      performance('item-first', 'event-band-first', 600, 610),
+      performance('item-other', 'event-band-other', 610, 620),
+    ],
+  })
+  const incorrect = detect({
+    eventBands,
+    eventMembers,
+    calculatedItems: [
+      performance('item-other', 'event-band-other', 600, 610),
+      performance('item-first', 'event-band-first', 610, 620),
+    ],
+  })
+
+  assert.equal(findIssues(correct, 'FIXED_POSITION_MISMATCH').length, 0)
+  assert.equal(findIssues(incorrect, 'FIXED_POSITION_MISMATCH').length, 1)
+})
+
+test('last固定は対象laneの最後なら正常で、途中ならERROR', () => {
+  const eventBands = [
+    createEventBand('event-band-last', ['member-1'], {
+      fixedPlacement: { stageId: 'stage-a', position: { kind: 'last' } },
+    }),
+    createEventBand('event-band-other', ['member-2']),
+  ]
+  const eventMembers = [
+    createEventMember('member-1'),
+    createEventMember('member-2'),
+  ]
+  const correct = detect({
+    eventBands,
+    eventMembers,
+    calculatedItems: [
+      performance('item-other', 'event-band-other', 600, 610),
+      performance('item-last', 'event-band-last', 610, 620),
+    ],
+  })
+  const incorrect = detect({
+    eventBands,
+    eventMembers,
+    calculatedItems: [
+      performance('item-last', 'event-band-last', 600, 610),
+      performance('item-other', 'event-band-other', 610, 620),
+    ],
+  })
+
+  assert.equal(findIssues(correct, 'FIXED_POSITION_MISMATCH').length, 0)
+  assert.equal(findIssues(incorrect, 'FIXED_POSITION_MISMATCH').length, 1)
+})
+
+test('BreakはfirstとlastのPerformance順位に数えない', () => {
+  for (const kind of ['first', 'last']) {
+    const issues = detect({
+      eventBands: [createEventBand('event-band-1', ['member-1'], {
+        fixedPlacement: {
+          stageId: 'stage-a',
+          position: { kind },
+        },
+      })],
+      calculatedItems: [
+        breakItem('break-before', 590, 600),
+        performance('item-1', 'event-band-1', 600, 610),
+        breakItem('break-after', 610, 620),
+      ],
+    })
+
+    assert.equal(findIssues(issues, 'FIXED_POSITION_MISMATCH').length, 0)
+  }
+})
+
+test('SectionありStageの固定位置は指定Section内のPerformanceだけで判定する', () => {
+  const issues = detect({
+    eventMembers: [
+      createEventMember('member-1'),
+      createEventMember('member-2'),
+    ],
+    eventBands: [
+      createEventBand('event-band-section-1', ['member-1'], {
+        fixedPlacement: {
+          stageId: 'stage-a',
+          sectionId: 'section-1',
+          position: { kind: 'last' },
+        },
+      }),
+      createEventBand('event-band-section-2', ['member-2']),
+    ],
+    sections: [createSection('section-1'), createSection('section-2')],
+    calculatedItems: [
+      {
+        ...performance('item-section-1', 'event-band-section-1', 600, 610),
+        sectionId: 'section-1',
+      },
+      {
+        ...performance('item-section-2', 'event-band-section-2', 610, 620),
+        sectionId: 'section-2',
+      },
+    ],
+  })
+
+  assert.equal(findIssues(issues, 'FIXED_POSITION_MISMATCH').length, 0)
+})
+
+test('index固定は0-basedのPerformance順位と一致する場合だけ正常', () => {
+  const eventBands = [
+    createEventBand('event-band-index', ['member-1'], {
+      fixedPlacement: {
+        stageId: 'stage-a',
+        position: { kind: 'index', index: 1 },
+      },
+    }),
+    createEventBand('event-band-other', ['member-2']),
+  ]
+  const eventMembers = [
+    createEventMember('member-1'),
+    createEventMember('member-2'),
+  ]
+  const correct = detect({
+    eventBands,
+    eventMembers,
+    calculatedItems: [
+      performance('item-other', 'event-band-other', 600, 610),
+      performance('item-index', 'event-band-index', 610, 620),
+    ],
+  })
+  const incorrect = detect({
+    eventBands,
+    eventMembers,
+    calculatedItems: [
+      performance('item-index', 'event-band-index', 600, 610),
+      performance('item-other', 'event-band-other', 610, 620),
+    ],
+  })
+
+  assert.equal(findIssues(correct, 'FIXED_POSITION_MISMATCH').length, 0)
+  assert.equal(findIssues(incorrect, 'FIXED_POSITION_MISMATCH').length, 1)
+})
+
+test('fixedPlacementありでもPoolの未配置EventBandにはMismatch Issueを返さない', () => {
+  const issues = detect({
+    eventBands: [
+      createEventBand('event-band-1', ['member-1']),
+      createEventBand('event-band-pool', ['member-1'], {
+        fixedPlacement: {
+          stageId: 'stage-other',
+          sectionId: 'section-other',
+          position: { kind: 'last' },
+          plannedStartTime: '18:00',
+        },
+      }),
+    ],
+  })
+
+  assert.equal(
+    issues.filter((issue) => issue.code.startsWith('FIXED_')).length,
+    0,
+  )
+})

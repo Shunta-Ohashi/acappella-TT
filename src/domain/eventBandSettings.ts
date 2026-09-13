@@ -141,6 +141,19 @@ export const hasAvailabilityWindowForDuration = (
     window.end - window.start >= durationMinutes,
   )
 
+export const isIntervalWithinAvailabilityWindows = (
+  windows: TimeRange[] | undefined,
+  startMinute: number,
+  endMinute: number,
+): boolean => Number.isSafeInteger(startMinute) &&
+  Number.isSafeInteger(endMinute) &&
+  startMinute >= 0 &&
+  startMinute < endMinute &&
+  endMinute <= MINUTES_PER_DAY &&
+  toMinuteWindows(windows).some((window) =>
+    startMinute >= window.start && endMinute <= window.end,
+  )
+
 export const getEventBandDayFeasibility = ({
   event,
   eventDayId,

@@ -17,13 +17,14 @@ import {
   getEventBandDayFeasibility,
   hasAvailabilityWindowForDuration,
   intersectAvailabilityWindows,
+  isIntervalWithinAvailabilityWindows,
   type EventBandDayFeasibilityStatus,
 } from './eventBandSettings.ts'
 import {
   getTimeRangeValidationError,
   type EditableTimeRange,
 } from './eventMemberDayDetails.ts'
-import { isValidLocalTime } from './timeline.ts'
+import { isValidLocalTime, parseLocalTimeToMinute } from './timeline.ts'
 
 export type FixedPositionMode = 'none' | FixedPosition['kind']
 
@@ -255,9 +256,24 @@ export const getEventBandConditionFeasibility = ({
   )
   const blockingReasons = [...memberFeasibility.blockingReasons]
   const warnings = [...memberFeasibility.warnings]
+  const fixedStartTime = item.fixedPlacement.plannedStartTime.trim()
 
   if (
-    blockingReasons.length === 0 &&
+    blockingReasons.length === 0 && fixedStartTime &&
+    isValidLocalTime(fixedStartTime)
+  ) {
+    const fixedStartMinute = parseLocalTimeToMinute(fixedStartTime)
+    if (!isIntervalWithinAvailabilityWindows(
+      effectiveAvailabilityWindows,
+      fixedStartMinute,
+      fixedStartMinute + eventBand.durationMinutes,
+    )) {
+      blockingReasons.push(
+        `固定開始時刻${fixedStartTime}からの出演枠${eventBand.durationMinutes}分が、実際に配置可能な時間内に収まりません。`,
+      )
+    }
+  } else if (
+    blockingReasons.length === 0 && !fixedStartTime &&
     !hasAvailabilityWindowForDuration(
       effectiveAvailabilityWindows,
       eventBand.durationMinutes,
