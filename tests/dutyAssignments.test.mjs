@@ -5,6 +5,7 @@ import {
   canDeleteDutyType,
   createDutySettingsDraft,
   createDutySettingsUpdate,
+  getDutyAssignmentsForEvent,
   getDutyAssignmentParticipationWarning,
   moveDutyTypeDraft,
   resolveDutyAssignmentInterval,
@@ -208,6 +209,59 @@ test('仕事を安定して並べ替え、renameとorderを保存する', () => 
 test('担当から参照される仕事は削除不可で、未参照なら削除できる', () => {
   assert.equal(canDeleteDutyType('type-photo', [createItem()]), false)
   assert.equal(canDeleteDutyType('type-tk', [createItem()]), true)
+})
+
+test('Event別DutyAssignment選択は未知DutyTypeのみStage所属で補完する', () => {
+  const otherEvent = { ...event, id: 'event-2', name: '別Event' }
+  const otherStage = { ...stages[0], id: 'stage-b', eventDayId: 'day-2' }
+  const otherType = {
+    id: 'duty-other',
+    eventId: otherEvent.id,
+    name: '消毒',
+    order: 0,
+  }
+  const selectedAssignment = assignment('selected')
+  const brokenAssignment = assignment('broken', {
+    dutyTypeId: 'missing-duty-type',
+  })
+  const otherAssignment = assignment('other', {
+    dutyTypeId: otherType.id,
+    eventDayId: 'day-2',
+    stageId: otherStage.id,
+  })
+  const allTypes = [...dutyTypes, otherType]
+  const allAssignments = [selectedAssignment, brokenAssignment, otherAssignment]
+
+  const selected = getDutyAssignmentsForEvent({
+    event,
+    stages,
+    dutyTypes: allTypes,
+    dutyAssignments: allAssignments,
+  })
+  assert.deepEqual(selected.map((item) => item.id), ['selected', 'broken'])
+
+  const selectedDraft = createDutySettingsDraft(
+    event,
+    eventDays,
+    allTypes,
+    selected,
+  )
+  assert.equal(
+    selectedDraft.assignments.find((item) => item.dutyAssignmentId === 'broken')
+      ?.missingDutyTypeId,
+    'missing-duty-type',
+  )
+  assert.equal(
+    selectedDraft.assignments.some((item) => item.dutyAssignmentId === 'other'),
+    false,
+  )
+
+  assert.deepEqual(getDutyAssignmentsForEvent({
+    event: otherEvent,
+    stages: [otherStage],
+    dutyTypes: allTypes,
+    dutyAssignments: allAssignments,
+  }).map((item) => item.id), ['other'])
 })
 
 test('DutyType参照切れ担当をdraftとround-trip保存で失わない', () => {
@@ -516,6 +570,14 @@ test('Issue detectorが参加状態・availability・仕事参照・broken bound
   assert.equal(findIssues(memberIssues, 'DUTY_OUTSIDE_MEMBER_AVAILABILITY').length, 1)
   assert.equal(findIssues(absentIssues, 'DUTY_MEMBER_ABSENT').length, 1)
   assert.equal(findIssues(structuralIssues, 'DUTY_TYPE_NOT_FOUND').length, 1)
+  assert.match(
+    findIssues(structuralIssues, 'DUTY_TYPE_NOT_FOUND')[0].message,
+    /DutyType missing-type/,
+  )
+  assert.doesNotMatch(
+    findIssues(structuralIssues, 'DUTY_TYPE_NOT_FOUND')[0].message,
+    /duty-broken/,
+  )
   assert.equal(findIssues(structuralIssues, 'DUTY_INVALID_BOUNDARY').length, 1)
 })
 

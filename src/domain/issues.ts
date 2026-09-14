@@ -680,7 +680,7 @@ export const detectScheduleIssues = ({
         addIssue({
           severity: 'ERROR',
           code: 'DUTY_TYPE_NOT_FOUND',
-          message: `一般業務担当 ${assignment.id} の仕事の種類が見つかりません`,
+          message: `一般業務担当の DutyType ${assignment.dutyTypeId} が見つかりません`,
           memberIds: [assignment.memberId],
           dutyTypeIds: [assignment.dutyTypeId],
           dutyAssignmentIds: [assignment.id],

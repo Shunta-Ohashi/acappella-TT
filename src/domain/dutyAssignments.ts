@@ -139,6 +139,34 @@ export const canDeleteDutyType = (
   assignment.dutyTypeDraftId === dutyTypeDraftId,
 )
 
+export const getDutyAssignmentsForEvent = ({
+  event,
+  stages,
+  dutyTypes,
+  dutyAssignments,
+}: {
+  event: Pick<Event, 'id'>
+  stages: Pick<Stage, 'id'>[]
+  dutyTypes: DutyType[]
+  dutyAssignments: DutyAssignment[]
+}): DutyAssignment[] => {
+  const eventDutyTypeIds = new Set(
+    dutyTypes
+      .filter((dutyType) => dutyType.eventId === event.id)
+      .map((dutyType) => dutyType.id),
+  )
+  const allDutyTypeIds = new Set(dutyTypes.map((dutyType) => dutyType.id))
+  const eventStageIds = new Set(stages.map((stage) => stage.id))
+
+  return dutyAssignments.filter((assignment) =>
+    eventDutyTypeIds.has(assignment.dutyTypeId) ||
+    (
+      eventStageIds.has(assignment.stageId) &&
+      !allDutyTypeIds.has(assignment.dutyTypeId)
+    ),
+  )
+}
+
 export const moveDutyTypeDraft = (
   dutyTypes: DutyTypeDraftItem[],
   draftId: string,

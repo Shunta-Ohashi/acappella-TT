@@ -122,6 +122,7 @@ import {
 } from './domain/paAssignments'
 import {
   createDutySettingsUpdate,
+  getDutyAssignmentsForEvent,
   type DutySettingsDraft,
   type DutySettingsUpdateResult,
 } from './domain/dutyAssignments'
@@ -298,13 +299,14 @@ function App() {
     .sort((first, second) =>
       first.order - second.order || first.id.localeCompare(second.id),
     )
-  const selectedEventDutyTypeIds = new Set(
-    selectedEventDutyTypes.map((dutyType) => dutyType.id),
-  )
-  const selectedEventDutyAssignments = dutyAssignments.filter((assignment) =>
-    selectedEventDutyTypeIds.has(assignment.dutyTypeId) ||
-    selectedStageIds.has(assignment.stageId),
-  )
+  const selectedEventDutyAssignments = selectedEvent
+    ? getDutyAssignmentsForEvent({
+        event: selectedEvent,
+        stages: selectedStages,
+        dutyTypes,
+        dutyAssignments,
+      })
+    : []
   const selectedEventCalculatedItems = selectedEvent
     ? selectedEventDays.flatMap((eventDay) => calculateEventDayTimelines({
         event: selectedEvent,
