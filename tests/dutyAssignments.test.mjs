@@ -206,9 +206,35 @@ test('仕事を安定して並べ替え、renameとorderを保存する', () => 
   ])
 })
 
-test('担当から参照される仕事は削除不可で、未参照なら削除できる', () => {
-  assert.equal(canDeleteDutyType('type-photo', [createItem()]), false)
-  assert.equal(canDeleteDutyType('type-tk', [createItem()]), true)
+test('draftまたはpersisted担当から参照される仕事は削除できない', () => {
+  assert.equal(
+    canDeleteDutyType(typeDrafts[0], [createItem()], []),
+    false,
+  )
+  assert.equal(
+    canDeleteDutyType(typeDrafts[0], [], [assignment('persisted-photo')]),
+    false,
+  )
+})
+
+test('persisted担当の削除を保存した後と未参照の仕事は削除できる', () => {
+  assert.equal(canDeleteDutyType(typeDrafts[0], [], []), true)
+  assert.equal(
+    canDeleteDutyType(typeDrafts[1], [], [assignment('persisted-photo')]),
+    true,
+  )
+})
+
+test('他Eventまたは他DutyTypeのpersisted担当は削除を誤って妨げない', () => {
+  const unrelatedAssignments = [
+    assignment('persisted-tk', { dutyTypeId: 'duty-tk' }),
+    assignment('other-event', { dutyTypeId: 'other-event-duty-type' }),
+  ]
+
+  assert.equal(
+    canDeleteDutyType(typeDrafts[0], [], unrelatedAssignments),
+    true,
+  )
 })
 
 test('Event別DutyAssignment選択は未知DutyTypeのみStage所属で補完する', () => {

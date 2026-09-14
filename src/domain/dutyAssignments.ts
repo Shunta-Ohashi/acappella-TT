@@ -133,11 +133,16 @@ export const validateDutyTypeDrafts = (
 }
 
 export const canDeleteDutyType = (
-  dutyTypeDraftId: string,
-  assignments: Pick<DutyAssignmentDraftItem, 'dutyTypeDraftId'>[],
-): boolean => !assignments.some((assignment) =>
-  assignment.dutyTypeDraftId === dutyTypeDraftId,
-)
+  dutyType: Pick<DutyTypeDraftItem, 'draftId' | 'dutyTypeId'>,
+  draftAssignments: Pick<DutyAssignmentDraftItem, 'dutyTypeDraftId'>[],
+  persistedAssignments: Pick<DutyAssignment, 'dutyTypeId'>[],
+): boolean =>
+  !draftAssignments.some((assignment) =>
+    assignment.dutyTypeDraftId === dutyType.draftId,
+  ) &&
+  (!dutyType.dutyTypeId || !persistedAssignments.some((assignment) =>
+    assignment.dutyTypeId === dutyType.dutyTypeId,
+  ))
 
 export const getDutyAssignmentsForEvent = ({
   event,

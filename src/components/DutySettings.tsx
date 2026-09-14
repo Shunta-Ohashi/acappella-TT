@@ -341,9 +341,13 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
                         type="button"
                         aria-label={`${dutyType.name}を削除`}
                         onClick={() => {
-                          if (!canDeleteDutyType(dutyType.draftId, draft.assignments)) {
+                          if (!canDeleteDutyType(
+                            dutyType,
+                            draft.assignments,
+                            dutyAssignments,
+                          )) {
                             setTypeActionError(
-                              'この仕事には担当設定があります。先に担当を削除してください。',
+                              'この仕事には担当設定があります。先に担当を削除して保存してください。',
                             )
                             return
                           }
