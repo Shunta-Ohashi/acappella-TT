@@ -2,6 +2,10 @@ import type {
   Event,
   EventBand,
   EventBandId,
+  DutyAssignment,
+  DutyAssignmentId,
+  DutyType,
+  DutyTypeId,
   EventDayId,
   EventMember,
   EventMemberDay,
@@ -26,6 +30,10 @@ import {
   resolvePaAssignmentInterval,
   type ResolvedPaAssignmentInterval,
 } from './paAssignments.ts'
+import {
+  resolveDutyAssignmentInterval,
+  type ResolvedDutyAssignmentInterval,
+} from './dutyAssignments.ts'
 
 export type IssueSeverity = 'ERROR' | 'WARNING' | 'INFO'
 
@@ -49,6 +57,15 @@ export type ScheduleIssueCode =
   | 'PA_OUTSIDE_MEMBER_AVAILABILITY'
   | 'PA_MEMBER_PERFORMANCE_OVERLAP'
   | 'PA_ASSIGNMENT_OVERLAP'
+  | 'DUTY_TYPE_NOT_FOUND'
+  | 'DUTY_MEMBER_NOT_CONFIGURED'
+  | 'DUTY_MEMBER_ABSENT'
+  | 'DUTY_MEMBER_UNDECIDED'
+  | 'DUTY_INVALID_BOUNDARY'
+  | 'DUTY_OUTSIDE_MEMBER_AVAILABILITY'
+  | 'DUTY_MEMBER_PERFORMANCE_OVERLAP'
+  | 'DUTY_ASSIGNMENT_OVERLAP'
+  | 'DUTY_PA_OVERLAP'
   | 'PERFORMANCE_OVERLAP'
   | 'BACK_TO_BACK'
   | 'SHORT_GAP'
@@ -68,6 +85,9 @@ export interface ScheduleIssue {
   stageIds?: StageId[]
   sectionIds?: SectionId[]
   paAssignmentIds?: PaAssignmentId[]
+  dutyTypeIds?: DutyTypeId[]
+  dutyAssignmentIds?: DutyAssignmentId[]
+  eventDayIds?: EventDayId[]
   gapBands?: number
   restMinutes?: number
   overrunMinutes?: number
@@ -82,6 +102,8 @@ export interface DetectScheduleIssuesInput {
   stages: Stage[]
   sections: Section[]
   paAssignments: PaAssignment[]
+  dutyTypes: DutyType[]
+  dutyAssignments: DutyAssignment[]
   calculatedItems: CalculatedScheduleItem[]
 }
 
@@ -127,6 +149,9 @@ const createIssueKey = (issue: ScheduleIssue): string =>
     [...(issue.stageIds ?? [])].sort().join(','),
     [...(issue.sectionIds ?? [])].sort().join(','),
     [...(issue.paAssignmentIds ?? [])].sort().join(','),
+    [...(issue.dutyTypeIds ?? [])].sort().join(','),
+    [...(issue.dutyAssignmentIds ?? [])].sort().join(','),
+    [...(issue.eventDayIds ?? [])].sort().join(','),
   ].join('|')
 
 const getLatestEndMinute = (
@@ -261,6 +286,8 @@ export const detectScheduleIssues = ({
   stages,
   sections,
   paAssignments,
+  dutyTypes,
+  dutyAssignments,
   calculatedItems,
 }: DetectScheduleIssuesInput): ScheduleIssue[] => {
   const issues: ScheduleIssue[] = []
@@ -283,6 +310,11 @@ export const detectScheduleIssues = ({
     eventBands
       .filter((eventBand) => eventBand.eventId === event.id)
       .map((eventBand) => [eventBand.id, eventBand]),
+  )
+  const eventDutyTypeById = new Map(
+    dutyTypes
+      .filter((dutyType) => dutyType.eventId === event.id)
+      .map((dutyType) => [dutyType.id, dutyType]),
   )
   const memberById = new Map(members.map((member) => [member.id, member]))
   const stageById = new Map(stages.map((stage) => [stage.id, stage]))
@@ -631,6 +663,199 @@ export const detectScheduleIssues = ({
       })
     }
   }
+
+  const resolvedDutyAssignments: Array<{
+    assignment: DutyAssignment
+    interval: ResolvedDutyAssignmentInterval
+  }> = []
+
+  dutyAssignments
+    .filter((assignment) =>
+      eventDutyTypeById.has(assignment.dutyTypeId) ||
+      stageById.has(assignment.stageId),
+    )
+    .forEach((assignment) => {
+      const dutyType = eventDutyTypeById.get(assignment.dutyTypeId)
+      if (!dutyType) {
+        addIssue({
+          severity: 'ERROR',
+          code: 'DUTY_TYPE_NOT_FOUND',
+          message: `一般業務担当 ${assignment.id} の仕事の種類が見つかりません`,
+          memberIds: [assignment.memberId],
+          dutyTypeIds: [assignment.dutyTypeId],
+          dutyAssignmentIds: [assignment.id],
+          eventDayIds: [assignment.eventDayId],
+          stageIds: [assignment.stageId],
+        })
+      }
+
+      const stage = stageById.get(assignment.stageId)
+      const resolution = stage?.eventDayId === assignment.eventDayId
+        ? resolveDutyAssignmentInterval(assignment, calculatedItems)
+        : {
+            ok: false as const,
+            reason: '一般業務担当のStageまたは開催日が正しくありません。',
+          }
+
+      if (!resolution.ok) {
+        addIssue({
+          severity: 'ERROR',
+          code: 'DUTY_INVALID_BOUNDARY',
+          message: `Stage ${assignment.stageId} の一般業務担当範囲が無効です。${resolution.reason}`,
+          memberIds: [assignment.memberId],
+          dutyTypeIds: [assignment.dutyTypeId],
+          dutyAssignmentIds: [assignment.id],
+          eventDayIds: [assignment.eventDayId],
+          stageIds: [assignment.stageId],
+        })
+      } else {
+        resolvedDutyAssignments.push({
+          assignment,
+          interval: resolution.interval,
+        })
+      }
+
+      const member = memberById.get(assignment.memberId)
+      const eventMember = eventMemberByMemberId.get(assignment.memberId)
+      const memberDay = eventMember
+        ? eventMemberDayByEventMemberId
+            .get(eventMember.id)
+            ?.get(assignment.eventDayId)
+        : undefined
+
+      if (!member || !memberDay) {
+        addIssue({
+          severity: 'ERROR',
+          code: 'DUTY_MEMBER_NOT_CONFIGURED',
+          message: `メンバー ${assignment.memberId} のこの開催日の一般業務参加情報が設定されていません`,
+          memberIds: [assignment.memberId],
+          dutyTypeIds: [assignment.dutyTypeId],
+          dutyAssignmentIds: [assignment.id],
+          eventDayIds: [assignment.eventDayId],
+          stageIds: [assignment.stageId],
+        })
+      } else if (memberDay.participationStatus === 'absent') {
+        addIssue({
+          severity: 'ERROR',
+          code: 'DUTY_MEMBER_ABSENT',
+          message: `不参加のメンバー ${assignment.memberId} が一般業務担当に設定されています`,
+          memberIds: [assignment.memberId],
+          dutyTypeIds: [assignment.dutyTypeId],
+          dutyAssignmentIds: [assignment.id],
+          eventDayIds: [assignment.eventDayId],
+          stageIds: [assignment.stageId],
+        })
+      } else {
+        if (memberDay.participationStatus === 'undecided') {
+          addIssue({
+            severity: 'INFO',
+            code: 'DUTY_MEMBER_UNDECIDED',
+            message: `メンバー ${assignment.memberId} の参加状態が未定のまま一般業務担当に設定されています`,
+            memberIds: [assignment.memberId],
+            dutyTypeIds: [assignment.dutyTypeId],
+            dutyAssignmentIds: [assignment.id],
+            eventDayIds: [assignment.eventDayId],
+            stageIds: [assignment.stageId],
+          })
+        }
+        if (
+          resolution.ok &&
+          !isIntervalWithinAvailabilityWindows(
+            memberDay.availabilityWindows,
+            resolution.interval.fromMinute,
+            resolution.interval.untilMinute,
+          )
+        ) {
+          addIssue({
+            severity: 'ERROR',
+            code: 'DUTY_OUTSIDE_MEMBER_AVAILABILITY',
+            message: `メンバー ${assignment.memberId} の一般業務担当時間が出演可能時間外です`,
+            memberIds: [assignment.memberId],
+            dutyTypeIds: [assignment.dutyTypeId],
+            dutyAssignmentIds: [assignment.id],
+            eventDayIds: [assignment.eventDayId],
+            stageIds: [assignment.stageId],
+          })
+        }
+      }
+
+      if (resolution.ok) {
+        getOverlappingMemberPerformances({
+          memberId: assignment.memberId,
+          eventDayId: assignment.eventDayId,
+          interval: resolution.interval,
+          eventBands,
+          calculatedItems,
+        }).forEach((performance) => {
+          if (!performance.eventBandId) return
+          addIssue({
+            severity: 'ERROR',
+            code: 'DUTY_MEMBER_PERFORMANCE_OVERLAP',
+            message: `メンバー ${assignment.memberId} は一般業務担当中に EventBand ${performance.eventBandId} へ出演しています`,
+            memberIds: [assignment.memberId],
+            eventBandIds: [performance.eventBandId],
+            scheduleItemIds: [performance.scheduleItemId],
+            eventDayIds: [assignment.eventDayId],
+            stageIds: [assignment.stageId, performance.stageId],
+            dutyTypeIds: [assignment.dutyTypeId],
+            dutyAssignmentIds: [assignment.id],
+          })
+        })
+      }
+    })
+
+  for (
+    let firstIndex = 0;
+    firstIndex < resolvedDutyAssignments.length;
+    firstIndex += 1
+  ) {
+    const first = resolvedDutyAssignments[firstIndex]
+    for (
+      let secondIndex = firstIndex + 1;
+      secondIndex < resolvedDutyAssignments.length;
+      secondIndex += 1
+    ) {
+      const second = resolvedDutyAssignments[secondIndex]
+      if (
+        first.assignment.memberId !== second.assignment.memberId ||
+        first.assignment.eventDayId !== second.assignment.eventDayId ||
+        !intervalsOverlap(first.interval, second.interval)
+      ) continue
+
+      addIssue({
+        severity: 'ERROR',
+        code: 'DUTY_ASSIGNMENT_OVERLAP',
+        message: `メンバー ${first.assignment.memberId} の一般業務担当時間が重複しています`,
+        memberIds: [first.assignment.memberId],
+        eventDayIds: [first.assignment.eventDayId],
+        stageIds: [first.assignment.stageId, second.assignment.stageId],
+        dutyTypeIds: [first.assignment.dutyTypeId, second.assignment.dutyTypeId],
+        dutyAssignmentIds: [first.assignment.id, second.assignment.id],
+      })
+    }
+  }
+
+  resolvedDutyAssignments.forEach((duty) => {
+    resolvedPaAssignments.forEach((pa) => {
+      if (
+        duty.assignment.memberId !== pa.assignment.memberId ||
+        duty.assignment.eventDayId !== pa.assignment.eventDayId ||
+        !intervalsOverlap(duty.interval, pa.interval)
+      ) return
+
+      addIssue({
+        severity: 'ERROR',
+        code: 'DUTY_PA_OVERLAP',
+        message: `メンバー ${duty.assignment.memberId} の一般業務とPA担当時間が重複しています`,
+        memberIds: [duty.assignment.memberId],
+        eventDayIds: [duty.assignment.eventDayId],
+        stageIds: [duty.assignment.stageId, pa.assignment.stageId],
+        dutyTypeIds: [duty.assignment.dutyTypeId],
+        dutyAssignmentIds: [duty.assignment.id],
+        paAssignmentIds: [pa.assignment.id],
+      })
+    })
+  })
 
   appearancesByMember.forEach((appearances, memberId) => {
     const eventMember = eventMemberByMemberId.get(memberId)

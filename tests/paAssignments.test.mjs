@@ -170,6 +170,8 @@ const detect = ({
   stages,
   sections: [],
   paAssignments,
+  dutyTypes: [],
+  dutyAssignments: [],
   calculatedItems: items,
 })
 

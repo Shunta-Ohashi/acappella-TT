@@ -1,9 +1,11 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 import type { DropResult } from '@hello-pangea/dnd'
 import type {
   Band,
   BandId,
+  DutyAssignment,
+  DutyType,
   Event as TimetableEvent,
   EventBand,
   EventDay,
@@ -59,6 +61,11 @@ import { EventBandSettings } from './components/EventBandSettings'
 import { EventBandConditions } from './components/EventBandConditions'
 import { EventStageSettings } from './components/EventStageSettings'
 import { PaSettings } from './components/PaSettings'
+import type { PaSettingsHandle } from './components/PaSettings'
+import {
+  DutySettings,
+  type DutySettingsHandle,
+} from './components/DutySettings'
 import { TimetableGrid } from './components/TimetableGrid'
 import { TimetableOperationsWorkspace } from './components/TimetableOperationsWorkspace'
 import { EventList } from './components/EventList'
@@ -113,6 +120,11 @@ import {
   type PaAssignmentsDraft,
   type PaAssignmentsUpdateResult,
 } from './domain/paAssignments'
+import {
+  createDutySettingsUpdate,
+  type DutySettingsDraft,
+  type DutySettingsUpdateResult,
+} from './domain/dutyAssignments'
 import {
   countIssuesBySeverity,
   getIssuesForStage,
@@ -240,6 +252,14 @@ function App() {
   const [paAssignments, setPaAssignments] = useState<PaAssignment[]>(
     initialDemoData.paAssignments,
   )
+  const [dutyTypes, setDutyTypes] = useState<DutyType[]>(
+    initialDemoData.dutyTypes,
+  )
+  const [dutyAssignments, setDutyAssignments] = useState<DutyAssignment[]>(
+    initialDemoData.dutyAssignments,
+  )
+  const paSettingsRef = useRef<PaSettingsHandle>(null)
+  const dutySettingsRef = useRef<DutySettingsHandle>(null)
   const selectedEventBands = eventBands.filter(
     (eventBand) => eventBand.eventId === selectedEventId,
   )
@@ -272,6 +292,18 @@ function App() {
   )
   const selectedEventPaAssignments = paAssignments.filter(
     (assignment) => assignment.eventId === selectedEventId,
+  )
+  const selectedEventDutyTypes = dutyTypes
+    .filter((dutyType) => dutyType.eventId === selectedEventId)
+    .sort((first, second) =>
+      first.order - second.order || first.id.localeCompare(second.id),
+    )
+  const selectedEventDutyTypeIds = new Set(
+    selectedEventDutyTypes.map((dutyType) => dutyType.id),
+  )
+  const selectedEventDutyAssignments = dutyAssignments.filter((assignment) =>
+    selectedEventDutyTypeIds.has(assignment.dutyTypeId) ||
+    selectedStageIds.has(assignment.stageId),
   )
   const selectedEventCalculatedItems = selectedEvent
     ? selectedEventDays.flatMap((eventDay) => calculateEventDayTimelines({
@@ -410,6 +442,7 @@ function App() {
       eventMemberDays,
       eventBands,
       paAssignments,
+      dutyAssignments,
     })
 
     if (!result.ok) return result
@@ -566,6 +599,55 @@ function App() {
     return result
   }
 
+  const handleSaveDutySettings = (
+    draft: DutySettingsDraft,
+  ): DutySettingsUpdateResult => {
+    if (!selectedEvent) {
+      return {
+        ok: false,
+        errors: {
+          dutyTypes: {},
+          assignments: {},
+          form: '編集するイベントが見つかりません。',
+        },
+      }
+    }
+    const result = createDutySettingsUpdate({
+      event: selectedEvent,
+      eventDays: selectedEventDays,
+      stages: selectedStages,
+      members,
+      eventMembers: selectedEventMembers,
+      eventMemberDays: selectedEventMemberDays,
+      eventBands: selectedEventBands,
+      paAssignments: selectedEventPaAssignments,
+      calculatedItems: selectedEventCalculatedItems,
+      dutyTypes,
+      dutyAssignments,
+      draft,
+      newDutyTypeIds: draft.dutyTypes
+        .filter((dutyType) => !dutyType.dutyTypeId)
+        .map(() => createId('duty-type')),
+      newDutyAssignmentIds: draft.assignments
+        .filter((assignment) => !assignment.dutyAssignmentId)
+        .map(() => createId('duty-assignment')),
+    })
+    if (!result.ok) return result
+    setDutyTypes(result.dutyTypes)
+    setDutyAssignments(result.dutyAssignments)
+    return result
+  }
+
+  const handleSaveStep6AndNext = () => {
+    const paIsValid = paSettingsRef.current?.validateDraft() ?? false
+    const dutyIsValid = dutySettingsRef.current?.validateDraft() ?? false
+    if (!paIsValid || !dutyIsValid) return
+
+    const paWasSaved = paSettingsRef.current?.commitDraft() ?? false
+    const dutyWasSaved = dutySettingsRef.current?.commitDraft() ?? false
+    if (paWasSaved && dutyWasSaved) setActiveStep(7)
+  }
+
   const handleSaveCommonMember = (
     memberId: MemberId | undefined,
     draft: CommonMemberDraft,
@@ -660,6 +742,7 @@ function App() {
       scheduleItems,
       eventBands,
       paAssignments,
+      dutyAssignments,
     })
 
     if (!result.ok) return result
@@ -935,6 +1018,10 @@ function App() {
         paAssignments: selectedEventPaAssignments.filter((assignment) =>
           assignment.eventDayId === timetableSelection.eventDayId,
         ),
+        dutyTypes: selectedEventDutyTypes,
+        dutyAssignments: selectedEventDutyAssignments.filter((assignment) =>
+          assignment.eventDayId === timetableSelection.eventDayId,
+        ),
         calculatedItems,
       })
     : []
@@ -955,12 +1042,16 @@ function App() {
         eventBands: selectedEventBands,
         members,
         paAssignments: selectedEventPaAssignments,
+        dutyTypes: selectedEventDutyTypes,
+        dutyAssignments: selectedEventDutyAssignments,
         issues: currentStageIssues,
       })
     : {
         rows: [],
         unresolvedPaAssignments: [],
         offGridPaAssignments: [],
+        unresolvedDutyAssignments: [],
+        offGridDutyAssignments: [],
       }
 
   return (
@@ -987,6 +1078,7 @@ function App() {
                   eventMemberDays,
                   eventBands,
                   paAssignments,
+                  dutyAssignments,
                 },
               )}
               onSave={handleSaveEventBasicInfo}
@@ -1009,6 +1101,7 @@ function App() {
                 scheduleItems,
                 eventBands,
                 paAssignments,
+                dutyAssignments,
               })}
               canDeleteSection={(sectionId) => canDeleteSection(sectionId, {
                 scheduleItems,
@@ -1178,6 +1271,9 @@ function App() {
                     rows={timetableWorkspaceRows.rows}
                     unresolvedPaAssignments={timetableWorkspaceRows.unresolvedPaAssignments}
                     offGridPaAssignments={timetableWorkspaceRows.offGridPaAssignments}
+                    dutyTypes={selectedEventDutyTypes}
+                    unresolvedDutyAssignments={timetableWorkspaceRows.unresolvedDutyAssignments}
+                    offGridDutyAssignments={timetableWorkspaceRows.offGridDutyAssignments}
                     transitionMinutes={intervalTime}
                     breakDuration={breakDuration}
                     onBreakDurationChange={setBreakDuration}
@@ -1190,6 +1286,7 @@ function App() {
                     issues={currentStageIssues}
                     members={members}
                     eventBands={selectedEventBands}
+                    dutyTypes={selectedEventDutyTypes}
                     stages={timetableStages}
                     sections={timetableSections}
                     calculatedItems={calculatedItems}
@@ -1197,6 +1294,7 @@ function App() {
                 )}
                 renderPaPanel={(onValidationFailed) => currentStage ? (
                   <PaSettings
+                    ref={paSettingsRef}
                     key={selectedEvent.id}
                     event={selectedEvent}
                     eventDays={selectedEventDays}
@@ -1218,17 +1316,46 @@ function App() {
                     createDraftId={() => createId('pa-assignment-draft')}
                     formId={`pa-settings-${selectedEvent.id}`}
                     onSave={handleSavePaAssignments}
-                    onSaveAndNext={() => setActiveStep(7)}
+                    onSaveAndNext={() => {
+                      if (!dutySettingsRef.current?.validateDraft()) return
+                      if (dutySettingsRef.current.commitDraft()) setActiveStep(7)
+                    }}
+                  />
+                ) : null}
+                renderOperationsPanel={(onValidationFailed) => currentStage ? (
+                  <DutySettings
+                    ref={dutySettingsRef}
+                    key={selectedEvent.id}
+                    event={selectedEvent}
+                    eventDays={selectedEventDays}
+                    stages={selectedStages}
+                    members={members}
+                    eventMembers={selectedEventMembers}
+                    eventMemberDays={selectedEventMemberDays}
+                    eventBands={selectedEventBands}
+                    scheduleItems={selectedScheduleItems}
+                    calculatedItems={selectedEventCalculatedItems}
+                    paAssignments={selectedEventPaAssignments}
+                    dutyTypes={selectedEventDutyTypes}
+                    dutyAssignments={selectedEventDutyAssignments}
+                    selectedEventDayId={timetableSelection.eventDayId}
+                    selectedStageId={currentStage.id}
+                    onSelectScope={(eventDayId, stageId) => {
+                      setSelectedTimetableEventDayId(eventDayId)
+                      setSelectedTimetableStageId(stageId)
+                    }}
+                    onValidationFailed={onValidationFailed}
+                    createDraftId={() => createId('duty-draft')}
+                    onSave={handleSaveDutySettings}
                   />
                 ) : null}
                 footer={(
                   <button
-                    type="submit"
+                    type="button"
                     className="primary-button"
-                    form={`pa-settings-${selectedEvent.id}`}
-                    value="save-and-next"
+                    onClick={handleSaveStep6AndNext}
                   >
-                    保存して次へ <span aria-hidden="true">→</span>
+                    設定を保存して次へ <span aria-hidden="true">→</span>
                   </button>
                 )}
               />

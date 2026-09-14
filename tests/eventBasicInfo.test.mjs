@@ -39,6 +39,7 @@ const noReferences = {
   eventMemberDays: [],
   eventBands: [],
   paAssignments: [],
+  dutyAssignments: [],
 }
 
 test('基本情報更新で既存EventDay IDを維持し、新規日と日付順のorderを反映する', () => {
@@ -130,6 +131,14 @@ test('関連データがないEventDayだけ削除可能と判定する', () => 
     ...noReferences,
     paAssignments: [{ eventDayId: 'day-b' }],
   }), true)
+  assert.equal(canDeleteEventDay('day-a', {
+    ...noReferences,
+    dutyAssignments: [{ eventDayId: 'day-a' }],
+  }), false)
+  assert.equal(canDeleteEventDay('day-a', {
+    ...noReferences,
+    dutyAssignments: [{ eventDayId: 'day-b' }],
+  }), true)
 })
 
 test('関連データがないEventDayを基本情報更新で削除できる', () => {
@@ -166,9 +175,29 @@ test('関連データがあるEventDayの削除を保存処理でもブロック
     eventMemberDays: [],
     eventBands: [],
     paAssignments: [],
+    dutyAssignments: [],
   })
 
   assert.equal(result.ok, false)
   if (result.ok) return
   assert.match(result.errors.form ?? '', /削除できません/)
+})
+
+test('一般業務担当から参照中のEventDayを保存処理でも削除できない', () => {
+  const result = createEventBasicInfoUpdate({
+    event,
+    eventDays,
+    draft: {
+      name: event.name,
+      eventDays: [{ eventDayId: 'day-a', date: '2027-11-08' }],
+      description: '',
+      notes: '',
+    },
+    newEventDayIds: [],
+    ...noReferences,
+    dutyAssignments: [{ eventDayId: 'day-b' }],
+  })
+
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.match(result.errors.form ?? '', /削除できません/)
 })

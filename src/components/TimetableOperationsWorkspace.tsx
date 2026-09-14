@@ -19,6 +19,7 @@ interface TimetableOperationsWorkspaceProps {
   timetable: ReactNode
   issuePanel: ReactNode
   renderPaPanel: (onValidationFailed: () => void) => ReactNode
+  renderOperationsPanel: (onValidationFailed: () => void) => ReactNode
   footer: ReactNode
 }
 
@@ -49,6 +50,7 @@ export function TimetableOperationsWorkspace({
   timetable,
   issuePanel,
   renderPaPanel,
+  renderOperationsPanel,
   footer,
 }: TimetableOperationsWorkspaceProps) {
   const [activePanel, setActivePanel] = useState<OperationsPanel>('issues')
@@ -189,12 +191,7 @@ export function TimetableOperationsWorkspace({
                 {renderPaPanel(() => openPanel('pa'))}
               </div>
               <div className="operations-panel-content" hidden={activePanel !== 'operations'}>
-                <section className="operations-placeholder">
-                  <h3>当日運営</h3>
-                  <p>
-                    受付・撮影・TKなどの担当割り当ては、今後この画面から設定できるようにする予定です。
-                  </p>
-                </section>
+                {renderOperationsPanel(() => openPanel('operations'))}
               </div>
             </aside>
           </div>

@@ -9,6 +9,8 @@ export type SectionId = string
 export type EventBandId = string
 export type ScheduleItemId = string
 export type PaAssignmentId = string
+export type DutyTypeId = string
+export type DutyAssignmentId = string
 
 // Values are stored as ISO-like strings and validated at the input boundary.
 export type LocalDate = string // YYYY-MM-DD
@@ -165,6 +167,23 @@ export interface PaAssignment {
   stageId: StageId
   memberId: MemberId
   role: PaRole
+  from: ScheduleBoundary
+  until: ScheduleBoundary
+}
+
+export interface DutyType {
+  id: DutyTypeId
+  eventId: EventId
+  name: string
+  order: number
+}
+
+export interface DutyAssignment {
+  id: DutyAssignmentId
+  dutyTypeId: DutyTypeId
+  eventDayId: EventDayId
+  stageId: StageId
+  memberId: MemberId
   from: ScheduleBoundary
   until: ScheduleBoundary
 }

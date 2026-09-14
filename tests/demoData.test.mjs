@@ -18,6 +18,8 @@ test('demoDataは想定件数と全EventDayのdomain invariantを満たす', () 
     sections: data.sections.length,
     scheduleItems: data.scheduleItems.length,
     paAssignments: data.paAssignments.length,
+    dutyTypes: data.dutyTypes.length,
+    dutyAssignments: data.dutyAssignments.length,
   }, {
     events: 2,
     eventDays: 3,
@@ -28,6 +30,8 @@ test('demoDataは想定件数と全EventDayのdomain invariantを満たす', () 
     sections: 5,
     scheduleItems: 6,
     paAssignments: 2,
+    dutyTypes: 2,
+    dutyAssignments: 2,
   })
 
   for (const eventDay of data.eventDays) {
@@ -69,6 +73,12 @@ test('demoDataは想定件数と全EventDayのdomain invariantを満たす', () 
       sections: data.sections,
       paAssignments: data.paAssignments.filter((assignment) =>
         assignment.eventId === event.id &&
+        assignment.eventDayId === eventDay.id,
+      ),
+      dutyTypes: data.dutyTypes.filter((dutyType) =>
+        dutyType.eventId === event.id,
+      ),
+      dutyAssignments: data.dutyAssignments.filter((assignment) =>
         assignment.eventDayId === eventDay.id,
       ),
       calculatedItems: timelines.calculatedItems,

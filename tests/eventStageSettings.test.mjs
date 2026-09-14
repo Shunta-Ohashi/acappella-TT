@@ -99,6 +99,7 @@ const noReferences = {
   scheduleItems: [],
   eventBands: [],
   paAssignments: [],
+  dutyAssignments: [],
 }
 
 test('Stage開始時刻は自動終了または固定終了より前の場合だけ変更可能にする', () => {
@@ -329,41 +330,54 @@ test('Event共通とStage固有の転換時間は0以上の整数だけ許可す
   assert.equal(validErrors.stages['draft-stage'], undefined)
 })
 
-test('ScheduleItem、Section、固定配置、またはPA担当から参照されるStageは削除不可にする', () => {
+test('ScheduleItem、Section、固定配置、PA担当、一般業務担当から参照されるStageは削除不可にする', () => {
   assert.equal(canDeleteStage(existingStage.id, noReferences), true)
   assert.equal(canDeleteStage(existingStage.id, {
     sections: [],
     scheduleItems: [{ stageId: existingStage.id }],
     eventBands: [],
     paAssignments: [],
+    dutyAssignments: [],
   }), false)
   assert.equal(canDeleteStage(existingStage.id, {
     sections: [{ stageId: existingStage.id }],
     scheduleItems: [],
     eventBands: [],
     paAssignments: [],
+    dutyAssignments: [],
   }), false)
   assert.equal(canDeleteStage(existingStage.id, {
     sections: [],
     scheduleItems: [],
     eventBands: [{ fixedPlacement: { stageId: existingStage.id } }],
     paAssignments: [],
+    dutyAssignments: [],
   }), false)
   assert.equal(canDeleteStage(existingStage.id, {
     sections: [],
     scheduleItems: [],
     eventBands: [{ fixedPlacement: { stageId: 'another-stage' } }],
     paAssignments: [],
+    dutyAssignments: [],
   }), true)
   assert.equal(canDeleteStage(existingStage.id, {
     sections: [],
     scheduleItems: [],
     eventBands: [],
     paAssignments: [{ stageId: existingStage.id }],
+    dutyAssignments: [],
   }), false)
   assert.equal(canDeleteStage(existingStage.id, {
     ...noReferences,
     paAssignments: [{ stageId: 'another-stage' }],
+  }), true)
+  assert.equal(canDeleteStage(existingStage.id, {
+    ...noReferences,
+    dutyAssignments: [{ stageId: existingStage.id }],
+  }), false)
+  assert.equal(canDeleteStage(existingStage.id, {
+    ...noReferences,
+    dutyAssignments: [{ stageId: 'another-stage' }],
   }), true)
 })
 
@@ -391,6 +405,7 @@ test('未参照Stageは削除でき、参照中Stageは保存処理でも削除�
     scheduleItems: [{ stageId: existingStage.id }],
     eventBands: [],
     paAssignments: [],
+    dutyAssignments: [],
   })
   assert.equal(blocked.ok, false)
   if (!blocked.ok) assert.match(blocked.errors.form ?? '', /削除できません/)
@@ -408,6 +423,7 @@ test('固定配置から参照中のStageは保存処理でも削除をブロッ
     scheduleItems: [],
     eventBands: [{ fixedPlacement: { stageId: existingStage.id } }],
     paAssignments: [],
+    dutyAssignments: [],
   })
 
   assert.equal(result.ok, false)
@@ -426,10 +442,27 @@ test('PA担当から参照中のStageは保存処理でも削除をブロック�
     scheduleItems: [],
     eventBands: [],
     paAssignments: [{ stageId: existingStage.id }],
+    dutyAssignments: [],
   })
 
   assert.equal(result.ok, false)
   if (!result.ok) assert.match(result.errors.form ?? '', /PA担当/)
+})
+
+test('一般業務担当から参照中のStageは保存処理でも削除をブロックする', () => {
+  const result = createEventStageSettingsUpdate({
+    event,
+    eventDays,
+    stages: [existingStage],
+    draft: settingsDraft({ stages: [] }),
+    newStageIds: [],
+    newSectionIds: [],
+    ...noReferences,
+    dutyAssignments: [{ stageId: existingStage.id }],
+  })
+
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.match(result.errors.form ?? '', /一般業務担当/)
 })
 
 test('Section draftへ既存Sectionと自動・固定時刻を反映する', () => {
@@ -585,6 +618,7 @@ test('既存Section IDを維持し、新規IDだけを使ってStageごとにord
     scheduleItems: [],
     eventBands: [],
     paAssignments: [],
+    dutyAssignments: [],
   })
 
   assert.equal(result.ok, true)
@@ -669,6 +703,7 @@ test('参照中Sectionをdraftから除いても保存処理で削除をブロ�
     }],
     eventBands: [],
     paAssignments: [],
+    dutyAssignments: [],
   })
 
   assert.equal(result.ok, false)
@@ -693,6 +728,7 @@ test('未参照の最後のSectionは保存処理で削除できる', () => {
     scheduleItems: [],
     eventBands: [],
     paAssignments: [],
+    dutyAssignments: [],
   })
 
   assert.equal(result.ok, true)
@@ -736,6 +772,7 @@ test('ScheduleItemがあるSectionなしStageへの最初のSection追加を保�
     }],
     eventBands: [],
     paAssignments: [],
+    dutyAssignments: [],
   })
 
   assert.equal(result.ok, false)

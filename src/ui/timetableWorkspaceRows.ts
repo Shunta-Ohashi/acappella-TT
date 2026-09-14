@@ -2,6 +2,10 @@ import type { ScheduleIssue } from '../domain/issues'
 import type {
   EventBand,
   EventDayId,
+  DutyAssignment,
+  DutyAssignmentId,
+  DutyType,
+  DutyTypeId,
   Member,
   PaAssignment,
   PaAssignmentId,
@@ -9,6 +13,7 @@ import type {
   ScheduleItem,
   StageId,
 } from '../domain/models'
+import { resolveDutyAssignmentInterval } from '../domain/dutyAssignments.ts'
 import {
   intervalsOverlap,
   resolvePaAssignmentInterval,
@@ -31,6 +36,15 @@ export interface TimetableWorkspacePaCoverage {
   endsHere: boolean
 }
 
+export interface TimetableWorkspaceDutyCoverage {
+  assignmentId: DutyAssignmentId
+  dutyTypeId: DutyTypeId
+  memberName: string
+  startsHere: boolean
+  endsHere: boolean
+  issueCounts: IssueSeverityCounts
+}
+
 export interface TimetableWorkspaceRow {
   scheduleItem: ScheduleItem
   calculatedItem: CalculatedScheduleItem
@@ -41,6 +55,7 @@ export interface TimetableWorkspaceRow {
   hasHardTimeCondition: boolean
   hasPreferredTimeCondition: boolean
   paCoverage: Record<PaRole, TimetableWorkspacePaCoverage[]>
+  dutyCoverage: Record<DutyTypeId, TimetableWorkspaceDutyCoverage[]>
 }
 
 export interface UnresolvedPaAssignment {
@@ -58,10 +73,27 @@ export interface OffGridPaAssignment {
   untilMinute: number
 }
 
+export interface UnresolvedDutyAssignment {
+  assignmentId: DutyAssignmentId
+  dutyTypeName: string
+  memberName: string
+  reason: string
+}
+
+export interface OffGridDutyAssignment {
+  assignmentId: DutyAssignmentId
+  dutyTypeName: string
+  memberName: string
+  fromMinute: number
+  untilMinute: number
+}
+
 export interface TimetableWorkspaceRowsResult {
   rows: TimetableWorkspaceRow[]
   unresolvedPaAssignments: UnresolvedPaAssignment[]
   offGridPaAssignments: OffGridPaAssignment[]
+  unresolvedDutyAssignments: UnresolvedDutyAssignment[]
+  offGridDutyAssignments: OffGridDutyAssignment[]
 }
 
 interface CreateTimetableWorkspaceRowsInput {
@@ -72,6 +104,8 @@ interface CreateTimetableWorkspaceRowsInput {
   eventBands: EventBand[]
   members: Member[]
   paAssignments: PaAssignment[]
+  dutyTypes: DutyType[]
+  dutyAssignments: DutyAssignment[]
   issues: ScheduleIssue[]
 }
 
@@ -101,6 +135,8 @@ export const createTimetableWorkspaceRows = ({
   eventBands,
   members,
   paAssignments,
+  dutyTypes,
+  dutyAssignments,
   issues,
 }: CreateTimetableWorkspaceRowsInput): TimetableWorkspaceRowsResult => {
   const scheduleItemById = new Map(
@@ -135,6 +171,9 @@ export const createTimetableWorkspaceRows = ({
       hasHardTimeCondition: eventBand?.availableTimeRange !== undefined,
       hasPreferredTimeCondition: eventBand?.preferredTimeRange !== undefined,
       paCoverage: { main: [], sub: [] },
+      dutyCoverage: Object.fromEntries(
+        dutyTypes.map((dutyType) => [dutyType.id, []]),
+      ),
     }]
   })
 
@@ -189,5 +228,85 @@ export const createTimetableWorkspaceRows = ({
     })
   }
 
-  return { rows, unresolvedPaAssignments, offGridPaAssignments }
+  const dutyTypeById = new Map(
+    dutyTypes.map((dutyType) => [dutyType.id, dutyType]),
+  )
+  const unresolvedDutyAssignments: UnresolvedDutyAssignment[] = []
+  const offGridDutyAssignments: OffGridDutyAssignment[] = []
+  for (const assignment of dutyAssignments.filter((candidate) =>
+    candidate.eventDayId === eventDayId && candidate.stageId === stageId,
+  )) {
+    const dutyType = dutyTypeById.get(assignment.dutyTypeId)
+    const dutyTypeName = dutyType?.name ?? '不明な仕事'
+    const member = memberById.get(assignment.memberId)
+    const memberName = member
+      ? getMemberDisplayName(member)
+      : '不明なメンバー'
+
+    if (!dutyType) {
+      unresolvedDutyAssignments.push({
+        assignmentId: assignment.id,
+        dutyTypeName,
+        memberName,
+        reason: '仕事の種類が見つかりません。',
+      })
+      continue
+    }
+
+    const resolution = resolveDutyAssignmentInterval(
+      assignment,
+      calculatedItems,
+    )
+    if (!resolution.ok) {
+      unresolvedDutyAssignments.push({
+        assignmentId: assignment.id,
+        dutyTypeName,
+        memberName,
+        reason: resolution.reason,
+      })
+      continue
+    }
+
+    const coveredRowIndexes = rows.flatMap((row, index) =>
+      intervalsOverlap(resolution.interval, {
+        fromMinute: row.calculatedItem.plannedStartMinute,
+        untilMinute: row.calculatedItem.plannedEndMinute,
+      })
+        ? [index]
+        : [],
+    )
+
+    if (coveredRowIndexes.length === 0) {
+      offGridDutyAssignments.push({
+        assignmentId: assignment.id,
+        dutyTypeName,
+        memberName,
+        fromMinute: resolution.interval.fromMinute,
+        untilMinute: resolution.interval.untilMinute,
+      })
+      continue
+    }
+
+    const assignmentIssues = issues.filter((issue) =>
+      issue.dutyAssignmentIds?.includes(assignment.id),
+    )
+    coveredRowIndexes.forEach((rowIndex, coveredIndex) => {
+      rows[rowIndex].dutyCoverage[dutyType.id].push({
+        assignmentId: assignment.id,
+        dutyTypeId: dutyType.id,
+        memberName,
+        startsHere: coveredIndex === 0,
+        endsHere: coveredIndex === coveredRowIndexes.length - 1,
+        issueCounts: countIssuesBySeverity(assignmentIssues),
+      })
+    })
+  }
+
+  return {
+    rows,
+    unresolvedPaAssignments,
+    offGridPaAssignments,
+    unresolvedDutyAssignments,
+    offGridDutyAssignments,
+  }
 }

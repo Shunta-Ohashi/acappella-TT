@@ -3,6 +3,7 @@ import type {
   EventBand,
   EventDay,
   EventDayId,
+  DutyAssignment,
   LocalTime,
   PaAssignment,
   ScheduleItem,
@@ -79,6 +80,7 @@ export interface StageReferences {
   scheduleItems: Pick<ScheduleItem, 'stageId'>[]
   eventBands: Pick<EventBand, 'fixedPlacement'>[]
   paAssignments: Pick<PaAssignment, 'stageId'>[]
+  dutyAssignments: Pick<DutyAssignment, 'stageId'>[]
 }
 
 export interface SectionReferences {
@@ -97,6 +99,7 @@ interface CreateEventStageSettingsUpdateInput {
   scheduleItems: ScheduleItem[]
   eventBands: EventBand[]
   paAssignments: PaAssignment[]
+  dutyAssignments: DutyAssignment[]
 }
 
 export type EventStageSettingsUpdateResult =
@@ -444,7 +447,7 @@ export const getEventStageSettingsErrorEventDayIds = (
 }
 
 export const STAGE_DELETE_BLOCKED_MESSAGE =
-  'このStageにはSection、タイムテーブル、固定配置、またはPA担当の設定があるため削除できません。関連する設定を先に解除してください。'
+  'このStageにはSection、タイムテーブル、固定配置、PA担当、または一般業務担当の設定があるため削除できません。関連する設定を先に解除してください。'
 
 export const SECTION_DELETE_BLOCKED_MESSAGE =
   'このSectionにはタイムテーブルまたは固定配置の設定があるため削除できません。関連する設定を先に解除してください。'
@@ -454,14 +457,21 @@ export const FIRST_SECTION_ADD_BLOCKED_MESSAGE =
 
 export const canDeleteStage = (
   stageId: StageId,
-  { sections, scheduleItems, eventBands, paAssignments }: StageReferences,
+  {
+    sections,
+    scheduleItems,
+    eventBands,
+    paAssignments,
+    dutyAssignments,
+  }: StageReferences,
 ): boolean =>
   !sections.some((section) => section.stageId === stageId) &&
   !scheduleItems.some((scheduleItem) => scheduleItem.stageId === stageId) &&
   !eventBands.some((eventBand) =>
     eventBand.fixedPlacement?.stageId === stageId,
   ) &&
-  !paAssignments.some((assignment) => assignment.stageId === stageId)
+  !paAssignments.some((assignment) => assignment.stageId === stageId) &&
+  !dutyAssignments.some((assignment) => assignment.stageId === stageId)
 
 export const canDeleteSection = (
   sectionId: SectionId,
@@ -493,6 +503,7 @@ export const createEventStageSettingsUpdate = ({
   scheduleItems,
   eventBands,
   paAssignments,
+  dutyAssignments,
 }: CreateEventStageSettingsUpdateInput): EventStageSettingsUpdateResult => {
   const errors = validateEventStageSettingsDraft(draft)
   if (hasEventStageSettingsErrors(errors)) return { ok: false, errors }
@@ -528,6 +539,7 @@ export const createEventStageSettingsUpdate = ({
       scheduleItems,
       eventBands,
       paAssignments,
+      dutyAssignments,
     }),
   )
 

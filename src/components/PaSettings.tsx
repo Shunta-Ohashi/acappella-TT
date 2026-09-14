@@ -1,4 +1,9 @@
-import { useState, type FormEvent } from 'react'
+import {
+  forwardRef,
+  useImperativeHandle,
+  useState,
+  type FormEvent,
+} from 'react'
 import type {
   Event,
   EventBand,
@@ -48,6 +53,11 @@ interface PaSettingsProps {
   onSaveAndNext: () => void
 }
 
+export interface PaSettingsHandle {
+  validateDraft: () => boolean
+  commitDraft: () => boolean
+}
+
 interface EditorState {
   item: PaAssignmentDraftItem
   isNew: boolean
@@ -56,7 +66,8 @@ interface EditorState {
 const emptyErrors = (): PaAssignmentsValidationErrors => ({ items: {} })
 const roleLabel = (role: PaRole) => role === 'main' ? 'Main PA' : 'Sub PA'
 
-export function PaSettings({
+export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
+  function PaSettings({
   formId,
   event,
   eventDays,
@@ -75,7 +86,7 @@ export function PaSettings({
   createDraftId,
   onSave,
   onSaveAndNext,
-}: PaSettingsProps) {
+  }: PaSettingsProps, ref) {
   const [draft, setDraft] = useState(() =>
     createPaAssignmentsDraft(event, paAssignments),
   )
@@ -152,7 +163,7 @@ export function PaSettings({
     }
   }
 
-  const save = (moveToNext: boolean) => {
+  const validateDraft = () => {
     const validationErrors = validatePaAssignmentsDraft({
       draft,
       event,
@@ -167,17 +178,29 @@ export function PaSettings({
     setSaveMessage('')
     if (hasPaAssignmentsErrors(validationErrors)) {
       presentErrors(validationErrors)
-      return
+      return false
     }
+    setErrors(emptyErrors())
+    return true
+  }
+
+  const commitDraft = () => {
     const result = onSave(draft)
     if (!result.ok) {
       presentErrors(result.errors)
-      return
+      return false
     }
     setDraft(createPaAssignmentsDraft(event, result.paAssignments))
     setErrors(emptyErrors())
+    setSaveMessage('✓ 保存しました')
+    return true
+  }
+
+  useImperativeHandle(ref, () => ({ validateDraft, commitDraft }))
+
+  const save = (moveToNext: boolean) => {
+    if (!validateDraft() || !commitDraft()) return
     if (moveToNext) onSaveAndNext()
-    else setSaveMessage('✓ 保存しました')
   }
 
   const handleSubmit = (submitEvent: FormEvent<HTMLFormElement>) => {
@@ -350,4 +373,5 @@ export function PaSettings({
       )}
     </section>
   )
-}
+  },
+)

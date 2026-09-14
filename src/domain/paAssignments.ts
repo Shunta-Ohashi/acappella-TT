@@ -16,6 +16,14 @@ import type {
 } from './models'
 import type { CalculatedScheduleItem } from './timeline'
 import { isIntervalWithinAvailabilityWindows } from './eventBandSettings.ts'
+import {
+  intervalsOverlap,
+  resolveScheduleBoundaryInterval,
+  type ResolvedScheduleInterval,
+  type ResolveScheduleIntervalResult,
+} from './scheduleBoundaries.ts'
+
+export { intervalsOverlap } from './scheduleBoundaries.ts'
 
 export interface PaAssignmentDraftItem {
   draftId: string
@@ -53,14 +61,8 @@ export type PaAssignmentsUpdateResult =
   | { ok: true; paAssignments: PaAssignment[] }
   | { ok: false; errors: PaAssignmentsValidationErrors }
 
-export interface ResolvedPaAssignmentInterval {
-  fromMinute: number
-  untilMinute: number
-}
-
-export type ResolvePaAssignmentIntervalResult =
-  | { ok: true; interval: ResolvedPaAssignmentInterval }
-  | { ok: false; reason: string }
+export type ResolvedPaAssignmentInterval = ResolvedScheduleInterval
+export type ResolvePaAssignmentIntervalResult = ResolveScheduleIntervalResult
 
 export interface PaMemberCandidate {
   member: Member
@@ -83,61 +85,14 @@ interface PaMemberPerformanceOverlapInput {
   calculatedItems: CalculatedScheduleItem[]
 }
 
-const getBoundaryMinute = (
-  boundary: ScheduleBoundary,
-  item: CalculatedScheduleItem,
-): number => boundary.edge === 'start'
-  ? item.plannedStartMinute
-  : item.plannedEndMinute
-
-export const intervalsOverlap = (
-  first: ResolvedPaAssignmentInterval,
-  second: ResolvedPaAssignmentInterval,
-): boolean => first.fromMinute < second.untilMinute &&
-  second.fromMinute < first.untilMinute
-
 export const resolvePaAssignmentInterval = (
   assignment: PaAssignmentScope,
   calculatedItems: CalculatedScheduleItem[],
-): ResolvePaAssignmentIntervalResult => {
-  const itemById = new Map(
-    calculatedItems.map((item) => [item.scheduleItemId, item]),
-  )
-  const fromItem = itemById.get(assignment.from.scheduleItemId)
-  const untilItem = itemById.get(assignment.until.scheduleItemId)
-
-  if (!fromItem) {
-    return { ok: false, reason: 'PA担当範囲の開始参照先が存在しません。' }
-  }
-  if (!untilItem) {
-    return { ok: false, reason: 'PA担当範囲の終了参照先が存在しません。' }
-  }
-  if (
-    fromItem.stageId !== assignment.stageId ||
-    fromItem.eventDayId !== assignment.eventDayId
-  ) {
-    return { ok: false, reason: 'PA担当範囲の開始は同じ開催日・Stageから選択してください。' }
-  }
-  if (
-    untilItem.stageId !== assignment.stageId ||
-    untilItem.eventDayId !== assignment.eventDayId
-  ) {
-    return { ok: false, reason: 'PA担当範囲の終了は同じ開催日・Stageから選択してください。' }
-  }
-
-  const fromMinute = getBoundaryMinute(assignment.from, fromItem)
-  const untilMinute = getBoundaryMinute(assignment.until, untilItem)
-  if (fromMinute >= untilMinute) {
-    return {
-      ok: false,
-      reason: fromMinute === untilMinute
-        ? 'PA担当範囲の開始と終了を同じ時刻にできません。'
-        : 'PA担当範囲の終了は開始より後にしてください。',
-    }
-  }
-
-  return { ok: true, interval: { fromMinute, untilMinute } }
-}
+): ResolvePaAssignmentIntervalResult => resolveScheduleBoundaryInterval(
+  assignment,
+  calculatedItems,
+  'PA担当',
+)
 
 export const getPaMemberCandidates = ({
   event,

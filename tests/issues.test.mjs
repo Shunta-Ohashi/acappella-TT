@@ -143,6 +143,8 @@ const detect = (options = {}) => {
     stages,
     sections,
     paAssignments: options.paAssignments ?? [],
+    dutyTypes: options.dutyTypes ?? [],
+    dutyAssignments: options.dutyAssignments ?? [],
     calculatedItems,
   })
 }

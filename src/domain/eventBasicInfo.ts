@@ -4,6 +4,7 @@ import type {
   EventDay,
   EventDayId,
   EventMemberDay,
+  DutyAssignment,
   LocalDate,
   PaAssignment,
   Stage,
@@ -35,6 +36,7 @@ export interface EventDayReferences {
   eventMemberDays: Pick<EventMemberDay, 'eventDayId'>[]
   eventBands: Pick<EventBand, 'eventDayId'>[]
   paAssignments: Pick<PaAssignment, 'eventDayId'>[]
+  dutyAssignments: Pick<DutyAssignment, 'eventDayId'>[]
 }
 
 interface CreateEventBasicInfoUpdateInput extends EventDayReferences {
@@ -81,13 +83,20 @@ export const validateEventBasicInfoDraft = (
 
 export const canDeleteEventDay = (
   eventDayId: EventDayId,
-  { stages, eventMemberDays, eventBands, paAssignments }: EventDayReferences,
+  {
+    stages,
+    eventMemberDays,
+    eventBands,
+    paAssignments,
+    dutyAssignments,
+  }: EventDayReferences,
 ): boolean =>
   !stages.some((stage) => stage.eventDayId === eventDayId) &&
   !eventMemberDays.some((eventMemberDay) =>
     eventMemberDay.eventDayId === eventDayId) &&
   !eventBands.some((eventBand) => eventBand.eventDayId === eventDayId) &&
-  !paAssignments.some((assignment) => assignment.eventDayId === eventDayId)
+  !paAssignments.some((assignment) => assignment.eventDayId === eventDayId) &&
+  !dutyAssignments.some((assignment) => assignment.eventDayId === eventDayId)
 
 export const createEventBasicInfoUpdate = ({
   event,
@@ -98,6 +107,7 @@ export const createEventBasicInfoUpdate = ({
   eventMemberDays,
   eventBands,
   paAssignments,
+  dutyAssignments,
 }: CreateEventBasicInfoUpdateInput): EventBasicInfoUpdateResult => {
   const errors = validateEventBasicInfoDraft(draft)
   if (errors.name || errors.dates) return { ok: false, errors }
@@ -119,6 +129,7 @@ export const createEventBasicInfoUpdate = ({
       eventMemberDays,
       eventBands,
       paAssignments,
+      dutyAssignments,
     }),
   )
 
