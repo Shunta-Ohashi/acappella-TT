@@ -3729,6 +3729,29 @@
   font-size: 11px;
 }
 
+.timetable-grid__off-grid-pa {
+  display: grid;
+  gap: 4px;
+  min-width: var(--timetable-grid-min-width);
+  padding: 7px 10px;
+  color: #55420f;
+  background: #fffdf2;
+  border-bottom: 1px solid #d8c78d;
+  font-size: 10px;
+}
+
+.timetable-grid__off-grid-pa ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 12px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.timetable-grid__off-grid-pa > span {
+  color: #635631;
+}
+
 .timetable-grid {
   width: max-content;
   min-width: var(--timetable-grid-min-width);

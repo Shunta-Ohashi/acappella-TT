@@ -50,9 +50,18 @@ export interface UnresolvedPaAssignment {
   reason: string
 }
 
+export interface OffGridPaAssignment {
+  assignmentId: PaAssignmentId
+  memberName: string
+  role: PaRole
+  fromMinute: number
+  untilMinute: number
+}
+
 export interface TimetableWorkspaceRowsResult {
   rows: TimetableWorkspaceRow[]
   unresolvedPaAssignments: UnresolvedPaAssignment[]
+  offGridPaAssignments: OffGridPaAssignment[]
 }
 
 interface CreateTimetableWorkspaceRowsInput {
@@ -130,6 +139,7 @@ export const createTimetableWorkspaceRows = ({
   })
 
   const unresolvedPaAssignments: UnresolvedPaAssignment[] = []
+  const offGridPaAssignments: OffGridPaAssignment[] = []
   for (const assignment of paAssignments.filter((candidate) =>
     candidate.eventDayId === eventDayId && candidate.stageId === stageId,
   )) {
@@ -157,6 +167,17 @@ export const createTimetableWorkspaceRows = ({
         : [],
     )
 
+    if (coveredRowIndexes.length === 0) {
+      offGridPaAssignments.push({
+        assignmentId: assignment.id,
+        memberName,
+        role: assignment.role,
+        fromMinute: resolution.interval.fromMinute,
+        untilMinute: resolution.interval.untilMinute,
+      })
+      continue
+    }
+
     coveredRowIndexes.forEach((rowIndex, coveredIndex) => {
       rows[rowIndex].paCoverage[assignment.role].push({
         assignmentId: assignment.id,
@@ -168,5 +189,5 @@ export const createTimetableWorkspaceRows = ({
     })
   }
 
-  return { rows, unresolvedPaAssignments }
+  return { rows, unresolvedPaAssignments, offGridPaAssignments }
 }

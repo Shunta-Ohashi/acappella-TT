@@ -957,7 +957,11 @@ function App() {
         paAssignments: selectedEventPaAssignments,
         issues: currentStageIssues,
       })
-    : { rows: [], unresolvedPaAssignments: [] }
+    : {
+        rows: [],
+        unresolvedPaAssignments: [],
+        offGridPaAssignments: [],
+      }
 
   return (
     <AppShell
@@ -1173,6 +1177,7 @@ function App() {
                     sections={currentStageUsesSections ? currentStageSections : []}
                     rows={timetableWorkspaceRows.rows}
                     unresolvedPaAssignments={timetableWorkspaceRows.unresolvedPaAssignments}
+                    offGridPaAssignments={timetableWorkspaceRows.offGridPaAssignments}
                     transitionMinutes={intervalTime}
                     breakDuration={breakDuration}
                     onBreakDurationChange={setBreakDuration}

@@ -9,6 +9,7 @@ import type {
 } from '../domain/models'
 import { formatMinuteAsLocalTime } from '../domain/timeline'
 import type {
+  OffGridPaAssignment,
   TimetableWorkspacePaCoverage,
   TimetableWorkspaceRow,
   UnresolvedPaAssignment,
@@ -23,6 +24,7 @@ interface TimetableGridProps {
   sections: Section[]
   rows: TimetableWorkspaceRow[]
   unresolvedPaAssignments: UnresolvedPaAssignment[]
+  offGridPaAssignments: OffGridPaAssignment[]
   transitionMinutes: number
   breakDuration: number
   onBreakDurationChange: (durationMinutes: number) => void
@@ -183,6 +185,7 @@ export function TimetableGrid({
   sections,
   rows,
   unresolvedPaAssignments,
+  offGridPaAssignments,
   transitionMinutes,
   breakDuration,
   onBreakDurationChange,
@@ -193,7 +196,10 @@ export function TimetableGrid({
     first.order - second.order,
   )
 
-  const renderBreakForm = (sectionId?: SectionId) => (
+  const renderBreakForm = (
+    targetName: string,
+    sectionId?: SectionId,
+  ) => (
     <form
       className="timetable-grid__break-form"
       onSubmit={(event: FormEvent<HTMLFormElement>) => {
@@ -210,7 +216,9 @@ export function TimetableGrid({
           onChange={(event) => onBreakDurationChange(Number(event.target.value))}
         />
       </label>
-      <button type="submit">＋ 休憩</button>
+      <button type="submit" aria-label={`${targetName}に休憩を追加`}>
+        ＋ 休憩
+      </button>
     </form>
   )
 
@@ -253,7 +261,7 @@ export function TimetableGrid({
           <h3 id="timetable-grid-title">{stage.name}</h3>
           <span>転換 {transitionMinutes}分</span>
         </div>
-        {orderedSections.length === 0 && renderBreakForm()}
+        {orderedSections.length === 0 && renderBreakForm(stage.name)}
       </header>
 
       {unresolvedPaAssignments.length > 0 && (
@@ -265,6 +273,24 @@ export function TimetableGrid({
             ).join(' / ')}
             {' '}PAパネルで担当範囲を修正または削除してください。
           </span>
+        </div>
+      )}
+
+      {offGridPaAssignments.length > 0 && (
+        <div className="timetable-grid__off-grid-pa" role="status">
+          <strong>Grid外PA担当 {offGridPaAssignments.length}件</strong>
+          <ul>
+            {offGridPaAssignments.map((assignment) => (
+              <li key={assignment.assignmentId}>
+                {assignment.role === 'main' ? 'Main PA' : 'Sub PA'}{' '}
+                {assignment.memberName}{' '}
+                {formatMinuteAsLocalTime(assignment.fromMinute)}〜
+                {formatMinuteAsLocalTime(assignment.untilMinute)}
+                （ScheduleItem間の時間帯）
+              </li>
+            ))}
+          </ul>
+          <span>詳細の確認・編集は右のPA設定を利用してください。</span>
         </div>
       )}
 
@@ -295,7 +321,7 @@ export function TimetableGrid({
                     </span>
                   )}
                 </div>
-                {renderBreakForm(section.id)}
+                {renderBreakForm(section.name, section.id)}
               </header>
               {renderLane(
                 sectionRows,

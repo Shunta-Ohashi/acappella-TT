@@ -184,6 +184,47 @@ test('Main PAの単一row担当と複数row・Breakをまたぐ担当を表示�
   assert.equal(rows[2].paCoverage.main[0].endsHere, true)
 })
 
+test('通常のPA区間はrowへ表示し、transitionだけの有効区間はGrid外担当として保持する', () => {
+  const normal = createRows({
+    paAssignments: [assignment({
+      id: 'main-performance',
+      role: 'main',
+      fromId: 'performance-1',
+      untilId: 'performance-1',
+    })],
+  })
+
+  assert.deepEqual(
+    normal.rows.map((row) => row.paCoverage.main.length),
+    [1, 0, 0],
+  )
+  assert.deepEqual(normal.offGridPaAssignments, [])
+
+  const transitionOnly = createRows({
+    paAssignments: [assignment({
+      id: 'main-transition',
+      role: 'main',
+      fromId: 'performance-1',
+      fromEdge: 'end',
+      untilId: 'performance-2',
+      untilEdge: 'start',
+    })],
+  })
+
+  assert.deepEqual(
+    transitionOnly.rows.map((row) => row.paCoverage.main.length),
+    [0, 0, 0],
+  )
+  assert.deepEqual(transitionOnly.unresolvedPaAssignments, [])
+  assert.deepEqual(transitionOnly.offGridPaAssignments, [{
+    assignmentId: 'main-transition',
+    memberName: 'やまだ',
+    role: 'main',
+    fromMinute: 610,
+    untilMinute: 612,
+  }])
+})
+
 test('Assignment終了と次row開始が同時刻ならhalf-open区間として次rowをcoverしない', () => {
   const touchingCalculatedItems = calculatedItems.map((item) =>
     item.scheduleItemId === 'performance-2'
