@@ -636,6 +636,28 @@ export const createDutySettingsUpdate = ({
   const currentAssignmentsById = new Map(
     currentAssignments.map((item) => [item.id, item]),
   )
+  const retainedDutyTypeIds = new Set(
+    draft.dutyTypes.flatMap((item) =>
+      item.dutyTypeId ? [item.dutyTypeId] : [],
+    ),
+  )
+  const referencedDeletedType = currentTypes.find(
+    (dutyType) =>
+      !retainedDutyTypeIds.has(dutyType.id) &&
+      dutyAssignments.some(
+        (assignment) => assignment.dutyTypeId === dutyType.id,
+      ),
+  )
+  if (referencedDeletedType) {
+    return {
+      ok: false,
+      errors: {
+        dutyTypes: {},
+        assignments: {},
+        form: `「${referencedDeletedType.name}」には担当設定があります。先に担当を削除して保存してください。`,
+      },
+    }
+  }
 
   for (const item of draft.dutyTypes) {
     if (item.dutyTypeId && !currentTypesById.has(item.dutyTypeId)) {

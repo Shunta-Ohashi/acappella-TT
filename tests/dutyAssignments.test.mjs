@@ -631,3 +631,130 @@ test('draft保存で追加・編集・削除し別Eventの仕事と担当を維�
     otherAssignment,
   )
 })
+
+test('参照中DutyTypeとAssignmentを同じdraftから除外しても暗黙削除しない', () => {
+  const existingAssignment = assignment('assignment-photo')
+  const result = createDutySettingsUpdate({
+    event,
+    eventDays,
+    stages,
+    members,
+    eventMembers,
+    eventMemberDays: createMemberDays(),
+    eventBands,
+    paAssignments: [],
+    calculatedItems,
+    dutyTypes: [dutyTypes[0]],
+    dutyAssignments: [existingAssignment],
+    draft: { dutyTypes: [], assignments: [] },
+    newDutyTypeIds: [],
+    newDutyAssignmentIds: [],
+  })
+
+  assert.equal(result.ok, false)
+  if (result.ok) return
+  assert.match(result.errors.form, /先に担当を削除して保存/)
+})
+
+test('参照中DutyTypeだけをdraftから除外しても削除しない', () => {
+  const existingAssignment = assignment('assignment-photo')
+  const draft = createDutySettingsDraft(
+    event,
+    eventDays,
+    [dutyTypes[0]],
+    [existingAssignment],
+  )
+  draft.dutyTypes = []
+
+  const result = createDutySettingsUpdate({
+    event,
+    eventDays,
+    stages,
+    members,
+    eventMembers,
+    eventMemberDays: createMemberDays(),
+    eventBands,
+    paAssignments: [],
+    calculatedItems,
+    dutyTypes: [dutyTypes[0]],
+    dutyAssignments: [existingAssignment],
+    draft,
+    newDutyTypeIds: [],
+    newDutyAssignmentIds: [],
+  })
+
+  assert.equal(result.ok, false)
+})
+
+test('persisted Assignmentがなければ未参照DutyTypeを削除できる', () => {
+  const result = createDutySettingsUpdate({
+    event,
+    eventDays,
+    stages,
+    members,
+    eventMembers,
+    eventMemberDays: createMemberDays(),
+    eventBands,
+    paAssignments: [],
+    calculatedItems,
+    dutyTypes: [dutyTypes[0]],
+    dutyAssignments: [],
+    draft: { dutyTypes: [], assignments: [] },
+    newDutyTypeIds: [],
+    newDutyAssignmentIds: [],
+  })
+
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.equal(result.dutyTypes.some((item) => item.id === dutyTypes[0].id), false)
+})
+
+test('他DutyTypeと他EventのAssignmentは未参照DutyTypeの削除を妨げない', () => {
+  const otherEventType = {
+    id: 'other-event-type',
+    eventId: 'other-event',
+    name: '他イベント受付',
+    order: 0,
+  }
+  const assignmentForTk = assignment('assignment-tk', {
+    dutyTypeId: dutyTypes[1].id,
+  })
+  const otherEventAssignment = assignment('other-event-assignment', {
+    dutyTypeId: otherEventType.id,
+  })
+  const draft = createDutySettingsDraft(
+    event,
+    eventDays,
+    [...dutyTypes, otherEventType],
+    [assignmentForTk, otherEventAssignment],
+  )
+  draft.dutyTypes = draft.dutyTypes.filter(
+    (item) => item.dutyTypeId !== dutyTypes[0].id,
+  )
+
+  const result = createDutySettingsUpdate({
+    event,
+    eventDays,
+    stages,
+    members,
+    eventMembers,
+    eventMemberDays: createMemberDays(),
+    eventBands,
+    paAssignments: [],
+    calculatedItems,
+    dutyTypes: [...dutyTypes, otherEventType],
+    dutyAssignments: [assignmentForTk, otherEventAssignment],
+    draft,
+    newDutyTypeIds: [],
+    newDutyAssignmentIds: [],
+  })
+
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.equal(result.dutyTypes.some((item) => item.id === dutyTypes[0].id), false)
+  assert.ok(result.dutyAssignments.some((item) => item.id === assignmentForTk.id))
+  assert.deepEqual(
+    result.dutyAssignments.find((item) => item.id === otherEventAssignment.id),
+    otherEventAssignment,
+  )
+})
