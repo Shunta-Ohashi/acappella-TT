@@ -37,7 +37,8 @@ export interface DutyTypeDraftItem {
 export interface DutyAssignmentDraftItem {
   draftId: string
   dutyAssignmentId?: DutyAssignmentId
-  dutyTypeDraftId: string
+  dutyTypeDraftId?: string
+  missingDutyTypeId?: DutyTypeId
   eventDayId: EventDayId
   stageId: StageId
   memberId: string
@@ -278,7 +279,12 @@ export const validateDutyAssignmentDraftItem = ({
     eventMemberDays,
   })
 
-  if (!dutyTypes.some((dutyType) => dutyType.draftId === item.dutyTypeDraftId)) {
+  const hasValidDutyType = item.dutyTypeDraftId !== undefined &&
+    dutyTypes.some((dutyType) => dutyType.draftId === item.dutyTypeDraftId)
+  const preservesMissingDutyType = item.dutyAssignmentId !== undefined &&
+    item.dutyTypeDraftId === undefined &&
+    item.missingDutyTypeId !== undefined
+  if (!hasValidDutyType && !preservesMissingDutyType) {
     errors.dutyTypeId = '仕事の種類を選択してください。'
   }
   if (!eventDayExists) {
@@ -450,6 +456,7 @@ export const hasDutySettingsErrors = (
 
 export const createDutySettingsDraft = (
   event: Event,
+  eventDays: EventDay[],
   dutyTypes: DutyType[],
   dutyAssignments: DutyAssignment[],
 ): DutySettingsDraft => {
@@ -464,6 +471,14 @@ export const createDutySettingsDraft = (
       `duty-type-${dutyType.id}`,
     ]),
   )
+  const knownDutyTypeById = new Map(
+    dutyTypes.map((dutyType) => [dutyType.id, dutyType]),
+  )
+  const eventDayIds = new Set(
+    eventDays
+      .filter((eventDay) => eventDay.eventId === event.id)
+      .map((eventDay) => eventDay.id),
+  )
 
   return {
     dutyTypes: eventDutyTypes.map((dutyType) => ({
@@ -473,18 +488,24 @@ export const createDutySettingsDraft = (
     })),
     assignments: dutyAssignments.flatMap((assignment) => {
       const dutyTypeDraftId = draftIdByDutyTypeId.get(assignment.dutyTypeId)
-      return dutyTypeDraftId
-        ? [{
-            draftId: `duty-assignment-${assignment.id}`,
-            dutyAssignmentId: assignment.id,
-            dutyTypeDraftId,
-            eventDayId: assignment.eventDayId,
-            stageId: assignment.stageId,
-            memberId: assignment.memberId,
-            from: { ...assignment.from },
-            until: { ...assignment.until },
-          }]
-        : []
+      const knownDutyType = knownDutyTypeById.get(assignment.dutyTypeId)
+      if (
+        knownDutyType?.eventId !== event.id &&
+        (knownDutyType || !eventDayIds.has(assignment.eventDayId))
+      ) return []
+
+      return [{
+        draftId: `duty-assignment-${assignment.id}`,
+        dutyAssignmentId: assignment.id,
+        ...(dutyTypeDraftId
+          ? { dutyTypeDraftId }
+          : { missingDutyTypeId: assignment.dutyTypeId }),
+        eventDayId: assignment.eventDayId,
+        stageId: assignment.stageId,
+        memberId: assignment.memberId,
+        from: { ...assignment.from },
+        until: { ...assignment.until },
+      }]
     }),
   }
 }
@@ -566,9 +587,22 @@ export const createDutySettingsUpdate = ({
   if (hasDutySettingsErrors(errors)) return { ok: false, errors }
 
   const currentTypes = dutyTypes.filter((dutyType) => dutyType.eventId === event.id)
+  const knownDutyTypeById = new Map(
+    dutyTypes.map((dutyType) => [dutyType.id, dutyType]),
+  )
   const currentTypeIds = new Set(currentTypes.map((dutyType) => dutyType.id))
+  const currentEventDayIds = new Set(
+    eventDays
+      .filter((eventDay) => eventDay.eventId === event.id)
+      .map((eventDay) => eventDay.id),
+  )
   const currentAssignments = dutyAssignments.filter((assignment) =>
-    currentTypeIds.has(assignment.dutyTypeId),
+    currentTypeIds.has(assignment.dutyTypeId) ||
+    (!knownDutyTypeById.has(assignment.dutyTypeId) &&
+      currentEventDayIds.has(assignment.eventDayId)),
+  )
+  const currentAssignmentIds = new Set(
+    currentAssignments.map((assignment) => assignment.id),
   )
   const currentTypesById = new Map(currentTypes.map((item) => [item.id, item]))
   const currentAssignmentsById = new Map(
@@ -640,7 +674,9 @@ export const createDutySettingsUpdate = ({
   const updatedAssignmentsForEvent = draft.assignments.map(
     (item): DutyAssignment => ({
       id: item.dutyAssignmentId ?? newDutyAssignmentIds[newAssignmentIndex++],
-      dutyTypeId: dutyTypeIdByDraftId.get(item.dutyTypeDraftId)!,
+      dutyTypeId: item.dutyTypeDraftId
+        ? dutyTypeIdByDraftId.get(item.dutyTypeDraftId)!
+        : item.missingDutyTypeId!,
       eventDayId: item.eventDayId,
       stageId: item.stageId,
       memberId: item.memberId,
@@ -657,7 +693,7 @@ export const createDutySettingsUpdate = ({
     ],
     dutyAssignments: [
       ...dutyAssignments.filter((assignment) =>
-        !currentTypeIds.has(assignment.dutyTypeId),
+        !currentAssignmentIds.has(assignment.id),
       ),
       ...updatedAssignmentsForEvent,
     ],

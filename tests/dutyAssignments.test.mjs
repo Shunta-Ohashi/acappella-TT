@@ -210,6 +210,111 @@ test('担当から参照される仕事は削除不可で、未参照なら削�
   assert.equal(canDeleteDutyType('type-tk', [createItem()]), true)
 })
 
+test('DutyType参照切れ担当をdraftとround-trip保存で失わない', () => {
+  const broken = assignment('broken-type', { dutyTypeId: 'deleted-duty-type' })
+  const draft = createDutySettingsDraft(
+    event,
+    eventDays,
+    dutyTypes,
+    [broken],
+  )
+
+  assert.equal(draft.assignments.length, 1)
+  assert.equal(draft.assignments[0].dutyTypeDraftId, undefined)
+  assert.equal(draft.assignments[0].missingDutyTypeId, 'deleted-duty-type')
+
+  const result = createDutySettingsUpdate({
+    event,
+    eventDays,
+    stages,
+    members,
+    eventMembers,
+    eventMemberDays: createMemberDays(),
+    eventBands,
+    paAssignments: [],
+    calculatedItems,
+    dutyTypes,
+    dutyAssignments: [broken],
+    draft,
+    newDutyTypeIds: [],
+    newDutyAssignmentIds: [],
+  })
+
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.deepEqual(result.dutyAssignments, [broken])
+})
+
+test('DutyType参照切れ担当は有効な仕事へ修復できる', () => {
+  const broken = assignment('repair-type', { dutyTypeId: 'deleted-duty-type' })
+  const draft = createDutySettingsDraft(
+    event,
+    eventDays,
+    dutyTypes,
+    [broken],
+  )
+  draft.assignments[0] = {
+    ...draft.assignments[0],
+    dutyTypeDraftId: draft.dutyTypes[0].draftId,
+    missingDutyTypeId: undefined,
+  }
+
+  const result = createDutySettingsUpdate({
+    event,
+    eventDays,
+    stages,
+    members,
+    eventMembers,
+    eventMemberDays: createMemberDays(),
+    eventBands,
+    paAssignments: [],
+    calculatedItems,
+    dutyTypes,
+    dutyAssignments: [broken],
+    draft,
+    newDutyTypeIds: [],
+    newDutyAssignmentIds: [],
+  })
+
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.equal(result.dutyAssignments[0].dutyTypeId, 'duty-photo')
+})
+
+test('DutyType参照切れ担当はdraftから削除したときだけ削除する', () => {
+  const broken = assignment('remove-broken-type', {
+    dutyTypeId: 'deleted-duty-type',
+  })
+  const draft = createDutySettingsDraft(
+    event,
+    eventDays,
+    dutyTypes,
+    [broken],
+  )
+  draft.assignments = []
+
+  const result = createDutySettingsUpdate({
+    event,
+    eventDays,
+    stages,
+    members,
+    eventMembers,
+    eventMemberDays: createMemberDays(),
+    eventBands,
+    paAssignments: [],
+    calculatedItems,
+    dutyTypes,
+    dutyAssignments: [broken],
+    draft,
+    newDutyTypeIds: [],
+    newDutyAssignmentIds: [],
+  })
+
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.deepEqual(result.dutyAssignments, [])
+})
+
 test('PerformanceとBreakを含むBoundaryから区間を解決しTimeline変更へ追従する', () => {
   const range = createItem({
     from: { scheduleItemId: 'performance-1', edge: 'start' },
@@ -280,6 +385,41 @@ test('一般業務中の本人出演とPA重複を保存前に拒否する', () 
   assert.match(validateItem(createItem(), {
     paAssignments: [paAssignment()],
   }).conflict, /PA/)
+})
+
+test('Duty validationは保存予定の最新PA一覧を使って競合を判定する', () => {
+  const dutyItem = createItem()
+  const currentPa = paAssignment()
+  const movedItems = [
+    ...calculatedItems,
+    {
+      scheduleItemId: 'performance-later',
+      eventDayId: 'day-1',
+      stageId: 'stage-a',
+      kind: 'performance',
+      eventBandId: 'event-band-1',
+      plannedStartMinute: 660,
+      plannedEndMinute: 670,
+    },
+  ]
+  const movedPa = paAssignment({
+    from: { scheduleItemId: 'performance-later', edge: 'start' },
+    until: { scheduleItemId: 'performance-later', edge: 'end' },
+  })
+
+  assert.match(validateItem(dutyItem, {
+    paAssignments: [currentPa],
+  }).conflict, /PA/)
+  assert.equal(validateItem(dutyItem, {
+    paAssignments: [],
+  }).conflict, undefined)
+  assert.equal(validateItem(dutyItem, {
+    paAssignments: [movedPa],
+    calculatedItems: movedItems,
+  }).conflict, undefined)
+  assert.equal(validateItem(dutyItem, {
+    paAssignments: [paAssignment({ memberId: 'member-3' })],
+  }).conflict, undefined)
 })
 
 test('同じMemberのDuty重複は仕事やStageを問わず拒否する', () => {
@@ -387,6 +527,7 @@ test('draft保存で追加・編集・削除し別Eventの仕事と担当を維�
   })
   const draft = createDutySettingsDraft(
     event,
+    eventDays,
     [...dutyTypes, otherType],
     [...existingAssignments, otherAssignment],
   )

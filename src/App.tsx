@@ -570,7 +570,7 @@ function App() {
     return result
   }
 
-  const handleSavePaAssignments = (
+  const handleCreatePaAssignmentsUpdate = (
     draft: PaAssignmentsDraft,
   ): PaAssignmentsUpdateResult => {
     if (!selectedEvent) {
@@ -579,7 +579,7 @@ function App() {
         errors: { items: {}, form: '編集するイベントが見つかりません。' },
       }
     }
-    const result = createPaAssignmentsUpdate({
+    return createPaAssignmentsUpdate({
       event: selectedEvent,
       eventDays: selectedEventDays,
       stages: selectedStages,
@@ -594,13 +594,11 @@ function App() {
         .filter((item) => !item.paAssignmentId)
         .map(() => createId('pa-assignment')),
     })
-    if (!result.ok) return result
-    setPaAssignments(result.paAssignments)
-    return result
   }
 
-  const handleSaveDutySettings = (
+  const handleCreateDutySettingsUpdate = (
     draft: DutySettingsDraft,
+    paAssignmentsOverride: PaAssignment[] = selectedEventPaAssignments,
   ): DutySettingsUpdateResult => {
     if (!selectedEvent) {
       return {
@@ -612,7 +610,7 @@ function App() {
         },
       }
     }
-    const result = createDutySettingsUpdate({
+    return createDutySettingsUpdate({
       event: selectedEvent,
       eventDays: selectedEventDays,
       stages: selectedStages,
@@ -620,7 +618,7 @@ function App() {
       eventMembers: selectedEventMembers,
       eventMemberDays: selectedEventMemberDays,
       eventBands: selectedEventBands,
-      paAssignments: selectedEventPaAssignments,
+      paAssignments: paAssignmentsOverride,
       calculatedItems: selectedEventCalculatedItems,
       dutyTypes,
       dutyAssignments,
@@ -632,20 +630,20 @@ function App() {
         .filter((assignment) => !assignment.dutyAssignmentId)
         .map(() => createId('duty-assignment')),
     })
-    if (!result.ok) return result
-    setDutyTypes(result.dutyTypes)
-    setDutyAssignments(result.dutyAssignments)
-    return result
   }
 
   const handleSaveStep6AndNext = () => {
-    const paIsValid = paSettingsRef.current?.validateDraft() ?? false
-    const dutyIsValid = dutySettingsRef.current?.validateDraft() ?? false
-    if (!paIsValid || !dutyIsValid) return
+    const paResult = paSettingsRef.current?.prepareDraft()
+    if (!paResult?.ok) return
 
-    const paWasSaved = paSettingsRef.current?.commitDraft() ?? false
-    const dutyWasSaved = dutySettingsRef.current?.commitDraft() ?? false
-    if (paWasSaved && dutyWasSaved) setActiveStep(7)
+    const dutyResult = dutySettingsRef.current?.prepareDraft(
+      paResult.paAssignments,
+    )
+    if (!dutyResult?.ok) return
+
+    paSettingsRef.current?.commitPrepared(paResult)
+    dutySettingsRef.current?.commitPrepared(dutyResult)
+    setActiveStep(7)
   }
 
   const handleSaveCommonMember = (
@@ -1315,11 +1313,9 @@ function App() {
                     onValidationFailed={onValidationFailed}
                     createDraftId={() => createId('pa-assignment-draft')}
                     formId={`pa-settings-${selectedEvent.id}`}
-                    onSave={handleSavePaAssignments}
-                    onSaveAndNext={() => {
-                      if (!dutySettingsRef.current?.validateDraft()) return
-                      if (dutySettingsRef.current.commitDraft()) setActiveStep(7)
-                    }}
+                    onCreateUpdate={handleCreatePaAssignmentsUpdate}
+                    onCommit={(result) => setPaAssignments(result.paAssignments)}
+                    onSaveAndNext={handleSaveStep6AndNext}
                   />
                 ) : null}
                 renderOperationsPanel={(onValidationFailed) => currentStage ? (
@@ -1346,7 +1342,11 @@ function App() {
                     }}
                     onValidationFailed={onValidationFailed}
                     createDraftId={() => createId('duty-draft')}
-                    onSave={handleSaveDutySettings}
+                    onCreateUpdate={handleCreateDutySettingsUpdate}
+                    onCommit={(result) => {
+                      setDutyTypes(result.dutyTypes)
+                      setDutyAssignments(result.dutyAssignments)
+                    }}
                   />
                 ) : null}
                 footer={(

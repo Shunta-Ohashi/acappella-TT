@@ -39,8 +39,12 @@ import {
 import { DutyAssignmentEditorDialog } from './DutyAssignmentEditorDialog'
 
 export interface DutySettingsHandle {
-  validateDraft: () => boolean
-  commitDraft: () => boolean
+  prepareDraft: (
+    paAssignmentsOverride?: PaAssignment[],
+  ) => DutySettingsUpdateResult
+  commitPrepared: (
+    result: Extract<DutySettingsUpdateResult, { ok: true }>,
+  ) => void
 }
 
 interface DutySettingsProps {
@@ -61,7 +65,11 @@ interface DutySettingsProps {
   onSelectScope: (eventDayId: EventDayId, stageId: StageId) => void
   onValidationFailed: () => void
   createDraftId: () => string
-  onSave: (draft: DutySettingsDraft) => DutySettingsUpdateResult
+  onCreateUpdate: (
+    draft: DutySettingsDraft,
+    paAssignmentsOverride?: PaAssignment[],
+  ) => DutySettingsUpdateResult
+  onCommit: (result: Extract<DutySettingsUpdateResult, { ok: true }>) => void
 }
 
 interface AssignmentEditorState {
@@ -98,10 +106,11 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
     onSelectScope,
     onValidationFailed,
     createDraftId,
-    onSave,
+    onCreateUpdate,
+    onCommit,
   }, ref) {
     const [draft, setDraft] = useState(() =>
-      createDutySettingsDraft(event, dutyTypes, dutyAssignments),
+      createDutySettingsDraft(event, eventDays, dutyTypes, dutyAssignments),
     )
     const [assignmentEditor, setAssignmentEditor] =
       useState<AssignmentEditorState>()
@@ -168,7 +177,9 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
       }
     }
 
-    const validateDraft = () => {
+    const prepareDraft = (
+      paAssignmentsOverride: PaAssignment[] = paAssignments,
+    ): DutySettingsUpdateResult => {
       const validationErrors = validateDutySettingsDraft({
         draft,
         event,
@@ -178,40 +189,41 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
         eventMembers,
         eventMemberDays,
         eventBands,
-        paAssignments,
+        paAssignments: paAssignmentsOverride,
         calculatedItems,
       })
       setSaveMessage('')
       if (hasDutySettingsErrors(validationErrors)) {
         presentErrors(validationErrors)
-        return false
+        return { ok: false, errors: validationErrors }
       }
       setErrors(emptyErrors())
-      return true
+      const result = onCreateUpdate(draft, paAssignmentsOverride)
+      if (!result.ok) presentErrors(result.errors)
+      return result
     }
 
-    const commitDraft = () => {
-      const result = onSave(draft)
-      if (!result.ok) {
-        presentErrors(result.errors)
-        return false
-      }
+    const commitPrepared = (
+      result: Extract<DutySettingsUpdateResult, { ok: true }>,
+    ) => {
+      onCommit(result)
       setDraft(createDutySettingsDraft(
         event,
+        eventDays,
         result.dutyTypes,
         result.dutyAssignments,
       ))
       setErrors(emptyErrors())
       setIsDirty(false)
       setSaveMessage('✓ 保存しました')
-      return true
     }
 
-    useImperativeHandle(ref, () => ({ validateDraft, commitDraft }))
+    useImperativeHandle(ref, () => ({ prepareDraft, commitPrepared }))
 
     const handleSubmit = (submitEvent: FormEvent<HTMLFormElement>) => {
       submitEvent.preventDefault()
-      if (validateDraft()) commitDraft()
+      const result = prepareDraft()
+      if (result.ok) commitPrepared(result)
     }
 
     const addDutyType = () => {
@@ -404,11 +416,21 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
             ) : (
               <ul className="duty-assignment-list">
                 {selectedAssignments.map((item) => {
-                  const dutyTypeName = dutyTypeByDraftId.get(item.dutyTypeDraftId)?.name ?? '不明な仕事'
+                  const dutyTypeName = item.dutyTypeDraftId
+                    ? dutyTypeByDraftId.get(item.dutyTypeDraftId)?.name ?? '不明な仕事'
+                    : '参照切れ'
                   const memberName = memberById.get(item.memberId)?.realName ?? '未設定'
                   return (
                     <li key={item.draftId}>
-                      <header><strong>{dutyTypeName}</strong><span>{memberName}</span></header>
+                      <header>
+                        <strong>{item.missingDutyTypeId ? '参照切れの担当' : dutyTypeName}</strong>
+                        <span>{memberName}</span>
+                      </header>
+                      {item.missingDutyTypeId && (
+                        <p className="form-error" role="status">
+                          仕事：参照切れ（修正または削除してください）
+                        </p>
+                      )}
                       <dl>
                         <div><dt>担当範囲</dt><dd>{getBoundaryLabel(item)}</dd></div>
                         <div><dt>実時間</dt><dd>{getTimeLabel(item)}</dd></div>

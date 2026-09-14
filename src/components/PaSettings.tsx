@@ -49,13 +49,16 @@ interface PaSettingsProps {
   onSelectScope: (eventDayId: EventDayId, stageId: StageId) => void
   onValidationFailed: () => void
   createDraftId: () => string
-  onSave: (draft: PaAssignmentsDraft) => PaAssignmentsUpdateResult
+  onCreateUpdate: (draft: PaAssignmentsDraft) => PaAssignmentsUpdateResult
+  onCommit: (result: Extract<PaAssignmentsUpdateResult, { ok: true }>) => void
   onSaveAndNext: () => void
 }
 
 export interface PaSettingsHandle {
-  validateDraft: () => boolean
-  commitDraft: () => boolean
+  prepareDraft: () => PaAssignmentsUpdateResult
+  commitPrepared: (
+    result: Extract<PaAssignmentsUpdateResult, { ok: true }>,
+  ) => void
 }
 
 interface EditorState {
@@ -84,7 +87,8 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
   onSelectScope,
   onValidationFailed,
   createDraftId,
-  onSave,
+  onCreateUpdate,
+  onCommit,
   onSaveAndNext,
   }: PaSettingsProps, ref) {
   const [draft, setDraft] = useState(() =>
@@ -163,7 +167,7 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
     }
   }
 
-  const validateDraft = () => {
+  const prepareDraft = (): PaAssignmentsUpdateResult => {
     const validationErrors = validatePaAssignmentsDraft({
       draft,
       event,
@@ -178,29 +182,32 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
     setSaveMessage('')
     if (hasPaAssignmentsErrors(validationErrors)) {
       presentErrors(validationErrors)
-      return false
+      return { ok: false, errors: validationErrors }
     }
     setErrors(emptyErrors())
-    return true
+    const result = onCreateUpdate(draft)
+    if (!result.ok) presentErrors(result.errors)
+    return result
   }
 
-  const commitDraft = () => {
-    const result = onSave(draft)
-    if (!result.ok) {
-      presentErrors(result.errors)
-      return false
-    }
+  const commitPrepared = (
+    result: Extract<PaAssignmentsUpdateResult, { ok: true }>,
+  ) => {
+    onCommit(result)
     setDraft(createPaAssignmentsDraft(event, result.paAssignments))
     setErrors(emptyErrors())
     setSaveMessage('✓ 保存しました')
-    return true
   }
 
-  useImperativeHandle(ref, () => ({ validateDraft, commitDraft }))
+  useImperativeHandle(ref, () => ({ prepareDraft, commitPrepared }))
 
   const save = (moveToNext: boolean) => {
-    if (!validateDraft() || !commitDraft()) return
-    if (moveToNext) onSaveAndNext()
+    if (moveToNext) {
+      onSaveAndNext()
+      return
+    }
+    const result = prepareDraft()
+    if (result.ok) commitPrepared(result)
   }
 
   const handleSubmit = (submitEvent: FormEvent<HTMLFormElement>) => {

@@ -168,16 +168,22 @@ export function DutyAssignmentEditorDialog({
             仕事
             <select
               id="duty-assignment-type"
-              value={draft.dutyTypeDraftId}
+              value={draft.dutyTypeDraftId ?? ''}
               aria-invalid={errors.dutyTypeId ? 'true' : undefined}
               onChange={(event) => {
                 setDraft((previous) => ({
                   ...previous,
-                  dutyTypeDraftId: event.target.value,
+                  dutyTypeDraftId: event.target.value || undefined,
+                  missingDutyTypeId: event.target.value
+                    ? undefined
+                    : previous.missingDutyTypeId,
                 }))
                 setErrors({})
               }}
             >
+              {!draft.dutyTypeDraftId && (
+                <option value="">仕事を選択してください（現在は参照切れ）</option>
+              )}
               {dutyTypes.map((dutyType) => (
                 <option key={dutyType.draftId} value={dutyType.draftId}>
                   {dutyType.name}
