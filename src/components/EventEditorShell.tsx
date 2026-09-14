@@ -51,31 +51,37 @@ export function EventEditorShell({
         </div>
       </header>
 
-      <div className="event-editor__layout">
-        <aside className="step-sidebar">
-          <p className="step-sidebar__title">作成ステップ</p>
-          <nav aria-label="イベント作成ステップ">
-            <ol className="step-sidebar__list">
-              {eventEditorSteps.map((step) => (
-                <li key={step.id}>
-                  <button
-                    type="button"
-                    className={step.id === activeStep
-                      ? 'step-sidebar__button step-sidebar__button--active'
-                      : 'step-sidebar__button'}
-                    aria-current={step.id === activeStep ? 'step' : undefined}
-                    onClick={() => onStepChange(step.id)}
-                  >
-                    <span className="step-sidebar__number">{step.id}</span>
-                    <span>{step.label}</span>
-                  </button>
-                </li>
-              ))}
-            </ol>
-          </nav>
-        </aside>
+      <nav className="event-step-navigation" aria-label="イベント作成ステップ">
+        <div className="event-step-navigation__inner">
+          <ol className="event-step-navigation__list">
+            {eventEditorSteps.map((step) => (
+              <li key={step.id}>
+                <button
+                  type="button"
+                  className={step.id === activeStep
+                    ? 'event-step-navigation__button event-step-navigation__button--active'
+                    : 'event-step-navigation__button'}
+                  aria-current={step.id === activeStep ? 'step' : undefined}
+                  onClick={() => onStepChange(step.id)}
+                >
+                  <span className="event-step-navigation__number">{step.id}</span>
+                  <span>{step.label}</span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </nav>
 
-        <section className="event-editor__content" aria-labelledby="current-step-title">
+      <div className={activeStep === 6
+        ? 'event-editor__layout event-editor__layout--workspace'
+        : 'event-editor__layout'}>
+        <section
+          className={activeStep === 6
+            ? 'event-editor__content event-editor__content--workspace'
+            : 'event-editor__content'}
+          aria-labelledby="current-step-title"
+        >
           <header className="event-editor__step-header">
             <p>STEP {currentStep.id}</p>
             <h2 id="current-step-title">{currentStep.label}</h2>

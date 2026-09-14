@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useState } from 'react'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 import type { DropResult } from '@hello-pangea/dnd'
 import type {
@@ -23,7 +23,6 @@ import type {
 import {
   createBreakScheduleItemForLane,
   createPerformanceScheduleItemForLane,
-  getEventBandById,
   getEventBandsForEventDay,
   getEventDaysForEvent,
   getEventDayScheduleItems,
@@ -41,7 +40,6 @@ import {
   resolveTimetableSelection,
   type ScheduleLane,
 } from './domain/schedule'
-import { formatMinuteAsLocalTime } from './domain/timeline'
 import { calculateEventDayTimelines } from './domain/timetable'
 import { detectScheduleIssues } from './domain/issues'
 import {
@@ -61,6 +59,7 @@ import { EventBandSettings } from './components/EventBandSettings'
 import { EventBandConditions } from './components/EventBandConditions'
 import { EventStageSettings } from './components/EventStageSettings'
 import { PaSettings } from './components/PaSettings'
+import { TimetableGrid } from './components/TimetableGrid'
 import { TimetableOperationsWorkspace } from './components/TimetableOperationsWorkspace'
 import { EventList } from './components/EventList'
 import { IssuePanel } from './components/IssuePanel'
@@ -115,17 +114,16 @@ import {
   type PaAssignmentsUpdateResult,
 } from './domain/paAssignments'
 import {
-  getHighestSeverityByScheduleItem,
+  countIssuesBySeverity,
   getIssuesForStage,
 } from './ui/issuePresentation'
 import { getEventBandMemberDisplayNames } from './ui/eventBandPresentation'
 import {
-  getSectionDroppableId,
-  getStageDroppableId,
   parseTimetableDroppableId,
   resolveScheduleLane,
   TIMETABLE_POOL_DROPPABLE_ID,
 } from './ui/timetableDnd'
+import { createTimetableWorkspaceRows } from './ui/timetableWorkspaceRows'
 import { createDemoData } from './data/demoData'
 import './App.css'
 
@@ -692,11 +690,7 @@ function App() {
 
   // ==================== 🎴 プール・タイムテーブル操作ロジック ====================
 
-  const handleAddBreak = (
-    e: FormEvent<HTMLFormElement>,
-    sectionId?: SectionId,
-  ) => {
-    e.preventDefault()
+  const handleAddBreak = (sectionId?: SectionId) => {
     if (
       !currentStage ||
       currentStageHasInvalidSectionAssignments ||
@@ -914,15 +908,7 @@ function App() {
     return getEventBandMemberDisplayNames(eventBand, members).join(' / ')
   }
 
-  const getBandNameByEventBand = (eventBand?: EventBand) => {
-    if (!eventBand) return '不明なバンド'
-    return eventBand.name
-  }
-
   // 選択日の全StageをIssue判定へ渡し、表示は選択中Stageだけに絞る
-  const currentStageScheduleItemsById = new Map(
-    currentStageScheduleItems.map(scheduleItem => [scheduleItem.id, scheduleItem]),
-  )
   const eventDayTimelines = selectedEvent && timetableSelection.eventDayId
     ? calculateEventDayTimelines({
         event: selectedEvent,
@@ -959,150 +945,19 @@ function App() {
         currentEventDayScheduleItems,
       )
     : []
-  const highestSeverityByScheduleItem =
-    getHighestSeverityByScheduleItem(currentStageIssues)
-  const calculatedTimetable = currentStageCalculatedItems.map(calculatedItem => {
-    const scheduleItem = currentStageScheduleItemsById.get(calculatedItem.scheduleItemId)
-    if (!scheduleItem) {
-      throw new Error(`ScheduleItem not found: ${calculatedItem.scheduleItemId}`)
-    }
-
-    const eventBand = scheduleItem.kind === 'performance'
-      ? getEventBandById(selectedEventBands, scheduleItem.eventBandId)
-      : undefined
-    const durationMinutes = calculatedItem.plannedEndMinute - calculatedItem.plannedStartMinute
-
-    return {
-      scheduleItem,
-      eventBand,
-      durationMinutes,
-      timeString: `${formatMinuteAsLocalTime(calculatedItem.plannedStartMinute)} 〜 ${formatMinuteAsLocalTime(calculatedItem.plannedEndMinute)}`,
-    }
-  })
-  const calculatedTimetableByScheduleItemId = new Map(
-    calculatedTimetable.map(item => [item.scheduleItem.id, item]),
-  )
-
-  // 共通スタイル定義（可読性向上のためまとめる）
-  const sectionBase: React.CSSProperties = { padding: '15px', borderRadius: '8px', marginBottom: '20px' }
-  const baseButton: React.CSSProperties = { border: 'none', padding: '8px 12px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }
-  const listItemBase: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', borderRadius: '4px', color: '#333', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }
-  const listContainerBase: React.CSSProperties = { listStyle: 'none', minHeight: '300px', padding: '10px', borderRadius: '8px', border: '2px dashed #cbd5e0' }
-
-  const renderScheduleLane = (
-    lane: ScheduleLane,
-    droppableId: string,
-    emptyMessage: string,
-    minimumHeight = '300px',
-  ) => {
-    const laneItems = getScheduleLaneItems(currentStageScheduleItems, lane)
-
-    return (
-      <Droppable droppableId={droppableId}>
-        {(provided) => (
-          <ul
-            {...provided.droppableProps}
-            ref={provided.innerRef}
-            className="timetable-lane"
-            style={{
-              ...listContainerBase,
-              minHeight: minimumHeight,
-              background: '#edf2f7',
-            }}
-          >
-            {laneItems.map((scheduleItem, index) => {
-              const timetableItem = calculatedTimetableByScheduleItemId.get(
-                scheduleItem.id,
-              )
-              if (!timetableItem) return null
-
-              const {
-                eventBand,
-                durationMinutes,
-                timeString,
-              } = timetableItem
-              const issueSeverity = highestSeverityByScheduleItem.get(
-                scheduleItem.id,
-              )
-
-              return (
-                <Draggable
-                  key={scheduleItem.id}
-                  draggableId={scheduleItem.id}
-                  index={index}
-                >
-                  {(provided) => (
-                    <li
-                      ref={provided.innerRef}
-                      {...provided.draggableProps}
-                      {...provided.dragHandleProps}
-                      className={issueSeverity
-                        ? `schedule-item schedule-item--${issueSeverity.toLowerCase()}`
-                        : 'schedule-item'}
-                      style={{
-                        ...listItemBase,
-                        background: scheduleItem.kind === 'break'
-                          ? '#e6fffa'
-                          : '#fff',
-                        ...provided.draggableProps.style,
-                      }}
-                    >
-                      <div>
-                        <span className="timetable-drag-handle" aria-hidden="true">
-                          ☰
-                        </span>
-                        <span
-                          className={scheduleItem.kind === 'break'
-                            ? 'timetable-item-time timetable-item-time--break'
-                            : 'timetable-item-time'}
-                        >
-                          {timeString}
-                        </span>
-                        <span>
-                          {scheduleItem.kind === 'break' ? '☕' : '🎵'}{' '}
-                          {scheduleItem.kind === 'break'
-                            ? scheduleItem.title
-                            : getBandNameByEventBand(eventBand)}{' '}
-                          ({durationMinutes}分)
-                        </span>
-                        {issueSeverity && (
-                          <span className={`schedule-item__issue-label schedule-item__issue-label--${issueSeverity.toLowerCase()}`}>
-                            {issueSeverity}
-                          </span>
-                        )}
-                        {scheduleItem.kind === 'performance' && (
-                          <div className="timetable-item-members">
-                            メンバー: {getEventBandMemberLabel(eventBand)}
-                          </div>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveScheduleItem(scheduleItem.id)}
-                        style={{
-                          ...baseButton,
-                          background: '#e53e3e',
-                          color: 'white',
-                          padding: '6px 12px',
-                          fontSize: '13px',
-                        }}
-                      >
-                        {scheduleItem.kind === 'break' ? '削除' : '外す'}
-                      </button>
-                    </li>
-                  )}
-                </Draggable>
-              )
-            })}
-            {laneItems.length === 0 && (
-              <li className="timetable-lane__empty">{emptyMessage}</li>
-            )}
-            {provided.placeholder}
-          </ul>
-        )}
-      </Droppable>
-    )
-  }
+  const currentStageIssueCounts = countIssuesBySeverity(currentStageIssues)
+  const timetableWorkspaceRows = currentStage && timetableSelection.eventDayId
+    ? createTimetableWorkspaceRows({
+        eventDayId: timetableSelection.eventDayId,
+        stageId: currentStage.id,
+        scheduleItems: currentStageScheduleItems,
+        calculatedItems: currentStageCalculatedItems,
+        eventBands: selectedEventBands,
+        members,
+        paAssignments: selectedEventPaAssignments,
+        issues: currentStageIssues,
+      })
+    : { rows: [], unresolvedPaAssignments: [] }
 
   return (
     <AppShell
@@ -1209,6 +1064,30 @@ function App() {
                 selectedStageId={timetableSelection.stageId}
                 onSelectEventDay={handleSelectTimetableEventDay}
                 onSelectStage={handleSelectTimetableStage}
+                poolCount={poolEventBands.length}
+                issueCounts={currentStageIssueCounts}
+                settings={currentStage ? (
+                  <div className="timetable-toolbar-settings">
+                    <label>
+                      開始
+                      <input
+                        type="time"
+                        value={startTime}
+                        onChange={(event) => handleStageStartTimeChange(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      転換
+                      <input
+                        type="number"
+                        min="0"
+                        value={intervalTime}
+                        onChange={(event) => handleStageTransitionMinutesChange(event.target.value)}
+                      />
+                      <span>分</span>
+                    </label>
+                  </div>
+                ) : null}
                 unavailableContent={!timetableEventDay ? (
                   <section className="timetable-empty-state">
                     <h3>開催日が設定されていません</h3>
@@ -1237,13 +1116,13 @@ function App() {
                 ) : undefined}
                 pool={currentStage ? (
                   <>
-                    <h3>出演候補Pool</h3>
+                    <h3>未配置バンド</h3>
                     <Droppable droppableId={TIMETABLE_POOL_DROPPABLE_ID}>
                       {(provided) => (
                         <ul
                           {...provided.droppableProps}
                           ref={provided.innerRef}
-                          style={{ ...listContainerBase, background: '#f7fafc' }}
+                          className="timetable-pool-list"
                         >
                           {poolEventBands.map((eventBand, index) => (
                             <Draggable
@@ -1256,11 +1135,8 @@ function App() {
                                   ref={provided.innerRef}
                                   {...provided.draggableProps}
                                   {...provided.dragHandleProps}
-                                  style={{
-                                    ...listItemBase,
-                                    background: '#fff',
-                                    ...provided.draggableProps.style,
-                                  }}
+                                  className="timetable-pool-card"
+                                  style={provided.draggableProps.style}
                                 >
                                   <div>
                                     <span className="timetable-drag-handle" aria-hidden="true">☰</span>
@@ -1292,112 +1168,17 @@ function App() {
                   </>
                 ) : null}
                 timetable={currentStage ? (
-                  <>
-                    <section
-                      className="timetable-quick-settings"
-                      style={{ ...sectionBase, background: '#edf2f7', color: '#2d3748' }}
-                    >
-                      <h3>スケジュール設定</h3>
-                      <div className="timetable-settings">
-                        <label>
-                          開始時刻
-                          <input
-                            type="time"
-                            value={startTime}
-                            onChange={(event) => handleStageStartTimeChange(event.target.value)}
-                          />
-                        </label>
-                        <label>
-                          転換時間（分）
-                          <input
-                            type="number"
-                            min="0"
-                            value={intervalTime}
-                            onChange={(event) => handleStageTransitionMinutesChange(event.target.value)}
-                          />
-                        </label>
-                      </div>
-                    </section>
-
-                    {currentStageUsesSections ? (
-                      <div className="timetable-section-list">
-                        {currentStageSections.map((section) => (
-                          <section key={section.id} className="timetable-section-lane">
-                            <header className="timetable-section-lane__header">
-                              <div>
-                                <p>SECTION {section.order + 1}</p>
-                                <h3>{section.name}</h3>
-                                {(section.plannedStartTime || section.plannedEndTime) && (
-                                  <span>
-                                    {section.plannedStartTime
-                                      ? `固定開始 ${section.plannedStartTime}`
-                                      : '開始は前Sectionから継続'}
-                                    {section.plannedEndTime
-                                      ? ` / 固定終了 ${section.plannedEndTime}`
-                                      : ''}
-                                  </span>
-                                )}
-                              </div>
-                              <form
-                                className="timetable-section-lane__break-form"
-                                onSubmit={(event) => handleAddBreak(event, section.id)}
-                              >
-                                <label htmlFor={`break-duration-${section.id}`}>
-                                  休憩時間（分）
-                                </label>
-                                <input
-                                  id={`break-duration-${section.id}`}
-                                  type="number"
-                                  min="1"
-                                  value={breakDuration}
-                                  onChange={(event) => setBreakDuration(Number(event.target.value))}
-                                />
-                                <button
-                                  type="submit"
-                                  aria-label={`${section.name}に休憩を追加`}
-                                >
-                                  ＋ 休憩を追加
-                                </button>
-                              </form>
-                            </header>
-                            {renderScheduleLane(
-                              { stageId: currentStage.id, sectionId: section.id },
-                              getSectionDroppableId(section.id),
-                              'このSectionにはまだ項目がありません。',
-                              '120px',
-                            )}
-                          </section>
-                        ))}
-                      </div>
-                    ) : (
-                      <>
-                        <section
-                          className="timetable-break-control"
-                          style={{ ...sectionBase, background: '#e6fffa', color: '#234e52' }}
-                        >
-                          <h3>休憩枠を追加</h3>
-                          <form onSubmit={(event) => handleAddBreak(event)}>
-                            <label>
-                              休憩時間（分）
-                              <input
-                                type="number"
-                                min="1"
-                                value={breakDuration}
-                                onChange={(event) => setBreakDuration(Number(event.target.value))}
-                              />
-                            </label>
-                            <button type="submit">休憩を追加</button>
-                          </form>
-                        </section>
-                        <h3>{currentStage.name}のタイムテーブル</h3>
-                        {renderScheduleLane(
-                          { stageId: currentStage.id },
-                          getStageDroppableId(currentStage.id),
-                          'タイムテーブルに項目を配置してください。',
-                        )}
-                      </>
-                    )}
-                  </>
+                  <TimetableGrid
+                    stage={currentStage}
+                    sections={currentStageUsesSections ? currentStageSections : []}
+                    rows={timetableWorkspaceRows.rows}
+                    unresolvedPaAssignments={timetableWorkspaceRows.unresolvedPaAssignments}
+                    transitionMinutes={intervalTime}
+                    breakDuration={breakDuration}
+                    onBreakDurationChange={setBreakDuration}
+                    onAddBreak={handleAddBreak}
+                    onRemoveScheduleItem={handleRemoveScheduleItem}
+                  />
                 ) : null}
                 issuePanel={(
                   <IssuePanel
