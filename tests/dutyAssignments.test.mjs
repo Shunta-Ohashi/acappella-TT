@@ -255,8 +255,21 @@ test('Event別DutyAssignment選択は未知DutyTypeのみStage所属で補完す
     eventDayId: 'day-2',
     stageId: otherStage.id,
   })
+  const hiddenBrokenAssignment = assignment('hidden-broken', {
+    dutyTypeId: 'missing-hidden-duty-type',
+    stageId: 'missing-stage',
+  })
+  const knownTypeBrokenStage = assignment('known-type-broken-stage', {
+    stageId: 'missing-stage',
+  })
   const allTypes = [...dutyTypes, otherType]
-  const allAssignments = [selectedAssignment, brokenAssignment, otherAssignment]
+  const allAssignments = [
+    selectedAssignment,
+    brokenAssignment,
+    hiddenBrokenAssignment,
+    knownTypeBrokenStage,
+    otherAssignment,
+  ]
 
   const selected = getDutyAssignmentsForEvent({
     event,
@@ -264,13 +277,17 @@ test('Event別DutyAssignment選択は未知DutyTypeのみStage所属で補完す
     dutyTypes: allTypes,
     dutyAssignments: allAssignments,
   })
-  assert.deepEqual(selected.map((item) => item.id), ['selected', 'broken'])
+  assert.deepEqual(selected.map((item) => item.id), [
+    'selected',
+    'broken',
+    'known-type-broken-stage',
+  ])
 
   const selectedDraft = createDutySettingsDraft(
     event,
-    eventDays,
+    stages,
     allTypes,
-    selected,
+    allAssignments,
   )
   assert.equal(
     selectedDraft.assignments.find((item) => item.dutyAssignmentId === 'broken')
@@ -279,6 +296,12 @@ test('Event別DutyAssignment選択は未知DutyTypeのみStage所属で補完す
   )
   assert.equal(
     selectedDraft.assignments.some((item) => item.dutyAssignmentId === 'other'),
+    false,
+  )
+  assert.equal(
+    selectedDraft.assignments.some(
+      (item) => item.dutyAssignmentId === 'hidden-broken',
+    ),
     false,
   )
 
@@ -290,11 +313,115 @@ test('Event別DutyAssignment選択は未知DutyTypeのみStage所属で補完す
   }).map((item) => item.id), ['other'])
 })
 
+test('draftへ表示されない参照切れAssignmentを通常保存やDutyType名変更で失わない', () => {
+  const hiddenBrokenAssignment = assignment('hidden-broken', {
+    dutyTypeId: 'missing-hidden-duty-type',
+    stageId: 'missing-stage',
+  })
+  const surfacedAssignments = getDutyAssignmentsForEvent({
+    event,
+    stages,
+    dutyTypes,
+    dutyAssignments: [hiddenBrokenAssignment],
+  })
+  const draft = createDutySettingsDraft(
+    event,
+    stages,
+    dutyTypes,
+    surfacedAssignments,
+  )
+  const createUpdate = () => createDutySettingsUpdate({
+    event,
+    eventDays,
+    stages,
+    members,
+    eventMembers,
+    eventMemberDays: createMemberDays(),
+    eventBands,
+    paAssignments: [],
+    calculatedItems,
+    dutyTypes,
+    dutyAssignments: [hiddenBrokenAssignment],
+    draft,
+    newDutyTypeIds: [],
+    newDutyAssignmentIds: [],
+  })
+
+  assert.equal(surfacedAssignments.length, 0)
+  const unchangedResult = createUpdate()
+  assert.equal(unchangedResult.ok, true)
+  if (!unchangedResult.ok) return
+  assert.deepEqual(unchangedResult.dutyAssignments, [hiddenBrokenAssignment])
+
+  draft.dutyTypes[0].name = '記録撮影'
+  const result = createUpdate()
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.equal(
+    result.dutyTypes.find((item) => item.id === 'duty-photo')?.name,
+    '記録撮影',
+  )
+  assert.deepEqual(result.dutyAssignments, [hiddenBrokenAssignment])
+})
+
+test('表示対象の正常Assignmentだけを編集し非表示の参照切れAssignmentを維持する', () => {
+  const normalAssignment = assignment('normal')
+  const hiddenBrokenAssignment = assignment('hidden-broken', {
+    dutyTypeId: 'missing-hidden-duty-type',
+    stageId: 'missing-stage',
+  })
+  const persistedAssignments = [normalAssignment, hiddenBrokenAssignment]
+  const surfacedAssignments = getDutyAssignmentsForEvent({
+    event,
+    stages,
+    dutyTypes,
+    dutyAssignments: persistedAssignments,
+  })
+  const draft = createDutySettingsDraft(
+    event,
+    stages,
+    dutyTypes,
+    surfacedAssignments,
+  )
+  draft.assignments[0].memberId = 'member-3'
+
+  const result = createDutySettingsUpdate({
+    event,
+    eventDays,
+    stages,
+    members,
+    eventMembers,
+    eventMemberDays: createMemberDays(),
+    eventBands,
+    paAssignments: [],
+    calculatedItems,
+    dutyTypes,
+    dutyAssignments: persistedAssignments,
+    draft,
+    newDutyTypeIds: [],
+    newDutyAssignmentIds: [],
+  })
+
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.equal(
+    result.dutyAssignments.find((item) => item.id === normalAssignment.id)
+      ?.memberId,
+    'member-3',
+  )
+  assert.deepEqual(
+    result.dutyAssignments.find(
+      (item) => item.id === hiddenBrokenAssignment.id,
+    ),
+    hiddenBrokenAssignment,
+  )
+})
+
 test('DutyType参照切れ担当をdraftとround-trip保存で失わない', () => {
   const broken = assignment('broken-type', { dutyTypeId: 'deleted-duty-type' })
   const draft = createDutySettingsDraft(
     event,
-    eventDays,
+    stages,
     dutyTypes,
     [broken],
   )
@@ -329,7 +456,7 @@ test('DutyType参照切れ担当は有効な仕事へ修復できる', () => {
   const broken = assignment('repair-type', { dutyTypeId: 'deleted-duty-type' })
   const draft = createDutySettingsDraft(
     event,
-    eventDays,
+    stages,
     dutyTypes,
     [broken],
   )
@@ -367,7 +494,7 @@ test('DutyType参照切れ担当はdraftから削除したときだけ削除す�
   })
   const draft = createDutySettingsDraft(
     event,
-    eventDays,
+    stages,
     dutyTypes,
     [broken],
   )
@@ -615,7 +742,7 @@ test('draft保存で追加・編集・削除し別Eventの仕事と担当を維�
   })
   const draft = createDutySettingsDraft(
     event,
-    eventDays,
+    stages,
     [...dutyTypes, otherType],
     [...existingAssignments, otherAssignment],
   )
@@ -686,7 +813,7 @@ test('参照中DutyTypeだけをdraftから除外しても削除しない', () =
   const existingAssignment = assignment('assignment-photo')
   const draft = createDutySettingsDraft(
     event,
-    eventDays,
+    stages,
     [dutyTypes[0]],
     [existingAssignment],
   )
@@ -750,7 +877,7 @@ test('他DutyTypeと他EventのAssignmentは未参照DutyTypeの削除を妨げ�
   })
   const draft = createDutySettingsDraft(
     event,
-    eventDays,
+    stages,
     [...dutyTypes, otherEventType],
     [assignmentForTk, otherEventAssignment],
   )

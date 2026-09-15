@@ -489,7 +489,7 @@ export const hasDutySettingsErrors = (
 
 export const createDutySettingsDraft = (
   event: Event,
-  eventDays: EventDay[],
+  stages: Stage[],
   dutyTypes: DutyType[],
   dutyAssignments: DutyAssignment[],
 ): DutySettingsDraft => {
@@ -504,14 +504,12 @@ export const createDutySettingsDraft = (
       `duty-type-${dutyType.id}`,
     ]),
   )
-  const knownDutyTypeById = new Map(
-    dutyTypes.map((dutyType) => [dutyType.id, dutyType]),
-  )
-  const eventDayIds = new Set(
-    eventDays
-      .filter((eventDay) => eventDay.eventId === event.id)
-      .map((eventDay) => eventDay.id),
-  )
+  const assignmentsForEvent = getDutyAssignmentsForEvent({
+    event,
+    stages,
+    dutyTypes,
+    dutyAssignments,
+  })
 
   return {
     dutyTypes: eventDutyTypes.map((dutyType) => ({
@@ -519,15 +517,9 @@ export const createDutySettingsDraft = (
       dutyTypeId: dutyType.id,
       name: dutyType.name,
     })),
-    assignments: dutyAssignments.flatMap((assignment) => {
+    assignments: assignmentsForEvent.map((assignment) => {
       const dutyTypeDraftId = draftIdByDutyTypeId.get(assignment.dutyTypeId)
-      const knownDutyType = knownDutyTypeById.get(assignment.dutyTypeId)
-      if (
-        knownDutyType?.eventId !== event.id &&
-        (knownDutyType || !eventDayIds.has(assignment.eventDayId))
-      ) return []
-
-      return [{
+      return {
         draftId: `duty-assignment-${assignment.id}`,
         dutyAssignmentId: assignment.id,
         ...(dutyTypeDraftId
@@ -538,7 +530,7 @@ export const createDutySettingsDraft = (
         memberId: assignment.memberId,
         from: { ...assignment.from },
         until: { ...assignment.until },
-      }]
+      }
     }),
   }
 }
@@ -620,20 +612,12 @@ export const createDutySettingsUpdate = ({
   if (hasDutySettingsErrors(errors)) return { ok: false, errors }
 
   const currentTypes = dutyTypes.filter((dutyType) => dutyType.eventId === event.id)
-  const knownDutyTypeById = new Map(
-    dutyTypes.map((dutyType) => [dutyType.id, dutyType]),
-  )
-  const currentTypeIds = new Set(currentTypes.map((dutyType) => dutyType.id))
-  const currentEventDayIds = new Set(
-    eventDays
-      .filter((eventDay) => eventDay.eventId === event.id)
-      .map((eventDay) => eventDay.id),
-  )
-  const currentAssignments = dutyAssignments.filter((assignment) =>
-    currentTypeIds.has(assignment.dutyTypeId) ||
-    (!knownDutyTypeById.has(assignment.dutyTypeId) &&
-      currentEventDayIds.has(assignment.eventDayId)),
-  )
+  const currentAssignments = getDutyAssignmentsForEvent({
+    event,
+    stages,
+    dutyTypes,
+    dutyAssignments,
+  })
   const currentAssignmentIds = new Set(
     currentAssignments.map((assignment) => assignment.id),
   )

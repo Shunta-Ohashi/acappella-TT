@@ -110,7 +110,7 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
     onCommit,
   }, ref) {
     const [draft, setDraft] = useState(() =>
-      createDutySettingsDraft(event, eventDays, dutyTypes, dutyAssignments),
+      createDutySettingsDraft(event, stages, dutyTypes, dutyAssignments),
     )
     const [assignmentEditor, setAssignmentEditor] =
       useState<AssignmentEditorState>()
@@ -209,7 +209,7 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
       onCommit(result)
       setDraft(createDutySettingsDraft(
         event,
-        eventDays,
+        stages,
         result.dutyTypes,
         result.dutyAssignments,
       ))
