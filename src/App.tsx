@@ -1,9 +1,11 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 import type { DropResult } from '@hello-pangea/dnd'
 import type {
   Band,
   BandId,
+  DutyAssignment,
+  DutyType,
   Event as TimetableEvent,
   EventBand,
   EventDay,
@@ -59,6 +61,11 @@ import { EventBandSettings } from './components/EventBandSettings'
 import { EventBandConditions } from './components/EventBandConditions'
 import { EventStageSettings } from './components/EventStageSettings'
 import { PaSettings } from './components/PaSettings'
+import type { PaSettingsHandle } from './components/PaSettings'
+import {
+  DutySettings,
+  type DutySettingsHandle,
+} from './components/DutySettings'
 import { TimetableGrid } from './components/TimetableGrid'
 import { TimetableOperationsWorkspace } from './components/TimetableOperationsWorkspace'
 import { EventList } from './components/EventList'
@@ -113,6 +120,12 @@ import {
   type PaAssignmentsDraft,
   type PaAssignmentsUpdateResult,
 } from './domain/paAssignments'
+import {
+  createDutySettingsUpdate,
+  getDutyAssignmentsForEvent,
+  type DutySettingsDraft,
+  type DutySettingsUpdateResult,
+} from './domain/dutyAssignments'
 import {
   countIssuesBySeverity,
   getIssuesForStage,
@@ -240,6 +253,14 @@ function App() {
   const [paAssignments, setPaAssignments] = useState<PaAssignment[]>(
     initialDemoData.paAssignments,
   )
+  const [dutyTypes, setDutyTypes] = useState<DutyType[]>(
+    initialDemoData.dutyTypes,
+  )
+  const [dutyAssignments, setDutyAssignments] = useState<DutyAssignment[]>(
+    initialDemoData.dutyAssignments,
+  )
+  const paSettingsRef = useRef<PaSettingsHandle>(null)
+  const dutySettingsRef = useRef<DutySettingsHandle>(null)
   const selectedEventBands = eventBands.filter(
     (eventBand) => eventBand.eventId === selectedEventId,
   )
@@ -273,6 +294,19 @@ function App() {
   const selectedEventPaAssignments = paAssignments.filter(
     (assignment) => assignment.eventId === selectedEventId,
   )
+  const selectedEventDutyTypes = dutyTypes
+    .filter((dutyType) => dutyType.eventId === selectedEventId)
+    .sort((first, second) =>
+      first.order - second.order || first.id.localeCompare(second.id),
+    )
+  const selectedEventDutyAssignments = selectedEvent
+    ? getDutyAssignmentsForEvent({
+        event: selectedEvent,
+        stages: selectedStages,
+        dutyTypes,
+        dutyAssignments,
+      })
+    : []
   const selectedEventCalculatedItems = selectedEvent
     ? selectedEventDays.flatMap((eventDay) => calculateEventDayTimelines({
         event: selectedEvent,
@@ -410,6 +444,7 @@ function App() {
       eventMemberDays,
       eventBands,
       paAssignments,
+      dutyAssignments,
     })
 
     if (!result.ok) return result
@@ -537,7 +572,7 @@ function App() {
     return result
   }
 
-  const handleSavePaAssignments = (
+  const handleCreatePaAssignmentsUpdate = (
     draft: PaAssignmentsDraft,
   ): PaAssignmentsUpdateResult => {
     if (!selectedEvent) {
@@ -546,7 +581,7 @@ function App() {
         errors: { items: {}, form: '編集するイベントが見つかりません。' },
       }
     }
-    const result = createPaAssignmentsUpdate({
+    return createPaAssignmentsUpdate({
       event: selectedEvent,
       eventDays: selectedEventDays,
       stages: selectedStages,
@@ -561,9 +596,56 @@ function App() {
         .filter((item) => !item.paAssignmentId)
         .map(() => createId('pa-assignment')),
     })
-    if (!result.ok) return result
-    setPaAssignments(result.paAssignments)
-    return result
+  }
+
+  const handleCreateDutySettingsUpdate = (
+    draft: DutySettingsDraft,
+    paAssignmentsOverride: PaAssignment[] = selectedEventPaAssignments,
+  ): DutySettingsUpdateResult => {
+    if (!selectedEvent) {
+      return {
+        ok: false,
+        errors: {
+          dutyTypes: {},
+          assignments: {},
+          form: '編集するイベントが見つかりません。',
+        },
+      }
+    }
+    return createDutySettingsUpdate({
+      event: selectedEvent,
+      eventDays: selectedEventDays,
+      stages: selectedStages,
+      members,
+      eventMembers: selectedEventMembers,
+      eventMemberDays: selectedEventMemberDays,
+      eventBands: selectedEventBands,
+      paAssignments: paAssignmentsOverride,
+      calculatedItems: selectedEventCalculatedItems,
+      dutyTypes,
+      dutyAssignments,
+      draft,
+      newDutyTypeIds: draft.dutyTypes
+        .filter((dutyType) => !dutyType.dutyTypeId)
+        .map(() => createId('duty-type')),
+      newDutyAssignmentIds: draft.assignments
+        .filter((assignment) => !assignment.dutyAssignmentId)
+        .map(() => createId('duty-assignment')),
+    })
+  }
+
+  const handleSaveStep6AndNext = () => {
+    const paResult = paSettingsRef.current?.prepareDraft()
+    if (!paResult?.ok) return
+
+    const dutyResult = dutySettingsRef.current?.prepareDraft(
+      paResult.paAssignments,
+    )
+    if (!dutyResult?.ok) return
+
+    paSettingsRef.current?.commitPrepared(paResult)
+    dutySettingsRef.current?.commitPrepared(dutyResult)
+    setActiveStep(7)
   }
 
   const handleSaveCommonMember = (
@@ -660,6 +742,7 @@ function App() {
       scheduleItems,
       eventBands,
       paAssignments,
+      dutyAssignments,
     })
 
     if (!result.ok) return result
@@ -935,6 +1018,10 @@ function App() {
         paAssignments: selectedEventPaAssignments.filter((assignment) =>
           assignment.eventDayId === timetableSelection.eventDayId,
         ),
+        dutyTypes: selectedEventDutyTypes,
+        dutyAssignments: selectedEventDutyAssignments.filter((assignment) =>
+          assignment.eventDayId === timetableSelection.eventDayId,
+        ),
         calculatedItems,
       })
     : []
@@ -955,12 +1042,16 @@ function App() {
         eventBands: selectedEventBands,
         members,
         paAssignments: selectedEventPaAssignments,
+        dutyTypes: selectedEventDutyTypes,
+        dutyAssignments: selectedEventDutyAssignments,
         issues: currentStageIssues,
       })
     : {
         rows: [],
         unresolvedPaAssignments: [],
         offGridPaAssignments: [],
+        unresolvedDutyAssignments: [],
+        offGridDutyAssignments: [],
       }
 
   return (
@@ -987,6 +1078,7 @@ function App() {
                   eventMemberDays,
                   eventBands,
                   paAssignments,
+                  dutyAssignments,
                 },
               )}
               onSave={handleSaveEventBasicInfo}
@@ -1009,6 +1101,7 @@ function App() {
                 scheduleItems,
                 eventBands,
                 paAssignments,
+                dutyAssignments,
               })}
               canDeleteSection={(sectionId) => canDeleteSection(sectionId, {
                 scheduleItems,
@@ -1178,6 +1271,9 @@ function App() {
                     rows={timetableWorkspaceRows.rows}
                     unresolvedPaAssignments={timetableWorkspaceRows.unresolvedPaAssignments}
                     offGridPaAssignments={timetableWorkspaceRows.offGridPaAssignments}
+                    dutyTypes={selectedEventDutyTypes}
+                    unresolvedDutyAssignments={timetableWorkspaceRows.unresolvedDutyAssignments}
+                    offGridDutyAssignments={timetableWorkspaceRows.offGridDutyAssignments}
                     transitionMinutes={intervalTime}
                     breakDuration={breakDuration}
                     onBreakDurationChange={setBreakDuration}
@@ -1190,6 +1286,7 @@ function App() {
                     issues={currentStageIssues}
                     members={members}
                     eventBands={selectedEventBands}
+                    dutyTypes={selectedEventDutyTypes}
                     stages={timetableStages}
                     sections={timetableSections}
                     calculatedItems={calculatedItems}
@@ -1197,6 +1294,7 @@ function App() {
                 )}
                 renderPaPanel={(onValidationFailed) => currentStage ? (
                   <PaSettings
+                    ref={paSettingsRef}
                     key={selectedEvent.id}
                     event={selectedEvent}
                     eventDays={selectedEventDays}
@@ -1217,18 +1315,49 @@ function App() {
                     onValidationFailed={onValidationFailed}
                     createDraftId={() => createId('pa-assignment-draft')}
                     formId={`pa-settings-${selectedEvent.id}`}
-                    onSave={handleSavePaAssignments}
-                    onSaveAndNext={() => setActiveStep(7)}
+                    onCreateUpdate={handleCreatePaAssignmentsUpdate}
+                    onCommit={(result) => setPaAssignments(result.paAssignments)}
+                    onSaveAndNext={handleSaveStep6AndNext}
+                  />
+                ) : null}
+                renderOperationsPanel={(onValidationFailed) => currentStage ? (
+                  <DutySettings
+                    ref={dutySettingsRef}
+                    key={selectedEvent.id}
+                    event={selectedEvent}
+                    eventDays={selectedEventDays}
+                    stages={selectedStages}
+                    members={members}
+                    eventMembers={selectedEventMembers}
+                    eventMemberDays={selectedEventMemberDays}
+                    eventBands={selectedEventBands}
+                    scheduleItems={selectedScheduleItems}
+                    calculatedItems={selectedEventCalculatedItems}
+                    paAssignments={selectedEventPaAssignments}
+                    dutyTypes={selectedEventDutyTypes}
+                    dutyAssignments={selectedEventDutyAssignments}
+                    selectedEventDayId={timetableSelection.eventDayId}
+                    selectedStageId={currentStage.id}
+                    onSelectScope={(eventDayId, stageId) => {
+                      setSelectedTimetableEventDayId(eventDayId)
+                      setSelectedTimetableStageId(stageId)
+                    }}
+                    onValidationFailed={onValidationFailed}
+                    createDraftId={() => createId('duty-draft')}
+                    onCreateUpdate={handleCreateDutySettingsUpdate}
+                    onCommit={(result) => {
+                      setDutyTypes(result.dutyTypes)
+                      setDutyAssignments(result.dutyAssignments)
+                    }}
                   />
                 ) : null}
                 footer={(
                   <button
-                    type="submit"
+                    type="button"
                     className="primary-button"
-                    form={`pa-settings-${selectedEvent.id}`}
-                    value="save-and-next"
+                    onClick={handleSaveStep6AndNext}
                   >
-                    保存して次へ <span aria-hidden="true">→</span>
+                    設定を保存して次へ <span aria-hidden="true">→</span>
                   </button>
                 )}
               />

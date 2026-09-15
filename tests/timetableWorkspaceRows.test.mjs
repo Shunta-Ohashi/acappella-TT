@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { createTimetableWorkspaceRows } from '../src/ui/timetableWorkspaceRows.ts'
+import { createTimetableGridColumns } from '../src/ui/timetableGridColumns.ts'
 
 const members = [
   { id: 'member-1', realName: '山田 太郎', acaName: 'やまだ', active: true },
@@ -104,6 +105,8 @@ const createRows = (overrides = {}) => createTimetableWorkspaceRows({
   eventBands,
   members,
   paAssignments: [],
+  dutyTypes: [],
+  dutyAssignments: [],
   issues: [],
   ...overrides,
 })
@@ -115,6 +118,29 @@ const assignment = ({ id, role, fromId, fromEdge = 'start', untilId, untilEdge =
   stageId: 'stage-1',
   memberId: role === 'main' ? 'member-1' : 'member-2',
   role,
+  from: { scheduleItemId: fromId, edge: fromEdge },
+  until: { scheduleItemId: untilId, edge: untilEdge },
+})
+
+const dutyTypes = [
+  { id: 'duty-photo', eventId: 'event-1', name: '撮影', order: 1 },
+  { id: 'duty-tk', eventId: 'event-1', name: 'TK', order: 0 },
+]
+
+const dutyAssignment = ({
+  id,
+  dutyTypeId = 'duty-photo',
+  memberId = 'member-1',
+  fromId,
+  fromEdge = 'start',
+  untilId,
+  untilEdge = 'end',
+}) => ({
+  id,
+  dutyTypeId,
+  eventDayId: 'day-1',
+  stageId: 'stage-1',
+  memberId,
   from: { scheduleItemId: fromId, edge: fromEdge },
   until: { scheduleItemId: untilId, edge: untilEdge },
 })
@@ -297,4 +323,77 @@ test('ScheduleItemに直接関連するIssueだけをrowへ対応付ける', () 
 
   assert.deepEqual(rows[0].issueCounts, { ERROR: 1, WARNING: 1, INFO: 0 })
   assert.deepEqual(rows[1].issueCounts, { ERROR: 0, WARNING: 0, INFO: 0 })
+})
+
+test('DutyTypeをorder順の動的Grid列へ追加する', () => {
+  assert.deepEqual(
+    createTimetableGridColumns([]).map((column) => column.label),
+    ['時刻', '出演', 'Main PA', 'Sub PA'],
+  )
+  assert.deepEqual(
+    createTimetableGridColumns(dutyTypes).map((column) => column.label),
+    ['時刻', '出演', 'Main PA', 'Sub PA', 'TK', '撮影'],
+  )
+})
+
+test('一般業務の複数担当をDutyType列へ分類しhalf-openでcoverageを作る', () => {
+  const { rows } = createRows({
+    dutyTypes,
+    dutyAssignments: [
+      dutyAssignment({
+        id: 'photo-first',
+        fromId: 'performance-1',
+        untilId: 'performance-1',
+      }),
+      dutyAssignment({
+        id: 'photo-second',
+        memberId: 'member-2',
+        fromId: 'performance-1',
+        untilId: 'performance-1',
+      }),
+      dutyAssignment({
+        id: 'tk-break',
+        dutyTypeId: 'duty-tk',
+        fromId: 'break-1',
+        untilId: 'break-1',
+      }),
+    ],
+  })
+
+  assert.deepEqual(
+    rows[0].dutyCoverage['duty-photo'].map((item) => item.memberName),
+    ['やまだ', '佐藤 花子'],
+  )
+  assert.equal(rows[1].dutyCoverage['duty-tk'].length, 0)
+  assert.equal(rows[2].dutyCoverage['duty-tk'].length, 1)
+})
+
+test('transition-only一般業務はGrid外へ保持し、参照切れと区別する', () => {
+  const result = createRows({
+    dutyTypes,
+    dutyAssignments: [
+      dutyAssignment({
+        id: 'transition-duty',
+        fromId: 'performance-1',
+        fromEdge: 'end',
+        untilId: 'performance-2',
+        untilEdge: 'start',
+      }),
+      dutyAssignment({
+        id: 'broken-duty',
+        fromId: 'missing',
+        untilId: 'performance-1',
+      }),
+    ],
+  })
+
+  assert.deepEqual(result.offGridDutyAssignments, [{
+    assignmentId: 'transition-duty',
+    dutyTypeName: '撮影',
+    memberName: 'やまだ',
+    fromMinute: 610,
+    untilMinute: 612,
+  }])
+  assert.equal(result.unresolvedDutyAssignments.length, 1)
+  assert.equal(result.unresolvedDutyAssignments[0].assignmentId, 'broken-duty')
 })

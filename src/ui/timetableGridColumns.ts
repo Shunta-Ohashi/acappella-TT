@@ -1,0 +1,31 @@
+import type { DutyType } from '../domain/models'
+
+export interface TimetableGridColumn {
+  id: string
+  label: string
+  width: number
+  dutyTypeId?: DutyType['id']
+}
+
+const fixedColumns: TimetableGridColumn[] = [
+  { id: 'time', label: '時刻', width: 76 },
+  { id: 'performance', label: '出演', width: 280 },
+  { id: 'main-pa', label: 'Main PA', width: 116 },
+  { id: 'sub-pa', label: 'Sub PA', width: 116 },
+]
+
+export const createTimetableGridColumns = (
+  dutyTypes: DutyType[],
+): TimetableGridColumn[] => [
+  ...fixedColumns,
+  ...[...dutyTypes]
+    .sort((first, second) =>
+      first.order - second.order || first.id.localeCompare(second.id),
+    )
+    .map((dutyType) => ({
+      id: `duty-${dutyType.id}`,
+      label: dutyType.name,
+      width: 116,
+      dutyTypeId: dutyType.id,
+    })),
+]

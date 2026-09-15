@@ -1,4 +1,9 @@
-import { useState, type FormEvent } from 'react'
+import {
+  forwardRef,
+  useImperativeHandle,
+  useState,
+  type FormEvent,
+} from 'react'
 import type {
   Event,
   EventBand,
@@ -44,8 +49,16 @@ interface PaSettingsProps {
   onSelectScope: (eventDayId: EventDayId, stageId: StageId) => void
   onValidationFailed: () => void
   createDraftId: () => string
-  onSave: (draft: PaAssignmentsDraft) => PaAssignmentsUpdateResult
+  onCreateUpdate: (draft: PaAssignmentsDraft) => PaAssignmentsUpdateResult
+  onCommit: (result: Extract<PaAssignmentsUpdateResult, { ok: true }>) => void
   onSaveAndNext: () => void
+}
+
+export interface PaSettingsHandle {
+  prepareDraft: () => PaAssignmentsUpdateResult
+  commitPrepared: (
+    result: Extract<PaAssignmentsUpdateResult, { ok: true }>,
+  ) => void
 }
 
 interface EditorState {
@@ -56,7 +69,8 @@ interface EditorState {
 const emptyErrors = (): PaAssignmentsValidationErrors => ({ items: {} })
 const roleLabel = (role: PaRole) => role === 'main' ? 'Main PA' : 'Sub PA'
 
-export function PaSettings({
+export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
+  function PaSettings({
   formId,
   event,
   eventDays,
@@ -73,9 +87,10 @@ export function PaSettings({
   onSelectScope,
   onValidationFailed,
   createDraftId,
-  onSave,
+  onCreateUpdate,
+  onCommit,
   onSaveAndNext,
-}: PaSettingsProps) {
+  }: PaSettingsProps, ref) {
   const [draft, setDraft] = useState(() =>
     createPaAssignmentsDraft(event, paAssignments),
   )
@@ -152,7 +167,7 @@ export function PaSettings({
     }
   }
 
-  const save = (moveToNext: boolean) => {
+  const prepareDraft = (): PaAssignmentsUpdateResult => {
     const validationErrors = validatePaAssignmentsDraft({
       draft,
       event,
@@ -167,17 +182,32 @@ export function PaSettings({
     setSaveMessage('')
     if (hasPaAssignmentsErrors(validationErrors)) {
       presentErrors(validationErrors)
-      return
+      return { ok: false, errors: validationErrors }
     }
-    const result = onSave(draft)
-    if (!result.ok) {
-      presentErrors(result.errors)
-      return
-    }
+    setErrors(emptyErrors())
+    const result = onCreateUpdate(draft)
+    if (!result.ok) presentErrors(result.errors)
+    return result
+  }
+
+  const commitPrepared = (
+    result: Extract<PaAssignmentsUpdateResult, { ok: true }>,
+  ) => {
+    onCommit(result)
     setDraft(createPaAssignmentsDraft(event, result.paAssignments))
     setErrors(emptyErrors())
-    if (moveToNext) onSaveAndNext()
-    else setSaveMessage('✓ 保存しました')
+    setSaveMessage('✓ 保存しました')
+  }
+
+  useImperativeHandle(ref, () => ({ prepareDraft, commitPrepared }))
+
+  const save = (moveToNext: boolean) => {
+    if (moveToNext) {
+      onSaveAndNext()
+      return
+    }
+    const result = prepareDraft()
+    if (result.ok) commitPrepared(result)
   }
 
   const handleSubmit = (submitEvent: FormEvent<HTMLFormElement>) => {
@@ -350,4 +380,5 @@ export function PaSettings({
       )}
     </section>
   )
-}
+  },
+)

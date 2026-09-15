@@ -1,5 +1,7 @@
 import type {
   Band,
+  DutyAssignment,
+  DutyType,
   Event,
   EventBand,
   EventDay,
@@ -24,6 +26,8 @@ export interface DemoData {
   eventBands: EventBand[]
   scheduleItems: ScheduleItem[]
   paAssignments: PaAssignment[]
+  dutyTypes: DutyType[]
+  dutyAssignments: DutyAssignment[]
   initialEventId: string
   initialEventDayId: string
   initialStageId: string
@@ -594,6 +598,54 @@ const paAssignments: PaAssignment[] = [
   },
 ]
 
+const dutyTypes: DutyType[] = [
+  {
+    id: 'duty-type-demo-photo',
+    eventId: 'event-demo-main',
+    name: '撮影',
+    order: 0,
+  },
+  {
+    id: 'duty-type-demo-sanitize',
+    eventId: 'event-demo-main',
+    name: '消毒',
+    order: 1,
+  },
+]
+
+const dutyAssignments: DutyAssignment[] = [
+  {
+    id: 'duty-assignment-demo-photo',
+    dutyTypeId: 'duty-type-demo-photo',
+    eventDayId: 'event-day-demo-main-01',
+    stageId: 'stage-demo-main-day1',
+    memberId: 'member-demo-01',
+    from: {
+      scheduleItemId: 'schedule-demo-main-day1-break',
+      edge: 'start',
+    },
+    until: {
+      scheduleItemId: 'schedule-demo-main-day1-break',
+      edge: 'end',
+    },
+  },
+  {
+    id: 'duty-assignment-demo-sanitize',
+    dutyTypeId: 'duty-type-demo-sanitize',
+    eventDayId: 'event-day-demo-main-01',
+    stageId: 'stage-demo-main-day1',
+    memberId: 'member-demo-05',
+    from: {
+      scheduleItemId: 'schedule-demo-main-day1-break',
+      edge: 'start',
+    },
+    until: {
+      scheduleItemId: 'schedule-demo-main-day1-break',
+      edge: 'end',
+    },
+  },
+]
+
 export const createDemoData = (): DemoData => ({
   events: events.map((event) => ({
     ...event,
@@ -649,6 +701,12 @@ export const createDemoData = (): DemoData => ({
   })),
   scheduleItems: scheduleItems.map((scheduleItem) => ({ ...scheduleItem })),
   paAssignments: paAssignments.map((assignment) => ({
+    ...assignment,
+    from: { ...assignment.from },
+    until: { ...assignment.until },
+  })),
+  dutyTypes: dutyTypes.map((dutyType) => ({ ...dutyType })),
+  dutyAssignments: dutyAssignments.map((assignment) => ({
     ...assignment,
     from: { ...assignment.from },
     until: { ...assignment.until },

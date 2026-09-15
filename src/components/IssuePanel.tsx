@@ -1,6 +1,7 @@
 import type { ScheduleIssue } from '../domain/issues'
 import type {
   EventBand,
+  DutyType,
   Member,
   Section,
   Stage,
@@ -15,6 +16,7 @@ interface IssuePanelProps {
   issues: ScheduleIssue[]
   members: Member[]
   eventBands: EventBand[]
+  dutyTypes?: DutyType[]
   stages: Stage[]
   sections: Section[]
   calculatedItems: CalculatedScheduleItem[]
@@ -26,6 +28,7 @@ export function IssuePanel({
   issues,
   members,
   eventBands,
+  dutyTypes = [],
   stages,
   sections,
   calculatedItems,
@@ -39,6 +42,9 @@ export function IssuePanel({
       eventBand.id,
       eventBand.name,
     ]),
+  )
+  const dutyTypeNameById = new Map(
+    dutyTypes.map((dutyType) => [dutyType.id, dutyType.name]),
   )
   const stageNameById = new Map(stages.map((stage) => [stage.id, stage.name]))
   const sectionNameById = new Map(
@@ -66,6 +72,13 @@ export function IssuePanel({
     issue.stageIds?.forEach((stageId) => {
       const stageName = stageNameById.get(stageId) ?? '不明なStage'
       message = message.replaceAll(`Stage ${stageId}`, `Stage「${stageName}」`)
+    })
+    issue.dutyTypeIds?.forEach((dutyTypeId) => {
+      const dutyTypeName = dutyTypeNameById.get(dutyTypeId) ?? '不明な仕事'
+      message = message.replaceAll(
+        `DutyType ${dutyTypeId}`,
+        `仕事「${dutyTypeName}」`,
+      )
     })
     issue.sectionIds?.forEach((sectionId) => {
       const sectionName = sectionNameById.get(sectionId) ?? '不明なSection'
@@ -132,6 +145,11 @@ export function IssuePanel({
                 sectionId => sectionNameById.get(sectionId) ?? '不明なSection',
               ),
             )
+            const dutyTypeNames = uniqueNames(
+              (issue.dutyTypeIds ?? []).map(
+                dutyTypeId => dutyTypeNameById.get(dutyTypeId) ?? '不明な仕事',
+              ),
+            )
             const targets = [
               memberNames.length > 0
                 ? `メンバー: ${memberNames.join('、')}`
@@ -144,6 +162,9 @@ export function IssuePanel({
                 : undefined,
               sectionNames.length > 0
                 ? `Section: ${sectionNames.join('、')}`
+                : undefined,
+              dutyTypeNames.length > 0
+                ? `仕事: ${dutyTypeNames.join('、')}`
                 : undefined,
             ].filter((target): target is string => target !== undefined)
             const metrics = [
@@ -168,6 +189,7 @@ export function IssuePanel({
                   issue.stageIds?.join('-'),
                   issue.sectionIds?.join('-'),
                   issue.paAssignmentIds?.join('-'),
+                  issue.dutyAssignmentIds?.join('-'),
                   index,
                 ].join('|')}
                 className={`issue-list__item issue-list__item--${issue.severity.toLowerCase()}`}
