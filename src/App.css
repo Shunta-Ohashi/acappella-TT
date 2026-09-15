@@ -4199,6 +4199,21 @@
   font-size: 12px;
 }
 
+.duty-settings__repair {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  background: #fff8f5;
+  border: 1px solid #d9a38f;
+  border-radius: 6px;
+}
+
+.duty-settings__repair h4 {
+  margin: 0;
+  color: #713522;
+  font-size: 11px;
+}
+
 .duty-type-list,
 .duty-assignment-list {
   display: grid;

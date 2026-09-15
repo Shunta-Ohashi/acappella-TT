@@ -25,6 +25,7 @@ import {
   canDeleteDutyType,
   createDutyAssignmentDraftItem,
   createDutySettingsDraft,
+  getDutyAssignmentScopeStatus,
   hasDutySettingsErrors,
   moveDutyTypeDraft,
   resolveDutyAssignmentInterval,
@@ -36,6 +37,7 @@ import {
   type DutyTypeDraftItem,
   type DutySettingsValidationErrors,
 } from '../domain/dutyAssignments'
+import { getMemberDisplayName } from '../ui/eventBandPresentation'
 import { DutyAssignmentEditorDialog } from './DutyAssignmentEditorDialog'
 
 export interface DutySettingsHandle {
@@ -75,6 +77,7 @@ interface DutySettingsProps {
 interface AssignmentEditorState {
   item: DutyAssignmentDraftItem
   isNew: boolean
+  isScopeRepair?: boolean
 }
 
 interface TypeEditorState {
@@ -135,9 +138,24 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
     const selectedStage = stages.find((stage) =>
       stage.id === selectedStageId && stage.eventDayId === selectedEventDayId,
     )
-    const selectedAssignments = draft.assignments.filter((assignment) =>
-      assignment.eventDayId === selectedEventDayId &&
-      assignment.stageId === selectedStageId,
+    const assignmentsWithScopeStatus = draft.assignments.map((assignment) => ({
+      assignment,
+      scopeStatus: getDutyAssignmentScopeStatus({
+        assignment,
+        event,
+        eventDays,
+        stages,
+      }),
+    }))
+    const selectedAssignments = assignmentsWithScopeStatus
+      .filter(({ assignment, scopeStatus }) =>
+        scopeStatus.valid &&
+        assignment.eventDayId === selectedEventDayId &&
+        assignment.stageId === selectedStageId,
+      )
+      .map(({ assignment }) => assignment)
+    const invalidScopeAssignments = assignmentsWithScopeStatus.filter(
+      ({ scopeStatus }) => !scopeStatus.valid,
     )
 
     const markChanged = () => {
@@ -172,7 +190,12 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
       const firstInvalid = draft.assignments.find((assignment) =>
         validationErrors.assignments[assignment.draftId],
       )
-      if (firstInvalid) {
+      if (firstInvalid && getDutyAssignmentScopeStatus({
+        assignment: firstInvalid,
+        event,
+        eventDays,
+        stages,
+      }).valid) {
         onSelectScope(firstInvalid.eventDayId, firstInvalid.stageId)
       }
     }
@@ -282,6 +305,26 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
       }))
       setAssignmentEditor(undefined)
       markChanged()
+    }
+
+    const removeAssignment = (draftId: string) => {
+      setDraft((previous) => ({
+        ...previous,
+        assignments: previous.assignments.filter((candidate) =>
+          candidate.draftId !== draftId,
+        ),
+      }))
+      markChanged()
+    }
+
+    const getDutyTypeName = (item: DutyAssignmentDraftItem) =>
+      item.dutyTypeDraftId
+        ? dutyTypeByDraftId.get(item.dutyTypeDraftId)?.name ?? '不明な仕事'
+        : '不明な仕事'
+
+    const getMemberName = (item: DutyAssignmentDraftItem) => {
+      const member = memberById.get(item.memberId)
+      return member ? getMemberDisplayName(member) : '不明なメンバー'
     }
 
     return (
@@ -413,6 +456,73 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
                 onClick={openNewAssignment}
               >＋ 担当を追加</button>
             </div>
+            {invalidScopeAssignments.length > 0 && (
+              <section
+                className="duty-settings__repair"
+                aria-labelledby="duty-assignment-repair-title"
+              >
+                <h4 id="duty-assignment-repair-title">修復が必要な担当</h4>
+                <ul className="duty-assignment-list">
+                  {invalidScopeAssignments.map(({ assignment, scopeStatus }) => {
+                    const dutyTypeName = getDutyTypeName(assignment)
+                    const memberName = getMemberName(assignment)
+                    return (
+                      <li key={assignment.draftId}>
+                        <header>
+                          <strong>{dutyTypeName}</strong>
+                          <span>{memberName}</span>
+                        </header>
+                        {!scopeStatus.valid && (
+                          <p className="form-error" role="status">
+                            {scopeStatus.message} 修正または削除してください。
+                          </p>
+                        )}
+                        {assignment.missingDutyTypeId && (
+                          <p className="form-error" role="status">
+                            仕事の参照も切れています。
+                          </p>
+                        )}
+                        <div className="pa-settings__row-actions">
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            disabled={!selectedStage}
+                            aria-label={`${memberName}の${dutyTypeName}担当を修正`}
+                            onClick={() => {
+                              if (!selectedStage) return
+                              setAssignmentEditor({
+                                item: {
+                                  ...assignment,
+                                  eventDayId: selectedStage.eventDayId,
+                                  stageId: selectedStage.id,
+                                  from: { ...assignment.from },
+                                  until: { ...assignment.until },
+                                },
+                                isNew: false,
+                                isScopeRepair: true,
+                              })
+                            }}
+                          >修正</button>
+                          <button
+                            type="button"
+                            className="danger-button"
+                            aria-label={`${memberName}の${dutyTypeName}担当を削除`}
+                            onClick={() => removeAssignment(assignment.draftId)}
+                          >削除</button>
+                        </div>
+                        {errors.assignments[assignment.draftId] && (
+                          <p className="form-error" role="alert">
+                            {Object.values(errors.assignments[assignment.draftId])
+                              .filter(Boolean)
+                              .join(' ')}
+                          </p>
+                        )}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </section>
+            )}
             {!selectedStage ? (
               <p className="duty-settings__empty">選択中のStageがありません。</p>
             ) : selectedAssignments.length === 0 ? (
@@ -420,10 +530,8 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
             ) : (
               <ul className="duty-assignment-list">
                 {selectedAssignments.map((item) => {
-                  const dutyTypeName = item.dutyTypeDraftId
-                    ? dutyTypeByDraftId.get(item.dutyTypeDraftId)?.name ?? '不明な仕事'
-                    : '参照切れ'
-                  const memberName = memberById.get(item.memberId)?.realName ?? '未設定'
+                  const dutyTypeName = getDutyTypeName(item)
+                  const memberName = getMemberName(item)
                   return (
                     <li key={item.draftId}>
                       <header>
@@ -453,15 +561,7 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
                           type="button"
                           className="danger-button"
                           aria-label={`${memberName}の${dutyTypeName}担当を削除`}
-                          onClick={() => {
-                            setDraft((previous) => ({
-                              ...previous,
-                              assignments: previous.assignments.filter((candidate) =>
-                                candidate.draftId !== item.draftId,
-                              ),
-                            }))
-                            markChanged()
-                          }}
+                          onClick={() => removeAssignment(item.draftId)}
                         >削除</button>
                       </div>
                       {errors.assignments[item.draftId] && (
@@ -508,6 +608,7 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
             calculatedItems={calculatedItems}
             dutyTypes={draft.dutyTypes}
             item={assignmentEditor.item}
+            isScopeRepair={assignmentEditor.isScopeRepair}
             onCancel={() => setAssignmentEditor(undefined)}
             onApply={applyAssignmentEditor}
           />

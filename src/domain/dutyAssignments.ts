@@ -86,6 +86,18 @@ export interface DutyMemberCandidate {
   warning?: string
 }
 
+export type DutyAssignmentScopeStatus =
+  | { valid: true }
+  | {
+      valid: false
+      problem:
+        | 'EVENT_DAY_NOT_FOUND'
+        | 'STAGE_NOT_FOUND'
+        | 'EVENT_DAY_AND_STAGE_NOT_FOUND'
+        | 'STAGE_EVENT_DAY_MISMATCH'
+      message: string
+    }
+
 interface DutyAssignmentScope {
   eventDayId: EventDayId
   stageId: StageId
@@ -170,6 +182,54 @@ export const getDutyAssignmentsForEvent = ({
       !allDutyTypeIds.has(assignment.dutyTypeId)
     ),
   )
+}
+
+export const getDutyAssignmentScopeStatus = ({
+  assignment,
+  event,
+  eventDays,
+  stages,
+}: {
+  assignment: Pick<DutyAssignmentDraftItem, 'eventDayId' | 'stageId'>
+  event: Pick<Event, 'id'>
+  eventDays: Pick<EventDay, 'id' | 'eventId'>[]
+  stages: Pick<Stage, 'id' | 'eventDayId'>[]
+}): DutyAssignmentScopeStatus => {
+  const eventDay = eventDays.find((candidate) =>
+    candidate.id === assignment.eventDayId && candidate.eventId === event.id,
+  )
+  const stage = stages.find((candidate) => candidate.id === assignment.stageId)
+
+  if (!eventDay && !stage) {
+    return {
+      valid: false,
+      problem: 'EVENT_DAY_AND_STAGE_NOT_FOUND',
+      message: '開催日とStageの参照が見つかりません。',
+    }
+  }
+  if (!eventDay) {
+    return {
+      valid: false,
+      problem: 'EVENT_DAY_NOT_FOUND',
+      message: '開催日の参照が見つかりません。',
+    }
+  }
+  if (!stage) {
+    return {
+      valid: false,
+      problem: 'STAGE_NOT_FOUND',
+      message: 'Stageの参照が見つかりません。',
+    }
+  }
+  if (stage.eventDayId !== eventDay.id) {
+    return {
+      valid: false,
+      problem: 'STAGE_EVENT_DAY_MISMATCH',
+      message: '開催日とStageの組み合わせが一致していません。',
+    }
+  }
+
+  return { valid: true }
 }
 
 export const moveDutyTypeDraft = (

@@ -5,6 +5,7 @@ import {
   canDeleteDutyType,
   createDutySettingsDraft,
   createDutySettingsUpdate,
+  getDutyAssignmentScopeStatus,
   getDutyAssignmentsForEvent,
   getDutyAssignmentParticipationWarning,
   moveDutyTypeDraft,
@@ -311,6 +312,116 @@ test('Event別DutyAssignment選択は未知DutyTypeのみStage所属で補完す
     dutyTypes: allTypes,
     dutyAssignments: allAssignments,
   }).map((item) => item.id), ['other'])
+})
+
+test('一般業務担当のEventDayとStage参照をscope別に検証する', () => {
+  const secondDay = {
+    id: 'day-2',
+    eventId: event.id,
+    date: '2027-11-07',
+    order: 1,
+  }
+  const secondStage = {
+    ...stages[0],
+    id: 'stage-b',
+    eventDayId: secondDay.id,
+  }
+  const scopeInput = {
+    event,
+    eventDays: [...eventDays, secondDay],
+    stages: [...stages, secondStage],
+  }
+
+  assert.deepEqual(getDutyAssignmentScopeStatus({
+    ...scopeInput,
+    assignment: createItem(),
+  }), { valid: true })
+  assert.equal(getDutyAssignmentScopeStatus({
+    ...scopeInput,
+    assignment: createItem({ eventDayId: 'missing-day' }),
+  }).problem, 'EVENT_DAY_NOT_FOUND')
+  assert.equal(getDutyAssignmentScopeStatus({
+    ...scopeInput,
+    assignment: createItem({ stageId: 'missing-stage' }),
+  }).problem, 'STAGE_NOT_FOUND')
+  assert.equal(getDutyAssignmentScopeStatus({
+    ...scopeInput,
+    assignment: createItem({
+      eventDayId: 'missing-day',
+      stageId: 'missing-stage',
+    }),
+  }).problem, 'EVENT_DAY_AND_STAGE_NOT_FOUND')
+  assert.equal(getDutyAssignmentScopeStatus({
+    ...scopeInput,
+    assignment: createItem({ stageId: secondStage.id }),
+  }).problem, 'STAGE_EVENT_DAY_MISMATCH')
+})
+
+test('参照切れscopeを有効な開催日・Stage・Boundaryへ修復して保存できる', () => {
+  const broken = assignment('repair-scope', {
+    stageId: 'missing-stage',
+    from: { scheduleItemId: 'missing-item', edge: 'start' },
+    until: { scheduleItemId: 'missing-item', edge: 'end' },
+  })
+  const draft = createDutySettingsDraft(event, stages, dutyTypes, [broken])
+  draft.assignments[0] = {
+    ...draft.assignments[0],
+    eventDayId: eventDays[0].id,
+    stageId: stages[0].id,
+    from: { scheduleItemId: 'performance-1', edge: 'start' },
+    until: { scheduleItemId: 'performance-1', edge: 'end' },
+  }
+
+  const result = createDutySettingsUpdate({
+    event,
+    eventDays,
+    stages,
+    members,
+    eventMembers,
+    eventMemberDays: createMemberDays(),
+    eventBands,
+    paAssignments: [],
+    calculatedItems,
+    dutyTypes,
+    dutyAssignments: [broken],
+    draft,
+    newDutyTypeIds: [],
+    newDutyAssignmentIds: [],
+  })
+
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.equal(result.dutyAssignments[0].stageId, stages[0].id)
+  assert.equal(result.dutyAssignments[0].from.scheduleItemId, 'performance-1')
+})
+
+test('参照切れscopeの担当をdraftから削除して保存できる', () => {
+  const broken = assignment('delete-broken-scope', {
+    stageId: 'missing-stage',
+  })
+  const draft = createDutySettingsDraft(event, stages, dutyTypes, [broken])
+  draft.assignments = []
+
+  const result = createDutySettingsUpdate({
+    event,
+    eventDays,
+    stages,
+    members,
+    eventMembers,
+    eventMemberDays: createMemberDays(),
+    eventBands,
+    paAssignments: [],
+    calculatedItems,
+    dutyTypes,
+    dutyAssignments: [broken],
+    draft,
+    newDutyTypeIds: [],
+    newDutyAssignmentIds: [],
+  })
+
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.deepEqual(result.dutyAssignments, [])
 })
 
 test('draftへ表示されない参照切れAssignmentを通常保存やDutyType名変更で失わない', () => {

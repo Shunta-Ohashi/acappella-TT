@@ -35,6 +35,7 @@ interface DutyAssignmentEditorDialogProps {
   calculatedItems: CalculatedScheduleItem[]
   dutyTypes: DutyTypeDraftItem[]
   item: DutyAssignmentDraftItem
+  isScopeRepair?: boolean
   onCancel: () => void
   onApply: (item: DutyAssignmentDraftItem) => void
 }
@@ -52,6 +53,7 @@ export function DutyAssignmentEditorDialog({
   calculatedItems,
   dutyTypes,
   item,
+  isScopeRepair = false,
   onCancel,
   onApply,
 }: DutyAssignmentEditorDialogProps) {
@@ -63,6 +65,9 @@ export function DutyAssignmentEditorDialog({
   }))
   const [errors, setErrors] = useState<DutyAssignmentItemErrors>({})
   const stage = stages.find((candidate) => candidate.id === draft.stageId)
+  const eventDay = eventDays.find((candidate) =>
+    candidate.id === draft.eventDayId && candidate.eventId === event.id,
+  )
   const stageCalculatedItems = calculatedItems.filter((calculatedItem) =>
     calculatedItem.eventDayId === draft.eventDayId &&
     calculatedItem.stageId === draft.stageId,
@@ -113,8 +118,16 @@ export function DutyAssignmentEditorDialog({
       label: `${getItemLabel(calculatedItem)} 終了（${formatMinuteAsLocalTime(calculatedItem.plannedEndMinute)}）`,
     },
   ])
+  const boundaryOptionValues = new Set(
+    boundaryOptions.map((option) => option.value),
+  )
+  const fromBoundaryValue = `${draft.from.scheduleItemId}|${draft.from.edge}`
+  const untilBoundaryValue = `${draft.until.scheduleItemId}|${draft.until.edge}`
+  const hasValidFromBoundary = boundaryOptionValues.has(fromBoundaryValue)
+  const hasValidUntilBoundary = boundaryOptionValues.has(untilBoundaryValue)
 
   const updateBoundary = (field: 'from' | 'until', value: string) => {
+    if (!value) return
     const separatorIndex = value.lastIndexOf('|')
     setDraft((previous) => ({
       ...previous,
@@ -160,7 +173,10 @@ export function DutyAssignmentEditorDialog({
         <header>
           <p>STEP 6</p>
           <h2 id="duty-assignment-dialog-title">一般業務担当を設定</h2>
-          <span>{stage?.name ?? '不明なStage'}</span>
+          <span>
+            {isScopeRepair ? '修復先：' : ''}
+            {eventDay?.label ?? eventDay?.date ?? '不明な開催日'} / {stage?.name ?? '不明なStage'}
+          </span>
         </header>
 
         <div className="pa-assignment-dialog__fields">
@@ -220,10 +236,15 @@ export function DutyAssignmentEditorDialog({
             担当開始
             <select
               id="duty-assignment-from"
-              value={`${draft.from.scheduleItemId}|${draft.from.edge}`}
+              value={hasValidFromBoundary ? fromBoundaryValue : ''}
               aria-invalid={errors.interval ? 'true' : undefined}
               onChange={(event) => updateBoundary('from', event.target.value)}
             >
+              {!hasValidFromBoundary && (
+                <option value="" disabled>
+                  修復先Stageの開始位置を選択してください
+                </option>
+              )}
               {boundaryOptions.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
@@ -234,10 +255,15 @@ export function DutyAssignmentEditorDialog({
             担当終了
             <select
               id="duty-assignment-until"
-              value={`${draft.until.scheduleItemId}|${draft.until.edge}`}
+              value={hasValidUntilBoundary ? untilBoundaryValue : ''}
               aria-invalid={errors.interval ? 'true' : undefined}
               onChange={(event) => updateBoundary('until', event.target.value)}
             >
+              {!hasValidUntilBoundary && (
+                <option value="" disabled>
+                  修復先Stageの終了位置を選択してください
+                </option>
+              )}
               {boundaryOptions.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
