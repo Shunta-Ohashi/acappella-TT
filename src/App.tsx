@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 import type { DropResult } from '@hello-pangea/dnd'
 import type {
@@ -138,6 +138,10 @@ import {
 } from './ui/timetableDnd'
 import { createTimetableWorkspaceRows } from './ui/timetableWorkspaceRows'
 import { createDemoData } from './data/demoData'
+import {
+  loadPersistedStateOrFallback,
+  savePersistedState,
+} from './persistence/localPersistence'
 import './App.css'
 
 type AppView = 'event-editor' | AppSection
@@ -181,26 +185,35 @@ const DEFAULT_EVENT_SETTINGS = {
   'timeZone' | 'defaultTransitionMinutes' | 'validationPolicy'
 >
 
-const initialDemoData = createDemoData()
-
 function App() {
+  const [initialAppState] = useState(() =>
+    loadPersistedStateOrFallback(createDemoData),
+  )
+  const initialEventId = initialAppState.events[0]?.id ?? ''
+  const initialEventDayId = getEventDaysForEvent(
+    initialAppState.eventDays,
+    initialEventId,
+  )[0]?.id
+  const initialStageId = initialEventDayId
+    ? getStagesForEventDay(initialAppState.stages, initialEventDayId)[0]?.id
+    : undefined
   const [activeView, setActiveView] = useState<AppView>('events')
   const [activeStep, setActiveStep] = useState<EventEditorStepId>(6)
   const [selectedEventId, setSelectedEventId] = useState<EventId>(
-    initialDemoData.initialEventId,
+    initialEventId,
   )
   const [selectedTimetableEventDayId, setSelectedTimetableEventDayId] =
-    useState<EventDayId | undefined>(initialDemoData.initialEventDayId)
+    useState<EventDayId | undefined>(initialEventDayId)
   const [selectedTimetableStageId, setSelectedTimetableStageId] =
-    useState<StageId | undefined>(initialDemoData.initialStageId)
+    useState<StageId | undefined>(initialStageId)
   const [isCreateEventDialogOpen, setIsCreateEventDialogOpen] = useState(false)
 
   // ==================== 📦 各種状態（State）の管理 ====================
 
-  const [events, setEvents] = useState<TimetableEvent[]>(initialDemoData.events)
-  const [eventDays, setEventDays] = useState<EventDay[]>(initialDemoData.eventDays)
-  const [stages, setStages] = useState<Stage[]>(initialDemoData.stages)
-  const [sections, setSections] = useState<Section[]>(initialDemoData.sections)
+  const [events, setEvents] = useState<TimetableEvent[]>(initialAppState.events)
+  const [eventDays, setEventDays] = useState<EventDay[]>(initialAppState.eventDays)
+  const [stages, setStages] = useState<Stage[]>(initialAppState.stages)
+  const [sections, setSections] = useState<Section[]>(initialAppState.sections)
   const selectedEvent = events.find((event) => event.id === selectedEventId)
   const selectedEventDays = getEventDaysForEvent(eventDays, selectedEventId)
   const selectedEventDayIds = new Set(
@@ -235,29 +248,29 @@ function App() {
   )
 
   // 1️⃣ サークル員データベース（初期データ）
-  const [members, setMembers] = useState<Member[]>(initialDemoData.members)
+  const [members, setMembers] = useState<Member[]>(initialAppState.members)
 
   // 2️⃣ バンドデータベース（初期データ）
-  const [bands, setBands] = useState<Band[]>(initialDemoData.bands)
+  const [bands, setBands] = useState<Band[]>(initialAppState.bands)
 
   // 3️⃣ このイベントに出演するバンド
   const [eventBands, setEventBands] = useState<EventBand[]>(
-    initialDemoData.eventBands,
+    initialAppState.eventBands,
   )
   const [eventMembers, setEventMembers] = useState<EventMember[]>(
-    initialDemoData.eventMembers,
+    initialAppState.eventMembers,
   )
   const [eventMemberDays, setEventMemberDays] = useState<EventMemberDay[]>(
-    initialDemoData.eventMemberDays,
+    initialAppState.eventMemberDays,
   )
   const [paAssignments, setPaAssignments] = useState<PaAssignment[]>(
-    initialDemoData.paAssignments,
+    initialAppState.paAssignments,
   )
   const [dutyTypes, setDutyTypes] = useState<DutyType[]>(
-    initialDemoData.dutyTypes,
+    initialAppState.dutyTypes,
   )
   const [dutyAssignments, setDutyAssignments] = useState<DutyAssignment[]>(
-    initialDemoData.dutyAssignments,
+    initialAppState.dutyAssignments,
   )
   const paSettingsRef = useRef<PaSettingsHandle>(null)
   const dutySettingsRef = useRef<DutySettingsHandle>(null)
@@ -274,8 +287,40 @@ function App() {
 
   // 4️⃣ 当日のタイムテーブル。出演項目はEventBandをIDで参照する
   const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>(
-    initialDemoData.scheduleItems,
+    initialAppState.scheduleItems,
   )
+
+  useEffect(() => {
+    savePersistedState({
+      members,
+      bands,
+      events,
+      eventDays,
+      stages,
+      sections,
+      eventMembers,
+      eventMemberDays,
+      eventBands,
+      scheduleItems,
+      paAssignments,
+      dutyTypes,
+      dutyAssignments,
+    })
+  }, [
+    members,
+    bands,
+    events,
+    eventDays,
+    stages,
+    sections,
+    eventMembers,
+    eventMemberDays,
+    eventBands,
+    scheduleItems,
+    paAssignments,
+    dutyTypes,
+    dutyAssignments,
+  ])
   const selectedScheduleItems = scheduleItems.filter((scheduleItem) =>
     selectedStageIds.has(scheduleItem.stageId),
   )
