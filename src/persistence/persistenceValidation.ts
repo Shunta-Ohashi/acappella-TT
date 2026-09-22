@@ -20,7 +20,10 @@ import type {
 } from '../domain/models'
 import { isValidLocalDate } from '../domain/eventCreation.ts'
 import { getTimeRangeValidationError } from '../domain/eventMemberDayDetails.ts'
-import { isValidStageTimeRange } from '../domain/eventStageSettings.ts'
+import {
+  isValidStageTimeRange,
+  validatePerformanceSlotMinutes,
+} from '../domain/eventStageSettings.ts'
 import { isValidLocalTime } from '../domain/timeline.ts'
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -106,6 +109,7 @@ export const isEvent = (value: unknown): value is Event =>
   isNonNegativeInteger(value.validationPolicy.minimumGapBands) &&
   isNonNegativeInteger(value.validationPolicy.minimumRestMinutes) &&
   isPositiveIntegerArray(value.performanceSlotMinutes) &&
+  validatePerformanceSlotMinutes(value.performanceSlotMinutes) === undefined &&
   isOptional(value.notes, isString)
 
 export const isEventDay = (value: unknown): value is EventDay =>

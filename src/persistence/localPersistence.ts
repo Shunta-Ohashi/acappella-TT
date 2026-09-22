@@ -13,7 +13,7 @@ import type {
   Section,
   Stage,
 } from '../domain/models'
-import { parseLocalTimeToMinute } from '../domain/timeline.ts'
+import { isSectionWithinStageTimeRange } from '../domain/eventStageSettings.ts'
 import {
   isBand,
   isDutyAssignment,
@@ -96,22 +96,7 @@ const hasValidSectionStageIntervals = ({
   return sections.every((section) => {
     const stage = stagesById.get(section.stageId)
     if (!stage) return true
-
-    const stageStart = parseLocalTimeToMinute(stage.plannedStartTime)
-    const stageEnd = stage.plannedEndTime === undefined
-      ? undefined
-      : parseLocalTimeToMinute(stage.plannedEndTime)
-    const sectionStart = section.plannedStartTime === undefined
-      ? undefined
-      : parseLocalTimeToMinute(section.plannedStartTime)
-    const sectionEnd = section.plannedEndTime === undefined
-      ? undefined
-      : parseLocalTimeToMinute(section.plannedEndTime)
-
-    return (sectionStart === undefined ||
-      (sectionStart >= stageStart && (stageEnd === undefined || sectionStart < stageEnd))) &&
-      (sectionEnd === undefined ||
-        (sectionEnd > stageStart && (stageEnd === undefined || sectionEnd <= stageEnd)))
+    return isSectionWithinStageTimeRange(stage, section)
   })
 }
 

@@ -82,10 +82,10 @@ import {
 } from './domain/eventBasicInfo'
 import {
   canAddFirstSection,
+  canSetStageStartTime,
   canDeleteSection,
   canDeleteStage,
   createEventStageSettingsUpdate,
-  isValidStageTimeRange,
   type EventStageSettingsUpdateResult,
   type SectionSettingsDraft,
   type StageSettingsDraft,
@@ -402,7 +402,7 @@ function App() {
   const handleStageStartTimeChange = (value: string) => {
     if (
       !currentStage ||
-      !isValidStageTimeRange(value, currentStage.plannedEndTime)
+      !canSetStageStartTime(currentStage, currentStageSections, value)
     ) return
 
     setStages(prev => prev.map(stage => (

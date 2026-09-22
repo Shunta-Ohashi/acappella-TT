@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import { createDemoData } from '../src/data/demoData.ts'
 import { getUnscheduledEventBandsForEventDay } from '../src/domain/schedule.ts'
+import { canSetStageStartTime } from '../src/domain/eventStageSettings.ts'
 import {
   CURRENT_STORAGE_VERSION,
   STORAGE_KEY,
@@ -535,6 +536,45 @@ test('保存済みSectionは固定時刻の順序とStage時間内への収ま�
       stages: [stage],
       sections: [{ ...section, plannedStartTime, plannedEndTime }],
     }))), expected)
+  }
+})
+
+test('Timetableで許可されるStage開始変更後のSectionは復元時にも有効', () => {
+  const demo = createDemoData()
+  const stage = demo.stages.find((candidate) =>
+    demo.sections.some((section) => section.stageId === candidate.id))
+  assert.ok(stage)
+  const stageSections = demo.sections.filter((section) => section.stageId === stage.id)
+  assert.equal(canSetStageStartTime(stage, stageSections, '09:00'), true)
+
+  const updated = {
+    ...createPersistedAppState(demo),
+    stages: demo.stages.map((candidate) =>
+      candidate.id === stage.id
+        ? { ...candidate, plannedStartTime: '09:00' }
+        : candidate),
+  }
+  assert.deepEqual(parsePersistedState(JSON.stringify(updated)), updated)
+})
+
+test('出演枠は既存Step 2仕様と同じく非空・正の整数・重複なしを要求する', () => {
+  const empty = createPersistedAppState(createEmptyState())
+  const event = createDemoData().events[0]
+
+  assert.ok(parsePersistedState(JSON.stringify({
+    ...empty,
+    events: [{ ...event, performanceSlotMinutes: [5, 10, 15] }],
+  })))
+  for (const performanceSlotMinutes of [
+    [],
+    [5, 5, 10],
+    [0, 5],
+    [-5, 10],
+  ]) {
+    assert.equal(parsePersistedState(JSON.stringify({
+      ...empty,
+      events: [{ ...event, performanceSlotMinutes }],
+    })), undefined)
   }
 })
 

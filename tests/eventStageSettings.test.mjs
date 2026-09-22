@@ -5,6 +5,7 @@ import {
   canAddFirstSection,
   canDeleteSection,
   canDeleteStage,
+  canSetStageStartTime,
   createEventStageSettingsDraft,
   createEventStageSettingsUpdate,
   getEventStageSettingsErrorEventDayIds,
@@ -108,6 +109,41 @@ test('Stage開始時刻は自動終了または固定終了より前の場合だ
   assert.equal(isValidStageTimeRange('17:00', '17:00'), false)
   assert.equal(isValidStageTimeRange('18:00', '17:00'), false)
   assert.equal(isValidStageTimeRange('24:00', '17:00'), false)
+})
+
+test('TimetableのStage開始変更は既存Sectionが1件でも範囲外になる場合に拒否する', () => {
+  const stage = { ...existingStage, plannedEndTime: '18:00' }
+  const sections = [
+    { ...existingSection, plannedStartTime: '11:00', plannedEndTime: '12:00' },
+    { ...existingSection, id: 'section-second', plannedStartTime: '14:00',
+      plannedEndTime: '15:00' },
+  ]
+
+  assert.equal(canSetStageStartTime(stage, sections, '09:00'), true)
+  assert.equal(canSetStageStartTime(stage, sections, '10:30'), true)
+  assert.equal(canSetStageStartTime(stage, sections, '11:30'), false)
+  assert.equal(canSetStageStartTime(stage, sections, '13:30'), false)
+  assert.equal(canSetStageStartTime(stage, sections.slice(1), '13:30'), true)
+  assert.equal(canSetStageStartTime(stage, sections, '18:00'), false)
+  assert.equal(canSetStageStartTime(stage, sections, '24:00'), false)
+  assert.equal(stage.plannedStartTime, '10:00')
+
+  const validDraft = settingsDraft({
+    stages: [validStageDraft({ plannedStartTime: '09:00', endMode: 'fixed',
+      plannedEndTime: '18:00' })],
+    sections: [validSectionDraft({ startMode: 'fixed', plannedStartTime: '11:00',
+      endMode: 'fixed', plannedEndTime: '12:00' })],
+  })
+  assert.equal(validateEventStageSettingsDraft(validDraft).sections['draft-section'], undefined)
+  const invalidDraft = settingsDraft({
+    ...validDraft,
+    stages: [validStageDraft({ plannedStartTime: '11:30', endMode: 'fixed',
+      plannedEndTime: '18:00' })],
+  })
+  assert.match(
+    validateEventStageSettingsDraft(invalidDraft).sections['draft-section'].plannedStartTime,
+    /Stage開始時刻以降/,
+  )
 })
 
 test('出演枠はStep 2 draftで編集し、保存時だけEventへ昇順で反映する', () => {
