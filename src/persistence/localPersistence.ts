@@ -13,6 +13,23 @@ import type {
   Section,
   Stage,
 } from '../domain/models'
+import {
+  isBand,
+  isDutyAssignment,
+  isDutyType,
+  isEvent,
+  isEventBand,
+  isEventDay,
+  isEventMember,
+  isEventMemberDay,
+  isMember,
+  isPaAssignment,
+  isPersistedCollection,
+  isRecord,
+  isScheduleItem,
+  isSection,
+  isStage,
+} from './persistenceValidation.ts'
 
 export const CURRENT_STORAGE_VERSION = 1 as const
 export const STORAGE_KEY = 'acappella-tt:app-state'
@@ -43,31 +60,24 @@ export interface StorageLike {
   removeItem: (key: string) => void
 }
 
-const collectionKeys = [
-  'members',
-  'bands',
-  'events',
-  'eventDays',
-  'stages',
-  'sections',
-  'eventMembers',
-  'eventMemberDays',
-  'eventBands',
-  'scheduleItems',
-  'paAssignments',
-  'dutyTypes',
-  'dutyAssignments',
-] as const satisfies readonly (keyof PersistedDomainState)[]
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
 export const isPersistedAppStateV1 = (
   value: unknown,
 ): value is PersistedAppStateV1 =>
   isRecord(value) &&
   value.version === CURRENT_STORAGE_VERSION &&
-  collectionKeys.every((key) => Array.isArray(value[key]))
+  isPersistedCollection(value.members, isMember) &&
+  isPersistedCollection(value.bands, isBand) &&
+  isPersistedCollection(value.events, isEvent) &&
+  isPersistedCollection(value.eventDays, isEventDay) &&
+  isPersistedCollection(value.stages, isStage) &&
+  isPersistedCollection(value.sections, isSection) &&
+  isPersistedCollection(value.eventMembers, isEventMember) &&
+  isPersistedCollection(value.eventMemberDays, isEventMemberDay) &&
+  isPersistedCollection(value.eventBands, isEventBand) &&
+  isPersistedCollection(value.scheduleItems, isScheduleItem) &&
+  isPersistedCollection(value.paAssignments, isPaAssignment) &&
+  isPersistedCollection(value.dutyTypes, isDutyType) &&
+  isPersistedCollection(value.dutyAssignments, isDutyAssignment)
 
 export const createPersistedAppState = (
   state: PersistedDomainState,

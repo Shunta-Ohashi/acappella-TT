@@ -190,3 +190,127 @@ test('localStorageへの保存失敗を外へ投げずstate更新を継続でき
     console.warn = originalWarn
   }
 })
+
+test('demoDataの全13 collectionで実際の要素がstructural validatorを通る', () => {
+  const demo = createDemoData()
+  const empty = createEmptyState()
+
+  for (const collection of Object.keys(empty)) {
+    assert.ok(demo[collection].length > 0, `${collection}に検証対象がありません`)
+    assert.ok(parsePersistedState(JSON.stringify({
+      ...createPersistedAppState(empty),
+      [collection]: [demo[collection][0]],
+    })), `${collection}の正常要素が拒否されました`)
+  }
+})
+
+test('events内のnullはsnapshot全体を拒否してdemoDataへfallbackする', () => {
+  const storage = new MemoryStorage()
+  storage.setItem(STORAGE_KEY, JSON.stringify({
+    ...createPersistedAppState(createEmptyState()),
+    events: [null],
+  }))
+
+  assert.doesNotThrow(() => loadPersistedStateOrFallback(createDemoData, storage))
+  assert.deepEqual(
+    loadPersistedStateOrFallback(createDemoData, storage),
+    createPersistedAppState(createDemoData()),
+  )
+  assert.equal(storage.getItem(STORAGE_KEY), null)
+})
+
+test('primitive、必須field欠落、誤ったprimitive型を拒否する', () => {
+  const empty = createPersistedAppState(createEmptyState())
+  const validEvent = createDemoData().events[0]
+  const { name: _missingName, ...eventWithoutName } = validEvent
+  const malformed = [
+    { members: ['invalid'] },
+    { events: [eventWithoutName] },
+    { events: [{ ...validEvent, id: 123 }] },
+  ]
+
+  for (const collection of malformed) {
+    assert.equal(parsePersistedState(JSON.stringify({
+      ...empty,
+      ...collection,
+    })), undefined)
+  }
+})
+
+test('ScheduleItemのdiscriminatorとkind別必須fieldを検証する', () => {
+  const base = {
+    id: 'item-1',
+    stageId: 'stage-1',
+    order: 0,
+  }
+  const empty = createPersistedAppState(createEmptyState())
+
+  for (const item of [
+    { ...base, kind: 'performance' },
+    { ...base, kind: 'break', title: '休憩' },
+    { ...base, kind: 'unknown', eventBandId: 'band-1' },
+  ]) {
+    assert.equal(parsePersistedState(JSON.stringify({
+      ...empty,
+      scheduleItems: [item],
+    })), undefined)
+  }
+  assert.ok(parsePersistedState(JSON.stringify({
+    ...empty,
+    scheduleItems: [{ ...base, kind: 'performance', eventBandId: 'missing-band' }],
+  })))
+})
+
+test('PA・DutyのScheduleBoundaryをnested validationし参照先の有無は見ない', () => {
+  const empty = createPersistedAppState(createEmptyState())
+  const broken = {
+    id: 'assignment-1',
+    eventDayId: 'missing-day',
+    stageId: 'missing-stage',
+    memberId: 'missing-member',
+    from: { scheduleItemId: 'missing-item', edge: 'start' },
+    until: { scheduleItemId: 'missing-item', edge: 'end' },
+  }
+  const pa = { ...broken, eventId: 'missing-event', role: 'sub' }
+  const duty = { ...broken, dutyTypeId: 'missing-duty-type' }
+
+  assert.ok(parsePersistedState(JSON.stringify({
+    ...empty,
+    paAssignments: [pa],
+    dutyAssignments: [duty],
+  })))
+  for (const collection of [
+    { paAssignments: [{ ...pa, from: { scheduleItemId: 'x', edge: 'middle' } }] },
+    { dutyAssignments: [{ ...duty, until: { scheduleItemId: 123, edge: 'end' } }] },
+  ]) {
+    assert.equal(parsePersistedState(JSON.stringify({
+      ...empty,
+      ...collection,
+    })), undefined)
+  }
+})
+
+test('optional・nested・literal fieldを構造検証し未知の追加fieldは許容する', () => {
+  const demo = createDemoData()
+  const empty = createPersistedAppState(createEmptyState())
+  const malformed = [
+    { members: [{ ...demo.members[0], paCapabilities: { main: true } }] },
+    { eventMemberDays: [{ ...demo.eventMemberDays[0], participationStatus: 'unknown' }] },
+    { eventMemberDays: [{ ...demo.eventMemberDays[0], availabilityWindows: [{}] }] },
+    { eventBands: [{ ...demo.eventBands[0], fixedPlacement: { stageId: 'stage-1', position: { kind: 'index' } } }] },
+    { eventBands: [{ ...demo.eventBands[0], preferredTimeRange: {} }] },
+    { paAssignments: [{ ...demo.paAssignments[0], role: 'operator' }] },
+    { stages: [{ ...demo.stages[0], plannedEndTime: null }] },
+  ]
+
+  for (const collection of malformed) {
+    assert.equal(parsePersistedState(JSON.stringify({
+      ...empty,
+      ...collection,
+    })), undefined)
+  }
+  assert.ok(parsePersistedState(JSON.stringify({
+    ...empty,
+    events: [{ ...demo.events[0], futureField: 'allowed' }],
+  })))
+})
