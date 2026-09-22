@@ -18,6 +18,7 @@ import type {
   Stage,
   TimeRange,
 } from '../domain/models'
+import { isValidLocalDate } from '../domain/eventCreation.ts'
 import { isValidLocalTime } from '../domain/timeline.ts'
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -31,6 +32,8 @@ const isPositiveInteger = (value: unknown): value is number =>
   isNonNegativeInteger(value) && value > 0
 const isLocalTime = (value: unknown): value is string =>
   isString(value) && isValidLocalTime(value)
+const isLocalDate = (value: unknown): value is string =>
+  isString(value) && isValidLocalDate(value)
 const isOptional = <T>(
   value: unknown,
   validator: (candidate: unknown) => candidate is T,
@@ -107,7 +110,7 @@ export const isEventDay = (value: unknown): value is EventDay =>
   isRecord(value) &&
   isString(value.id) &&
   isString(value.eventId) &&
-  isString(value.date) &&
+  isLocalDate(value.date) &&
   isOptional(value.label, isString) &&
   isNonNegativeInteger(value.order)
 

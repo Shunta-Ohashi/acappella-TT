@@ -108,6 +108,48 @@ test('全collectionが空でも有効な保存状態として復元する', () =
   )
 })
 
+test('EventDay.dateは実在するLocalDateだけを復元する', () => {
+  const empty = createPersistedAppState(createEmptyState())
+  const eventDay = createDemoData().eventDays[0]
+
+  for (const date of ['2026-09-22', '2024-02-29']) {
+    assert.ok(parsePersistedState(JSON.stringify({
+      ...empty,
+      eventDays: [{ ...eventDay, date }],
+    })), `${date}は有効な開催日`)
+  }
+
+  for (const date of [
+    '2026-02-29',
+    '2026-02-31',
+    '2026-13-01',
+    '2026-00-10',
+    'bad',
+  ]) {
+    assert.equal(parsePersistedState(JSON.stringify({
+      ...empty,
+      eventDays: [{ ...eventDay, date }],
+    })), undefined, `${date}は無効な開催日`)
+  }
+})
+
+test('不正なEventDay.dateを含むsnapshotは一括拒否し、storageを削除してdemoDataへ戻す', () => {
+  const demo = createDemoData()
+  const storage = new MemoryStorage()
+  storage.setItem(STORAGE_KEY, JSON.stringify({
+    ...createPersistedAppState(demo),
+    eventDays: demo.eventDays.map((day, index) =>
+      index === 0 ? { ...day, date: '2026-02-31' } : day),
+  }))
+
+  let recovered
+  assert.doesNotThrow(() => {
+    recovered = loadPersistedStateOrFallback(createDemoData, storage)
+  })
+  assert.deepEqual(recovered, createPersistedAppState(demo))
+  assert.equal(storage.getItem(STORAGE_KEY), null)
+})
+
 test('broken referenceをcleanupせずそのまま保存・復元する', () => {
   const state = {
     ...createEmptyState(),
