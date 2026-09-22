@@ -19,6 +19,8 @@ import type {
   TimeRange,
 } from '../domain/models'
 import { isValidLocalDate } from '../domain/eventCreation.ts'
+import { getTimeRangeValidationError } from '../domain/eventMemberDayDetails.ts'
+import { isValidStageTimeRange } from '../domain/eventStageSettings.ts'
 import { isValidLocalTime } from '../domain/timeline.ts'
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -54,7 +56,7 @@ const isTimeRange = (value: unknown): value is TimeRange =>
   isRecord(value) &&
   isOptional(value.from, isLocalTime) &&
   isOptional(value.until, isLocalTime) &&
-  (value.from !== undefined || value.until !== undefined)
+  getTimeRangeValidationError(value) === undefined
 
 const isFixedPosition = (value: unknown): value is FixedPosition =>
   isRecord(value) && (
@@ -123,6 +125,7 @@ export const isStage = (value: unknown): value is Stage =>
   isNonNegativeInteger(value.order) &&
   isLocalTime(value.plannedStartTime) &&
   isOptional(value.plannedEndTime, isLocalTime) &&
+  isValidStageTimeRange(value.plannedStartTime, value.plannedEndTime) &&
   isOptional(value.transitionMinutes, isNonNegativeInteger) &&
   isOptional(value.notes, isString)
 
@@ -134,6 +137,8 @@ export const isSection = (value: unknown): value is Section =>
   isNonNegativeInteger(value.order) &&
   isOptional(value.plannedStartTime, isLocalTime) &&
   isOptional(value.plannedEndTime, isLocalTime) &&
+  (value.plannedStartTime === undefined || value.plannedEndTime === undefined ||
+    isValidStageTimeRange(value.plannedStartTime, value.plannedEndTime)) &&
   isOptional(value.notes, isString)
 
 export const isEventMember = (value: unknown): value is EventMember =>

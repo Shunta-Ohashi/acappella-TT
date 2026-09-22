@@ -13,6 +13,7 @@ import type {
   Section,
   Stage,
 } from '../domain/models'
+import { parseLocalTimeToMinute } from '../domain/timeline.ts'
 import {
   isBand,
   isDutyAssignment,
@@ -86,6 +87,34 @@ const hasResolvablePerformanceEventBands = ({
   })
 }
 
+const hasValidSectionStageIntervals = ({
+  sections,
+  stages,
+}: Pick<PersistedDomainState, 'sections' | 'stages'>): boolean => {
+  const stagesById = new Map(stages.map((stage) => [stage.id, stage]))
+
+  return sections.every((section) => {
+    const stage = stagesById.get(section.stageId)
+    if (!stage) return true
+
+    const stageStart = parseLocalTimeToMinute(stage.plannedStartTime)
+    const stageEnd = stage.plannedEndTime === undefined
+      ? undefined
+      : parseLocalTimeToMinute(stage.plannedEndTime)
+    const sectionStart = section.plannedStartTime === undefined
+      ? undefined
+      : parseLocalTimeToMinute(section.plannedStartTime)
+    const sectionEnd = section.plannedEndTime === undefined
+      ? undefined
+      : parseLocalTimeToMinute(section.plannedEndTime)
+
+    return (sectionStart === undefined ||
+      (sectionStart >= stageStart && (stageEnd === undefined || sectionStart < stageEnd))) &&
+      (sectionEnd === undefined ||
+        (sectionEnd > stageStart && (stageEnd === undefined || sectionEnd <= stageEnd)))
+  })
+}
+
 export const isPersistedAppStateV1 = (
   value: unknown,
 ): value is PersistedAppStateV1 =>
@@ -108,6 +137,10 @@ export const isPersistedAppStateV1 = (
     eventBands: value.eventBands,
     eventDays: value.eventDays,
     scheduleItems: value.scheduleItems,
+    stages: value.stages,
+  }) &&
+  hasValidSectionStageIntervals({
+    sections: value.sections,
     stages: value.stages,
   })
 

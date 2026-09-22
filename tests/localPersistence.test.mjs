@@ -459,6 +459,104 @@ test('保存済みLocalTimeはStage・Section・TimeRange・固定開始時刻�
   }
 })
 
+test('保存済みTimeRangeは片側開放を許可し、両端指定なら開始 < 終了を要求する', () => {
+  const demo = createDemoData()
+  const empty = createPersistedAppState(createEmptyState())
+  const memberDay = demo.eventMemberDays[0]
+  const eventBand = demo.eventBands[0]
+  const validRanges = [
+    { from: '09:00', until: '17:00' },
+    { from: '09:00' },
+    { until: '17:00' },
+  ]
+  const invalidRanges = [
+    { from: '17:00', until: '09:00' },
+    { from: '09:00', until: '09:00' },
+  ]
+
+  for (const range of validRanges) {
+    for (const collection of [
+      { eventMemberDays: [{ ...memberDay, availabilityWindows: [range] }] },
+      { eventMemberDays: [{ ...memberDay, preferredTimeRange: range }] },
+      { eventBands: [{ ...eventBand, availableTimeRange: range }] },
+      { eventBands: [{ ...eventBand, preferredTimeRange: range }] },
+    ]) {
+      assert.ok(parsePersistedState(JSON.stringify({ ...empty, ...collection })))
+    }
+  }
+
+  for (const range of invalidRanges) {
+    for (const collection of [
+      { eventMemberDays: [{ ...memberDay, availabilityWindows: [range] }] },
+      { eventMemberDays: [{ ...memberDay, preferredTimeRange: range }] },
+      { eventBands: [{ ...eventBand, availableTimeRange: range }] },
+      { eventBands: [{ ...eventBand, preferredTimeRange: range }] },
+    ]) {
+      assert.equal(parsePersistedState(JSON.stringify({ ...empty, ...collection })), undefined)
+    }
+  }
+})
+
+test('保存済みStageの固定終了は開始より後だけを許可する', () => {
+  const empty = createPersistedAppState(createEmptyState())
+  const stage = createDemoData().stages[0]
+  for (const [plannedStartTime, plannedEndTime, expected] of [
+    ['09:00', '18:00', true],
+    ['09:00', undefined, true],
+    ['18:00', '09:00', false],
+    ['09:00', '09:00', false],
+  ]) {
+    assert.equal(Boolean(parsePersistedState(JSON.stringify({
+      ...empty,
+      stages: [{ ...stage, plannedStartTime, plannedEndTime }],
+    }))), expected)
+  }
+})
+
+test('保存済みSectionは固定時刻の順序とStage時間内への収まりを要求する', () => {
+  const empty = createPersistedAppState(createEmptyState())
+  const demo = createDemoData()
+  const stage = { ...demo.stages[0], plannedStartTime: '09:00', plannedEndTime: '18:00' }
+  const section = { ...demo.sections[0], stageId: stage.id }
+  for (const [plannedStartTime, plannedEndTime, expected] of [
+    ['10:00', '17:00', true],
+    ['09:00', '18:00', true],
+    [undefined, '17:00', true],
+    ['10:00', undefined, true],
+    ['17:00', '10:00', false],
+    ['10:00', '10:00', false],
+    ['08:59', '17:00', false],
+    ['18:00', undefined, false],
+    [undefined, '09:00', false],
+    [undefined, '18:01', false],
+  ]) {
+    assert.equal(Boolean(parsePersistedState(JSON.stringify({
+      ...empty,
+      stages: [stage],
+      sections: [{ ...section, plannedStartTime, plannedEndTime }],
+    }))), expected)
+  }
+})
+
+test('不正な時間区間を含むsnapshotは補正せず一括破棄してdemoDataへ戻す', () => {
+  const demo = createDemoData()
+  const storage = new MemoryStorage()
+  storage.setItem(STORAGE_KEY, JSON.stringify({
+    ...createPersistedAppState(demo),
+    eventMemberDays: demo.eventMemberDays.map((day, index) =>
+      index === 0
+        ? { ...day, availabilityWindows: [{ from: '17:00', until: '09:00' }] }
+        : day),
+  }))
+
+  let recovered
+  assert.doesNotThrow(() => {
+    recovered = loadPersistedStateOrFallback(createDemoData, storage)
+  })
+  assert.deepEqual(recovered, createPersistedAppState(demo))
+  assert.equal(storage.getItem(STORAGE_KEY), null)
+})
+
 test('保存済み数値を各fieldの整数・符号制約で検証し、許可される0は維持する', () => {
   const demo = createDemoData()
   const empty = createPersistedAppState(createEmptyState())
