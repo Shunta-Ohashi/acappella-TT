@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   createBreakScheduleItemForLane,
+  isValidBreakDurationMinutes,
   createPerformanceScheduleItemForLane,
   getEventBandsForEventDay,
   getInvalidSectionScheduleItemIds,
@@ -199,6 +200,32 @@ test('SectionなしStageへの項目追加ではsectionIdを持たない', () =>
     title: '休憩',
     durationMinutes: 10,
   })
+})
+
+test('Break作成は正の安全な整数分数だけを受け付ける', () => {
+  const stage = stages[1]
+  const input = {
+    id: 'break-duration-test',
+    title: '休憩',
+    stage,
+    stageSections: [],
+    lane: { stageId: stage.id },
+  }
+
+  for (const durationMinutes of [1, 5]) {
+    assert.equal(isValidBreakDurationMinutes(durationMinutes), true)
+    assert.equal(
+      createBreakScheduleItemForLane({ ...input, durationMinutes })?.durationMinutes,
+      durationMinutes,
+    )
+  }
+  for (const durationMinutes of [
+    0, -1, 5.5, Number.NaN, Number.POSITIVE_INFINITY,
+    Number.MAX_SAFE_INTEGER + 1,
+  ]) {
+    assert.equal(isValidBreakDurationMinutes(durationMinutes), false)
+    assert.equal(createBreakScheduleItemForLane({ ...input, durationMinutes }), undefined)
+  }
 })
 
 test('legacy Stage並べ替えでも既存ScheduleItemのsectionIdを維持する', () => {
