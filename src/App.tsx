@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 import type { DropResult } from '@hello-pangea/dnd'
 import type {
@@ -46,7 +46,6 @@ import {
 import { calculateEventDayTimelines } from './domain/timetable'
 import { detectScheduleIssues } from './domain/issues'
 import {
-  AppSectionPlaceholder,
   AppShell,
   type AppSection,
 } from './components/AppShell'
@@ -70,6 +69,7 @@ import {
 import { TimetableGrid } from './components/TimetableGrid'
 import { TimetableOperationsWorkspace } from './components/TimetableOperationsWorkspace'
 import { EventList } from './components/EventList'
+import { DataBackupSettings } from './components/DataBackupSettings'
 import { IssuePanel } from './components/IssuePanel'
 import {
   createEventData,
@@ -142,20 +142,17 @@ import { createDemoData } from './data/demoData'
 import {
   loadPersistedStateOrFallback,
   savePersistedState,
+  type PersistedAppStateV1,
+  type PersistedDomainState,
 } from './persistence/localPersistence'
+import {
+  createBackupFilename,
+  createBackupJson,
+  parseBackupJson,
+} from './persistence/dataBackup'
 import './App.css'
 
 type AppView = 'event-editor' | AppSection
-
-const appSectionPlaceholders: Record<
-  Exclude<AppSection, 'events' | 'shared-data'>,
-  { title: string; description: string }
-> = {
-  settings: {
-    title: '設定',
-    description: 'アプリ全体の設定は後続PRで実装します。',
-  },
-}
 
 const createId = (prefix: string) => `${prefix}-${crypto.randomUUID()}`
 
@@ -208,6 +205,12 @@ function App() {
   const [selectedTimetableStageId, setSelectedTimetableStageId] =
     useState<StageId | undefined>(initialStageId)
   const [isCreateEventDialogOpen, setIsCreateEventDialogOpen] = useState(false)
+  const [isImportingBackup, setIsImportingBackup] = useState(false)
+  const importingBackupRef = useRef(false)
+  const [backupFeedback, setBackupFeedback] = useState<{
+    kind: 'success' | 'error'
+    message: string
+  } | null>(null)
 
   // ==================== 📦 各種状態（State）の管理 ====================
 
@@ -291,23 +294,21 @@ function App() {
     initialAppState.scheduleItems,
   )
 
-  useEffect(() => {
-    savePersistedState({
-      members,
-      bands,
-      events,
-      eventDays,
-      stages,
-      sections,
-      eventMembers,
-      eventMemberDays,
-      eventBands,
-      scheduleItems,
-      paAssignments,
-      dutyTypes,
-      dutyAssignments,
-    })
-  }, [
+  const domainState = useMemo<PersistedDomainState>(() => ({
+    members,
+    bands,
+    events,
+    eventDays,
+    stages,
+    sections,
+    eventMembers,
+    eventMemberDays,
+    eventBands,
+    scheduleItems,
+    paAssignments,
+    dutyTypes,
+    dutyAssignments,
+  }), [
     members,
     bands,
     events,
@@ -322,6 +323,87 @@ function App() {
     dutyTypes,
     dutyAssignments,
   ])
+  useEffect(() => {
+    savePersistedState(domainState)
+  }, [domainState])
+
+  const applyPersistedSnapshot = (snapshot: PersistedAppStateV1) => {
+    setMembers(snapshot.members)
+    setBands(snapshot.bands)
+    setEvents(snapshot.events)
+    setEventDays(snapshot.eventDays)
+    setStages(snapshot.stages)
+    setSections(snapshot.sections)
+    setEventMembers(snapshot.eventMembers)
+    setEventMemberDays(snapshot.eventMemberDays)
+    setEventBands(snapshot.eventBands)
+    setScheduleItems(snapshot.scheduleItems)
+    setPaAssignments(snapshot.paAssignments)
+    setDutyTypes(snapshot.dutyTypes)
+    setDutyAssignments(snapshot.dutyAssignments)
+    setSelectedEventId('')
+    setSelectedTimetableEventDayId(undefined)
+    setSelectedTimetableStageId(undefined)
+    setActiveStep(6)
+    setBreakDuration(10)
+    setIsCreateEventDialogOpen(false)
+    setActiveView('events')
+  }
+
+  const handleExportBackup = () => {
+    let objectUrl: string | undefined
+    let link: HTMLAnchorElement | undefined
+    try {
+      const json = createBackupJson(domainState)
+      objectUrl = URL.createObjectURL(new Blob([json], {
+        type: 'application/json;charset=utf-8',
+      }))
+      link = document.createElement('a')
+      link.href = objectUrl
+      link.download = createBackupFilename(new Date())
+      document.body.appendChild(link)
+      link.click()
+      setBackupFeedback({ kind: 'success', message: 'バックアップを書き出しました。' })
+    } catch {
+      setBackupFeedback({ kind: 'error', message: 'バックアップを書き出せませんでした。' })
+    } finally {
+      link?.remove()
+      if (objectUrl) {
+        const completedUrl = objectUrl
+        window.setTimeout(() => URL.revokeObjectURL(completedUrl), 0)
+      }
+    }
+  }
+
+  const handleImportBackup = async (file: File) => {
+    if (importingBackupRef.current) return
+    importingBackupRef.current = true
+    setIsImportingBackup(true)
+    setBackupFeedback(null)
+    try {
+      const snapshot = parseBackupJson(await file.text())
+      if (!snapshot) {
+        setBackupFeedback({
+          kind: 'error',
+          message: 'バックアップファイルを読み込めませんでした。ファイルが破損しているか、対応していない形式です。',
+        })
+        return
+      }
+      if (!window.confirm('バックアップを復元すると、現在のデータはすべて置き換わり、未保存の編集も失われます。復元しますか？')) return
+      if (!savePersistedState(snapshot)) {
+        setBackupFeedback({ kind: 'error', message: 'バックアップを保存できませんでした。現在のデータは変更されていません。' })
+        return
+      }
+      applyPersistedSnapshot(snapshot)
+      setBackupFeedback({ kind: 'success', message: 'バックアップを復元しました。' })
+    } catch {
+      setBackupFeedback({ kind: 'error', message: 'バックアップファイルを読み込めませんでした。現在のデータは変更されていません。' })
+    } finally {
+      importingBackupRef.current = false
+      setIsImportingBackup(false)
+    }
+  }
+
   const selectedScheduleItems = scheduleItems.filter((scheduleItem) =>
     selectedStageIds.has(scheduleItem.stageId),
   )
@@ -1105,6 +1187,14 @@ function App() {
       activeSection={activeView === 'event-editor' ? 'events' : activeView}
       onNavigate={(section) => setActiveView(section)}
     >
+      {backupFeedback && (
+        <div
+          className={`data-backup-feedback data-backup-feedback--${backupFeedback.kind}`}
+          role={backupFeedback.kind === 'error' ? 'alert' : 'status'}
+        >
+          {backupFeedback.message}
+        </div>
+      )}
       {activeView === 'event-editor' ? (
         <EventEditorShell
           eventName={selectedEvent?.name ?? 'イベント'}
@@ -1427,9 +1517,10 @@ function App() {
           onSaveBand={handleSaveCommonBand}
         />
       ) : (
-        <AppSectionPlaceholder
-          title={appSectionPlaceholders[activeView].title}
-          description={appSectionPlaceholders[activeView].description}
+        <DataBackupSettings
+          isImporting={isImportingBackup}
+          onExport={handleExportBackup}
+          onImportFile={handleImportBackup}
         />
       )}
       {isCreateEventDialogOpen && (

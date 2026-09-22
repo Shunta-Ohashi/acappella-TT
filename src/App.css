@@ -693,6 +693,41 @@
   background: #f3f7fc;
 }
 
+.data-backup-settings {
+  min-height: 0;
+}
+
+.data-backup-settings h2 {
+  margin: 28px 0 8px;
+  color: #26303d;
+  font-size: 18px;
+}
+
+.data-backup-settings__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.data-backup-settings__notice {
+  margin-top: 20px;
+}
+
+.data-backup-feedback {
+  width: min(100% - 64px, 1056px);
+  margin: 20px auto 0;
+  padding: 12px 16px;
+  border: 1px solid #aec3dc;
+  border-radius: 8px;
+  background: #f3f7fc;
+  color: #26303d;
+}
+
+.data-backup-feedback--error {
+  border-color: #d9a5a5;
+  background: #fff5f5;
+}
+
 .timetable-workspace {
   min-width: 0;
 }
