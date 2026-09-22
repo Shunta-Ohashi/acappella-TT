@@ -199,6 +199,7 @@ test('demoDataの全13 collectionで実際の要素がstructural validatorを通
     assert.ok(demo[collection].length > 0, `${collection}に検証対象がありません`)
     assert.ok(parsePersistedState(JSON.stringify({
       ...createPersistedAppState(empty),
+      ...(collection === 'scheduleItems' ? { eventBands: demo.eventBands } : {}),
       [collection]: [demo[collection][0]],
     })), `${collection}の正常要素が拒否されました`)
   }
@@ -255,10 +256,146 @@ test('ScheduleItemのdiscriminatorとkind別必須fieldを検証する', () => {
       scheduleItems: [item],
     })), undefined)
   }
-  assert.ok(parsePersistedState(JSON.stringify({
+  assert.equal(parsePersistedState(JSON.stringify({
     ...empty,
     scheduleItems: [{ ...base, kind: 'performance', eventBandId: 'missing-band' }],
-  })))
+  })), undefined)
+})
+
+test('PerformanceのEventBand参照切れはsnapshot全体を拒否し、Breakと修復可能な参照切れは保持する', () => {
+  const storage = new MemoryStorage()
+  const demo = createDemoData()
+  const valid = createPersistedAppState(demo)
+  const performance = demo.scheduleItems.find((item) => item.kind === 'performance')
+  assert.ok(performance)
+  assert.ok(parsePersistedState(JSON.stringify(valid)))
+
+  const broken = {
+    ...valid,
+    scheduleItems: valid.scheduleItems.map((item) =>
+      item.id === performance.id ? { ...item, eventBandId: 'missing-band' } : item),
+  }
+  storage.setItem(STORAGE_KEY, JSON.stringify(broken))
+  let recovered
+  assert.doesNotThrow(() => {
+    recovered = loadPersistedStateOrFallback(createDemoData, storage)
+  })
+  assert.deepEqual(recovered, valid)
+  assert.equal(storage.getItem(STORAGE_KEY), null)
+
+  const breakOnly = {
+    ...createPersistedAppState(createEmptyState()),
+    scheduleItems: [{ id: 'break-1', stageId: 'missing-stage', order: 0,
+      kind: 'break', title: '休憩', durationMinutes: 10 }],
+  }
+  assert.ok(parsePersistedState(JSON.stringify(breakOnly)))
+})
+
+test('出演項目が別EventのEventBandを参照すると起動時Timelineへ渡せないため拒否する', () => {
+  const demo = createDemoData()
+  const performance = demo.scheduleItems.find((item) => item.kind === 'performance')
+  assert.ok(performance)
+  const stage = demo.stages.find((candidate) => candidate.id === performance.stageId)
+  const day = demo.eventDays.find((candidate) => candidate.id === stage?.eventDayId)
+  assert.ok(day)
+  const otherEventBand = demo.eventBands.find((band) => band.eventId !== day.eventId)
+  assert.ok(otherEventBand)
+  assert.equal(parsePersistedState(JSON.stringify({
+    ...createPersistedAppState(demo),
+    scheduleItems: demo.scheduleItems.map((item) =>
+      item.id === performance.id ? { ...item, eventBandId: otherEventBand.id } : item),
+  })), undefined)
+})
+
+test('保存済みLocalTimeはStage・Section・TimeRange・固定開始時刻まで同じ形式で検証する', () => {
+  const demo = createDemoData()
+  const empty = createPersistedAppState(createEmptyState())
+  const stage = demo.stages[0]
+  const section = demo.sections[0]
+  const memberDay = demo.eventMemberDays[0]
+  const eventBand = demo.eventBands[0]
+  const valid = [
+    { stages: [{ ...stage, plannedStartTime: '09:30', plannedEndTime: undefined }] },
+    { sections: [{ ...section, plannedStartTime: '09:30', plannedEndTime: undefined }] },
+    { eventMemberDays: [{ ...memberDay, availabilityWindows: [{ from: '09:30' }],
+      preferredTimeRange: { until: '17:30' } }] },
+    { eventBands: [{ ...eventBand, availableTimeRange: { from: '09:30' },
+      preferredTimeRange: { until: '17:30' },
+      fixedPlacement: { stageId: stage.id, plannedStartTime: '09:30' } }] },
+  ]
+  for (const collection of valid) {
+    assert.ok(parsePersistedState(JSON.stringify({ ...empty, ...collection })))
+  }
+
+  const invalid = [
+    { stages: [{ ...stage, plannedStartTime: 'bad' }] },
+    { stages: [{ ...stage, plannedStartTime: '24:00' }] },
+    { stages: [{ ...stage, plannedEndTime: '10:60' }] },
+    { sections: [{ ...section, plannedStartTime: '9:30' }] },
+    { sections: [{ ...section, plannedEndTime: '24:00' }] },
+    { eventMemberDays: [{ ...memberDay, availabilityWindows: [{ until: '99:00' }] }] },
+    { eventMemberDays: [{ ...memberDay, preferredTimeRange: { from: '10:60' } }] },
+    { eventBands: [{ ...eventBand, availableTimeRange: { from: 'bad' } }] },
+    { eventBands: [{ ...eventBand, preferredTimeRange: { until: '24:00' } }] },
+    { eventBands: [{ ...eventBand, fixedPlacement: { stageId: stage.id,
+      plannedStartTime: '10:60' } }] },
+  ]
+  for (const collection of invalid) {
+    assert.equal(parsePersistedState(JSON.stringify({ ...empty, ...collection })), undefined)
+  }
+})
+
+test('保存済み数値を各fieldの整数・符号制約で検証し、許可される0は維持する', () => {
+  const demo = createDemoData()
+  const empty = createPersistedAppState(createEmptyState())
+  const event = demo.events[0]
+  const stage = demo.stages[0]
+  const section = demo.sections[0]
+  const eventDay = demo.eventDays[0]
+  const member = demo.members[0]
+  const eventBand = demo.eventBands[0]
+  const breakItem = { id: 'break-1', stageId: stage.id, order: 0,
+    kind: 'break', title: '休憩', durationMinutes: 10 }
+  const dutyType = demo.dutyTypes[0]
+  const allowedZero = {
+    ...empty,
+    events: [{ ...event, defaultTransitionMinutes: 0,
+      validationPolicy: { minimumGapBands: 0, minimumRestMinutes: 0 } }],
+    eventDays: [{ ...eventDay, order: 0 }],
+    stages: [{ ...stage, order: 0, transitionMinutes: 0 }],
+    sections: [{ ...section, order: 0 }],
+    scheduleItems: [breakItem],
+    dutyTypes: [{ ...dutyType, order: 0 }],
+    eventBands: [{ ...eventBand, fixedPlacement: {
+      stageId: stage.id, position: { kind: 'index', index: 0 },
+    } }],
+  }
+  assert.ok(parsePersistedState(JSON.stringify(allowedZero)))
+
+  const invalid = [
+    { members: [{ ...member, entryAcademicYear: 0 }] },
+    { events: [{ ...event, defaultTransitionMinutes: -1 }] },
+    { events: [{ ...event, defaultTransitionMinutes: 1.5 }] },
+    { events: [{ ...event, validationPolicy: { ...event.validationPolicy, minimumGapBands: -1 } }] },
+    { events: [{ ...event, validationPolicy: { ...event.validationPolicy, minimumRestMinutes: 1.5 } }] },
+    { events: [{ ...event, performanceSlotMinutes: [0] }] },
+    { events: [{ ...event, performanceSlotMinutes: [1.5] }] },
+    { eventDays: [{ ...eventDay, order: -1 }] },
+    { stages: [{ ...stage, order: 1.5 }] },
+    { stages: [{ ...stage, transitionMinutes: -1 }] },
+    { sections: [{ ...section, order: -1 }] },
+    { eventBands: [{ ...eventBand, durationMinutes: 0 }] },
+    { eventBands: [{ ...eventBand, durationMinutes: 1.5 }] },
+    { eventBands: [{ ...eventBand, fixedPlacement: {
+      stageId: stage.id, position: { kind: 'index', index: -1 },
+    } }] },
+    { scheduleItems: [{ ...breakItem, durationMinutes: -1 }] },
+    { scheduleItems: [{ ...breakItem, order: 1.5 }] },
+    { dutyTypes: [{ ...dutyType, order: -1 }] },
+  ]
+  for (const collection of invalid) {
+    assert.equal(parsePersistedState(JSON.stringify({ ...empty, ...collection })), undefined)
+  }
 })
 
 test('PA・DutyのScheduleBoundaryをnested validationし参照先の有無は見ない', () => {

@@ -60,6 +60,26 @@ export interface StorageLike {
   removeItem: (key: string) => void
 }
 
+const hasResolvablePerformanceEventBands = ({
+  eventBands,
+  eventDays,
+  scheduleItems,
+  stages,
+}: Pick<PersistedDomainState, 'eventBands' | 'eventDays' | 'scheduleItems' | 'stages'>): boolean => {
+  const eventBandsById = new Map(eventBands.map((eventBand) => [eventBand.id, eventBand]))
+  const eventIdByDayId = new Map(eventDays.map((day) => [day.id, day.eventId]))
+  const eventIdByStageId = new Map(stages.map((stage) =>
+    [stage.id, eventIdByDayId.get(stage.eventDayId)]))
+
+  return scheduleItems.every((item) => {
+    if (item.kind !== 'performance') return true
+    const eventBand = eventBandsById.get(item.eventBandId)
+    if (!eventBand) return false
+    const stageEventId = eventIdByStageId.get(item.stageId)
+    return stageEventId === undefined || eventBand.eventId === stageEventId
+  })
+}
+
 export const isPersistedAppStateV1 = (
   value: unknown,
 ): value is PersistedAppStateV1 =>
@@ -77,7 +97,13 @@ export const isPersistedAppStateV1 = (
   isPersistedCollection(value.scheduleItems, isScheduleItem) &&
   isPersistedCollection(value.paAssignments, isPaAssignment) &&
   isPersistedCollection(value.dutyTypes, isDutyType) &&
-  isPersistedCollection(value.dutyAssignments, isDutyAssignment)
+  isPersistedCollection(value.dutyAssignments, isDutyAssignment) &&
+  hasResolvablePerformanceEventBands({
+    eventBands: value.eventBands,
+    eventDays: value.eventDays,
+    scheduleItems: value.scheduleItems,
+    stages: value.stages,
+  })
 
 export const createPersistedAppState = (
   state: PersistedDomainState,

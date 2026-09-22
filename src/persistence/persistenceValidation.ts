@@ -18,14 +18,19 @@ import type {
   Stage,
   TimeRange,
 } from '../domain/models'
+import { isValidLocalTime } from '../domain/timeline.ts'
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const isString = (value: unknown): value is string => typeof value === 'string'
 const isBoolean = (value: unknown): value is boolean => typeof value === 'boolean'
-const isFiniteNumber = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isFinite(value)
+const isNonNegativeInteger = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+const isPositiveInteger = (value: unknown): value is number =>
+  isNonNegativeInteger(value) && value > 0
+const isLocalTime = (value: unknown): value is string =>
+  isString(value) && isValidLocalTime(value)
 const isOptional = <T>(
   value: unknown,
   validator: (candidate: unknown) => candidate is T,
@@ -36,23 +41,23 @@ const isArrayOf = <T>(
 ): value is T[] => Array.isArray(value) && value.every(validator)
 const isStringArray = (value: unknown): value is string[] =>
   isArrayOf(value, isString)
-const isNumberArray = (value: unknown): value is number[] =>
-  isArrayOf(value, isFiniteNumber)
+const isPositiveIntegerArray = (value: unknown): value is number[] =>
+  isArrayOf(value, isPositiveInteger)
 
 const isPaCapabilities = (value: unknown): value is PaCapabilities =>
   isRecord(value) && isBoolean(value.main) && isBoolean(value.sub)
 
 const isTimeRange = (value: unknown): value is TimeRange =>
   isRecord(value) &&
-  isOptional(value.from, isString) &&
-  isOptional(value.until, isString) &&
+  isOptional(value.from, isLocalTime) &&
+  isOptional(value.until, isLocalTime) &&
   (value.from !== undefined || value.until !== undefined)
 
 const isFixedPosition = (value: unknown): value is FixedPosition =>
   isRecord(value) && (
     value.kind === 'first' ||
     value.kind === 'last' ||
-    (value.kind === 'index' && isFiniteNumber(value.index))
+    (value.kind === 'index' && isNonNegativeInteger(value.index))
   )
 
 const isFixedPlacement = (value: unknown): value is FixedPlacement =>
@@ -60,7 +65,7 @@ const isFixedPlacement = (value: unknown): value is FixedPlacement =>
   isString(value.stageId) &&
   isOptional(value.sectionId, isString) &&
   isOptional(value.position, isFixedPosition) &&
-  isOptional(value.plannedStartTime, isString)
+  isOptional(value.plannedStartTime, isLocalTime)
 
 const isScheduleBoundary = (value: unknown): value is ScheduleBoundary =>
   isRecord(value) &&
@@ -72,7 +77,7 @@ export const isMember = (value: unknown): value is Member =>
   isString(value.id) &&
   isString(value.realName) &&
   isOptional(value.acaName, isString) &&
-  isOptional(value.entryAcademicYear, isFiniteNumber) &&
+  isOptional(value.entryAcademicYear, isPositiveInteger) &&
   isOptional(value.notes, isString) &&
   isBoolean(value.active) &&
   isOptional(value.paCapabilities, isPaCapabilities)
@@ -91,11 +96,11 @@ export const isEvent = (value: unknown): value is Event =>
   isString(value.name) &&
   isOptional(value.description, isString) &&
   isString(value.timeZone) &&
-  isFiniteNumber(value.defaultTransitionMinutes) &&
+  isNonNegativeInteger(value.defaultTransitionMinutes) &&
   isRecord(value.validationPolicy) &&
-  isFiniteNumber(value.validationPolicy.minimumGapBands) &&
-  isFiniteNumber(value.validationPolicy.minimumRestMinutes) &&
-  isNumberArray(value.performanceSlotMinutes) &&
+  isNonNegativeInteger(value.validationPolicy.minimumGapBands) &&
+  isNonNegativeInteger(value.validationPolicy.minimumRestMinutes) &&
+  isPositiveIntegerArray(value.performanceSlotMinutes) &&
   isOptional(value.notes, isString)
 
 export const isEventDay = (value: unknown): value is EventDay =>
@@ -104,7 +109,7 @@ export const isEventDay = (value: unknown): value is EventDay =>
   isString(value.eventId) &&
   isString(value.date) &&
   isOptional(value.label, isString) &&
-  isFiniteNumber(value.order)
+  isNonNegativeInteger(value.order)
 
 export const isStage = (value: unknown): value is Stage =>
   isRecord(value) &&
@@ -112,10 +117,10 @@ export const isStage = (value: unknown): value is Stage =>
   isString(value.eventDayId) &&
   isString(value.name) &&
   isOptional(value.location, isString) &&
-  isFiniteNumber(value.order) &&
-  isString(value.plannedStartTime) &&
-  isOptional(value.plannedEndTime, isString) &&
-  isOptional(value.transitionMinutes, isFiniteNumber) &&
+  isNonNegativeInteger(value.order) &&
+  isLocalTime(value.plannedStartTime) &&
+  isOptional(value.plannedEndTime, isLocalTime) &&
+  isOptional(value.transitionMinutes, isNonNegativeInteger) &&
   isOptional(value.notes, isString)
 
 export const isSection = (value: unknown): value is Section =>
@@ -123,9 +128,9 @@ export const isSection = (value: unknown): value is Section =>
   isString(value.id) &&
   isString(value.stageId) &&
   isString(value.name) &&
-  isFiniteNumber(value.order) &&
-  isOptional(value.plannedStartTime, isString) &&
-  isOptional(value.plannedEndTime, isString) &&
+  isNonNegativeInteger(value.order) &&
+  isOptional(value.plannedStartTime, isLocalTime) &&
+  isOptional(value.plannedEndTime, isLocalTime) &&
   isOptional(value.notes, isString)
 
 export const isEventMember = (value: unknown): value is EventMember =>
@@ -156,7 +161,7 @@ export const isEventBand = (value: unknown): value is EventBand =>
   isOptional(value.bandId, isString) &&
   isString(value.name) &&
   isStringArray(value.memberIds) &&
-  isFiniteNumber(value.durationMinutes) &&
+  isPositiveInteger(value.durationMinutes) &&
   isOptional(value.availableTimeRange, isTimeRange) &&
   isOptional(value.preferredTimeRange, isTimeRange) &&
   isOptional(value.fixedPlacement, isFixedPlacement) &&
@@ -167,11 +172,11 @@ export const isScheduleItem = (value: unknown): value is ScheduleItem =>
   isString(value.id) &&
   isString(value.stageId) &&
   isOptional(value.sectionId, isString) &&
-  isFiniteNumber(value.order) && (
+  isNonNegativeInteger(value.order) && (
     (value.kind === 'performance' && isString(value.eventBandId)) ||
     (value.kind === 'break' &&
       isString(value.title) &&
-      isFiniteNumber(value.durationMinutes))
+      isPositiveInteger(value.durationMinutes))
   )
 
 export const isPaAssignment = (value: unknown): value is PaAssignment =>
@@ -190,7 +195,7 @@ export const isDutyType = (value: unknown): value is DutyType =>
   isString(value.id) &&
   isString(value.eventId) &&
   isString(value.name) &&
-  isFiniteNumber(value.order)
+  isNonNegativeInteger(value.order)
 
 export const isDutyAssignment = (value: unknown): value is DutyAssignment =>
   isRecord(value) &&
