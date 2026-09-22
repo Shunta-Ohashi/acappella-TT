@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { createDemoData } from '../src/data/demoData.ts'
-import { getUnscheduledEventBandsForEventDay } from '../src/domain/schedule.ts'
+import {
+  createBreakScheduleItemForLane,
+  getUnscheduledEventBandsForEventDay,
+} from '../src/domain/schedule.ts'
 import { canSetStageStartTime } from '../src/domain/eventStageSettings.ts'
 import {
   CURRENT_STORAGE_VERSION,
@@ -304,6 +307,28 @@ test('ScheduleItemのdiscriminatorとkind別必須fieldを検証する', () => {
     ...empty,
     scheduleItems: [{ ...base, kind: 'performance', eventBandId: 'missing-band' }],
   })), undefined)
+})
+
+test('domainで作成できるBreakは保存・復元しても同じdurationMinutesを保つ', () => {
+  const demo = createDemoData()
+  const stage = demo.stages.find((candidate) =>
+    !demo.sections.some((section) => section.stageId === candidate.id))
+  assert.ok(stage)
+  const item = createBreakScheduleItemForLane({
+    id: 'break-round-trip',
+    title: '休憩',
+    durationMinutes: 5,
+    stage,
+    stageSections: [],
+    lane: { stageId: stage.id },
+  })
+  assert.ok(item)
+
+  const snapshot = createPersistedAppState({
+    ...demo,
+    scheduleItems: [...demo.scheduleItems, item],
+  })
+  assert.deepEqual(parsePersistedState(JSON.stringify(snapshot)), snapshot)
 })
 
 test('PerformanceのEventBand参照切れはsnapshot全体を拒否し、Breakと修復可能な参照切れは保持する', () => {

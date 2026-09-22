@@ -24,6 +24,7 @@ import {
   isValidStageTimeRange,
   validatePerformanceSlotMinutes,
 } from '../domain/eventStageSettings.ts'
+import { isValidBreakDurationMinutes } from '../domain/schedule.ts'
 import { isValidLocalTime } from '../domain/timeline.ts'
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -188,7 +189,7 @@ export const isScheduleItem = (value: unknown): value is ScheduleItem =>
     (value.kind === 'performance' && isString(value.eventBandId)) ||
     (value.kind === 'break' &&
       isString(value.title) &&
-      isPositiveInteger(value.durationMinutes))
+      isValidBreakDurationMinutes(value.durationMinutes))
   )
 
 export const isPaAssignment = (value: unknown): value is PaAssignment =>

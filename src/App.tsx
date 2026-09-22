@@ -35,6 +35,7 @@ import {
   getStagesForEventDay,
   getUnscheduledEventBandsForEventDay,
   insertScheduleItemInLane,
+  isValidBreakDurationMinutes,
   moveScheduleItemWithinStage,
   removeScheduleItem,
   reorderScheduleLaneItems,
@@ -822,7 +823,7 @@ function App() {
     if (
       !currentStage ||
       currentStageHasInvalidSectionAssignments ||
-      breakDuration <= 0
+      !isValidBreakDurationMinutes(breakDuration)
     ) return
 
     const lane: ScheduleLane = {

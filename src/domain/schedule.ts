@@ -318,6 +318,9 @@ export const createPerformanceScheduleItemForLane = ({
   }, lane, 0) as PerformanceScheduleItem
 }
 
+export const isValidBreakDurationMinutes = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+
 export const createBreakScheduleItemForLane = ({
   id,
   title,
@@ -334,7 +337,7 @@ export const createBreakScheduleItemForLane = ({
   lane: ScheduleLane
 }): BreakScheduleItem | undefined => {
   if (
-    durationMinutes <= 0 ||
+    !isValidBreakDurationMinutes(durationMinutes) ||
     !isValidScheduleLane(stage, stageSections, lane)
   ) return undefined
 
