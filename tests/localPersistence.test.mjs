@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { createDemoData } from '../src/data/demoData.ts'
+import { getUnscheduledEventBandsForEventDay } from '../src/domain/schedule.ts'
 import {
   CURRENT_STORAGE_VERSION,
   STORAGE_KEY,
@@ -347,6 +348,77 @@ test('出演項目が別EventのEventBandを参照すると起動時Timelineへ�
     scheduleItems: demo.scheduleItems.map((item) =>
       item.id === performance.id ? { ...item, eventBandId: otherEventBand.id } : item),
   })), undefined)
+})
+
+test('同じ固定Bandの別日出演は別EventBand IDで保存でき、Poolも日別IDで判定する', () => {
+  const demo = createDemoData()
+  const day1Band = demo.eventBands.find((band) =>
+    band.bandId && demo.eventBands.some((other) =>
+      other.id !== band.id && other.eventId === band.eventId &&
+      other.bandId === band.bandId && other.eventDayId !== band.eventDayId))
+  assert.ok(day1Band)
+  const day2Band = demo.eventBands.find((band) =>
+    band.id !== day1Band.id && band.eventId === day1Band.eventId &&
+    band.bandId === day1Band.bandId && band.eventDayId !== day1Band.eventDayId)
+  assert.ok(day2Band)
+  const day1Stage = demo.stages.find((stage) => stage.eventDayId === day1Band.eventDayId)
+  const day2Stage = demo.stages.find((stage) => stage.eventDayId === day2Band.eventDayId)
+  assert.ok(day1Stage)
+  assert.ok(day2Stage)
+  const day1Item = { id: 'day1-item', stageId: day1Stage.id, order: 0,
+    kind: 'performance', eventBandId: day1Band.id }
+  const day2Item = { id: 'day2-item', stageId: day2Stage.id, order: 0,
+    kind: 'performance', eventBandId: day2Band.id }
+  const snapshot = createPersistedAppState(demo)
+
+  assert.ok(parsePersistedState(JSON.stringify({ ...snapshot, scheduleItems: [day1Item] })))
+  assert.ok(parsePersistedState(JSON.stringify({
+    ...snapshot,
+    scheduleItems: [day1Item, day2Item],
+  })))
+
+  const day2Pool = getUnscheduledEventBandsForEventDay({
+    eventBands: demo.eventBands,
+    eventId: day2Band.eventId,
+    eventDayId: day2Band.eventDayId,
+    stages: demo.stages,
+    scheduleItems: [day1Item],
+  })
+  assert.ok(day2Pool.some((band) => band.id === day2Band.id))
+  assert.ok(!day2Pool.some((band) => band.id === day1Band.id))
+
+  const scheduledDay2Pool = getUnscheduledEventBandsForEventDay({
+    eventBands: demo.eventBands,
+    eventId: day2Band.eventId,
+    eventDayId: day2Band.eventDayId,
+    stages: demo.stages,
+    scheduleItems: [day1Item, day2Item],
+  })
+  assert.ok(!scheduledDay2Pool.some((band) => band.id === day2Band.id))
+})
+
+test('同一Eventでも別EventDayのEventBandを参照するPerformanceは一括拒否する', () => {
+  const demo = createDemoData()
+  const day1Band = demo.eventBands.find((band) => band.eventDayId === 'event-day-demo-main-01')
+  const day2Band = demo.eventBands.find((band) =>
+    band.eventId === day1Band?.eventId && band.eventDayId !== day1Band.eventDayId)
+  const day1Stage = demo.stages.find((stage) => stage.eventDayId === day1Band?.eventDayId)
+  assert.ok(day1Band)
+  assert.ok(day2Band)
+  assert.ok(day1Stage)
+  const storage = new MemoryStorage()
+  storage.setItem(STORAGE_KEY, JSON.stringify({
+    ...createPersistedAppState(demo),
+    scheduleItems: [{ id: 'cross-day-item', stageId: day1Stage.id, order: 0,
+      kind: 'performance', eventBandId: day2Band.id }],
+  }))
+
+  let recovered
+  assert.doesNotThrow(() => {
+    recovered = loadPersistedStateOrFallback(createDemoData, storage)
+  })
+  assert.deepEqual(recovered, createPersistedAppState(demo))
+  assert.equal(storage.getItem(STORAGE_KEY), null)
 })
 
 test('保存済みLocalTimeはStage・Section・TimeRange・固定開始時刻まで同じ形式で検証する', () => {

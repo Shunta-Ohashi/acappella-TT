@@ -68,14 +68,20 @@ const hasResolvablePerformanceEventBands = ({
 }: Pick<PersistedDomainState, 'eventBands' | 'eventDays' | 'scheduleItems' | 'stages'>): boolean => {
   const eventBandsById = new Map(eventBands.map((eventBand) => [eventBand.id, eventBand]))
   const eventIdByDayId = new Map(eventDays.map((day) => [day.id, day.eventId]))
-  const eventIdByStageId = new Map(stages.map((stage) =>
-    [stage.id, eventIdByDayId.get(stage.eventDayId)]))
+  const eventDayIdByStageId = new Map(stages.map((stage) =>
+    [stage.id, stage.eventDayId]))
 
   return scheduleItems.every((item) => {
     if (item.kind !== 'performance') return true
     const eventBand = eventBandsById.get(item.eventBandId)
     if (!eventBand) return false
-    const stageEventId = eventIdByStageId.get(item.stageId)
+    const stageEventDayId = eventDayIdByStageId.get(item.stageId)
+    if (stageEventDayId !== undefined && eventBand.eventDayId !== stageEventDayId) {
+      return false
+    }
+    const stageEventId = stageEventDayId === undefined
+      ? undefined
+      : eventIdByDayId.get(stageEventDayId)
     return stageEventId === undefined || eventBand.eventId === stageEventId
   })
 }
