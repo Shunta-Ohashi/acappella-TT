@@ -128,10 +128,9 @@ const isWithinTimeRange = (
   plannedEndMinute: number,
   timeRange: TimeRange,
 ): boolean =>
-  (timeRange.from === undefined ||
-    plannedStartMinute >= parseLocalTimeToMinute(timeRange.from)) &&
-  (timeRange.until === undefined ||
-    plannedEndMinute <= parseLocalTimeToMinute(timeRange.until))
+  isIntervalWithinAvailabilityWindows(
+    [timeRange], plannedStartMinute, plannedEndMinute,
+  )
 
 const isOutsideTimeRange = (
   plannedStartMinute: number,
@@ -911,15 +910,11 @@ export const detectScheduleIssues = ({
         })
       }
 
-      const isOutsideAvailability =
-        eventMemberDay.availabilityWindows !== undefined &&
-        !eventMemberDay.availabilityWindows.some((availabilityWindow) =>
-          isWithinTimeRange(
-            appearance.plannedStartMinute,
-            appearance.plannedEndMinute,
-            availabilityWindow,
-          ),
-        )
+      const isOutsideAvailability = !isIntervalWithinAvailabilityWindows(
+        eventMemberDay.availabilityWindows,
+        appearance.plannedStartMinute,
+        appearance.plannedEndMinute,
+      )
 
       if (isOutsideAvailability) {
         addIssue({
