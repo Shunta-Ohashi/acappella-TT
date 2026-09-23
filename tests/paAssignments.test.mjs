@@ -443,6 +443,28 @@ test('Timeline更新により同じScheduleBoundaryから導出するPA実時間
   })
 })
 
+test('Section間Breakのstart/end ScheduleBoundaryをPA実時間へ解決する', () => {
+  const interSectionBreak = {
+    scheduleItemId: 'between-break',
+    eventDayId: 'day-1',
+    stageId: 'stage-a',
+    afterSectionId: 'section-1',
+    kind: 'break',
+    plannedStartMinute: 720,
+    plannedEndMinute: 735,
+  }
+  const result = resolvePaAssignmentInterval({
+    ...createItem(),
+    from: { scheduleItemId: 'between-break', edge: 'start' },
+    until: { scheduleItemId: 'between-break', edge: 'end' },
+  }, [interSectionBreak])
+
+  assert.deepEqual(result, {
+    ok: true,
+    interval: { fromMinute: 720, untilMinute: 735 },
+  })
+})
+
 test('PA担当中の本人出演を同一EventDayの別StageでもERRORにする', () => {
   const issues = detect({
     paAssignments: [assignment('pa-1', { memberId: 'member-both' })],

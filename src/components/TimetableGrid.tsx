@@ -1,5 +1,5 @@
 import { Draggable, Droppable } from '@hello-pangea/dnd'
-import type { CSSProperties, FormEvent } from 'react'
+import { Fragment, type CSSProperties, type FormEvent } from 'react'
 import type {
   DutyType,
   PaRole,
@@ -20,6 +20,7 @@ import type {
 } from '../ui/timetableWorkspaceRows'
 import { createTimetableGridColumns } from '../ui/timetableGridColumns'
 import {
+  getInterSectionDroppableId,
   getSectionDroppableId,
   getStageDroppableId,
 } from '../ui/timetableDnd'
@@ -37,6 +38,7 @@ interface TimetableGridProps {
   breakDuration: number
   onBreakDurationChange: (durationMinutes: number) => void
   onAddBreak: (sectionId?: SectionId) => void
+  onAddInterSectionBreak: (afterSectionId: SectionId) => void
   onRemoveScheduleItem: (scheduleItemId: ScheduleItemId) => void
 }
 
@@ -242,6 +244,7 @@ export function TimetableGrid({
   breakDuration,
   onBreakDurationChange,
   onAddBreak,
+  onAddInterSectionBreak,
   onRemoveScheduleItem,
 }: TimetableGridProps) {
   const timetableGridColumns = createTimetableGridColumns(dutyTypes)
@@ -280,6 +283,35 @@ export function TimetableGrid({
       </label>
       <button type="submit" aria-label={`${targetName}に休憩を追加`}>
         ＋ 休憩
+      </button>
+    </form>
+  )
+
+  const renderInterSectionBreakForm = (
+    previousSection: Section,
+    nextSection: Section,
+  ) => (
+    <form
+      className="timetable-grid__break-form"
+      onSubmit={(event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault()
+        onAddInterSectionBreak(previousSection.id)
+      }}
+    >
+      <label>
+        休憩（分）
+        <input
+          type="number"
+          min="1"
+          value={breakDuration}
+          onChange={(event) => onBreakDurationChange(Number(event.target.value))}
+        />
+      </label>
+      <button
+        type="submit"
+        aria-label={`${previousSection.name}と${nextSection.name}の間に休憩を追加`}
+      >
+        ＋ 休憩を追加
       </button>
     </form>
   )
@@ -399,37 +431,64 @@ export function TimetableGrid({
           ))}
         </div>
 
-        {orderedSections.length > 0 ? orderedSections.map((section) => {
+        {orderedSections.length > 0 ? orderedSections.map((section, index) => {
           const sectionRows = rows.filter((row) =>
             row.scheduleItem.sectionId === section.id,
           )
+          const nextSection = orderedSections[index + 1]
+          const interSectionRows = rows.filter((row) =>
+            row.scheduleItem.kind === 'break' &&
+            row.scheduleItem.afterSectionId === section.id,
+          )
           return (
-            <section className="timetable-grid__section" key={section.id}>
-              <header className="timetable-grid__section-heading">
-                <div>
-                  <strong>{section.name}</strong>
-                  {(section.plannedStartTime || section.plannedEndTime) && (
-                    <span>
-                      {section.plannedStartTime
-                        ? `開始 ${section.plannedStartTime}`
-                        : '前Sectionから継続'}
-                      {section.plannedEndTime
-                        ? ` / 終了 ${section.plannedEndTime}`
-                        : ''}
-                    </span>
+            <Fragment key={section.id}>
+              <section className="timetable-grid__section">
+                <header className="timetable-grid__section-heading">
+                  <div>
+                    <strong>{section.name}</strong>
+                    {(section.plannedStartTime || section.plannedEndTime) && (
+                      <span>
+                        {section.plannedStartTime
+                          ? `開始 ${section.plannedStartTime}`
+                          : '前Sectionから継続'}
+                        {section.plannedEndTime
+                          ? ` / 終了 ${section.plannedEndTime}`
+                          : ''}
+                      </span>
+                    )}
+                  </div>
+                  {renderBreakForm(section.name, section.id)}
+                </header>
+                {renderLane(
+                  sectionRows,
+                  getSectionDroppableId(section.id),
+                  'このSectionにはまだ項目がありません。',
+                )}
+              </section>
+              {nextSection && (
+                <section className="timetable-grid__inter-section-breaks">
+                  <header className="timetable-grid__inter-section-heading">
+                    <div>
+                      <strong>部間休憩</strong>
+                      <span>{section.name} と {nextSection.name} の間</span>
+                    </div>
+                    {renderInterSectionBreakForm(section, nextSection)}
+                  </header>
+                  {renderLane(
+                    interSectionRows,
+                    getInterSectionDroppableId(section.id),
+                    '部間休憩はありません。',
                   )}
-                </div>
-                {renderBreakForm(section.name, section.id)}
-              </header>
-              {renderLane(
-                sectionRows,
-                getSectionDroppableId(section.id),
-                'このSectionにはまだ項目がありません。',
+                </section>
               )}
-            </section>
+            </Fragment>
           )
         }) : renderLane(
-          rows.filter((row) => row.scheduleItem.sectionId === undefined),
+          rows.filter((row) =>
+            row.scheduleItem.sectionId === undefined &&
+            (row.scheduleItem.kind !== 'break' ||
+              row.scheduleItem.afterSectionId === undefined),
+          ),
           getStageDroppableId(stage.id),
           'タイムテーブルに項目を配置してください。',
         )}

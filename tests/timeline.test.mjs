@@ -164,6 +164,70 @@ test('Section開始時刻がなければ前Sectionの終了後から続ける', 
   )
 })
 
+test('Section内BreakとSection間Breakを順に計算し、次SectionとStage終了へ反映する', () => {
+  const result = calculateStageTimeline({
+    event,
+    stage: createStage({ plannedStartTime: '10:00', transitionMinutes: 0 }),
+    sections: [
+      { id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 },
+      { id: 'section-2', stageId: 'stage-1', name: '2部', order: 1 },
+    ],
+    scheduleItems: [
+      performance('performance-1', 'event-band-2', 0, { sectionId: 'section-1' }),
+      {
+        id: 'inside-break', stageId: 'stage-1', sectionId: 'section-1',
+        order: 1, kind: 'break', title: '部内休憩', durationMinutes: 5,
+      },
+      {
+        id: 'between-break', stageId: 'stage-1', afterSectionId: 'section-1',
+        order: 0, kind: 'break', title: '部間休憩', durationMinutes: 15,
+      },
+      performance('performance-2', 'event-band-2', 0, { sectionId: 'section-2' }),
+    ],
+    eventBands,
+  })
+
+  assert.deepEqual(
+    result.map((item) => [
+      item.scheduleItemId,
+      item.plannedStartMinute,
+      item.plannedEndMinute,
+      item.sectionId,
+      item.afterSectionId,
+    ]),
+    [
+      ['performance-1', 600, 610, 'section-1', undefined],
+      ['inside-break', 610, 615, 'section-1', undefined],
+      ['between-break', 615, 630, undefined, 'section-1'],
+      ['performance-2', 630, 640, 'section-2', undefined],
+    ],
+  )
+})
+
+test('Section間Breakは最後のSection・不明Section・曖昧配置では計算しない', () => {
+  const sections = [
+    { id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 },
+    { id: 'section-2', stageId: 'stage-1', name: '2部', order: 1 },
+  ]
+  for (const placement of [
+    { afterSectionId: 'section-2' },
+    { afterSectionId: 'missing-section' },
+    { sectionId: 'section-1', afterSectionId: 'section-1' },
+    {},
+  ]) {
+    assert.throws(() => calculateStageTimeline({
+      event,
+      stage: createStage(),
+      sections,
+      scheduleItems: [{
+        id: 'invalid-break', stageId: 'stage-1', order: 0,
+        kind: 'break', title: '休憩', durationMinutes: 10, ...placement,
+      }],
+      eventBands,
+    }), /Invalid Section placement for Break/)
+  }
+})
+
 test('次Sectionの開始アンカーが前Sectionの終了より前でも、その時刻を優先する', () => {
   const result = calculateStageTimeline({
     event,

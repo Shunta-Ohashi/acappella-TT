@@ -931,6 +931,36 @@ function App() {
     setBreakDuration(10)
   }
 
+  const handleAddInterSectionBreak = (afterSectionId: SectionId) => {
+    if (
+      !currentStage ||
+      currentStageHasInvalidSectionAssignments ||
+      !isValidBreakDurationMinutes(breakDuration)
+    ) return
+
+    const lane: ScheduleLane = {
+      stageId: currentStage.id,
+      afterSectionId,
+    }
+    const newBreakItem = createBreakScheduleItemForLane({
+      id: createId('schedule-break'),
+      title: '☕ 休憩',
+      durationMinutes: breakDuration,
+      stage: currentStage,
+      stageSections: currentStageSections,
+      lane,
+    })
+    if (!newBreakItem) return
+
+    setScheduleItems(prev => insertScheduleItemInLane(
+      prev,
+      lane,
+      newBreakItem,
+      getScheduleLaneItems(prev, lane).length,
+    ))
+    setBreakDuration(10)
+  }
+
   // 演奏項目を削除すると、参照先のEventBandが算出プールへ戻る。休憩はそのまま削除する
   const handleRemoveScheduleItem = (id: string) => {
     setScheduleItems(prev => removeScheduleItem(prev, id))
@@ -958,12 +988,16 @@ function App() {
     const currentStageSectionIds = new Set(
       currentStageSections.map(section => section.id),
     )
+    const validInterSectionAnchorIds = new Set(
+      currentStageSections.slice(0, -1).map(section => section.id),
+    )
     const sourceLane = sourceTarget.kind === 'pool'
       ? undefined
       : resolveScheduleLane(
           sourceTarget,
           currentStage.id,
           currentStageSectionIds,
+          validInterSectionAnchorIds,
         )
     const destinationLane = destinationTarget.kind === 'pool'
       ? undefined
@@ -971,6 +1005,7 @@ function App() {
           destinationTarget,
           currentStage.id,
           currentStageSectionIds,
+          validInterSectionAnchorIds,
         )
     const sourceIndex = source.index
     const destinationIndex = destination.index
@@ -1342,7 +1377,7 @@ function App() {
                   <section className="timetable-data-error" role="alert">
                     <h3>このStageのタイムテーブルを編集できません</h3>
                     <p>
-                      有効なSectionに所属していない項目があります。データを確認してから再度開いてください。
+                      Section設定と一致しない項目があります。データを確認してから再度開いてください。
                     </p>
                     <p>対象項目: {invalidCurrentStageScheduleItemIds.join('、')}</p>
                   </section>
@@ -1414,6 +1449,7 @@ function App() {
                     breakDuration={breakDuration}
                     onBreakDurationChange={setBreakDuration}
                     onAddBreak={handleAddBreak}
+                    onAddInterSectionBreak={handleAddInterSectionBreak}
                     onRemoveScheduleItem={handleRemoveScheduleItem}
                   />
                 ) : null}

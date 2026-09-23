@@ -241,7 +241,14 @@ const detectTimelineConstraintIssues = ({
       const previousSectionItems = stageItems.filter(
         item => item.sectionId === previousSection.id,
       )
-      const previousEndMinute = getLatestEndMinute(previousSectionItems)
+      const interSectionBreakItems = stageItems.filter(
+        item => item.afterSectionId === previousSection.id,
+      )
+      const itemsBeforeNextSection = [
+        ...previousSectionItems,
+        ...interSectionBreakItems,
+      ]
+      const previousEndMinute = getLatestEndMinute(itemsBeforeNextSection)
       if (previousEndMinute === undefined) continue
 
       const fixedStartMinute = parseLocalTimeToMinute(
@@ -255,7 +262,7 @@ const detectTimelineConstraintIssues = ({
         message: `前のSection ${previousSection.id} のタイムテーブルが Section ${nextSection.id} の固定開始 ${nextSection.plannedStartTime} を ${previousEndMinute - fixedStartMinute} 分超過しています`,
         stageIds: [stage.id],
         sectionIds: [previousSection.id, nextSection.id],
-        scheduleItemIds: previousSectionItems
+        scheduleItemIds: itemsBeforeNextSection
           .filter(item => item.plannedEndMinute > fixedStartMinute)
           .map(item => item.scheduleItemId),
         overrunMinutes: previousEndMinute - fixedStartMinute,

@@ -5,6 +5,7 @@ export const TIMETABLE_POOL_DROPPABLE_ID = 'timetable:pool'
 
 const STAGE_PREFIX = 'timetable:stage:'
 const SECTION_PREFIX = 'timetable:section:'
+const INTER_SECTION_PREFIX = 'timetable:inter-section:'
 
 export const getStageDroppableId = (stageId: StageId): string =>
   `${STAGE_PREFIX}${encodeURIComponent(stageId)}`
@@ -12,10 +13,14 @@ export const getStageDroppableId = (stageId: StageId): string =>
 export const getSectionDroppableId = (sectionId: SectionId): string =>
   `${SECTION_PREFIX}${encodeURIComponent(sectionId)}`
 
+export const getInterSectionDroppableId = (afterSectionId: SectionId): string =>
+  `${INTER_SECTION_PREFIX}${encodeURIComponent(afterSectionId)}`
+
 export type TimetableDropTarget =
   | { kind: 'pool' }
   | { kind: 'stage'; stageId: StageId }
   | { kind: 'section'; sectionId: SectionId }
+  | { kind: 'inter-section'; afterSectionId: SectionId }
 
 const decodeId = (value: string): string | undefined => {
   try {
@@ -40,6 +45,15 @@ export const parseTimetableDroppableId = (
     return sectionId ? { kind: 'section', sectionId } : undefined
   }
 
+  if (droppableId.startsWith(INTER_SECTION_PREFIX)) {
+    const afterSectionId = decodeId(
+      droppableId.slice(INTER_SECTION_PREFIX.length),
+    )
+    return afterSectionId
+      ? { kind: 'inter-section', afterSectionId }
+      : undefined
+  }
+
   return undefined
 }
 
@@ -47,6 +61,7 @@ export const resolveScheduleLane = (
   target: TimetableDropTarget,
   currentStageId: StageId,
   currentStageSectionIds: Set<SectionId>,
+  validInterSectionAnchorIds: Set<SectionId> = new Set(),
 ): ScheduleLane | undefined => {
   if (
     target.kind === 'stage' &&
@@ -54,6 +69,14 @@ export const resolveScheduleLane = (
     currentStageSectionIds.size === 0
   ) {
     return { stageId: currentStageId }
+  }
+
+
+  if (
+    target.kind === 'inter-section' &&
+    validInterSectionAnchorIds.has(target.afterSectionId)
+  ) {
+    return { stageId: currentStageId, afterSectionId: target.afterSectionId }
   }
 
   if (

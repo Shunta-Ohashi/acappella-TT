@@ -165,6 +165,33 @@ test('Timeline順にPerformance・Breakのrowを作り、出演枠へ転換時�
   assert.equal(result.rows[2].scheduleItem.durationMinutes, 10)
 })
 
+test('Section間Breakの配置参照をStep 6 rowへ維持する', () => {
+  const interSectionBreak = {
+    id: 'between-break',
+    stageId: 'stage-1',
+    afterSectionId: 'section-1',
+    order: 0,
+    kind: 'break',
+    title: '部間休憩',
+    durationMinutes: 15,
+  }
+  const result = createRows({
+    scheduleItems: [interSectionBreak],
+    calculatedItems: [{
+      scheduleItemId: interSectionBreak.id,
+      eventDayId: 'day-1',
+      stageId: 'stage-1',
+      afterSectionId: 'section-1',
+      kind: 'break',
+      plannedStartMinute: 620,
+      plannedEndMinute: 635,
+    }],
+  })
+
+  assert.equal(result.rows[0].scheduleItem.afterSectionId, 'section-1')
+  assert.equal(result.rows[0].calculatedItem.afterSectionId, 'section-1')
+})
+
 test('Section所属と実出演メンバー順、条件indicatorをrowへ引き継ぐ', () => {
   const { rows } = createRows()
 

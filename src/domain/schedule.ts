@@ -22,6 +22,7 @@ export interface TimetableSelection {
 export interface ScheduleLane {
   stageId: StageId
   sectionId?: SectionId
+  afterSectionId?: SectionId
 }
 
 const reorder = <T,>(
@@ -54,8 +55,14 @@ const getScheduledEventBandIds = (
 const isItemInLane = (
   item: ScheduleItem,
   lane: ScheduleLane,
-): boolean =>
-  item.stageId === lane.stageId && item.sectionId === lane.sectionId
+): boolean => {
+  if (item.stageId !== lane.stageId || item.sectionId !== lane.sectionId) {
+    return false
+  }
+  return item.kind === 'break'
+    ? item.afterSectionId === lane.afterSectionId
+    : lane.afterSectionId === undefined
+}
 
 const setItemLane = (
   item: ScheduleItem,
@@ -63,6 +70,9 @@ const setItemLane = (
   order: number,
 ): ScheduleItem => {
   const section = lane.sectionId ? { sectionId: lane.sectionId } : {}
+  const interSection = lane.afterSectionId
+    ? { afterSectionId: lane.afterSectionId }
+    : {}
 
   return item.kind === 'performance'
     ? {
@@ -81,6 +91,7 @@ const setItemLane = (
         title: item.title,
         durationMinutes: item.durationMinutes,
         ...section,
+        ...interSection,
       }
 }
 
@@ -228,10 +239,20 @@ export const isValidScheduleLane = (
   lane: ScheduleLane,
 ): boolean => {
   if (lane.stageId !== stage.id) return false
-  if (stageSections.length === 0) return lane.sectionId === undefined
-  if (!lane.sectionId) return false
-  return stageSections.some(
-    section => section.stageId === stage.id && section.id === lane.sectionId,
+  const orderedSections = getSectionsForStage(stageSections, stage.id)
+  if (orderedSections.length === 0) {
+    return lane.sectionId === undefined && lane.afterSectionId === undefined
+  }
+  if (lane.sectionId !== undefined && lane.afterSectionId !== undefined) {
+    return false
+  }
+  if (lane.sectionId !== undefined) {
+    return orderedSections.some(section => section.id === lane.sectionId)
+  }
+  if (lane.afterSectionId === undefined) return false
+  return orderedSections.some(
+    (section, index) =>
+      section.id === lane.afterSectionId && index < orderedSections.length - 1,
   )
 }
 
@@ -248,9 +269,31 @@ export const isValidScheduleItemSectionAssignment = (
   )
   const stageUsesSections = sectionIds.size > 0
 
-  return stageUsesSections
-    ? scheduleItem.sectionId !== undefined && sectionIds.has(scheduleItem.sectionId)
-    : scheduleItem.sectionId === undefined
+  if (scheduleItem.kind === 'performance') {
+    return stageUsesSections
+      ? scheduleItem.sectionId !== undefined && sectionIds.has(scheduleItem.sectionId)
+      : scheduleItem.sectionId === undefined
+  }
+
+  if (!stageUsesSections) {
+    return scheduleItem.sectionId === undefined &&
+      scheduleItem.afterSectionId === undefined
+  }
+  if (
+    scheduleItem.sectionId !== undefined &&
+    scheduleItem.afterSectionId !== undefined
+  ) return false
+  if (scheduleItem.sectionId !== undefined) {
+    return sectionIds.has(scheduleItem.sectionId)
+  }
+  if (scheduleItem.afterSectionId === undefined) return false
+
+  const orderedSections = getSectionsForStage(stageSections, stageId)
+  return orderedSections.some(
+    (section, index) =>
+      section.id === scheduleItem.afterSectionId &&
+      index < orderedSections.length - 1,
+  )
 }
 
 export const getInvalidSectionScheduleItemIds = (
@@ -314,7 +357,10 @@ export const createPerformanceScheduleItemForLane = ({
   stageSections: Section[]
   lane: ScheduleLane
 }): PerformanceScheduleItem | undefined => {
-  if (!isValidScheduleLane(stage, stageSections, lane)) return undefined
+  if (
+    lane.afterSectionId !== undefined ||
+    !isValidScheduleLane(stage, stageSections, lane)
+  ) return undefined
 
   return setItemLane({
     id,
@@ -408,7 +454,8 @@ export const moveScheduleItemWithinStage = ({
 
   if (
     sourceLane.stageId === destinationLane.stageId &&
-    sourceLane.sectionId === destinationLane.sectionId
+    sourceLane.sectionId === destinationLane.sectionId &&
+    sourceLane.afterSectionId === destinationLane.afterSectionId
   ) {
     return reorderScheduleLaneItems(
       scheduleItems,
@@ -421,6 +468,10 @@ export const moveScheduleItemWithinStage = ({
   const sourceItems = getScheduleLaneItems(scheduleItems, sourceLane)
   const movedItem = sourceItems[sourceIndex]
   if (!movedItem) return scheduleItems
+  if (
+    movedItem.kind === 'performance' &&
+    destinationLane.afterSectionId !== undefined
+  ) return scheduleItems
   const destinationItems = getScheduleLaneItems(
     scheduleItems,
     destinationLane,
@@ -453,6 +504,9 @@ export const removeScheduleItem = (
   const lane = {
     stageId: targetItem.stageId,
     sectionId: targetItem.sectionId,
+    ...(targetItem.kind === 'break' && targetItem.afterSectionId !== undefined
+      ? { afterSectionId: targetItem.afterSectionId }
+      : {}),
   }
   return replaceScheduleLaneItems(
     scheduleItems,

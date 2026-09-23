@@ -185,6 +185,7 @@ export const isScheduleItem = (value: unknown): value is ScheduleItem =>
   isString(value.id) &&
   isString(value.stageId) &&
   isOptional(value.sectionId, isString) &&
+  isOptional(value.afterSectionId, isString) &&
   isNonNegativeInteger(value.order) && (
     (value.kind === 'performance' && isString(value.eventBandId)) ||
     (value.kind === 'break' &&

@@ -17,6 +17,31 @@ import {
 import { detectScheduleIssues } from '../src/domain/issues.ts'
 import { intervalsOverlap } from '../src/domain/scheduleBoundaries.ts'
 
+test('Section間BreakのScheduleBoundaryを一般業務の実時間へ解決する', () => {
+  const result = resolveDutyAssignmentInterval({
+    id: 'duty-between-break',
+    dutyTypeId: 'duty-type-1',
+    eventDayId: 'day-1',
+    stageId: 'stage-a',
+    memberId: 'member-1',
+    from: { scheduleItemId: 'between-break', edge: 'start' },
+    until: { scheduleItemId: 'between-break', edge: 'end' },
+  }, [{
+    scheduleItemId: 'between-break',
+    eventDayId: 'day-1',
+    stageId: 'stage-a',
+    afterSectionId: 'section-1',
+    kind: 'break',
+    plannedStartMinute: 720,
+    plannedEndMinute: 735,
+  }])
+
+  assert.deepEqual(result, {
+    ok: true,
+    interval: { fromMinute: 720, untilMinute: 735 },
+  })
+})
+
 const event = {
   id: 'event-1',
   name: 'テストイベント',

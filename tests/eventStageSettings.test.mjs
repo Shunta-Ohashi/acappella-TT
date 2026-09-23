@@ -686,11 +686,15 @@ test('既存Section IDを維持し、新規IDだけを使ってStageごとにord
   ])
 })
 
-test('ScheduleItemまたは固定配置から参照されるSectionだけ削除不可にする', () => {
+test('Section内・Section間ScheduleItemまたは固定配置から参照されるSectionだけ削除不可にする', () => {
   const noSectionReferences = { scheduleItems: [], eventBands: [] }
   assert.equal(canDeleteSection(existingSection.id, noSectionReferences), true)
   assert.equal(canDeleteSection(existingSection.id, {
     scheduleItems: [{ sectionId: existingSection.id }],
+    eventBands: [],
+  }), false)
+  assert.equal(canDeleteSection(existingSection.id, {
+    scheduleItems: [{ afterSectionId: existingSection.id }],
     eventBands: [],
   }), false)
   assert.equal(canDeleteSection(existingSection.id, {
@@ -731,7 +735,7 @@ test('参照中Sectionをdraftから除いても保存処理で削除をブロ�
     scheduleItems: [{
       id: 'schedule-1',
       stageId: existingStage.id,
-      sectionId: existingSection.id,
+      afterSectionId: existingSection.id,
       order: 0,
       kind: 'break',
       title: '休憩',
