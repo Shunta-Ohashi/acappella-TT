@@ -291,10 +291,22 @@ export const evaluateScheduleConstraints = ({
     const stageItems = getStageScheduleItems(scheduleItems, stageId)
     // Without a Stage model, a Section-based lane order cannot be inferred.
     if (stageItems.some((item) => item.sectionId !== undefined)) return
-    untimedSequenceItems.push(...stageItems
-      .filter((item) => item.kind === 'performance')
-      .map((item) => ({
+    const performanceItems = stageItems.filter(
+      (item) => item.kind === 'performance',
+    )
+    const performancesWithDay = performanceItems.map((item) => {
+      const band = eventBandById.get(item.eventBandId)
+      return band?.eventId === event.id ? { item, eventDayId: band.eventDayId } : undefined
+    })
+    // If even one Performance has no trustworthy EventDay, its position may
+    // belong to any day's sequence. Do not collapse around it and invent a
+    // cross-day position or gap violation.
+    if (performancesWithDay.some((item) => item === undefined)) return
+    untimedSequenceItems.push(...performancesWithDay
+      .filter((item) => item !== undefined)
+      .map(({ item, eventDayId }) => ({
         scheduleItemId: item.id,
+        eventDayId,
         stageId: item.stageId,
         eventBandId: item.eventBandId,
       })))
@@ -336,6 +348,7 @@ export const evaluateScheduleConstraints = ({
             .filter((item) => item.kind === 'performance')
             .map((item) => ({
               scheduleItemId: item.id,
+              eventDayId: stage.eventDayId,
               stageId: item.stageId,
               sectionId: item.sectionId,
               eventBandId: item.eventBandId,

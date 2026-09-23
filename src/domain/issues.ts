@@ -381,6 +381,7 @@ export const getPerformanceParticipationIssue = ({
 
 export interface PerformanceSequenceItem {
   scheduleItemId: ScheduleItemId
+  eventDayId: EventDayId
   stageId: StageId
   sectionId?: SectionId
   eventBandId: EventBandId
@@ -397,10 +398,14 @@ export const getPerformanceSequenceIssues = ({
 }): ScheduleIssue[] => {
   const issues: ScheduleIssue[] = []
   const eventBandById = new Map(eventBands.map((band) => [band.id, band]))
-  const nextIndexByStage = new Map<StageId, number>()
+  const nextIndexBySequence = new Map<string, number>()
   const sequencedPerformances = performances.map((performance) => {
-    const stagePerformanceIndex = nextIndexByStage.get(performance.stageId) ?? 0
-    nextIndexByStage.set(performance.stageId, stagePerformanceIndex + 1)
+    const sequenceKey = JSON.stringify([
+      performance.eventDayId,
+      performance.stageId,
+    ])
+    const stagePerformanceIndex = nextIndexBySequence.get(sequenceKey) ?? 0
+    nextIndexBySequence.set(sequenceKey, stagePerformanceIndex + 1)
     return {
       ...performance,
       stagePerformanceIndex,
@@ -419,6 +424,7 @@ export const getPerformanceSequenceIssues = ({
     ) return
 
     const lanePerformances = sequencedPerformances.filter((candidate) =>
+      candidate.eventDayId === performance.eventDayId &&
       candidate.stageId === fixedPlacement.stageId &&
       (fixedPlacement.sectionId === undefined ||
         candidate.sectionId === fixedPlacement.sectionId),
@@ -443,6 +449,7 @@ export const getPerformanceSequenceIssues = ({
       message: `EventBand ${eventBand.id} は対象レーンの${positionLabel}に固定されています`,
       eventBandIds: [eventBand.id],
       scheduleItemIds: [performance.scheduleItemId],
+      eventDayIds: [performance.eventDayId],
       stageIds: [performance.stageId],
       ...(performance.sectionId
         ? { sectionIds: [performance.sectionId] }
@@ -454,6 +461,7 @@ export const getPerformanceSequenceIssues = ({
     memberId: MemberId
     eventBandId: EventBandId
     scheduleItemId: ScheduleItemId
+    eventDayId: EventDayId
     stageId: StageId
     stagePerformanceIndex: number
   }>>()
@@ -465,6 +473,7 @@ export const getPerformanceSequenceIssues = ({
         memberId,
         eventBandId: performance.eventBand!.id,
         scheduleItemId: performance.scheduleItemId,
+        eventDayId: performance.eventDayId,
         stageId: performance.stageId,
         stagePerformanceIndex: performance.stagePerformanceIndex,
       })
@@ -473,19 +482,23 @@ export const getPerformanceSequenceIssues = ({
   })
 
   appearancesByMember.forEach((appearances, memberId) => {
-    const appearancesByStage = new Map<StageId, typeof appearances>()
+    const appearancesBySequence = new Map<string, typeof appearances>()
     appearances.forEach((appearance) => {
-      const stageAppearances = appearancesByStage.get(appearance.stageId) ?? []
-      stageAppearances.push(appearance)
-      appearancesByStage.set(appearance.stageId, stageAppearances)
+      const sequenceKey = JSON.stringify([
+        appearance.eventDayId,
+        appearance.stageId,
+      ])
+      const sequenceAppearances = appearancesBySequence.get(sequenceKey) ?? []
+      sequenceAppearances.push(appearance)
+      appearancesBySequence.set(sequenceKey, sequenceAppearances)
     })
 
-    appearancesByStage.forEach((stageAppearances) => {
-      stageAppearances.sort((first, second) =>
+    appearancesBySequence.forEach((sequenceAppearances) => {
+      sequenceAppearances.sort((first, second) =>
         first.stagePerformanceIndex - second.stagePerformanceIndex)
-      for (let index = 1; index < stageAppearances.length; index += 1) {
-        const previous = stageAppearances[index - 1]
-        const next = stageAppearances[index]
+      for (let index = 1; index < sequenceAppearances.length; index += 1) {
+        const previous = sequenceAppearances[index - 1]
+        const next = sequenceAppearances[index]
         const gapBands =
           next.stagePerformanceIndex - previous.stagePerformanceIndex - 1
         if (gapBands === 0) {
@@ -496,6 +509,7 @@ export const getPerformanceSequenceIssues = ({
             memberIds: [memberId],
             eventBandIds: [previous.eventBandId, next.eventBandId],
             scheduleItemIds: [previous.scheduleItemId, next.scheduleItemId],
+            eventDayIds: [next.eventDayId],
             gapBands,
           })
         } else if (gapBands < minimumGapBands) {
@@ -506,6 +520,7 @@ export const getPerformanceSequenceIssues = ({
             memberIds: [memberId],
             eventBandIds: [previous.eventBandId, next.eventBandId],
             scheduleItemIds: [previous.scheduleItemId, next.scheduleItemId],
+            eventDayIds: [next.eventDayId],
             gapBands,
           })
         }
@@ -673,6 +688,7 @@ export const detectScheduleIssues = ({
   getPerformanceSequenceIssues({
     performances: resolvedPerformances.map(({ calculatedItem, eventBand }) => ({
       scheduleItemId: calculatedItem.scheduleItemId,
+      eventDayId: calculatedItem.eventDayId,
       stageId: calculatedItem.stageId,
       sectionId: calculatedItem.sectionId,
       eventBandId: eventBand.id,

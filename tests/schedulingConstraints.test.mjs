@@ -173,6 +173,95 @@ test('Stage不正でもraw順序から固定位置違反を検出する', () => 
     ['item-b'])
 })
 
+test('同じmissing stageIdでも異なるEventDay間ではgapを比較しない', () => {
+  const candidate = input({
+    event: { ...input().event, validationPolicy: {
+      minimumGapBands: 2, minimumRestMinutes: 0,
+    } },
+    eventBands: [band('band-day-1'), band('band-day-2', ['member-1'], {
+      eventDayId: day2.id,
+    })],
+    scheduleItems: [performance('item-day-1', 'band-day-1', 'missing-stage', 0),
+      performance('item-day-2', 'band-day-2', 'missing-stage', 1)],
+  })
+  const result = evaluateScheduleConstraints(candidate)
+
+  assert.equal(codes(result.softViolations).includes('BACK_TO_BACK'), false)
+  assert.equal(codes(result.softViolations).includes('SHORT_GAP'), false)
+})
+
+test('missing Stageでも同じEventDay内ならBACK_TO_BACKを評価する', () => {
+  const result = evaluate({
+    eventBands: [band('band-a'), band('band-b')],
+    scheduleItems: [performance('item-a', 'band-a', 'missing-stage', 0),
+      performance('item-b', 'band-b', 'missing-stage', 1)],
+  })
+
+  assert.deepEqual(find(result.softViolations, 'BACK_TO_BACK').scheduleItemIds,
+    ['item-a', 'item-b'])
+})
+
+test('missing Stageのfixed first・last・indexをEventDayごとに判定する', () => {
+  const evaluatePosition = (position, scheduleItems) => evaluate({
+    eventBands: [band('day-1-noise', ['member-2']),
+      band('day-2-head', ['member-2'], { eventDayId: day2.id }),
+      band('day-2-fixed', ['member-1'], {
+        eventDayId: day2.id,
+        fixedPlacement: { stageId: 'missing-stage', position },
+      }),
+      band('day-2-tail', ['member-2'], { eventDayId: day2.id })],
+    scheduleItems,
+  })
+
+  const first = evaluatePosition({ kind: 'first' }, [
+    performance('noise', 'day-1-noise', 'missing-stage', 0),
+    performance('fixed', 'day-2-fixed', 'missing-stage', 1),
+    performance('tail', 'day-2-tail', 'missing-stage', 2),
+  ])
+  const last = evaluatePosition({ kind: 'last' }, [
+    performance('noise', 'day-1-noise', 'missing-stage', 0),
+    performance('head', 'day-2-head', 'missing-stage', 1),
+    performance('fixed', 'day-2-fixed', 'missing-stage', 2),
+  ])
+  const indexed = evaluatePosition({ kind: 'index', index: 1 }, [
+    performance('noise', 'day-1-noise', 'missing-stage', 0),
+    performance('head', 'day-2-head', 'missing-stage', 1),
+    performance('fixed', 'day-2-fixed', 'missing-stage', 2),
+  ])
+
+  for (const result of [first, last, indexed]) {
+    assert.equal(codes(result.hardViolations)
+      .includes('FIXED_POSITION_MISMATCH'), false)
+  }
+})
+
+test('EventDay不明のPerformanceはmissing Stage sequenceを保守的に無効化する', () => {
+  const candidate = input({
+    event: { ...input().event, validationPolicy: {
+      minimumGapBands: 2, minimumRestMinutes: 0,
+    } },
+    eventBands: [band('band-day-1'), band('band-day-2', ['member-1'], {
+      eventDayId: day2.id,
+      fixedPlacement: {
+        stageId: 'missing-stage', position: { kind: 'first' },
+      },
+    })],
+    scheduleItems: [performance('item-day-1', 'band-day-1', 'missing-stage', 0),
+      performance('unknown-day', 'missing-band', 'missing-stage', 1),
+      performance('item-day-2', 'band-day-2', 'missing-stage', 2)],
+  })
+  const before = structuredClone(candidate)
+  const result = evaluateScheduleConstraints(candidate)
+
+  assert.ok(codes(result.hardViolations).includes('EVENT_BAND_NOT_FOUND'))
+  assert.equal(codes(result.hardViolations)
+    .includes('FIXED_POSITION_MISMATCH'), false)
+  assert.equal(codes(result.softViolations).includes('BACK_TO_BACK'), false)
+  assert.equal(codes(result.softViolations).includes('SHORT_GAP'), false)
+  assert.deepEqual(result, evaluateScheduleConstraints(candidate))
+  assert.deepEqual(candidate, before)
+})
+
 test('Stage不正でもEventBandの日付からabsentとundecidedを評価する', () => {
   const base = input()
   const candidate = input({
