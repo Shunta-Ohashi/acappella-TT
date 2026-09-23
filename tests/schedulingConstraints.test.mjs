@@ -123,6 +123,99 @@ test('別日EventBand、存在しないStage、存在しないEventBandはHard�
   }).hardViolations).includes('EVENT_BAND_EVENT_MISMATCH'))
 })
 
+test('同じPerformanceのStage不正とEventBand参照切れを独立して報告する', () => {
+  const candidate = input({
+    scheduleItems: [performance('broken-item', 'missing-band', 'missing-stage')],
+  })
+  const result = evaluateScheduleConstraints(candidate)
+
+  assert.ok(codes(result.hardViolations).includes('INVALID_STAGE_ASSIGNMENT'))
+  assert.ok(codes(result.hardViolations).includes('EVENT_BAND_NOT_FOUND'))
+  assert.equal(result.hardViolations.filter((violation) =>
+    violation.code === 'EVENT_BAND_NOT_FOUND').length, 1)
+  assert.equal(result.feasible, false)
+})
+
+test('Stage不正でも正常EventBandへfalse positiveを出さない', () => {
+  const result = evaluate({
+    scheduleItems: [performance('item-1', 'band-1', 'missing-stage')],
+  })
+
+  assert.deepEqual(codes(result.hardViolations), ['INVALID_STAGE_ASSIGNMENT'])
+  assert.deepEqual(result.softViolations, [])
+})
+
+test('Stage不正と別EventのEventBand ownership違反を併記する', () => {
+  const result = evaluate({
+    eventBands: [band('foreign-band', ['member-1'], { eventId: 'other-event' })],
+    scheduleItems: [performance('item-1', 'foreign-band', 'missing-stage')],
+  })
+
+  assert.ok(codes(result.hardViolations).includes('INVALID_STAGE_ASSIGNMENT'))
+  assert.ok(codes(result.hardViolations).includes('EVENT_BAND_EVENT_MISMATCH'))
+  assert.equal(codes(result.hardViolations).includes('EVENT_BAND_DAY_MISMATCH'), false)
+})
+
+test('Stage不正でもraw順序から固定位置違反を検出する', () => {
+  const candidate = input({
+    eventBands: [band('band-a', ['member-1']), band('band-b', ['member-2'], {
+      fixedPlacement: {
+        stageId: 'missing-stage', position: { kind: 'first' },
+      },
+    })],
+    scheduleItems: [performance('item-a', 'band-a', 'missing-stage', 0),
+      performance('item-b', 'band-b', 'missing-stage', 1)],
+  })
+  const result = evaluateScheduleConstraints(candidate)
+
+  assert.ok(codes(result.hardViolations).includes('INVALID_STAGE_ASSIGNMENT'))
+  assert.deepEqual(find(result.hardViolations, 'FIXED_POSITION_MISMATCH').scheduleItemIds,
+    ['item-b'])
+})
+
+test('Stage不正でもEventBandの日付からabsentとundecidedを評価する', () => {
+  const base = input()
+  const candidate = input({
+    eventBands: [band('band-a', ['member-1']), band('band-b', ['member-2'])],
+    eventMemberDays: base.eventMemberDays.map((day) =>
+      day.id === 'member-1-day-1'
+        ? { ...day, participationStatus: 'absent' }
+        : day.id === 'member-2-day-1'
+          ? { ...day, participationStatus: 'undecided' }
+          : day),
+    scheduleItems: [performance('item-a', 'band-a', 'missing-stage', 0),
+      performance('item-b', 'band-b', 'missing-stage', 1)],
+  })
+  const result = evaluateScheduleConstraints(candidate)
+
+  assert.deepEqual(find(result.hardViolations, 'MEMBER_ABSENT').scheduleItemIds,
+    ['item-a'])
+  assert.deepEqual(find(result.softViolations,
+    'MEMBER_PARTICIPATION_UNDECIDED').scheduleItemIds, ['item-b'])
+})
+
+test('Stage不正時も独立して判定できるsectionId参照切れを報告する', () => {
+  const result = evaluate({
+    scheduleItems: [performance(
+      'item-1', 'band-1', 'missing-stage', 0, 'missing-section',
+    )],
+  })
+
+  assert.ok(codes(result.hardViolations).includes('INVALID_STAGE_ASSIGNMENT'))
+  assert.ok(codes(result.hardViolations).includes('INVALID_SECTION_ASSIGNMENT'))
+})
+
+test('複数参照エラーを含む評価はdeterministicかつcandidateを変更しない', () => {
+  const candidate = input({
+    scheduleItems: [performance('broken-item', 'missing-band', 'missing-stage')],
+  })
+  const before = structuredClone(candidate)
+
+  assert.deepEqual(evaluateScheduleConstraints(candidate),
+    evaluateScheduleConstraints(candidate))
+  assert.deepEqual(candidate, before)
+})
+
 test('Sectionあり・なしの不正な所属をHardにする', () => {
   const stale = evaluate({ scheduleItems: [performance('item-1', 'band-1', 'stage-a', 0, 'stale')] })
   assert.deepEqual(find(stale.hardViolations, 'INVALID_SECTION_ASSIGNMENT').scheduleItemIds,

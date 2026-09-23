@@ -218,7 +218,9 @@ export const evaluateScheduleConstraints = ({
 
   const scheduledByBand = new Map<EventBandId, ScheduleItemId[]>()
   const calculableItems: ScheduleItem[] = []
+  const placementCheckableItems: ScheduleItem[] = []
   for (const item of scheduleItems) {
+    let hasValidEventBand = item.kind === 'break'
     if (item.kind === 'performance') {
       const scheduled = scheduledByBand.get(item.eventBandId) ?? []
       scheduled.push(item.id)
@@ -230,7 +232,18 @@ export const evaluateScheduleConstraints = ({
         severity: 'hard', code: 'INVALID_STAGE_ASSIGNMENT',
         stageIds: [item.stageId], scheduleItemIds: [item.id],
       })
-      continue
+      if (item.sectionId !== undefined) {
+        const referencedSection = sections.find(
+          (section) => section.id === item.sectionId,
+        )
+        if (!referencedSection || referencedSection.stageId !== item.stageId) {
+          hardViolations.push({
+            severity: 'hard', code: 'INVALID_SECTION_ASSIGNMENT',
+            stageIds: [item.stageId], sectionIds: [item.sectionId],
+            scheduleItemIds: [item.id],
+          })
+        }
+      }
     }
     if (item.kind === 'performance') {
       const band = eventBandById.get(item.eventBandId)
@@ -238,13 +251,22 @@ export const evaluateScheduleConstraints = ({
         hardViolations.push({
           severity: 'hard',
           code: band ? 'EVENT_BAND_EVENT_MISMATCH' : 'EVENT_BAND_NOT_FOUND',
-          eventDayIds: [stage.eventDayId], stageIds: [stage.id],
+          ...(stage ? { eventDayIds: [stage.eventDayId] } : {}),
+          stageIds: [item.stageId],
           eventBandIds: [item.eventBandId], scheduleItemIds: [item.id],
         })
-        continue
+      } else {
+        hasValidEventBand = true
+        placementCheckableItems.push(item)
+        if (!stage && !selectedDayIds.has(band.eventDayId)) {
+          hardViolations.push({
+            severity: 'hard', code: 'EVENT_BAND_DAY_MISMATCH',
+            eventBandIds: [band.id], scheduleItemIds: [item.id],
+          })
+        }
       }
     }
-    calculableItems.push(item)
+    if (stage && hasValidEventBand) calculableItems.push(item)
   }
 
   for (const [eventBandId, itemIds] of scheduledByBand) {
@@ -260,6 +282,23 @@ export const evaluateScheduleConstraints = ({
   }
 
   const resolvableItemIds = new Set(calculableItems.map((item) => item.id))
+  const invalidStageIds = new Set(
+    scheduleItems
+      .filter((item) => !stageById.has(item.stageId))
+      .map((item) => item.stageId),
+  )
+  invalidStageIds.forEach((stageId) => {
+    const stageItems = getStageScheduleItems(scheduleItems, stageId)
+    // Without a Stage model, a Section-based lane order cannot be inferred.
+    if (stageItems.some((item) => item.sectionId !== undefined)) return
+    untimedSequenceItems.push(...stageItems
+      .filter((item) => item.kind === 'performance')
+      .map((item) => ({
+        scheduleItemId: item.id,
+        stageId: item.stageId,
+        eventBandId: item.eventBandId,
+      })))
+  })
   for (const day of selectedDays) {
     for (const stage of getStagesForEventDay(selectedStages, day.id)) {
       const stageSections = getSectionsForStage(sections, stage.id)
@@ -332,17 +371,18 @@ export const evaluateScheduleConstraints = ({
     eventBands: selectedEventBands,
     minimumGapBands: event.validationPolicy.minimumGapBands,
   }))
-  for (const item of calculableItems) {
+  for (const item of placementCheckableItems) {
     if (item.kind !== 'performance' || calculatedById.has(item.id)) continue
     const stage = stageById.get(item.stageId)
     const band = eventBandById.get(item.eventBandId)
-    if (!stage || !band) continue
+    if (!band) continue
     untimedIssues.push(...getUntimedPerformancePlacementIssues(band, {
       scheduleItemId: item.id,
-      eventDayId: stage.eventDayId,
-      stageId: stage.id,
+      eventDayId: stage?.eventDayId,
+      stageId: item.stageId,
       sectionId: item.sectionId,
     }))
+    const participationEventDayId = stage?.eventDayId ?? band.eventDayId
     for (const memberId of new Set(band.memberIds)) {
       const eventMember = eventMemberByMemberId.get(memberId)
       const participationIssue = getPerformanceParticipationIssue({
@@ -351,7 +391,7 @@ export const evaluateScheduleConstraints = ({
         scheduleItemId: item.id,
         eventMember,
         eventMemberDay: eventMember
-          ? eventMemberDayByKey.get(`${eventMember.id}:${stage.eventDayId}`)
+          ? eventMemberDayByKey.get(`${eventMember.id}:${participationEventDayId}`)
           : undefined,
       })
       if (participationIssue) untimedIssues.push(participationIssue)

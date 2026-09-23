@@ -280,10 +280,15 @@ const compareAppearances = (
 export const getUntimedPerformancePlacementIssues = (
   eventBand: EventBand,
   item: Pick<CalculatedScheduleItem,
-    'scheduleItemId' | 'eventDayId' | 'stageId' | 'sectionId'>,
+    'scheduleItemId' | 'stageId' | 'sectionId'> & {
+      eventDayId?: EventDayId
+    },
 ): ScheduleIssue[] => {
   const issues: ScheduleIssue[] = []
-  if (eventBand.eventDayId !== item.eventDayId) {
+  if (
+    item.eventDayId !== undefined &&
+    eventBand.eventDayId !== item.eventDayId
+  ) {
     issues.push({
       severity: 'ERROR',
       code: 'EVENT_BAND_DAY_MISMATCH',
