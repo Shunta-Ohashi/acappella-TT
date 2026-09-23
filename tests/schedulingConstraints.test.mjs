@@ -102,6 +102,44 @@ test('同じEventBandの重複配置はHardにする', () => {
     ['item-1', 'item-2'])
 })
 
+test('duplicate EventBandは現在Eventの実在EventBandだけを集計する', () => {
+  const missing = input({
+    scheduleItems: [performance('missing-a', 'missing-band'),
+      performance('missing-b', 'missing-band', 'stage-a', 1)],
+  })
+  const missingResult = evaluateScheduleConstraints(missing)
+  assert.equal(missingResult.hardViolations.filter((violation) =>
+    violation.code === 'EVENT_BAND_NOT_FOUND').length, 2)
+  assert.equal(codes(missingResult.hardViolations)
+    .includes('DUPLICATE_EVENT_BAND'), false)
+
+  const foreign = input({
+    eventBands: [band('foreign-band', ['member-1'], { eventId: 'other-event' })],
+    scheduleItems: [performance('foreign-a', 'foreign-band'),
+      performance('foreign-b', 'foreign-band', 'stage-a', 1)],
+  })
+  const foreignResult = evaluateScheduleConstraints(foreign)
+  assert.equal(foreignResult.hardViolations.filter((violation) =>
+    violation.code === 'EVENT_BAND_EVENT_MISMATCH').length, 2)
+  assert.equal(codes(foreignResult.hardViolations)
+    .includes('DUPLICATE_EVENT_BAND'), false)
+
+  const dayMismatch = input({
+    stages: [stage('stage-day-2', '10:00', day2.id)],
+    scheduleItems: [performance('mismatch-a', 'band-1', 'stage-day-2'),
+      performance('mismatch-b', 'band-1', 'stage-day-2', 1)],
+  })
+  const mismatchResult = evaluateScheduleConstraints(dayMismatch)
+  assert.ok(codes(mismatchResult.hardViolations)
+    .includes('EVENT_BAND_DAY_MISMATCH'))
+  assert.deepEqual(find(mismatchResult.hardViolations,
+    'DUPLICATE_EVENT_BAND').scheduleItemIds, ['mismatch-a', 'mismatch-b'])
+
+  const single = evaluate()
+  assert.equal(codes(single.hardViolations).includes('DUPLICATE_EVENT_BAND'), false)
+  assert.deepEqual(missingResult, evaluateScheduleConstraints(missing))
+})
+
 test('別日EventBand、存在しないStage、存在しないEventBandはHardにする', () => {
   const mismatch = evaluate({
     stages: [stage('stage-b', '10:00', day2.id)],

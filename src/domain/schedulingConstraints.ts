@@ -221,11 +221,6 @@ export const evaluateScheduleConstraints = ({
   const placementCheckableItems: ScheduleItem[] = []
   for (const item of scheduleItems) {
     let hasValidEventBand = item.kind === 'break'
-    if (item.kind === 'performance') {
-      const scheduled = scheduledByBand.get(item.eventBandId) ?? []
-      scheduled.push(item.id)
-      scheduledByBand.set(item.eventBandId, scheduled)
-    }
     const stage = stageById.get(item.stageId)
     if (!stage) {
       hardViolations.push({
@@ -257,6 +252,9 @@ export const evaluateScheduleConstraints = ({
         })
       } else {
         hasValidEventBand = true
+        const scheduled = scheduledByBand.get(item.eventBandId) ?? []
+        scheduled.push(item.id)
+        scheduledByBand.set(item.eventBandId, scheduled)
         placementCheckableItems.push(item)
         if (!stage && !selectedDayIds.has(band.eventDayId)) {
           hardViolations.push({
