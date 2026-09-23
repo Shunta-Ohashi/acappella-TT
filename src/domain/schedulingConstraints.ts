@@ -19,7 +19,9 @@ import type {
 import {
   detectScheduleIssues,
   getPerformanceParticipationIssue,
+  getPerformanceSequenceIssues,
   getUntimedPerformancePlacementIssues,
+  type PerformanceSequenceItem,
   type ScheduleIssue,
   type ScheduleIssueCode,
 } from './issues.ts'
@@ -210,6 +212,7 @@ export const evaluateScheduleConstraints = ({
   const selectedEventBands = eventBands.filter((band) => band.eventId === event.id)
   const eventBandById = new Map(eventBands.map((band) => [band.id, band]))
   const calculatedItems: CalculatedScheduleItem[] = []
+  const untimedSequenceItems: PerformanceSequenceItem[] = []
   const hardViolations: HardConstraintViolation[] = []
   const softViolations: SoftConstraintViolation[] = []
 
@@ -281,7 +284,26 @@ export const evaluateScheduleConstraints = ({
         : stageItems.filter((item) => !invalidIdSet.has(item.id))
       // An unresolved EventBand has no reliable duration. Do not invent
       // start times for the rest of this Stage by dropping that item.
-      if (timedItems.some((item) => !resolvableItemIds.has(item.id))) continue
+      if (timedItems.some((item) => !resolvableItemIds.has(item.id))) {
+        // With valid Section assignments, the raw lane order is unambiguous.
+        // Preserve unresolved performances in that order: they count toward
+        // fixed positions and gapBands even though their duration is unknown.
+        if (invalidIds.length === 0 || stageSections.length === 0) {
+          const orderedItems = stageSections.length === 0
+            ? timedItems
+            : stageSections.flatMap((section) =>
+                timedItems.filter((item) => item.sectionId === section.id))
+          untimedSequenceItems.push(...orderedItems
+            .filter((item) => item.kind === 'performance')
+            .map((item) => ({
+              scheduleItemId: item.id,
+              stageId: item.stageId,
+              sectionId: item.sectionId,
+              eventBandId: item.eventBandId,
+            })))
+        }
+        continue
+      }
 
       calculatedItems.push(...calculateStageTimeline({
         event,
@@ -305,6 +327,11 @@ export const evaluateScheduleConstraints = ({
   ]))
 
   const untimedIssues: ScheduleIssue[] = []
+  untimedIssues.push(...getPerformanceSequenceIssues({
+    performances: untimedSequenceItems,
+    eventBands: selectedEventBands,
+    minimumGapBands: event.validationPolicy.minimumGapBands,
+  }))
   for (const item of calculableItems) {
     if (item.kind !== 'performance' || calculatedById.has(item.id)) continue
     const stage = stageById.get(item.stageId)

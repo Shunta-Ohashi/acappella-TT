@@ -115,7 +115,6 @@ interface PerformanceAppearance {
   stageId: StageId
   plannedStartMinute: number
   plannedEndMinute: number
-  stagePerformanceIndex: number
 }
 
 interface ResolvedPerformance {
@@ -375,6 +374,143 @@ export const getPerformanceParticipationIssue = ({
   return undefined
 }
 
+export interface PerformanceSequenceItem {
+  scheduleItemId: ScheduleItemId
+  stageId: StageId
+  sectionId?: SectionId
+  eventBandId: EventBandId
+}
+
+export const getPerformanceSequenceIssues = ({
+  performances,
+  eventBands,
+  minimumGapBands,
+}: {
+  performances: PerformanceSequenceItem[]
+  eventBands: EventBand[]
+  minimumGapBands: number
+}): ScheduleIssue[] => {
+  const issues: ScheduleIssue[] = []
+  const eventBandById = new Map(eventBands.map((band) => [band.id, band]))
+  const nextIndexByStage = new Map<StageId, number>()
+  const sequencedPerformances = performances.map((performance) => {
+    const stagePerformanceIndex = nextIndexByStage.get(performance.stageId) ?? 0
+    nextIndexByStage.set(performance.stageId, stagePerformanceIndex + 1)
+    return {
+      ...performance,
+      stagePerformanceIndex,
+      eventBand: eventBandById.get(performance.eventBandId),
+    }
+  })
+
+  sequencedPerformances.forEach((performance) => {
+    const eventBand = performance.eventBand
+    const fixedPlacement = eventBand?.fixedPlacement
+    if (!eventBand || !fixedPlacement?.position) return
+    if (fixedPlacement.stageId !== performance.stageId) return
+    if (
+      fixedPlacement.sectionId !== undefined &&
+      fixedPlacement.sectionId !== performance.sectionId
+    ) return
+
+    const lanePerformances = sequencedPerformances.filter((candidate) =>
+      candidate.stageId === fixedPlacement.stageId &&
+      (fixedPlacement.sectionId === undefined ||
+        candidate.sectionId === fixedPlacement.sectionId),
+    )
+    const actualIndex = lanePerformances.findIndex((candidate) =>
+      candidate.scheduleItemId === performance.scheduleItemId)
+    const positionMatches = fixedPlacement.position.kind === 'first'
+      ? actualIndex === 0
+      : fixedPlacement.position.kind === 'last'
+        ? actualIndex === lanePerformances.length - 1
+        : actualIndex === fixedPlacement.position.index
+    if (positionMatches) return
+
+    const positionLabel = fixedPlacement.position.kind === 'first'
+      ? '最初'
+      : fixedPlacement.position.kind === 'last'
+        ? '最後'
+        : `${fixedPlacement.position.index + 1}番目`
+    issues.push({
+      severity: 'ERROR',
+      code: 'FIXED_POSITION_MISMATCH',
+      message: `EventBand ${eventBand.id} は対象レーンの${positionLabel}に固定されています`,
+      eventBandIds: [eventBand.id],
+      scheduleItemIds: [performance.scheduleItemId],
+      stageIds: [performance.stageId],
+      ...(performance.sectionId
+        ? { sectionIds: [performance.sectionId] }
+        : {}),
+    })
+  })
+
+  const appearancesByMember = new Map<MemberId, Array<{
+    memberId: MemberId
+    eventBandId: EventBandId
+    scheduleItemId: ScheduleItemId
+    stageId: StageId
+    stagePerformanceIndex: number
+  }>>()
+  sequencedPerformances.forEach((performance) => {
+    if (!performance.eventBand) return
+    new Set(performance.eventBand.memberIds).forEach((memberId) => {
+      const appearances = appearancesByMember.get(memberId) ?? []
+      appearances.push({
+        memberId,
+        eventBandId: performance.eventBand!.id,
+        scheduleItemId: performance.scheduleItemId,
+        stageId: performance.stageId,
+        stagePerformanceIndex: performance.stagePerformanceIndex,
+      })
+      appearancesByMember.set(memberId, appearances)
+    })
+  })
+
+  appearancesByMember.forEach((appearances, memberId) => {
+    const appearancesByStage = new Map<StageId, typeof appearances>()
+    appearances.forEach((appearance) => {
+      const stageAppearances = appearancesByStage.get(appearance.stageId) ?? []
+      stageAppearances.push(appearance)
+      appearancesByStage.set(appearance.stageId, stageAppearances)
+    })
+
+    appearancesByStage.forEach((stageAppearances) => {
+      stageAppearances.sort((first, second) =>
+        first.stagePerformanceIndex - second.stagePerformanceIndex)
+      for (let index = 1; index < stageAppearances.length; index += 1) {
+        const previous = stageAppearances[index - 1]
+        const next = stageAppearances[index]
+        const gapBands =
+          next.stagePerformanceIndex - previous.stagePerformanceIndex - 1
+        if (gapBands === 0) {
+          issues.push({
+            severity: 'WARNING',
+            code: 'BACK_TO_BACK',
+            message: `メンバー ${memberId} が同じStageで連続出演します`,
+            memberIds: [memberId],
+            eventBandIds: [previous.eventBandId, next.eventBandId],
+            scheduleItemIds: [previous.scheduleItemId, next.scheduleItemId],
+            gapBands,
+          })
+        } else if (gapBands < minimumGapBands) {
+          issues.push({
+            severity: 'WARNING',
+            code: 'SHORT_GAP',
+            message: `メンバー ${memberId} の同じStageでの出演間隔が ${gapBands} バンドです`,
+            memberIds: [memberId],
+            eventBandIds: [previous.eventBandId, next.eventBandId],
+            scheduleItemIds: [previous.scheduleItemId, next.scheduleItemId],
+            gapBands,
+          })
+        }
+      }
+    })
+  })
+
+  return issues
+}
+
 export const detectScheduleIssues = ({
   event,
   members,
@@ -435,7 +571,6 @@ export const detectScheduleIssues = ({
       daysByEventDayId,
     )
   })
-  const nextPerformanceIndexByStage = new Map<StageId, number>()
   const resolvedPerformances: ResolvedPerformance[] = []
   const appearancesByMember = new Map<MemberId, PerformanceAppearance[]>()
 
@@ -452,12 +587,6 @@ export const detectScheduleIssues = ({
       throw new Error(`EventBand not found: ${calculatedItem.eventBandId}`)
     }
 
-    const stagePerformanceIndex =
-      nextPerformanceIndexByStage.get(calculatedItem.stageId) ?? 0
-    nextPerformanceIndexByStage.set(
-      calculatedItem.stageId,
-      stagePerformanceIndex + 1,
-    )
     resolvedPerformances.push({ calculatedItem, eventBand })
 
     new Set(eventBand.memberIds).forEach((memberId) => {
@@ -469,7 +598,6 @@ export const detectScheduleIssues = ({
         stageId: calculatedItem.stageId,
         plannedStartMinute: calculatedItem.plannedStartMinute,
         plannedEndMinute: calculatedItem.plannedEndMinute,
-        stagePerformanceIndex,
       }
       const memberAppearances = appearancesByMember.get(memberId) ?? []
       memberAppearances.push(appearance)
@@ -518,48 +646,6 @@ export const detectScheduleIssues = ({
     const fixedPlacement = eventBand.fixedPlacement
     if (!fixedPlacement) return
 
-    const stageMatches = fixedPlacement.stageId === calculatedItem.stageId
-    const fixedSectionId = fixedPlacement.sectionId
-    const sectionMatches = fixedSectionId === undefined ||
-      fixedSectionId === calculatedItem.sectionId
-
-    if (stageMatches && sectionMatches && fixedPlacement.position) {
-      const lanePerformances = resolvedPerformances.filter(
-        ({ calculatedItem: candidate }) =>
-          candidate.stageId === fixedPlacement.stageId &&
-          (fixedPlacement.sectionId === undefined ||
-            candidate.sectionId === fixedPlacement.sectionId),
-      )
-      const actualIndex = lanePerformances.findIndex(
-        ({ calculatedItem: candidate }) =>
-          candidate.scheduleItemId === calculatedItem.scheduleItemId,
-      )
-      const positionMatches = fixedPlacement.position.kind === 'first'
-        ? actualIndex === 0
-        : fixedPlacement.position.kind === 'last'
-          ? actualIndex === lanePerformances.length - 1
-          : actualIndex === fixedPlacement.position.index
-
-      if (!positionMatches) {
-        const positionLabel = fixedPlacement.position.kind === 'first'
-          ? '最初'
-          : fixedPlacement.position.kind === 'last'
-            ? '最後'
-            : `${fixedPlacement.position.index + 1}番目`
-        addIssue({
-          severity: 'ERROR',
-          code: 'FIXED_POSITION_MISMATCH',
-          message: `EventBand ${eventBand.id} は対象レーンの${positionLabel}に固定されています`,
-          eventBandIds: [eventBand.id],
-          scheduleItemIds: [calculatedItem.scheduleItemId],
-          stageIds: [calculatedItem.stageId],
-          ...(calculatedItem.sectionId
-            ? { sectionIds: [calculatedItem.sectionId] }
-            : {}),
-        })
-      }
-    }
-
     if (
       fixedPlacement.plannedStartTime &&
       parseLocalTimeToMinute(fixedPlacement.plannedStartTime) !==
@@ -578,6 +664,17 @@ export const detectScheduleIssues = ({
       })
     }
   })
+
+  getPerformanceSequenceIssues({
+    performances: resolvedPerformances.map(({ calculatedItem, eventBand }) => ({
+      scheduleItemId: calculatedItem.scheduleItemId,
+      stageId: calculatedItem.stageId,
+      sectionId: calculatedItem.sectionId,
+      eventBandId: eventBand.id,
+    })),
+    eventBands,
+    minimumGapBands: event.validationPolicy.minimumGapBands,
+  }).forEach(addIssue)
 
   const resolvedPaAssignments: Array<{
     assignment: PaAssignment
@@ -1050,48 +1147,6 @@ export const detectScheduleIssues = ({
       }
     })
 
-    const appearancesByStage = new Map<StageId, PerformanceAppearance[]>()
-    appearances.forEach((appearance) => {
-      const stageAppearances = appearancesByStage.get(appearance.stageId) ?? []
-      stageAppearances.push(appearance)
-      appearancesByStage.set(appearance.stageId, stageAppearances)
-    })
-
-    appearancesByStage.forEach((stageAppearances) => {
-      stageAppearances.sort(
-        (first, second) =>
-          first.stagePerformanceIndex - second.stagePerformanceIndex,
-      )
-
-      for (let index = 1; index < stageAppearances.length; index += 1) {
-        const previous = stageAppearances[index - 1]
-        const next = stageAppearances[index]
-        const gapBands =
-          next.stagePerformanceIndex - previous.stagePerformanceIndex - 1
-
-        if (gapBands === 0) {
-          addIssue({
-            severity: 'WARNING',
-            code: 'BACK_TO_BACK',
-            message: `メンバー ${memberId} が同じStageで連続出演します`,
-            memberIds: [memberId],
-            eventBandIds: [previous.eventBandId, next.eventBandId],
-            scheduleItemIds: [previous.scheduleItemId, next.scheduleItemId],
-            gapBands,
-          })
-        } else if (gapBands < event.validationPolicy.minimumGapBands) {
-          addIssue({
-            severity: 'WARNING',
-            code: 'SHORT_GAP',
-            message: `メンバー ${memberId} の同じStageでの出演間隔が ${gapBands} バンドです`,
-            memberIds: [memberId],
-            eventBandIds: [previous.eventBandId, next.eventBandId],
-            scheduleItemIds: [previous.scheduleItemId, next.scheduleItemId],
-            gapBands,
-          })
-        }
-      }
-    })
   })
 
   return issues

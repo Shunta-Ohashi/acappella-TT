@@ -262,6 +262,124 @@ test('参照切れで時刻不明なら後続を前倒しせず、時刻不要�
   assert.deepEqual(result.softViolations, [])
 })
 
+test('EventBand参照切れがあってもraw順序から固定位置違反を検出する', () => {
+  const candidate = input({
+    eventBands: [band('band-a', ['member-1']), band('band-b', ['member-2'], {
+      fixedPlacement: { stageId: 'stage-a', position: { kind: 'first' } },
+    })],
+    scheduleItems: [performance('broken', 'missing-band', 'stage-a', 0),
+      performance('valid-a', 'band-a', 'stage-a', 1),
+      performance('valid-b', 'band-b', 'stage-a', 2)],
+  })
+  const result = evaluateScheduleConstraints(candidate)
+
+  assert.ok(codes(result.hardViolations).includes('EVENT_BAND_NOT_FOUND'))
+  assert.deepEqual(find(result.hardViolations, 'FIXED_POSITION_MISMATCH').scheduleItemIds,
+    ['valid-b'])
+  assert.equal(result.feasible, false)
+})
+
+test('EventBand参照切れがあっても正常Performanceの連続出演を検出する', () => {
+  const candidate = input({
+    eventBands: [band('band-a'), band('band-b')],
+    scheduleItems: [performance('broken', 'missing-band', 'stage-a', 0),
+      performance('valid-a', 'band-a', 'stage-a', 1),
+      performance('valid-b', 'band-b', 'stage-a', 2)],
+  })
+  const result = evaluateScheduleConstraints(candidate)
+
+  assert.ok(codes(result.hardViolations).includes('EVENT_BAND_NOT_FOUND'))
+  assert.deepEqual(find(result.softViolations, 'BACK_TO_BACK').scheduleItemIds,
+    ['valid-a', 'valid-b'])
+  assert.equal(result.totalPenalty, 10)
+})
+
+test('参照切れPerformanceもgapBandsへ数え、SHORT_GAPを検出する', () => {
+  const candidate = input({
+    event: { ...input().event, validationPolicy: {
+      minimumGapBands: 2, minimumRestMinutes: 0,
+    } },
+    eventBands: [band('band-a'), band('band-b')],
+    scheduleItems: [performance('valid-a', 'band-a', 'stage-a', 0),
+      performance('broken', 'missing-band', 'stage-a', 1),
+      performance('valid-b', 'band-b', 'stage-a', 2)],
+  })
+  const result = evaluateScheduleConstraints(candidate)
+  const shortGap = find(result.softViolations, 'SHORT_GAP')
+
+  assert.equal(shortGap.gapBands, 1)
+  assert.deepEqual(shortGap.scheduleItemIds, ['valid-a', 'valid-b'])
+  assert.equal(shortGap.penalty, 5)
+  assert.equal(codes(result.softViolations).includes('BACK_TO_BACK'), false)
+})
+
+test('参照切れStageでもBreakをgapBandsへ数えず連続出演にする', () => {
+  const candidate = input({
+    event: { ...input().event, validationPolicy: {
+      minimumGapBands: 2, minimumRestMinutes: 0,
+    } },
+    eventBands: [band('band-a'), band('band-b')],
+    scheduleItems: [performance('valid-a', 'band-a', 'stage-a', 0),
+      breakItem('break-1', 5, 1),
+      performance('valid-b', 'band-b', 'stage-a', 2),
+      performance('broken', 'missing-band', 'stage-a', 3)],
+  })
+  const result = evaluateScheduleConstraints(candidate)
+
+  assert.deepEqual(find(result.softViolations, 'BACK_TO_BACK').scheduleItemIds,
+    ['valid-a', 'valid-b'])
+  assert.equal(codes(result.softViolations).includes('SHORT_GAP'), false)
+})
+
+test('参照切れStageでは時刻依存違反を推測せず、別Stageは通常評価する', () => {
+  const base = input()
+  const candidate = input({
+    event: { ...base.event, validationPolicy: {
+      minimumGapBands: 0, minimumRestMinutes: 30,
+    } },
+    stages: [stage('stage-a'), stage('stage-b')],
+    eventMemberDays: base.eventMemberDays.map((day) =>
+      day.id === 'member-1-day-1'
+        ? { ...day, availabilityWindows: [{ from: '10:30' }],
+          preferredTimeRange: { from: '11:00' } }
+        : day),
+    eventBands: [band('band-a', ['member-1'], {
+      availableTimeRange: { from: '10:30' },
+      preferredTimeRange: { from: '11:00' },
+      fixedPlacement: { stageId: 'stage-a', plannedStartTime: '12:00' },
+    }), band('band-b', ['member-2'], {
+      availableTimeRange: { from: '10:05' },
+    })],
+    scheduleItems: [performance('broken', 'missing-band', 'stage-a', 0),
+      performance('untimed', 'band-a', 'stage-a', 1),
+      performance('stage-b-item', 'band-b', 'stage-b', 0)],
+  })
+  const result = evaluateScheduleConstraints(candidate)
+  const violationCodes = [...codes(result.hardViolations), ...codes(result.softViolations)]
+
+  assert.ok(violationCodes.includes('EVENT_BAND_NOT_FOUND'))
+  assert.ok(violationCodes.includes('OUTSIDE_BAND_AVAILABILITY'))
+  assert.equal(violationCodes.includes('OUTSIDE_MEMBER_AVAILABILITY'), false)
+  assert.equal(violationCodes.includes('FIXED_START_TIME_MISMATCH'), false)
+  assert.equal(violationCodes.includes('PREFERENCE_NOT_MET'), false)
+  assert.equal(violationCodes.includes('SHORT_REST'), false)
+  assert.equal(violationCodes.includes('PERFORMANCE_OVERLAP'), false)
+})
+
+test('参照切れを含む評価はdeterministicかつcandidateを変更しない', () => {
+  const candidate = input({
+    eventBands: [band('band-a'), band('band-b')],
+    scheduleItems: [performance('broken', 'missing-band', 'stage-a', 0),
+      performance('valid-a', 'band-a', 'stage-a', 1),
+      performance('valid-b', 'band-b', 'stage-a', 2)],
+  })
+  const before = structuredClone(candidate)
+
+  assert.deepEqual(evaluateScheduleConstraints(candidate),
+    evaluateScheduleConstraints(candidate))
+  assert.deepEqual(candidate, before)
+})
+
 test('同一Stageと別Stageの出演重複をIssueと同じHardにし、接する区間は重複しない', () => {
   const sameStage = input({
     sections: [section('s1', 0, { plannedStartTime: '10:00' }),
