@@ -77,11 +77,21 @@ export const calculateStageTimeline = ({
     )
   const calculatedItems: CalculatedScheduleItem[] = []
   let currentMinute = parseLocalTimeToMinute(stage.plannedStartTime)
+  let previousItemKind: ScheduleItem['kind'] | undefined
+  let hasExplicitAnchorSincePreviousItem = false
 
   const calculateItems = (items: ScheduleItem[]) => {
     const orderedItems = [...items].sort((left, right) => left.order - right.order)
 
     for (const scheduleItem of orderedItems) {
+      if (
+        previousItemKind === 'performance' &&
+        scheduleItem.kind === 'performance' &&
+        !hasExplicitAnchorSincePreviousItem
+      ) {
+        currentMinute += transitionMinutes
+      }
+
       let durationMinutes: number
       if (scheduleItem.kind === 'break') {
         durationMinutes = scheduleItem.durationMinutes
@@ -111,9 +121,9 @@ export const calculateStageTimeline = ({
           : {}),
       })
 
-      currentMinute = scheduleItem.kind === 'performance'
-        ? plannedEndMinute + transitionMinutes
-        : plannedEndMinute
+      currentMinute = plannedEndMinute
+      previousItemKind = scheduleItem.kind
+      hasExplicitAnchorSincePreviousItem = false
     }
   }
 
@@ -146,6 +156,7 @@ export const calculateStageTimeline = ({
   for (const [sectionIndex, section] of stageSections.entries()) {
     if (section.plannedStartTime) {
       currentMinute = parseLocalTimeToMinute(section.plannedStartTime)
+      hasExplicitAnchorSincePreviousItem = true
     }
 
     calculateItems(

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { detectScheduleIssues } from '../src/domain/issues.ts'
+import { calculateStageTimeline } from '../src/domain/timeline.ts'
 import {
   createPaAssignmentsDraft,
   createPaAssignmentsUpdate,
@@ -444,24 +445,38 @@ test('Timeline更新により同じScheduleBoundaryから導出するPA実時間
 })
 
 test('Section間Breakのstart/end ScheduleBoundaryをPA実時間へ解決する', () => {
-  const interSectionBreak = {
-    scheduleItemId: 'between-break',
-    eventDayId: 'day-1',
-    stageId: 'stage-a',
-    afterSectionId: 'section-1',
-    kind: 'break',
-    plannedStartMinute: 720,
-    plannedEndMinute: 735,
-  }
+  const timeline = calculateStageTimeline({
+    event,
+    stage: { ...stages[0], transitionMinutes: 2 },
+    sections: [
+      { id: 'section-1', stageId: 'stage-a', name: '1部', order: 0 },
+      { id: 'section-2', stageId: 'stage-a', name: '2部', order: 1 },
+    ],
+    scheduleItems: [
+      {
+        id: 'performance-a', stageId: 'stage-a', sectionId: 'section-1',
+        order: 0, kind: 'performance', eventBandId: 'event-band-a',
+      },
+      {
+        id: 'between-break', stageId: 'stage-a', afterSectionId: 'section-1',
+        order: 0, kind: 'break', title: '部間休憩', durationMinutes: 15,
+      },
+      {
+        id: 'performance-b', stageId: 'stage-a', sectionId: 'section-2',
+        order: 0, kind: 'performance', eventBandId: 'event-band-b',
+      },
+    ],
+    eventBands,
+  })
   const result = resolvePaAssignmentInterval({
     ...createItem(),
     from: { scheduleItemId: 'between-break', edge: 'start' },
     until: { scheduleItemId: 'between-break', edge: 'end' },
-  }, [interSectionBreak])
+  }, timeline)
 
   assert.deepEqual(result, {
     ok: true,
-    interval: { fromMinute: 720, untilMinute: 735 },
+    interval: { fromMinute: 610, untilMinute: 625 },
   })
 })
 

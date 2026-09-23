@@ -87,7 +87,7 @@ test('SectionなしではStage開始時刻とEventの転換時間を使ってPer
   )
 })
 
-test('Stageの転換時間を優先し、Break後には転換時間を加えない', () => {
+test('転換時間はPerformance同士の直結時だけ適用し、SectionなしStageのBreak前後には加えない', () => {
   const result = calculateStageTimeline({
     event,
     stage: createStage({ plannedStartTime: '10:00', transitionMinutes: 5 }),
@@ -109,7 +109,33 @@ test('Stageの転換時間を優先し、Break後には転換時間を加えな�
 
   assert.deepEqual(
     result.map(item => [item.plannedStartMinute, item.plannedEndMinute]),
-    [[600, 610], [615, 625], [625, 635]],
+    [[600, 610], [610, 620], [620, 630]],
+  )
+})
+
+test('複数Breakが連続しても前後へ転換時間を加えない', () => {
+  const result = calculateStageTimeline({
+    event,
+    stage: createStage({ plannedStartTime: '10:00', transitionMinutes: 5 }),
+    sections: [],
+    scheduleItems: [
+      performance('item-1', 'event-band-2', 0),
+      {
+        id: 'break-1', stageId: 'stage-1', order: 1,
+        kind: 'break', title: '休憩1', durationMinutes: 5,
+      },
+      {
+        id: 'break-2', stageId: 'stage-1', order: 2,
+        kind: 'break', title: '休憩2', durationMinutes: 10,
+      },
+      performance('item-2', 'event-band-2', 3),
+    ],
+    eventBands,
+  })
+
+  assert.deepEqual(
+    result.map(item => [item.plannedStartMinute, item.plannedEndMinute]),
+    [[600, 610], [610, 615], [615, 625], [625, 635]],
   )
 })
 
@@ -160,14 +186,14 @@ test('Section開始時刻がなければ前Sectionの終了後から続ける', 
 
   assert.deepEqual(
     result.map(item => [item.plannedStartMinute, item.plannedEndMinute]),
-    [[660, 670], [673, 678]],
+    [[660, 670], [670, 675]],
   )
 })
 
 test('Section内BreakとSection間Breakを順に計算し、次SectionとStage終了へ反映する', () => {
   const result = calculateStageTimeline({
     event,
-    stage: createStage({ plannedStartTime: '10:00', transitionMinutes: 0 }),
+    stage: createStage({ plannedStartTime: '10:00', transitionMinutes: 2 }),
     sections: [
       { id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 },
       { id: 'section-2', stageId: 'stage-1', name: '2部', order: 1 },
@@ -201,6 +227,27 @@ test('Section内BreakとSection間Breakを順に計算し、次SectionとStage�
       ['between-break', 615, 630, undefined, 'section-1'],
       ['performance-2', 630, 640, 'section-2', undefined],
     ],
+  )
+})
+
+test('BreakなしのSection境界でPerformanceが直接続く場合は転換時間を適用する', () => {
+  const result = calculateStageTimeline({
+    event,
+    stage: createStage({ plannedStartTime: '10:00', transitionMinutes: 2 }),
+    sections: [
+      { id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 },
+      { id: 'section-2', stageId: 'stage-1', name: '2部', order: 1 },
+    ],
+    scheduleItems: [
+      performance('item-1', 'event-band-2', 0, { sectionId: 'section-1' }),
+      performance('item-2', 'event-band-2', 0, { sectionId: 'section-2' }),
+    ],
+    eventBands,
+  })
+
+  assert.deepEqual(
+    result.map(item => [item.plannedStartMinute, item.plannedEndMinute]),
+    [[600, 610], [612, 622]],
   )
 })
 
