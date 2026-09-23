@@ -235,27 +235,34 @@ export const isValidScheduleLane = (
   )
 }
 
-export const getInvalidSectionScheduleItemIds = (
-  stage: Stage,
+export const isValidScheduleItemSectionAssignment = (
+  stageId: StageId,
   stageSections: Section[],
-  scheduleItems: ScheduleItem[],
-): ScheduleItemId[] => {
+  scheduleItem: ScheduleItem,
+): boolean => {
+  if (scheduleItem.stageId !== stageId) return false
   const sectionIds = new Set(
     stageSections
-      .filter(section => section.stageId === stage.id)
+      .filter(section => section.stageId === stageId)
       .map(section => section.id),
   )
   const stageUsesSections = sectionIds.size > 0
 
-  return scheduleItems
-    .filter(item =>
-      item.stageId === stage.id &&
-      (stageUsesSections
-        ? !item.sectionId || !sectionIds.has(item.sectionId)
-        : item.sectionId !== undefined),
-    )
-    .map(item => item.id)
+  return stageUsesSections
+    ? scheduleItem.sectionId !== undefined && sectionIds.has(scheduleItem.sectionId)
+    : scheduleItem.sectionId === undefined
 }
+
+export const getInvalidSectionScheduleItemIds = (
+  stage: Stage,
+  stageSections: Section[],
+  scheduleItems: ScheduleItem[],
+): ScheduleItemId[] => scheduleItems
+  .filter(item =>
+    item.stageId === stage.id &&
+    !isValidScheduleItemSectionAssignment(stage.id, stageSections, item),
+  )
+  .map(item => item.id)
 
 const replaceStageScheduleItems = (
   scheduleItems: ScheduleItem[],
