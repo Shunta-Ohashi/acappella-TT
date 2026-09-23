@@ -276,6 +276,105 @@ const compareAppearances = (
   first.stageId.localeCompare(second.stageId) ||
   first.scheduleItemId.localeCompare(second.scheduleItemId)
 
+// These checks do not depend on a calculated start/end time. The constraint
+// evaluator also uses them when a malformed item prevents timeline calculation.
+export const getUntimedPerformancePlacementIssues = (
+  eventBand: EventBand,
+  item: Pick<CalculatedScheduleItem,
+    'scheduleItemId' | 'eventDayId' | 'stageId' | 'sectionId'>,
+): ScheduleIssue[] => {
+  const issues: ScheduleIssue[] = []
+  if (eventBand.eventDayId !== item.eventDayId) {
+    issues.push({
+      severity: 'ERROR',
+      code: 'EVENT_BAND_DAY_MISMATCH',
+      message: `EventBand ${eventBand.id} は別の開催日に登録されています`,
+      eventBandIds: [eventBand.id],
+      scheduleItemIds: [item.scheduleItemId],
+    })
+  }
+
+  const fixedPlacement = eventBand.fixedPlacement
+  if (!fixedPlacement) return issues
+
+  const stageMatches = fixedPlacement.stageId === item.stageId
+  if (!stageMatches) {
+    issues.push({
+      severity: 'ERROR',
+      code: 'FIXED_STAGE_MISMATCH',
+      message: `EventBand ${eventBand.id} は Stage ${fixedPlacement.stageId} に固定されています`,
+      eventBandIds: [eventBand.id],
+      scheduleItemIds: [item.scheduleItemId],
+      stageIds: [fixedPlacement.stageId, item.stageId],
+    })
+  }
+
+  const fixedSectionId = fixedPlacement.sectionId
+  if (
+    stageMatches && fixedSectionId !== undefined &&
+    fixedSectionId !== item.sectionId
+  ) {
+    issues.push({
+      severity: 'ERROR',
+      code: 'FIXED_SECTION_MISMATCH',
+      message: `EventBand ${eventBand.id} は Section ${fixedSectionId} に固定されています`,
+      eventBandIds: [eventBand.id],
+      scheduleItemIds: [item.scheduleItemId],
+      stageIds: [item.stageId],
+      sectionIds: [
+        fixedSectionId,
+        ...(item.sectionId ? [item.sectionId] : []),
+      ],
+    })
+  }
+  return issues
+}
+
+export const getPerformanceParticipationIssue = ({
+  memberId,
+  eventBandId,
+  scheduleItemId,
+  eventMember,
+  eventMemberDay,
+}: {
+  memberId: MemberId
+  eventBandId: EventBandId
+  scheduleItemId: ScheduleItemId
+  eventMember?: EventMember
+  eventMemberDay?: EventMemberDay
+}): ScheduleIssue | undefined => {
+  const references = {
+    memberIds: [memberId],
+    eventBandIds: [eventBandId],
+    scheduleItemIds: [scheduleItemId],
+  }
+  if (!eventMember) return {
+    severity: 'ERROR',
+    code: 'MEMBER_NOT_REGISTERED_FOR_EVENT',
+    message: `メンバー ${memberId} がイベントに登録されていません`,
+    ...references,
+  }
+  if (!eventMemberDay) return {
+    severity: 'ERROR',
+    code: 'MEMBER_DAY_NOT_CONFIGURED',
+    message: `メンバー ${memberId} のこの開催日の参加情報が設定されていません`,
+    ...references,
+  }
+  if (eventMemberDay.participationStatus === 'absent') return {
+    severity: 'ERROR',
+    code: 'MEMBER_ABSENT',
+    message: `不参加のメンバー ${memberId} が出演に含まれています`,
+    ...references,
+  }
+  if (eventMemberDay.participationStatus === 'undecided') return {
+    severity: 'INFO',
+    code: 'MEMBER_PARTICIPATION_UNDECIDED',
+    message: `メンバー ${memberId} の参加状態が未定です`,
+    ...references,
+  }
+  return undefined
+}
+
 export const detectScheduleIssues = ({
   event,
   members,
@@ -379,15 +478,8 @@ export const detectScheduleIssues = ({
   })
 
   resolvedPerformances.forEach(({ calculatedItem, eventBand }) => {
-    if (eventBand.eventDayId !== calculatedItem.eventDayId) {
-      addIssue({
-        severity: 'ERROR',
-        code: 'EVENT_BAND_DAY_MISMATCH',
-        message: `EventBand ${eventBand.id} は別の開催日に登録されています`,
-        eventBandIds: [eventBand.id],
-        scheduleItemIds: [calculatedItem.scheduleItemId],
-      })
-    }
+    getUntimedPerformancePlacementIssues(eventBand, calculatedItem)
+      .forEach(addIssue)
 
     if (
       eventBand.availableTimeRange &&
@@ -427,37 +519,9 @@ export const detectScheduleIssues = ({
     if (!fixedPlacement) return
 
     const stageMatches = fixedPlacement.stageId === calculatedItem.stageId
-    if (!stageMatches) {
-      addIssue({
-        severity: 'ERROR',
-        code: 'FIXED_STAGE_MISMATCH',
-        message: `EventBand ${eventBand.id} は Stage ${fixedPlacement.stageId} に固定されています`,
-        eventBandIds: [eventBand.id],
-        scheduleItemIds: [calculatedItem.scheduleItemId],
-        stageIds: [fixedPlacement.stageId, calculatedItem.stageId],
-      })
-    }
-
     const fixedSectionId = fixedPlacement.sectionId
     const sectionMatches = fixedSectionId === undefined ||
       fixedSectionId === calculatedItem.sectionId
-    if (
-      stageMatches && fixedSectionId !== undefined &&
-      fixedSectionId !== calculatedItem.sectionId
-    ) {
-      addIssue({
-        severity: 'ERROR',
-        code: 'FIXED_SECTION_MISMATCH',
-        message: `EventBand ${eventBand.id} は Section ${fixedSectionId} に固定されています`,
-        eventBandIds: [eventBand.id],
-        scheduleItemIds: [calculatedItem.scheduleItemId],
-        stageIds: [calculatedItem.stageId],
-        sectionIds: [
-          fixedSectionId,
-          ...(calculatedItem.sectionId ? [calculatedItem.sectionId] : []),
-        ],
-      })
-    }
 
     if (stageMatches && sectionMatches && fixedPlacement.position) {
       const lanePerformances = resolvedPerformances.filter(
@@ -860,55 +924,19 @@ export const detectScheduleIssues = ({
     const eventMember = eventMemberByMemberId.get(memberId)
 
     appearances.forEach((appearance) => {
-      if (!eventMember) {
-        addIssue({
-          severity: 'ERROR',
-          code: 'MEMBER_NOT_REGISTERED_FOR_EVENT',
-          message: `メンバー ${memberId} がイベントに登録されていません`,
-          memberIds: [memberId],
-          eventBandIds: [appearance.eventBandId],
-          scheduleItemIds: [appearance.scheduleItemId],
-        })
-        return
-      }
-
-      const eventMemberDay = eventMemberDayByEventMemberId
-        .get(eventMember.id)
-        ?.get(appearance.eventDayId)
-      if (!eventMemberDay) {
-        addIssue({
-          severity: 'ERROR',
-          code: 'MEMBER_DAY_NOT_CONFIGURED',
-          message: `メンバー ${memberId} のこの開催日の参加情報が設定されていません`,
-          memberIds: [memberId],
-          eventBandIds: [appearance.eventBandId],
-          scheduleItemIds: [appearance.scheduleItemId],
-        })
-        return
-      }
-
-      if (eventMemberDay.participationStatus === 'absent') {
-        addIssue({
-          severity: 'ERROR',
-          code: 'MEMBER_ABSENT',
-          message: `不参加のメンバー ${memberId} が出演に含まれています`,
-          memberIds: [memberId],
-          eventBandIds: [appearance.eventBandId],
-          scheduleItemIds: [appearance.scheduleItemId],
-        })
-        return
-      }
-
-      if (eventMemberDay.participationStatus === 'undecided') {
-        addIssue({
-          severity: 'INFO',
-          code: 'MEMBER_PARTICIPATION_UNDECIDED',
-          message: `メンバー ${memberId} の参加状態が未定です`,
-          memberIds: [memberId],
-          eventBandIds: [appearance.eventBandId],
-          scheduleItemIds: [appearance.scheduleItemId],
-        })
-      }
+      const eventMemberDay = eventMember
+        ? eventMemberDayByEventMemberId.get(eventMember.id)
+          ?.get(appearance.eventDayId)
+        : undefined
+      const participationIssue = getPerformanceParticipationIssue({
+        memberId,
+        eventBandId: appearance.eventBandId,
+        scheduleItemId: appearance.scheduleItemId,
+        eventMember,
+        eventMemberDay,
+      })
+      if (participationIssue) addIssue(participationIssue)
+      if (!eventMemberDay || participationIssue?.severity === 'ERROR') return
 
       const isOutsideAvailability = !isIntervalWithinAvailabilityWindows(
         eventMemberDay.availabilityWindows,

@@ -18,11 +18,22 @@ import type {
 } from './models'
 import {
   detectScheduleIssues,
+  getPerformanceParticipationIssue,
+  getUntimedPerformancePlacementIssues,
   type ScheduleIssue,
   type ScheduleIssueCode,
 } from './issues.ts'
-import { calculateEventDayTimelines } from './timetable.ts'
-import { parseLocalTimeToMinute, type CalculatedScheduleItem } from './timeline.ts'
+import {
+  getInvalidSectionScheduleItemIds,
+  getSectionsForStage,
+  getStageScheduleItems,
+  getStagesForEventDay,
+} from './schedule.ts'
+import {
+  calculateStageTimeline,
+  parseLocalTimeToMinute,
+  type CalculatedScheduleItem,
+} from './timeline.ts'
 
 const HARD_ISSUE_CODES = [
   'MEMBER_NOT_REGISTERED_FOR_EVENT',
@@ -145,13 +156,18 @@ const sortViolations = <T extends ConstraintReferences>(
   eventDays: EventDay[],
   stages: Stage[],
   calculatedItems: CalculatedScheduleItem[],
+  scheduleItems: ScheduleItem[],
 ): T[] => {
   const dayById = new Map(eventDays.map((day) => [day.id, day]))
   const stageById = new Map(stages.map((stage) => [stage.id, stage]))
   const calculatedById = new Map(calculatedItems.map((item) => [item.scheduleItemId, item]))
+  const scheduleItemById = new Map(scheduleItems.map((item) => [item.id, item]))
   const key = (violation: T): string => {
     const firstItem = calculatedById.get(violation.scheduleItemIds?.[0] ?? '')
-    const stage = stageById.get(violation.stageIds?.[0] ?? firstItem?.stageId ?? '')
+    const sourceItem = scheduleItemById.get(violation.scheduleItemIds?.[0] ?? '')
+    const stage = stageById.get(
+      violation.stageIds?.[0] ?? firstItem?.stageId ?? sourceItem?.stageId ?? '',
+    )
     const day = dayById.get(violation.eventDayIds?.[0] ?? stage?.eventDayId ?? '')
     return [
       String(day?.order ?? Number.MAX_SAFE_INTEGER).padStart(16, '0'),
@@ -240,26 +256,45 @@ export const evaluateScheduleConstraints = ({
     }
   }
 
+  const resolvableItemIds = new Set(calculableItems.map((item) => item.id))
   for (const day of selectedDays) {
-    const timeline = calculateEventDayTimelines({
-      event,
-      eventDayId: day.id,
-      stages: selectedStages,
-      sections,
-      scheduleItems: calculableItems,
-      eventBands: selectedEventBands,
-    })
-    calculatedItems.push(...timeline.calculatedItems)
-    for (const invalid of timeline.invalidStages) {
-      hardViolations.push({
-        severity: 'hard', code: 'INVALID_SECTION_ASSIGNMENT',
-        eventDayIds: [day.id], stageIds: [invalid.stageId],
-        scheduleItemIds: [...invalid.scheduleItemIds].sort(),
-      })
+    for (const stage of getStagesForEventDay(selectedStages, day.id)) {
+      const stageSections = getSectionsForStage(sections, stage.id)
+      const stageItems = getStageScheduleItems(scheduleItems, stage.id)
+      const invalidIds = getInvalidSectionScheduleItemIds(
+        stage, stageSections, stageItems,
+      )
+      if (invalidIds.length > 0) {
+        hardViolations.push({
+          severity: 'hard', code: 'INVALID_SECTION_ASSIGNMENT',
+          eventDayIds: [day.id], stageIds: [stage.id],
+          scheduleItemIds: [...invalidIds].sort(),
+        })
+      }
+
+      // A Sectioned Stage never places an invalid item in a valid lane, so
+      // excluding it cannot shift the remaining lane's timeline. Without
+      // Sections, every item affects the one sequence: retain its duration.
+      const invalidIdSet = new Set(invalidIds)
+      const timedItems = stageSections.length === 0
+        ? stageItems
+        : stageItems.filter((item) => !invalidIdSet.has(item.id))
+      // An unresolved EventBand has no reliable duration. Do not invent
+      // start times for the rest of this Stage by dropping that item.
+      if (timedItems.some((item) => !resolvableItemIds.has(item.id))) continue
+
+      calculatedItems.push(...calculateStageTimeline({
+        event,
+        stage,
+        sections: stageSections,
+        scheduleItems: timedItems,
+        eventBands: selectedEventBands,
+      }))
     }
   }
 
   const calculatedById = new Map(calculatedItems.map((item) => [item.scheduleItemId, item]))
+  const scheduleItemById = new Map(scheduleItems.map((item) => [item.id, item]))
   const eventMemberByMemberId = new Map(
     eventMembers
       .filter((member) => member.eventId === event.id)
@@ -268,6 +303,33 @@ export const evaluateScheduleConstraints = ({
   const eventMemberDayByKey = new Map(eventMemberDays.map((day) => [
     `${day.eventMemberId}:${day.eventDayId}`, day,
   ]))
+
+  const untimedIssues: ScheduleIssue[] = []
+  for (const item of calculableItems) {
+    if (item.kind !== 'performance' || calculatedById.has(item.id)) continue
+    const stage = stageById.get(item.stageId)
+    const band = eventBandById.get(item.eventBandId)
+    if (!stage || !band) continue
+    untimedIssues.push(...getUntimedPerformancePlacementIssues(band, {
+      scheduleItemId: item.id,
+      eventDayId: stage.eventDayId,
+      stageId: stage.id,
+      sectionId: item.sectionId,
+    }))
+    for (const memberId of new Set(band.memberIds)) {
+      const eventMember = eventMemberByMemberId.get(memberId)
+      const participationIssue = getPerformanceParticipationIssue({
+        memberId,
+        eventBandId: band.id,
+        scheduleItemId: item.id,
+        eventMember,
+        eventMemberDay: eventMember
+          ? eventMemberDayByKey.get(`${eventMember.id}:${stage.eventDayId}`)
+          : undefined,
+      })
+      if (participationIssue) untimedIssues.push(participationIssue)
+    }
+  }
 
   const preferenceOutsideMinutes = (issue: ScheduleIssue): number => {
     const item = calculatedById.get(issue.scheduleItemIds?.[0] ?? '')
@@ -292,7 +354,7 @@ export const evaluateScheduleConstraints = ({
     dutyTypes: [],
     dutyAssignments: [],
     calculatedItems,
-  })
+  }).concat(untimedIssues)
 
   const referencesForIssue = (issue: ScheduleIssue): Omit<ConstraintReferences, 'code'> => {
     const days = new Set(issue.eventDayIds ?? [])
@@ -301,7 +363,9 @@ export const evaluateScheduleConstraints = ({
       if (dayId) days.add(dayId)
     })
     issue.scheduleItemIds?.forEach((id) => {
-      const dayId = calculatedById.get(id)?.eventDayId
+      const dayId = calculatedById.get(id)?.eventDayId ??
+        stageById.get(scheduleItemById.get(id)?.stageId ?? '')
+          ?.eventDayId
       if (dayId) days.add(dayId)
     })
     return {
@@ -346,8 +410,8 @@ export const evaluateScheduleConstraints = ({
     })
   }
 
-  sortViolations(hardViolations, selectedDays, selectedStages, calculatedItems)
-  sortViolations(softViolations, selectedDays, selectedStages, calculatedItems)
+  sortViolations(hardViolations, selectedDays, selectedStages, calculatedItems, scheduleItems)
+  sortViolations(softViolations, selectedDays, selectedStages, calculatedItems, scheduleItems)
   return {
     feasible: hardViolations.length === 0,
     hardViolations,

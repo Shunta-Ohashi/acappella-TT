@@ -76,6 +76,16 @@ const issueCodes = (candidate) => {
   }).map((issue) => issue.code)
 }
 
+const invalidSectionCandidate = (overrides = {}) => input({
+  sections: [section('section-1', 0)],
+  eventBands: [band('band-1'), band('band-2', ['member-2'])],
+  scheduleItems: [
+    performance('invalid-item', 'band-1', 'stage-a', 0, 'missing-section'),
+    performance('valid-item', 'band-2', 'stage-a', 1, 'section-1'),
+  ],
+  ...overrides,
+})
+
 test('clean scheduleはfeasibleでpenalty 0', () => {
   assert.deepEqual(evaluate(), {
     feasible: true, hardViolations: [], softViolations: [], totalPenalty: 0,
@@ -125,6 +135,131 @@ test('Sectionあり・なしの不正な所属をHardにする', () => {
     sections,
     scheduleItems: [performance('item-1', 'band-1', 'stage-a', 0, 'section-1')],
   }).feasible, true)
+})
+
+test('Section不正itemと同じStageの正常itemの不参加を両方検出する', () => {
+  const candidate = invalidSectionCandidate()
+  candidate.eventMemberDays = candidate.eventMemberDays.map((day) =>
+    day.id === 'member-2-day-1'
+      ? { ...day, participationStatus: 'absent' }
+      : day)
+
+  const result = evaluateScheduleConstraints(candidate)
+  assert.equal(result.feasible, false)
+  assert.deepEqual(find(result.hardViolations, 'INVALID_SECTION_ASSIGNMENT').scheduleItemIds,
+    ['invalid-item'])
+  assert.deepEqual(find(result.hardViolations, 'MEMBER_ABSENT').scheduleItemIds,
+    ['valid-item'])
+})
+
+test('Section不正itemと同じStageの正常itemの日別参加情報不足を検出する', () => {
+  const candidate = invalidSectionCandidate()
+  candidate.eventMemberDays = candidate.eventMemberDays.filter((day) =>
+    day.id !== 'member-2-day-1')
+
+  const result = evaluateScheduleConstraints(candidate)
+  assert.ok(codes(result.hardViolations).includes('INVALID_SECTION_ASSIGNMENT'))
+  assert.deepEqual(find(result.hardViolations, 'MEMBER_DAY_NOT_CONFIGURED').scheduleItemIds,
+    ['valid-item'])
+})
+
+test('Section不正itemと同じStageの正常itemの固定Stage違反も検出する', () => {
+  const candidate = invalidSectionCandidate({
+    eventBands: [band('band-1'), band('band-2', ['member-2'], {
+      fixedPlacement: { stageId: 'another-stage' },
+    })],
+  })
+  const result = evaluateScheduleConstraints(candidate)
+
+  assert.ok(codes(result.hardViolations).includes('INVALID_SECTION_ASSIGNMENT'))
+  assert.deepEqual(find(result.hardViolations, 'FIXED_STAGE_MISMATCH').scheduleItemIds,
+    ['valid-item'])
+})
+
+test('Section不正itemだけでも修復せずfeasible=falseにする', () => {
+  const candidate = invalidSectionCandidate({
+    eventBands: [band('band-1')],
+    scheduleItems: [performance('invalid-item', 'band-1', 'stage-a', 0, 'missing-section')],
+  })
+  const original = structuredClone(candidate)
+  const result = evaluateScheduleConstraints(candidate)
+
+  assert.equal(result.feasible, false)
+  assert.deepEqual(codes(result.hardViolations), ['INVALID_SECTION_ASSIGNMENT'])
+  assert.deepEqual(candidate, original)
+})
+
+test('Section不正Stageは別StageのConstraint評価を抑制しない', () => {
+  const candidate = invalidSectionCandidate({
+    stages: [stage('stage-a'), stage('stage-b')],
+    eventBands: [band('band-1'), band('band-2', ['member-2'])],
+    scheduleItems: [
+      performance('invalid-item', 'band-1', 'stage-a', 0, 'missing-section'),
+      performance('valid-item', 'band-2', 'stage-b'),
+    ],
+  })
+  candidate.eventMemberDays = candidate.eventMemberDays.map((day) =>
+    day.id === 'member-2-day-1'
+      ? { ...day, participationStatus: 'absent' }
+      : day)
+
+  const result = evaluateScheduleConstraints(candidate)
+  assert.ok(codes(result.hardViolations).includes('INVALID_SECTION_ASSIGNMENT'))
+  assert.deepEqual(find(result.hardViolations, 'MEMBER_ABSENT').scheduleItemIds,
+    ['valid-item'])
+})
+
+test('Section不正itemが混じっても同一Stageの正常item同士のSoft penaltyを計算する', () => {
+  const candidate = invalidSectionCandidate({
+    eventBands: [band('band-1'), band('band-2', ['member-2']),
+      band('band-3', ['member-2'])],
+    scheduleItems: [
+      performance('invalid-item', 'band-1', 'stage-a', 0, 'missing-section'),
+      performance('valid-item', 'band-2', 'stage-a', 1, 'section-1'),
+      performance('valid-next', 'band-3', 'stage-a', 2, 'section-1'),
+    ],
+  })
+  const result = evaluateScheduleConstraints(candidate)
+  assert.equal(result.feasible, false)
+  assert.deepEqual(codes(result.softViolations), ['BACK_TO_BACK'])
+  assert.equal(result.totalPenalty, 10)
+  assert.deepEqual(find(result.softViolations, 'BACK_TO_BACK').scheduleItemIds,
+    ['valid-item', 'valid-next'])
+  assert.deepEqual(result, evaluateScheduleConstraints(candidate))
+})
+
+test('SectionなしStageのstale sectionIdは項目を除外して後続時刻を前倒ししない', () => {
+  const candidate = input({
+    eventBands: [band('band-1', ['member-1'], {
+      availableTimeRange: { from: '10:20' },
+    })],
+    scheduleItems: [breakItem('stale-break', 20, 0, 'missing-section'),
+      performance('valid-item', 'band-1', 'stage-a', 1)],
+  })
+  const result = evaluateScheduleConstraints(candidate)
+  assert.ok(codes(result.hardViolations).includes('INVALID_SECTION_ASSIGNMENT'))
+  assert.equal(codes(result.hardViolations).includes('OUTSIDE_BAND_AVAILABILITY'), false)
+})
+
+test('参照切れで時刻不明なら後続を前倒しせず、時刻不要の不参加だけを評価する', () => {
+  const candidate = input({
+    eventBands: [band('band-2', ['member-2'], {
+      availableTimeRange: { from: '10:30' },
+    })],
+    scheduleItems: [performance('missing-item', 'missing-band'),
+      performance('valid-item', 'band-2', 'stage-a', 1)],
+  })
+  candidate.eventMemberDays = candidate.eventMemberDays.map((day) =>
+    day.id === 'member-2-day-1'
+      ? { ...day, participationStatus: 'absent' }
+      : day)
+  const result = evaluateScheduleConstraints(candidate)
+
+  assert.ok(codes(result.hardViolations).includes('EVENT_BAND_NOT_FOUND'))
+  assert.deepEqual(find(result.hardViolations, 'MEMBER_ABSENT').scheduleItemIds,
+    ['valid-item'])
+  assert.equal(codes(result.hardViolations).includes('OUTSIDE_BAND_AVAILABILITY'), false)
+  assert.deepEqual(result.softViolations, [])
 })
 
 test('同一Stageと別Stageの出演重複をIssueと同じHardにし、接する区間は重複しない', () => {
