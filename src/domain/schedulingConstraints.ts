@@ -30,6 +30,7 @@ import {
   getSectionsForStage,
   getStageScheduleItems,
   getStagesForEventDay,
+  isValidScheduleItemSectionAssignment,
 } from './schedule.ts'
 import {
   calculateStageTimeline,
@@ -227,17 +228,16 @@ export const evaluateScheduleConstraints = ({
         severity: 'hard', code: 'INVALID_STAGE_ASSIGNMENT',
         stageIds: [item.stageId], scheduleItemIds: [item.id],
       })
-      if (item.sectionId !== undefined) {
-        const referencedSection = sections.find(
-          (section) => section.id === item.sectionId,
-        )
-        if (!referencedSection || referencedSection.stageId !== item.stageId) {
-          hardViolations.push({
-            severity: 'hard', code: 'INVALID_SECTION_ASSIGNMENT',
-            stageIds: [item.stageId], sectionIds: [item.sectionId],
-            scheduleItemIds: [item.id],
-          })
-        }
+      const stageSections = sections.filter(
+        (section) => section.stageId === item.stageId,
+      )
+      if (!isValidScheduleItemSectionAssignment(item.stageId, stageSections, item)) {
+        hardViolations.push({
+          severity: 'hard', code: 'INVALID_SECTION_ASSIGNMENT',
+          stageIds: [item.stageId],
+          ...(item.sectionId !== undefined ? { sectionIds: [item.sectionId] } : {}),
+          scheduleItemIds: [item.id],
+        })
       }
     }
     if (item.kind === 'performance') {
@@ -290,19 +290,20 @@ export const evaluateScheduleConstraints = ({
     const stageSections = sections
       .filter((section) => section.stageId === stageId)
       .sort((first, second) => first.order - second.order || first.id.localeCompare(second.id))
-    const sectionIds = new Set(stageSections.map((section) => section.id))
-    const usesTrustedSectionLanes = stageItems.some((item) => item.sectionId !== undefined)
-    // A missing Stage still permits raw sequence checks when every item has a
-    // known lane. Mixed or stale Section assignments have no trustworthy lane
-    // order, so keep the conservative skip for those cases.
-    if (usesTrustedSectionLanes && (
-      stageSections.length === 0 ||
-      stageItems.some((item) => item.sectionId === undefined || !sectionIds.has(item.sectionId))
-    )) return
-    const orderedStageItems = usesTrustedSectionLanes
+    const stageUsesSections = stageSections.length > 0
+    // Section records are the source of truth even when the Stage reference is
+    // missing. Exclude ambiguous assignments instead of treating them as one
+    // sectionless Stage lane; valid Section lanes remain independently usable.
+    const orderedStageItems = stageUsesSections
       ? stageSections.flatMap((section) =>
-          stageItems.filter((item) => item.sectionId === section.id))
+          stageItems.filter((item) =>
+            item.sectionId === section.id &&
+            isValidScheduleItemSectionAssignment(stageId, stageSections, item)))
       : stageItems
+    if (
+      !stageUsesSections &&
+      stageItems.some((item) => item.sectionId !== undefined)
+    ) return
     const performanceItems = orderedStageItems.filter(
       (item) => item.kind === 'performance',
     )
@@ -322,6 +323,7 @@ export const evaluateScheduleConstraints = ({
         scheduleItemId: item.id,
         eventDayId,
         stageId: item.stageId,
+        sectionId: item.sectionId,
         eventBandId: item.eventBandId,
       })))
   })

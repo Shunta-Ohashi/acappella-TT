@@ -239,6 +239,38 @@ test('missing Stageでも同じEventDay内ならBACK_TO_BACKを評価する', ()
     ['item-a', 'item-b'])
 })
 
+test('missing StageにSectionレコードがあればsectionIdなしitemをraw Stageへfallbackしない', () => {
+  const candidate = input({
+    event: { ...input().event, validationPolicy: {
+      minimumGapBands: 2, minimumRestMinutes: 0,
+    } },
+    sections: [
+      { id: 'section-a', stageId: 'missing-stage', name: 'A', order: 0 },
+      { id: 'section-b', stageId: 'missing-stage', name: 'B', order: 1 },
+    ],
+    eventBands: [
+      band('head', ['member-1']),
+      band('fixed', ['member-1'], {
+        fixedPlacement: { stageId: 'missing-stage', position: { kind: 'first' } },
+      }),
+    ],
+    scheduleItems: [
+      performance('head-item', 'head', 'missing-stage', 0),
+      performance('fixed-item', 'fixed', 'missing-stage', 1),
+    ],
+  })
+  const before = structuredClone(candidate)
+  const result = evaluateScheduleConstraints(candidate)
+
+  assert.equal(result.hardViolations.filter((violation) =>
+    violation.code === 'INVALID_SECTION_ASSIGNMENT').length, 2)
+  assert.equal(codes(result.hardViolations).includes('FIXED_POSITION_MISMATCH'), false)
+  assert.equal(codes(result.softViolations).includes('BACK_TO_BACK'), false)
+  assert.equal(codes(result.softViolations).includes('SHORT_GAP'), false)
+  assert.deepEqual(result, evaluateScheduleConstraints(candidate))
+  assert.deepEqual(candidate, before)
+})
+
 test('missing Stageでも有効Sectionレーンならraw順序の制約を評価する', () => {
   const result = evaluate({
     sections: [{ id: 'section-1', stageId: 'missing-stage', name: 'Section', order: 0 }],
@@ -257,8 +289,31 @@ test('missing Stageでも有効Sectionレーンならraw順序の制約を評価
   })
 
   assert.ok(codes(result.hardViolations).includes('INVALID_STAGE_ASSIGNMENT'))
+  assert.deepEqual(find(result.hardViolations, 'FIXED_POSITION_MISMATCH').scheduleItemIds,
+    ['fixed-item'])
   assert.deepEqual(find(result.softViolations, 'BACK_TO_BACK').scheduleItemIds,
     ['head-item', 'fixed-item'])
+})
+
+test('missing Stageの不正Section itemを除外して有効Sectionレーンを評価する', () => {
+  const result = evaluate({
+    sections: [{ id: 'section-1', stageId: 'missing-stage', name: 'Section', order: 0 },
+      { id: 'other-section', stageId: 'other-stage', name: 'Other', order: 0 }],
+    eventBands: [band('band-a'), band('band-b'),
+      band('missing-section-band', ['member-2']), band('other-section-band', ['member-2'])],
+    scheduleItems: [
+      performance('band-a-item', 'band-a', 'missing-stage', 0, 'section-1'),
+      performance('missing-section-item', 'missing-section-band', 'missing-stage', 1),
+      performance('other-section-item', 'other-section-band',
+        'missing-stage', 2, 'other-section'),
+      performance('band-b-item', 'band-b', 'missing-stage', 3, 'section-1'),
+    ],
+  })
+
+  assert.equal(result.hardViolations.filter((violation) =>
+    violation.code === 'INVALID_SECTION_ASSIGNMENT').length, 2)
+  assert.deepEqual(find(result.softViolations, 'BACK_TO_BACK').scheduleItemIds,
+    ['band-a-item', 'band-b-item'])
 })
 
 test('missing Stageのfixed first・last・indexをEventDayごとに判定する', () => {
