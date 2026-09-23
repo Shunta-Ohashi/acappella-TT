@@ -295,6 +295,117 @@ test('missing Stageでも有効Sectionレーンならraw順序の制約を評価
     ['head-item', 'fixed-item'])
 })
 
+test('missing StageではEventDayを信頼できないSectionだけskipする', () => {
+  const foreignDay = {
+    id: 'foreign-day', eventId: 'other-event', date: '2027-12-01', order: 0,
+  }
+  const cases = [
+    {
+      name: 'missing EventBand',
+      eventDays: input().eventDays,
+      extraBands: [],
+      badItem: performance('bad-item', 'missing-band', 'missing-stage', 0, 'section-b'),
+      hardCode: 'EVENT_BAND_NOT_FOUND',
+    },
+    {
+      name: 'foreign EventBand',
+      eventDays: input().eventDays,
+      extraBands: [band('foreign-band', ['member-2'], { eventId: 'other-event' })],
+      badItem: performance('bad-item', 'foreign-band', 'missing-stage', 0, 'section-b'),
+      hardCode: 'EVENT_BAND_EVENT_MISMATCH',
+    },
+    {
+      name: 'nonexistent EventDay',
+      eventDays: input().eventDays,
+      extraBands: [band('bad-day-band', ['member-2'], { eventDayId: 'missing-day' })],
+      badItem: performance('bad-item', 'bad-day-band', 'missing-stage', 0, 'section-b'),
+      hardCode: 'EVENT_BAND_DAY_MISMATCH',
+    },
+    {
+      name: 'foreign EventDay',
+      eventDays: [...input().eventDays, foreignDay],
+      extraBands: [band('bad-day-band', ['member-2'], { eventDayId: foreignDay.id })],
+      badItem: performance('bad-item', 'bad-day-band', 'missing-stage', 0, 'section-b'),
+      hardCode: 'EVENT_BAND_DAY_MISMATCH',
+    },
+  ]
+
+  for (const invalidCase of cases) {
+    const candidate = input({
+      eventDays: invalidCase.eventDays,
+      sections: [
+        { id: 'section-a', stageId: 'missing-stage', name: 'A', order: 0 },
+        { id: 'section-b', stageId: 'missing-stage', name: 'B', order: 1 },
+      ],
+      eventBands: [
+        band('valid-head', ['member-1']),
+        band('valid-fixed', ['member-1'], {
+          fixedPlacement: {
+            stageId: 'missing-stage', sectionId: 'section-a', position: { kind: 'first' },
+          },
+        }),
+        ...invalidCase.extraBands,
+      ],
+      scheduleItems: [
+        performance('valid-head-item', 'valid-head', 'missing-stage', 0, 'section-a'),
+        performance('valid-fixed-item', 'valid-fixed', 'missing-stage', 1, 'section-a'),
+        invalidCase.badItem,
+      ],
+    })
+    const before = structuredClone(candidate)
+    const result = evaluateScheduleConstraints(candidate)
+
+    assert.ok(codes(result.hardViolations).includes(invalidCase.hardCode), invalidCase.name)
+    assert.deepEqual(find(result.hardViolations, 'FIXED_POSITION_MISMATCH').scheduleItemIds,
+      ['valid-fixed-item'], invalidCase.name)
+    assert.deepEqual(find(result.softViolations, 'BACK_TO_BACK').scheduleItemIds,
+      ['valid-head-item', 'valid-fixed-item'], invalidCase.name)
+    assert.deepEqual(result, evaluateScheduleConstraints(candidate), invalidCase.name)
+    assert.deepEqual(candidate, before, invalidCase.name)
+  }
+})
+
+test('missing Stageの同一Section内でEventDayが混在すればそのlaneだけskipする', () => {
+  const candidate = input({
+    sections: [
+      { id: 'section-a', stageId: 'missing-stage', name: 'A', order: 0 },
+      { id: 'section-b', stageId: 'missing-stage', name: 'B', order: 1 },
+    ],
+    eventBands: [
+      band('valid-head', ['member-1']),
+      band('valid-fixed', ['member-1'], {
+        fixedPlacement: {
+          stageId: 'missing-stage', sectionId: 'section-a', position: { kind: 'first' },
+        },
+      }),
+      band('day-1-band', ['member-2']),
+      band('day-2-head', ['member-2'], { eventDayId: day2.id }),
+      band('day-2-fixed', ['member-2'], {
+        eventDayId: day2.id,
+        fixedPlacement: {
+          stageId: 'missing-stage', sectionId: 'section-b', position: { kind: 'first' },
+        },
+      }),
+    ],
+    scheduleItems: [
+      performance('valid-head-item', 'valid-head', 'missing-stage', 0, 'section-a'),
+      performance('valid-fixed-item', 'valid-fixed', 'missing-stage', 1, 'section-a'),
+      performance('day-1-item', 'day-1-band', 'missing-stage', 0, 'section-b'),
+      performance('day-2-head-item', 'day-2-head', 'missing-stage', 1, 'section-b'),
+      performance('day-2-fixed-item', 'day-2-fixed', 'missing-stage', 2, 'section-b'),
+    ],
+  })
+  const result = evaluateScheduleConstraints(candidate)
+
+  assert.deepEqual(result.hardViolations
+    .filter((violation) => violation.code === 'FIXED_POSITION_MISMATCH')
+    .map((violation) => violation.scheduleItemIds), [['valid-fixed-item']])
+  assert.deepEqual(result.softViolations
+    .filter((violation) => violation.code === 'BACK_TO_BACK')
+    .map((violation) => violation.scheduleItemIds),
+  [['valid-head-item', 'valid-fixed-item']])
+})
+
 test('missing Stageの不正Section itemを除外して有効Sectionレーンを評価する', () => {
   const result = evaluate({
     sections: [{ id: 'section-1', stageId: 'missing-stage', name: 'Section', order: 0 },

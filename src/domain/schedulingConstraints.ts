@@ -213,7 +213,7 @@ export const evaluateScheduleConstraints = ({
   const selectedEventBands = eventBands.filter((band) => band.eventId === event.id)
   const eventBandById = new Map(eventBands.map((band) => [band.id, band]))
   const calculatedItems: CalculatedScheduleItem[] = []
-  const untimedSequenceItems: PerformanceSequenceItem[] = []
+  const untimedSequenceGroups: PerformanceSequenceItem[][] = []
   const hardViolations: HardConstraintViolation[] = []
   const softViolations: SoftConstraintViolation[] = []
 
@@ -285,6 +285,30 @@ export const evaluateScheduleConstraints = ({
       .filter((item) => !stageById.has(item.stageId))
       .map((item) => item.stageId),
   )
+  const getTrustedMissingStageSequence = (
+    performanceItems: Extract<ScheduleItem, { kind: 'performance' }>[],
+    requireSingleEventDay: boolean,
+  ): PerformanceSequenceItem[] | undefined => {
+    const sequenceItems = performanceItems.map((item) => {
+      const band = eventBandById.get(item.eventBandId)
+      return band?.eventId === event.id && selectedDayIds.has(band.eventDayId)
+        ? {
+            scheduleItemId: item.id,
+            eventDayId: band.eventDayId,
+            stageId: item.stageId,
+            sectionId: item.sectionId,
+            eventBandId: item.eventBandId,
+          }
+        : undefined
+    })
+    if (sequenceItems.some((item) => item === undefined)) return undefined
+    const trustedItems = sequenceItems.filter((item) => item !== undefined)
+    if (
+      requireSingleEventDay &&
+      new Set(trustedItems.map((item) => item.eventDayId)).size > 1
+    ) return undefined
+    return trustedItems
+  }
   invalidStageIds.forEach((stageId) => {
     const stageItems = getStageScheduleItems(scheduleItems, stageId)
     const stageSections = sections
@@ -294,38 +318,27 @@ export const evaluateScheduleConstraints = ({
     // Section records are the source of truth even when the Stage reference is
     // missing. Exclude ambiguous assignments instead of treating them as one
     // sectionless Stage lane; valid Section lanes remain independently usable.
-    const orderedStageItems = stageUsesSections
-      ? stageSections.flatMap((section) =>
-          stageItems.filter((item) =>
-            item.sectionId === section.id &&
-            isValidScheduleItemSectionAssignment(stageId, stageSections, item)))
-      : stageItems
-    if (
-      !stageUsesSections &&
-      stageItems.some((item) => item.sectionId !== undefined)
-    ) return
-    const performanceItems = orderedStageItems.filter(
+    if (stageUsesSections) {
+      stageSections.forEach((section) => {
+        const lanePerformances = stageItems.filter(
+          (item): item is Extract<ScheduleItem, { kind: 'performance' }> =>
+          item.kind === 'performance' &&
+          item.sectionId === section.id &&
+          isValidScheduleItemSectionAssignment(stageId, stageSections, item),
+        )
+        const sequence = getTrustedMissingStageSequence(lanePerformances, true)
+        if (sequence?.length) untimedSequenceGroups.push(sequence)
+      })
+      return
+    }
+    if (stageItems.some((item) => item.sectionId !== undefined)) return
+    const performanceItems = stageItems.filter(
       (item) => item.kind === 'performance',
     )
-    const performancesWithDay = performanceItems.map((item) => {
-      const band = eventBandById.get(item.eventBandId)
-      return band?.eventId === event.id && selectedDayIds.has(band.eventDayId)
-        ? { item, eventDayId: band.eventDayId }
-        : undefined
-    })
-    // If even one Performance has no trustworthy EventDay, its position may
-    // belong to any day's sequence. Do not collapse around it and invent a
-    // cross-day position or gap violation.
-    if (performancesWithDay.some((item) => item === undefined)) return
-    untimedSequenceItems.push(...performancesWithDay
-      .filter((item) => item !== undefined)
-      .map(({ item, eventDayId }) => ({
-        scheduleItemId: item.id,
-        eventDayId,
-        stageId: item.stageId,
-        sectionId: item.sectionId,
-        eventBandId: item.eventBandId,
-      })))
+    // A sectionless missing Stage is one lane. An unknown EventDay can affect
+    // any position in it, so keep the conservative Stage-level skip here.
+    const sequence = getTrustedMissingStageSequence(performanceItems, false)
+    if (sequence?.length) untimedSequenceGroups.push(sequence)
   })
   for (const day of selectedDays) {
     for (const stage of getStagesForEventDay(selectedStages, day.id)) {
@@ -358,7 +371,7 @@ export const evaluateScheduleConstraints = ({
           ? timedItems
           : stageSections.flatMap((section) =>
               timedItems.filter((item) => item.sectionId === section.id))
-        untimedSequenceItems.push(...orderedItems
+        const sequence = orderedItems
           .filter((item) => item.kind === 'performance')
           .map((item) => ({
             scheduleItemId: item.id,
@@ -366,7 +379,8 @@ export const evaluateScheduleConstraints = ({
             stageId: item.stageId,
             sectionId: item.sectionId,
             eventBandId: item.eventBandId,
-          })))
+          }))
+        if (sequence.length) untimedSequenceGroups.push(sequence)
         continue
       }
 
@@ -392,11 +406,13 @@ export const evaluateScheduleConstraints = ({
   ]))
 
   const untimedIssues: ScheduleIssue[] = []
-  untimedIssues.push(...getPerformanceSequenceIssues({
-    performances: untimedSequenceItems,
-    eventBands: selectedEventBands,
-    minimumGapBands: event.validationPolicy.minimumGapBands,
-  }))
+  untimedSequenceGroups.forEach((performances) => {
+    untimedIssues.push(...getPerformanceSequenceIssues({
+      performances,
+      eventBands: selectedEventBands,
+      minimumGapBands: event.validationPolicy.minimumGapBands,
+    }))
+  })
   for (const item of placementCheckableItems) {
     if (item.kind !== 'performance' || calculatedById.has(item.id)) continue
     const stage = stageById.get(item.stageId)
