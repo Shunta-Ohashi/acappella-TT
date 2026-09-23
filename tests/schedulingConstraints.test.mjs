@@ -300,6 +300,40 @@ test('EventDay不明のPerformanceはmissing Stage sequenceを保守的に無効
   assert.deepEqual(candidate, before)
 })
 
+test('missing Stageでは存在しない・別EventのEventDayをraw sequenceへ使わない', () => {
+  const foreignDay = {
+    id: 'other-event-day', eventId: 'other-event', date: '2027-12-01', order: 0,
+  }
+  for (const [eventDayId, eventDays] of [
+    ['missing-event-day', input().eventDays],
+    [foreignDay.id, [...input().eventDays, foreignDay]],
+  ]) {
+    const candidate = input({
+      event: { ...input().event, validationPolicy: {
+        minimumGapBands: 2, minimumRestMinutes: 0,
+      } },
+      eventDays,
+      eventBands: [
+        band(`head-${eventDayId}`, ['member-1'], { eventDayId }),
+        band(`fixed-${eventDayId}`, ['member-1'], {
+          eventDayId,
+          fixedPlacement: { stageId: 'missing-stage', position: { kind: 'first' } },
+        }),
+      ],
+      scheduleItems: [
+        performance(`head-item-${eventDayId}`, `head-${eventDayId}`, 'missing-stage', 0),
+        performance(`fixed-item-${eventDayId}`, `fixed-${eventDayId}`, 'missing-stage', 1),
+      ],
+    })
+    const result = evaluateScheduleConstraints(candidate)
+
+    assert.ok(codes(result.hardViolations).includes('EVENT_BAND_DAY_MISMATCH'))
+    assert.equal(codes(result.hardViolations).includes('FIXED_POSITION_MISMATCH'), false)
+    assert.equal(codes(result.softViolations).includes('BACK_TO_BACK'), false)
+    assert.equal(codes(result.softViolations).includes('SHORT_GAP'), false)
+  }
+})
+
 test('Stage不正でもEventBandの日付からabsentとundecidedを評価する', () => {
   const base = input()
   const candidate = input({

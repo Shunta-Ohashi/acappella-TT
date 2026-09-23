@@ -294,7 +294,9 @@ export const evaluateScheduleConstraints = ({
     )
     const performancesWithDay = performanceItems.map((item) => {
       const band = eventBandById.get(item.eventBandId)
-      return band?.eventId === event.id ? { item, eventDayId: band.eventDayId } : undefined
+      return band?.eventId === event.id && selectedDayIds.has(band.eventDayId)
+        ? { item, eventDayId: band.eventDayId }
+        : undefined
     })
     // If even one Performance has no trustworthy EventDay, its position may
     // belong to any day's sequence. Do not collapse around it and invent a
