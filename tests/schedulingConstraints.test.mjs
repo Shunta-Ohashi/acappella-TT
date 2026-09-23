@@ -239,6 +239,28 @@ test('missing Stageでも同じEventDay内ならBACK_TO_BACKを評価する', ()
     ['item-a', 'item-b'])
 })
 
+test('missing Stageでも有効Sectionレーンならraw順序の制約を評価する', () => {
+  const result = evaluate({
+    sections: [{ id: 'section-1', stageId: 'missing-stage', name: 'Section', order: 0 }],
+    eventBands: [
+      band('head', ['member-1']),
+      band('fixed', ['member-1'], {
+        fixedPlacement: {
+          stageId: 'missing-stage', sectionId: 'section-1', position: { kind: 'first' },
+        },
+      }),
+    ],
+    scheduleItems: [
+      performance('head-item', 'head', 'missing-stage', 0, 'section-1'),
+      performance('fixed-item', 'fixed', 'missing-stage', 1, 'section-1'),
+    ],
+  })
+
+  assert.ok(codes(result.hardViolations).includes('INVALID_STAGE_ASSIGNMENT'))
+  assert.deepEqual(find(result.softViolations, 'BACK_TO_BACK').scheduleItemIds,
+    ['head-item', 'fixed-item'])
+})
+
 test('missing Stageのfixed first・last・indexをEventDayごとに判定する', () => {
   const evaluatePosition = (position, scheduleItems) => evaluate({
     eventBands: [band('day-1-noise', ['member-2']),
@@ -480,6 +502,30 @@ test('Section不正itemが混じっても同一Stageの正常item同士のSoft p
   assert.deepEqual(find(result.softViolations, 'BACK_TO_BACK').scheduleItemIds,
     ['valid-item', 'valid-next'])
   assert.deepEqual(result, evaluateScheduleConstraints(candidate))
+})
+
+test('Section不正itemと参照切れが混在しても有効レーンのraw順序を評価する', () => {
+  const candidate = invalidSectionCandidate({
+    eventBands: [
+      band('invalid-band', ['member-2']),
+      band('fixed-band', ['member-1'], {
+        fixedPlacement: {
+          stageId: 'stage-a', sectionId: 'section-1', position: { kind: 'first' },
+        },
+      }),
+    ],
+    scheduleItems: [
+      performance('invalid-item', 'invalid-band', 'stage-a', 0, 'missing-section'),
+      performance('broken-item', 'missing-band', 'stage-a', 0, 'section-1'),
+      performance('fixed-item', 'fixed-band', 'stage-a', 1, 'section-1'),
+    ],
+  })
+  const result = evaluateScheduleConstraints(candidate)
+
+  assert.ok(codes(result.hardViolations).includes('INVALID_SECTION_ASSIGNMENT'))
+  assert.ok(codes(result.hardViolations).includes('EVENT_BAND_NOT_FOUND'))
+  assert.deepEqual(find(result.hardViolations, 'FIXED_POSITION_MISMATCH').scheduleItemIds,
+    ['fixed-item'])
 })
 
 test('SectionなしStageのstale sectionIdは項目を除外して後続時刻を前倒ししない', () => {

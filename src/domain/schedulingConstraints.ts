@@ -287,9 +287,23 @@ export const evaluateScheduleConstraints = ({
   )
   invalidStageIds.forEach((stageId) => {
     const stageItems = getStageScheduleItems(scheduleItems, stageId)
-    // Without a Stage model, a Section-based lane order cannot be inferred.
-    if (stageItems.some((item) => item.sectionId !== undefined)) return
-    const performanceItems = stageItems.filter(
+    const stageSections = sections
+      .filter((section) => section.stageId === stageId)
+      .sort((first, second) => first.order - second.order || first.id.localeCompare(second.id))
+    const sectionIds = new Set(stageSections.map((section) => section.id))
+    const usesTrustedSectionLanes = stageItems.some((item) => item.sectionId !== undefined)
+    // A missing Stage still permits raw sequence checks when every item has a
+    // known lane. Mixed or stale Section assignments have no trustworthy lane
+    // order, so keep the conservative skip for those cases.
+    if (usesTrustedSectionLanes && (
+      stageSections.length === 0 ||
+      stageItems.some((item) => item.sectionId === undefined || !sectionIds.has(item.sectionId))
+    )) return
+    const orderedStageItems = usesTrustedSectionLanes
+      ? stageSections.flatMap((section) =>
+          stageItems.filter((item) => item.sectionId === section.id))
+      : stageItems
+    const performanceItems = orderedStageItems.filter(
       (item) => item.kind === 'performance',
     )
     const performancesWithDay = performanceItems.map((item) => {
@@ -336,24 +350,21 @@ export const evaluateScheduleConstraints = ({
       // An unresolved EventBand has no reliable duration. Do not invent
       // start times for the rest of this Stage by dropping that item.
       if (timedItems.some((item) => !resolvableItemIds.has(item.id))) {
-        // With valid Section assignments, the raw lane order is unambiguous.
-        // Preserve unresolved performances in that order: they count toward
-        // fixed positions and gapBands even though their duration is unknown.
-        if (invalidIds.length === 0 || stageSections.length === 0) {
-          const orderedItems = stageSections.length === 0
-            ? timedItems
-            : stageSections.flatMap((section) =>
-                timedItems.filter((item) => item.sectionId === section.id))
-          untimedSequenceItems.push(...orderedItems
-            .filter((item) => item.kind === 'performance')
-            .map((item) => ({
-              scheduleItemId: item.id,
-              eventDayId: stage.eventDayId,
-              stageId: item.stageId,
-              sectionId: item.sectionId,
-              eventBandId: item.eventBandId,
-            })))
-        }
+        // Invalid Section assignments are excluded from timedItems, so the
+        // remaining valid lanes still have an unambiguous raw order.
+        const orderedItems = stageSections.length === 0
+          ? timedItems
+          : stageSections.flatMap((section) =>
+              timedItems.filter((item) => item.sectionId === section.id))
+        untimedSequenceItems.push(...orderedItems
+          .filter((item) => item.kind === 'performance')
+          .map((item) => ({
+            scheduleItemId: item.id,
+            eventDayId: stage.eventDayId,
+            stageId: item.stageId,
+            sectionId: item.sectionId,
+            eventBandId: item.eventBandId,
+          })))
         continue
       }
 
