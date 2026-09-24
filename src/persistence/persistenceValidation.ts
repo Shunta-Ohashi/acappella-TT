@@ -186,8 +186,11 @@ export const isScheduleItem = (value: unknown): value is ScheduleItem =>
   isString(value.stageId) &&
   isOptional(value.sectionId, isString) &&
   isNonNegativeInteger(value.order) && (
-    (value.kind === 'performance' && isString(value.eventBandId)) ||
+    (value.kind === 'performance' &&
+      value.afterSectionId === undefined &&
+      isString(value.eventBandId)) ||
     (value.kind === 'break' &&
+      isOptional(value.afterSectionId, isString) &&
       isString(value.title) &&
       isValidBreakDurationMinutes(value.durationMinutes))
   )

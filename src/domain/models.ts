@@ -156,6 +156,7 @@ export interface BreakScheduleItem extends ScheduleItemBase {
   kind: 'break'
   title: string
   durationMinutes: number
+  afterSectionId?: SectionId
 }
 
 export type ScheduleItem = PerformanceScheduleItem | BreakScheduleItem

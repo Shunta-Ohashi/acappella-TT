@@ -84,7 +84,14 @@ export interface StageReferences {
 }
 
 export interface SectionReferences {
-  scheduleItems: Pick<ScheduleItem, 'sectionId'>[]
+  scheduleItems: Array<
+    | { kind: 'performance'; sectionId?: SectionId }
+    | {
+        kind: 'break'
+        sectionId?: SectionId
+        afterSectionId?: SectionId
+      }
+  >
   eventBands: Pick<EventBand, 'fixedPlacement'>[]
 }
 
@@ -520,7 +527,9 @@ export const canDeleteSection = (
   { scheduleItems, eventBands }: SectionReferences,
 ): boolean =>
   !scheduleItems.some((scheduleItem) =>
-    scheduleItem.sectionId === sectionId,
+    scheduleItem.sectionId === sectionId ||
+    (scheduleItem.kind === 'break' &&
+      scheduleItem.afterSectionId === sectionId),
   ) &&
   !eventBands.some((eventBand) =>
     eventBand.fixedPlacement?.sectionId === sectionId,

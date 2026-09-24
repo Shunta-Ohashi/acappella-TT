@@ -3838,6 +3838,38 @@
   border-bottom: 1px solid #cbd5e1;
 }
 
+.timetable-grid__inter-section-breaks {
+  background: #f8fbfa;
+  border-bottom: 1px solid #cbd5e1;
+}
+
+.timetable-grid__inter-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 9px;
+  background: #edf7f5;
+  border-top: 1px dashed #9cbeb9;
+  border-bottom: 1px dashed #9cbeb9;
+}
+
+.timetable-grid__inter-section-heading > div {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.timetable-grid__inter-section-heading strong {
+  color: #234d49;
+  font-size: 11px;
+}
+
+.timetable-grid__inter-section-heading span {
+  color: #526174;
+  font-size: 9px;
+}
+
 .timetable-grid__section:first-child .timetable-grid__section-heading {
   border-top: 0;
 }

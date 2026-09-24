@@ -1170,6 +1170,27 @@ test('前Sectionが次Sectionの固定開始を超えると固定開始ごとに
   ])
 })
 
+test('Section間Breakは前Section終了に含めず、次Section固定開始との衝突には含める', () => {
+  const stage = createStage('stage-a', { plannedEndTime: '12:05' })
+  const issues = detect({
+    stages: [stage],
+    sections: [
+      createSection('section-1', stage.id, 0, { plannedEndTime: '12:00' }),
+      createSection('section-2', stage.id, 1, { plannedStartTime: '12:10' }),
+    ],
+    calculatedItems: [
+      { ...breakItem('inside', 710, 720), sectionId: 'section-1' },
+      { ...breakItem('between', 720, 740), afterSectionId: 'section-1' },
+    ],
+  })
+
+  assert.equal(findIssues(issues, 'SECTION_END_EXCEEDED').length, 0)
+  assert.equal(findIssues(issues, 'STAGE_END_EXCEEDED')[0].overrunMinutes, 15)
+  const conflict = findIssues(issues, 'SECTION_START_CONFLICT')[0]
+  assert.equal(conflict.overrunMinutes, 10)
+  assert.deepEqual(conflict.scheduleItemIds, ['between'])
+})
+
 test('固定開始がないSectionや別StageのSectionとは開始衝突を判定しない', () => {
   const stageA = createStage('stage-a')
   const stageB = createStage('stage-b')

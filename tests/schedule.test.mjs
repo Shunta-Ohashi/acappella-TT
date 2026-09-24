@@ -7,9 +7,11 @@ import {
   createPerformanceScheduleItemForLane,
   getEventBandsForEventDay,
   getInvalidSectionScheduleItemIds,
+  getScheduleLaneItems,
   getSectionsForStage,
   getStagesForEventDay,
   getUnscheduledEventBandsForEventDay,
+  insertScheduleItemInLane,
   insertStageScheduleItem,
   moveScheduleItemWithinStage,
   removeScheduleItem,
@@ -18,11 +20,151 @@ import {
   resolveTimetableSelection,
 } from '../src/domain/schedule.ts'
 import {
+  getInterSectionDroppableId,
   getSectionDroppableId,
   getStageDroppableId,
   parseTimetableDroppableId,
   resolveScheduleLane,
 } from '../src/ui/timetableDnd.ts'
+
+test('Break配置はSection内・Section間・SectionなしStageを明示的に区別する', () => {
+  const sectionedStage = stages[1]
+  const stageSections = [
+    { id: 'section-1', stageId: sectionedStage.id, name: '1部', order: 0 },
+    { id: 'section-2', stageId: sectionedStage.id, name: '2部', order: 1 },
+    { id: 'section-3', stageId: sectionedStage.id, name: '3部', order: 2 },
+    { id: 'section-other-stage', stageId: 'stage-day-1-b', name: '別Stage', order: 0 },
+  ]
+  const makeBreak = (id, placement = {}) => ({
+    id,
+    stageId: sectionedStage.id,
+    order: 0,
+    kind: 'break',
+    title: '休憩',
+    durationMinutes: 10,
+    ...placement,
+  })
+
+  assert.deepEqual(getInvalidSectionScheduleItemIds(
+    sectionedStage,
+    stageSections,
+    [
+      makeBreak('inside', { sectionId: 'section-1' }),
+      makeBreak('between-1-2', { afterSectionId: 'section-1' }),
+      makeBreak('between-2-3', { afterSectionId: 'section-2' }),
+    ],
+  ), [])
+  assert.deepEqual(getInvalidSectionScheduleItemIds(
+    sectionedStage,
+    stageSections,
+    [
+      makeBreak('ambiguous'),
+      makeBreak('both', {
+        sectionId: 'section-1',
+        afterSectionId: 'section-1',
+      }),
+      makeBreak('missing', { afterSectionId: 'missing-section' }),
+      makeBreak('foreign', { afterSectionId: 'section-other-stage' }),
+      makeBreak('after-last', { afterSectionId: 'section-3' }),
+    ],
+  ), ['ambiguous', 'both', 'missing', 'foreign', 'after-last'])
+
+  const sectionlessStage = stages[0]
+  assert.deepEqual(getInvalidSectionScheduleItemIds(
+    sectionlessStage,
+    [],
+    [{ ...makeBreak('plain'), stageId: sectionlessStage.id }],
+  ), [])
+})
+
+test('Section間Breakを専用laneへ追加・並べ替え・削除できる', () => {
+  const stage = stages[1]
+  const stageSections = [
+    { id: 'section-1', stageId: stage.id, name: '1部', order: 0 },
+    { id: 'section-2', stageId: stage.id, name: '2部', order: 1 },
+  ]
+  const lane = { stageId: stage.id, afterSectionId: 'section-1' }
+  const first = createBreakScheduleItemForLane({
+    id: 'between-a', title: '休憩A', durationMinutes: 10,
+    stage, stageSections, lane,
+  })
+  const second = createBreakScheduleItemForLane({
+    id: 'between-b', title: '休憩B', durationMinutes: 5,
+    stage, stageSections, lane,
+  })
+  assert.equal(first?.afterSectionId, 'section-1')
+  assert.equal(first?.sectionId, undefined)
+
+  const inserted = [first, second].filter(Boolean).reduce(
+    (items, item) => insertScheduleItemInLane(items, lane, item, items.length),
+    [],
+  )
+  const reordered = reorderScheduleLaneItems(inserted, lane, 1, 0)
+  assert.deepEqual(
+    getScheduleLaneItems(reordered, lane).map((item) => item.id),
+    ['between-b', 'between-a'],
+  )
+  assert.deepEqual(
+    removeScheduleItem(reordered, 'between-b').map((item) => item.id),
+    ['between-a'],
+  )
+})
+
+test('PerformanceはSection間laneへ配置できない', () => {
+  const stage = stages[1]
+  const stageSections = [
+    { id: 'section-1', stageId: stage.id, name: '1部', order: 0 },
+    { id: 'section-2', stageId: stage.id, name: '2部', order: 1 },
+  ]
+  assert.equal(createPerformanceScheduleItemForLane({
+    id: 'performance-between',
+    eventBandId: 'band-a',
+    stage,
+    stageSections,
+    lane: { stageId: stage.id, afterSectionId: 'section-1' },
+  }), undefined)
+
+  const scheduleItems = [{
+    id: 'performance-inside',
+    stageId: stage.id,
+    sectionId: 'section-1',
+    order: 0,
+    kind: 'performance',
+    eventBandId: 'band-a',
+  }]
+  assert.equal(moveScheduleItemWithinStage({
+    scheduleItems,
+    stage,
+    stageSections,
+    sourceLane: { stageId: stage.id, sectionId: 'section-1' },
+    sourceIndex: 0,
+    destinationLane: { stageId: stage.id, afterSectionId: 'section-1' },
+    destinationIndex: 0,
+  }), scheduleItems)
+
+  assert.deepEqual(getInvalidSectionScheduleItemIds(
+    stage,
+    stageSections,
+    [{
+      ...scheduleItems[0],
+      afterSectionId: 'section-1',
+    }],
+  ), ['performance-inside'])
+
+  const sectionlessStage = stages[0]
+  assert.deepEqual(getInvalidSectionScheduleItemIds(
+    sectionlessStage,
+    [],
+    [{
+      id: 'performance-with-hidden-after-section',
+      stageId: sectionlessStage.id,
+      afterSectionId: 'section-1',
+      order: 0,
+      kind: 'performance',
+      eventBandId: 'band-a',
+    }],
+  ), ['performance-with-hidden-after-section'])
+})
 
 test('EventBandを選択中Eventかつ現在のEventDayで絞り込む', () => {
   const sameEventAndDay = {
@@ -626,6 +768,7 @@ test('無効Sectionや別StageのSectionへの移動を拒否する', () => {
 test('D&D IDを一意に生成・解析し、現在Stageの有効なlaneだけ解決する', () => {
   const stageId = 'stage:main/1'
   const sectionId = 'section:1/部'
+  const interSectionDroppableId = getInterSectionDroppableId(sectionId)
   const stageDroppableId = getStageDroppableId(stageId)
   const sectionDroppableId = getSectionDroppableId(sectionId)
 
@@ -636,6 +779,10 @@ test('D&D IDを一意に生成・解析し、現在Stageの有効なlaneだけ�
   assert.deepEqual(parseTimetableDroppableId(sectionDroppableId), {
     kind: 'section',
     sectionId,
+  })
+  assert.deepEqual(parseTimetableDroppableId(interSectionDroppableId), {
+    kind: 'inter-section',
+    afterSectionId: sectionId,
   })
   assert.deepEqual(
     resolveScheduleLane(
@@ -649,6 +796,24 @@ test('D&D IDを一意に生成・解析し、現在Stageの有効なlaneだけ�
     resolveScheduleLane(
       { kind: 'section', sectionId: 'other' },
       stageId,
+      new Set([sectionId]),
+    ),
+    undefined,
+  )
+  assert.deepEqual(
+    resolveScheduleLane(
+      { kind: 'inter-section', afterSectionId: sectionId },
+      stageId,
+      new Set([sectionId, 'section-2']),
+      new Set([sectionId]),
+    ),
+    { stageId, afterSectionId: sectionId },
+  )
+  assert.equal(
+    resolveScheduleLane(
+      { kind: 'inter-section', afterSectionId: 'section-2' },
+      stageId,
+      new Set([sectionId, 'section-2']),
       new Set([sectionId]),
     ),
     undefined,

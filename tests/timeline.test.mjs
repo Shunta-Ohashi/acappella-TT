@@ -87,7 +87,7 @@ test('SectionなしではStage開始時刻とEventの転換時間を使ってPer
   )
 })
 
-test('Stageの転換時間を優先し、Break後には転換時間を加えない', () => {
+test('転換時間はPerformance同士の直結時だけ適用し、SectionなしStageのBreak前後には加えない', () => {
   const result = calculateStageTimeline({
     event,
     stage: createStage({ plannedStartTime: '10:00', transitionMinutes: 5 }),
@@ -109,7 +109,33 @@ test('Stageの転換時間を優先し、Break後には転換時間を加えな�
 
   assert.deepEqual(
     result.map(item => [item.plannedStartMinute, item.plannedEndMinute]),
-    [[600, 610], [615, 625], [625, 635]],
+    [[600, 610], [610, 620], [620, 630]],
+  )
+})
+
+test('複数Breakが連続しても前後へ転換時間を加えない', () => {
+  const result = calculateStageTimeline({
+    event,
+    stage: createStage({ plannedStartTime: '10:00', transitionMinutes: 5 }),
+    sections: [],
+    scheduleItems: [
+      performance('item-1', 'event-band-2', 0),
+      {
+        id: 'break-1', stageId: 'stage-1', order: 1,
+        kind: 'break', title: '休憩1', durationMinutes: 5,
+      },
+      {
+        id: 'break-2', stageId: 'stage-1', order: 2,
+        kind: 'break', title: '休憩2', durationMinutes: 10,
+      },
+      performance('item-2', 'event-band-2', 3),
+    ],
+    eventBands,
+  })
+
+  assert.deepEqual(
+    result.map(item => [item.plannedStartMinute, item.plannedEndMinute]),
+    [[600, 610], [610, 615], [615, 625], [625, 635]],
   )
 })
 
@@ -160,8 +186,132 @@ test('Section開始時刻がなければ前Sectionの終了後から続ける', 
 
   assert.deepEqual(
     result.map(item => [item.plannedStartMinute, item.plannedEndMinute]),
-    [[660, 670], [673, 678]],
+    [[660, 670], [670, 675]],
   )
+})
+
+test('Section内BreakとSection間Breakを順に計算し、次SectionとStage終了へ反映する', () => {
+  const result = calculateStageTimeline({
+    event,
+    stage: createStage({ plannedStartTime: '10:00', transitionMinutes: 2 }),
+    sections: [
+      { id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 },
+      { id: 'section-2', stageId: 'stage-1', name: '2部', order: 1 },
+    ],
+    scheduleItems: [
+      performance('performance-1', 'event-band-2', 0, { sectionId: 'section-1' }),
+      {
+        id: 'inside-break', stageId: 'stage-1', sectionId: 'section-1',
+        order: 1, kind: 'break', title: '部内休憩', durationMinutes: 5,
+      },
+      {
+        id: 'between-break', stageId: 'stage-1', afterSectionId: 'section-1',
+        order: 0, kind: 'break', title: '部間休憩', durationMinutes: 15,
+      },
+      performance('performance-2', 'event-band-2', 0, { sectionId: 'section-2' }),
+    ],
+    eventBands,
+  })
+
+  assert.deepEqual(
+    result.map((item) => [
+      item.scheduleItemId,
+      item.plannedStartMinute,
+      item.plannedEndMinute,
+      item.sectionId,
+      item.afterSectionId,
+    ]),
+    [
+      ['performance-1', 600, 610, 'section-1', undefined],
+      ['inside-break', 610, 615, 'section-1', undefined],
+      ['between-break', 615, 630, undefined, 'section-1'],
+      ['performance-2', 630, 640, 'section-2', undefined],
+    ],
+  )
+})
+
+test('BreakなしのSection境界でPerformanceが直接続く場合は転換時間を適用する', () => {
+  const result = calculateStageTimeline({
+    event,
+    stage: createStage({ plannedStartTime: '10:00', transitionMinutes: 2 }),
+    sections: [
+      { id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 },
+      { id: 'section-2', stageId: 'stage-1', name: '2部', order: 1 },
+    ],
+    scheduleItems: [
+      performance('item-1', 'event-band-2', 0, { sectionId: 'section-1' }),
+      performance('item-2', 'event-band-2', 0, { sectionId: 'section-2' }),
+    ],
+    eventBands,
+  })
+
+  assert.deepEqual(
+    result.map(item => [item.plannedStartMinute, item.plannedEndMinute]),
+    [[600, 610], [612, 622]],
+  )
+})
+
+test('Section間Breakは最後のSection・不明Section・曖昧配置では計算しない', () => {
+  const sections = [
+    { id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 },
+    { id: 'section-2', stageId: 'stage-1', name: '2部', order: 1 },
+  ]
+  for (const placement of [
+    { afterSectionId: 'section-2' },
+    { afterSectionId: 'missing-section' },
+    { sectionId: 'section-1', afterSectionId: 'section-1' },
+    {},
+  ]) {
+    assert.throws(() => calculateStageTimeline({
+      event,
+      stage: createStage(),
+      sections,
+      scheduleItems: [{
+        id: 'invalid-break', stageId: 'stage-1', order: 0,
+        kind: 'break', title: '休憩', durationMinutes: 10, ...placement,
+      }],
+      eventBands,
+    }), /Invalid Section placement for Break/)
+  }
+})
+
+test('SectionなしStageでも不正なSection配置を計算前に拒否する', () => {
+  for (const placement of [
+    { sectionId: 'missing-section' },
+    { afterSectionId: 'missing-section' },
+  ]) {
+    assert.throws(() => calculateStageTimeline({
+      event,
+      stage: createStage(),
+      sections: [],
+      scheduleItems: [{
+        id: 'invalid-break', stageId: 'stage-1', order: 0,
+        kind: 'break', title: '休憩', durationMinutes: 10, ...placement,
+      }],
+      eventBands,
+    }), /Invalid Section placement for Break/)
+  }
+})
+
+test('PerformanceのafterSectionIdはSectionの有無にかかわらず計算前に拒否する', () => {
+  for (const sections of [
+    [],
+    [
+      { id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 },
+      { id: 'section-2', stageId: 'stage-1', name: '2部', order: 1 },
+    ],
+  ]) {
+    assert.throws(() => calculateStageTimeline({
+      event,
+      stage: createStage(),
+      sections,
+      scheduleItems: [performance('invalid-performance', 'event-band-1', 0, {
+        ...(sections.length > 0 ? { sectionId: 'section-1' } : {}),
+        afterSectionId: 'section-1',
+      })],
+      eventBands,
+    }), /Invalid Section placement for Performance/)
+  }
 })
 
 test('次Sectionの開始アンカーが前Sectionの終了より前でも、その時刻を優先する', () => {

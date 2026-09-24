@@ -46,6 +46,24 @@ test('13 collectionのバックアップは既存version付きsnapshotと同じ�
   assert.equal('selectedEventId' in restored, false)
 })
 
+test('Section間Breakの配置情報をJSON export/importで維持する', () => {
+  const state = {
+    ...emptyState(),
+    scheduleItems: [{
+      id: 'between-break',
+      stageId: 'stage-1',
+      afterSectionId: 'section-1',
+      order: 0,
+      kind: 'break',
+      title: '部間休憩',
+      durationMinutes: 15,
+    }],
+  }
+
+  const restored = parseBackupJson(createBackupJson(state))
+  assert.equal(restored.scheduleItems[0].afterSectionId, 'section-1')
+})
+
 test('不正JSON、未知version、必須collection不足、malformed elementを拒否する', () => {
   const valid = createPersistedAppState(emptyState())
 

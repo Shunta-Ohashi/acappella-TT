@@ -72,6 +72,15 @@ const isHardIssueCode = (code: ScheduleIssueCode): code is HardIssueCode =>
 const isSoftIssueCode = (code: ScheduleIssueCode): code is SoftIssueCode =>
   softIssueCodeSet.has(code)
 
+const withoutSectionPlacement = (item: ScheduleItem): ScheduleItem => {
+  const {
+    sectionId: _sectionId,
+    afterSectionId: _afterSectionId,
+    ...itemWithoutPlacement
+  } = item as ScheduleItem & { afterSectionId?: SectionId }
+  return itemWithoutPlacement as ScheduleItem
+}
+
 export type SchedulingConstraintCode =
   | 'DUPLICATE_EVENT_BAND'
   | 'INVALID_STAGE_ASSIGNMENT'
@@ -357,10 +366,14 @@ export const evaluateScheduleConstraints = ({
 
       // A Sectioned Stage never places an invalid item in a valid lane, so
       // excluding it cannot shift the remaining lane's timeline. Without
-      // Sections, every item affects the one sequence: retain its duration.
+      // Sections, every item affects the one sequence: retain its duration,
+      // but strip the already-reported invalid placement before Timeline
+      // performs its own placement validation.
       const invalidIdSet = new Set(invalidIds)
       const timedItems = stageSections.length === 0
-        ? stageItems
+        ? stageItems.map((item) => invalidIdSet.has(item.id)
+            ? withoutSectionPlacement(item)
+            : item)
         : stageItems.filter((item) => !invalidIdSet.has(item.id))
       // An unresolved EventBand has no reliable duration. Do not invent
       // start times for the rest of this Stage by dropping that item.

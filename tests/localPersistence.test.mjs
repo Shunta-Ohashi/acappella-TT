@@ -309,6 +309,23 @@ test('ScheduleItemのdiscriminatorとkind別必須fieldを検証する', () => {
   })), undefined)
 })
 
+test('PerformanceのafterSectionIdをpersisted snapshotとして拒否する', () => {
+  const demo = createDemoData()
+  const snapshot = createPersistedAppState(demo)
+  const performance = snapshot.scheduleItems.find(
+    (item) => item.kind === 'performance',
+  )
+  assert.ok(performance)
+
+  assert.equal(parsePersistedState(JSON.stringify({
+    ...snapshot,
+    scheduleItems: snapshot.scheduleItems.map((item) =>
+      item.id === performance.id
+        ? { ...item, afterSectionId: 'hidden-section-reference' }
+        : item),
+  })), undefined)
+})
+
 test('domainで作成できるBreakは保存・復元しても同じdurationMinutesを保つ', () => {
   const demo = createDemoData()
   const stage = demo.stages.find((candidate) =>
@@ -329,6 +346,36 @@ test('domainで作成できるBreakは保存・復元しても同じdurationMinu
     scheduleItems: [...demo.scheduleItems, item],
   })
   assert.deepEqual(parsePersistedState(JSON.stringify(snapshot)), snapshot)
+})
+
+test('Section間BreakのafterSectionIdをround-tripし、旧Breakも読み込める', () => {
+  const empty = createPersistedAppState(createEmptyState())
+  const interSectionBreak = {
+    id: 'between-break',
+    stageId: 'stage-1',
+    afterSectionId: 'section-1',
+    order: 0,
+    kind: 'break',
+    title: '部間休憩',
+    durationMinutes: 15,
+  }
+  const restored = parsePersistedState(JSON.stringify({
+    ...empty,
+    scheduleItems: [interSectionBreak],
+  }))
+  assert.deepEqual(restored.scheduleItems, [interSectionBreak])
+
+  const legacyBreak = { ...interSectionBreak }
+  delete legacyBreak.afterSectionId
+  assert.deepEqual(parsePersistedState(JSON.stringify({
+    ...empty,
+    scheduleItems: [legacyBreak],
+  })).scheduleItems, [legacyBreak])
+
+  assert.equal(parsePersistedState(JSON.stringify({
+    ...empty,
+    scheduleItems: [{ ...interSectionBreak, afterSectionId: 123 }],
+  })), undefined)
 })
 
 test('PerformanceのEventBand参照切れはsnapshot全体を拒否し、Breakと修復可能な参照切れは保持する', () => {

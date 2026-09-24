@@ -579,6 +579,78 @@ test('Sectionあり・なしの不正な所属をHardにする', () => {
   }).feasible, true)
 })
 
+test('Performanceのhidden afterSectionIdをSectionの有無にかかわらずHardにする', () => {
+  for (const sections of [[], [section('section-1', 0), section('section-2', 1)]]) {
+    const candidate = input({
+      sections,
+      scheduleItems: [{
+        ...performance(
+          'item-1',
+          'band-1',
+          'stage-a',
+          0,
+          sections.length > 0 ? 'section-1' : undefined,
+        ),
+        afterSectionId: 'section-1',
+      }],
+    })
+    const original = structuredClone(candidate)
+    const result = evaluateScheduleConstraints(candidate)
+
+    assert.deepEqual(
+      find(result.hardViolations, 'INVALID_SECTION_ASSIGNMENT').scheduleItemIds,
+      ['item-1'],
+    )
+    assert.deepEqual(result, evaluateScheduleConstraints(candidate))
+    assert.deepEqual(candidate, original)
+  }
+})
+
+test('Section間Breakを有効配置としてTimelineへ反映し、Break自体はgapBandsへ数えない', () => {
+  const candidate = input({
+    event: {
+      ...input().event,
+      defaultTransitionMinutes: 2,
+      validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 20 },
+    },
+    sections: [section('section-1', 0), section('section-2', 1)],
+    eventBands: [band('band-1'), band('band-2')],
+    scheduleItems: [
+      performance('item-1', 'band-1', 'stage-a', 0, 'section-1'),
+      { ...breakItem('between-break', 15, 0), afterSectionId: 'section-1' },
+      performance('item-2', 'band-2', 'stage-a', 0, 'section-2'),
+    ],
+  })
+  const original = structuredClone(candidate)
+  const result = evaluateScheduleConstraints(candidate)
+
+  assert.equal(codes(result.hardViolations).includes('INVALID_SECTION_ASSIGNMENT'), false)
+  assert.equal(codes(result.softViolations).includes('BACK_TO_BACK'), true)
+  assert.equal(codes(result.softViolations).includes('SHORT_GAP'), false)
+  assert.equal(find(result.softViolations, 'SHORT_REST').restMinutes, 15)
+  assert.deepEqual(result, evaluateScheduleConstraints(candidate))
+  assert.deepEqual(candidate, original)
+})
+
+test('成立しないSection間BreakをINVALID_SECTION_ASSIGNMENTにする', () => {
+  const sections = [section('section-1', 0), section('section-2', 1)]
+  for (const placement of [
+    { afterSectionId: 'section-2' },
+    { afterSectionId: 'missing-section' },
+    { sectionId: 'section-1', afterSectionId: 'section-1' },
+    {},
+  ]) {
+    const result = evaluate({
+      sections,
+      scheduleItems: [{ ...breakItem('invalid-break', 10, 0), ...placement }],
+    })
+    assert.deepEqual(
+      find(result.hardViolations, 'INVALID_SECTION_ASSIGNMENT').scheduleItemIds,
+      ['invalid-break'],
+    )
+  }
+})
+
 test('Section不正itemと同じStageの正常itemの不参加を両方検出する', () => {
   const candidate = invalidSectionCandidate()
   candidate.eventMemberDays = candidate.eventMemberDays.map((day) =>
