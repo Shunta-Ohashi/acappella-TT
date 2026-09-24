@@ -144,6 +144,11 @@ import {
 } from './ui/timetableDnd'
 import { createTimetableWorkspaceRows } from './ui/timetableWorkspaceRows'
 import {
+  clearTimetableLockFeedback,
+  getTimetableLockFeedbackMessage,
+  type TimetableLockFeedback,
+} from './ui/timetableLockPresentation'
+import {
   applyTimetableLock,
   evaluateTimetableLocks,
   removeTimetableLock,
@@ -291,7 +296,9 @@ function App() {
   const [timetableLocks, setTimetableLocks] = useState<TimetableLock[]>(
     initialAppState.timetableLocks,
   )
-  const [timetableLockFeedback, setTimetableLockFeedback] = useState('')
+  const [timetableLockFeedback, setTimetableLockFeedback] = useState<
+    TimetableLockFeedback | null
+  >(null)
   const paSettingsRef = useRef<PaSettingsHandle>(null)
   const dutySettingsRef = useRef<DutySettingsHandle>(null)
   const selectedEventBands = eventBands.filter(
@@ -360,6 +367,7 @@ function App() {
     setDutyTypes(snapshot.dutyTypes)
     setDutyAssignments(snapshot.dutyAssignments)
     setTimetableLocks(snapshot.timetableLocks)
+    setTimetableLockFeedback(clearTimetableLockFeedback())
     setSelectedEventId('')
     setSelectedTimetableEventDayId(undefined)
     setSelectedTimetableStageId(undefined)
@@ -535,6 +543,7 @@ function App() {
   const handleOpenEvent = (eventId: EventId) => {
     if (!events.some((event) => event.id === eventId)) return
 
+    setTimetableLockFeedback(clearTimetableLockFeedback())
     setSelectedEventId(eventId)
     setSelectedTimetableEventDayId(undefined)
     setSelectedTimetableStageId(undefined)
@@ -563,6 +572,7 @@ function App() {
       defaults: DEFAULT_EVENT_SETTINGS,
     })
 
+    setTimetableLockFeedback(clearTimetableLockFeedback())
     setEvents((previous) => [...previous, created.event])
     setEventDays((previous) => [...previous, ...created.eventDays])
     setSelectedEventId(created.event.id)
@@ -943,12 +953,15 @@ function App() {
     const evaluation = evaluateSelectedEventLocks(candidateScheduleItems)
     if (!evaluation.valid) {
       setTimetableLockFeedback(
-        evaluation.violations[0]?.message ?? 'TT固定により操作できません。',
+        {
+          eventId: selectedEventId,
+          message: evaluation.violations[0]?.message ?? 'TT固定により操作できません。',
+        },
       )
       return false
     }
     setScheduleItems(candidateScheduleItems)
-    setTimetableLockFeedback('')
+    setTimetableLockFeedback(clearTimetableLockFeedback())
     return true
   }
 
@@ -1035,24 +1048,36 @@ function App() {
     })
     if (!result.ok) {
       setTimetableLockFeedback(
-        result.violations[0]?.message ?? 'TT固定を設定できません。',
+        {
+          eventId: selectedEventId,
+          message: result.violations[0]?.message ?? 'TT固定を設定できません。',
+        },
       )
       return
     }
     setScheduleItems(result.scheduleItems)
     setTimetableLocks(result.timetableLocks)
-    setTimetableLockFeedback('TT固定を更新しました。')
+    setTimetableLockFeedback({
+      eventId: selectedEventId,
+      message: 'TT固定を更新しました。',
+    })
   }
 
   const handleUnlockTimetableLock = (lockId: TimetableLockId) => {
     setTimetableLocks((previous) => removeTimetableLock(previous, lockId))
-    setTimetableLockFeedback('TT固定を解除しました。')
+    setTimetableLockFeedback({
+      eventId: selectedEventId,
+      message: 'TT固定を解除しました。',
+    })
   }
 
   const handleUnlockAllTimetableLocks = () => {
     setTimetableLocks((previous) =>
       removeTimetableLocksForEvent(previous, selectedEventId))
-    setTimetableLockFeedback('このイベントのTT固定をすべて解除しました。')
+    setTimetableLockFeedback({
+      eventId: selectedEventId,
+      message: 'このイベントのTT固定をすべて解除しました。',
+    })
   }
 
   // ==================== 🔀 安全なドラッグ＆ドロップ処理 ====================
@@ -1554,7 +1579,10 @@ function App() {
                     onRemoveScheduleItem={handleRemoveScheduleItem}
                     timetableLocks={selectedEventTimetableLocks}
                     lockViolations={timetableLockEvaluation.violations}
-                    lockFeedback={timetableLockFeedback}
+                    lockFeedback={getTimetableLockFeedbackMessage(
+                      timetableLockFeedback,
+                      selectedEventId,
+                    )}
                     onSetTimetableLock={handleSetTimetableLock}
                     onUnlockTimetableLock={handleUnlockTimetableLock}
                     onUnlockAllTimetableLocks={handleUnlockAllTimetableLocks}

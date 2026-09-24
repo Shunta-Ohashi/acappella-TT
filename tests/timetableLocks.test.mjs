@@ -7,6 +7,13 @@ import {
   removeTimetableLock,
   removeTimetableLocksForEvent,
 } from '../src/domain/timetableLocks.ts'
+import {
+  clearTimetableLockFeedback,
+  getAffectedTimetableLockIds,
+  getTimetableLockFeedbackMessage,
+  getTimetableLockRepairSummary,
+  getUniqueLockIdsForViolation,
+} from '../src/ui/timetableLockPresentation.ts'
 
 const eventDays = [
   { id: 'day-1', eventId: 'event-1', date: '2027-11-01', order: 0 },
@@ -372,4 +379,55 @@ test('別EventのLockは現在Eventの評価へ干渉しない', () => {
     stageId: 'missing', position: { kind: 'first' },
   }
   assert.deepEqual(evaluate([otherLock]).violations, [])
+})
+
+test('TT固定feedbackは選択Eventに一致するときだけ表示し、切替後に復活しない', () => {
+  const feedback = { eventId: 'event-1', message: 'TT固定を更新しました。' }
+
+  assert.equal(
+    getTimetableLockFeedbackMessage(feedback, 'event-1'),
+    'TT固定を更新しました。',
+  )
+  assert.equal(getTimetableLockFeedbackMessage(feedback, 'event-2'), '')
+
+  const clearedFeedback = clearTimetableLockFeedback()
+  assert.equal(getTimetableLockFeedbackMessage(clearedFeedback, 'event-1'), '')
+  assert.equal(getTimetableLockFeedbackMessage(clearedFeedback, 'event-2'), '')
+})
+
+test('snapshot復元時にTT固定feedbackをclearする', () => {
+  const feedbackBeforeRestore = {
+    eventId: 'event-1',
+    message: 'TT固定が必須条件と競合しています。',
+  }
+  const feedbackAfterRestore = clearTimetableLockFeedback()
+
+  assert.equal(
+    getTimetableLockFeedbackMessage(feedbackBeforeRestore, 'event-1'),
+    'TT固定が必須条件と競合しています。',
+  )
+  assert.equal(getTimetableLockFeedbackMessage(feedbackAfterRestore, 'event-1'), '')
+})
+
+test('修復パネル用のTT固定件数はViolation数ではなくunique Lock数を使う', () => {
+  const singleLockViolations = [
+    { code: 'STAGE_NOT_FOUND', lockIds: ['lock-1'], message: 'Stageなし' },
+    { code: 'POSITION_MISMATCH', lockIds: ['lock-1'], message: '位置違反' },
+  ]
+  assert.deepEqual(getAffectedTimetableLockIds(singleLockViolations), ['lock-1'])
+  assert.deepEqual(getTimetableLockRepairSummary(singleLockViolations), {
+    visible: true,
+    affectedLockIds: ['lock-1'],
+  })
+
+  const multipleLockViolations = [
+    ...singleLockViolations,
+    { code: 'LOCK_CONFLICT', lockIds: ['lock-1', 'lock-2', 'lock-2'], message: '競合' },
+  ]
+  assert.deepEqual(getAffectedTimetableLockIds(multipleLockViolations), ['lock-1', 'lock-2'])
+  assert.deepEqual(getUniqueLockIdsForViolation(multipleLockViolations[2]), ['lock-1', 'lock-2'])
+  assert.deepEqual(getTimetableLockRepairSummary([]), {
+    visible: false,
+    affectedLockIds: [],
+  })
 })

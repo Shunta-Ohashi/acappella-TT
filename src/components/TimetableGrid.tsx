@@ -15,6 +15,10 @@ import {
   type TimetableLockMode,
   type TimetableLockViolation,
 } from '../domain/timetableLocks'
+import {
+  getTimetableLockRepairSummary,
+  getUniqueLockIdsForViolation,
+} from '../ui/timetableLockPresentation'
 import { formatMinuteAsLocalTime } from '../domain/timeline'
 import type {
   OffGridPaAssignment,
@@ -65,19 +69,20 @@ export function TimetableLockRepairPanel({
   violations: TimetableLockViolation[]
   onUnlockTimetableLock: (lockId: TimetableLockId) => void
 }) {
-  if (violations.length === 0) return null
+  const repairSummary = getTimetableLockRepairSummary(violations)
+  if (!repairSummary.visible) return null
 
   return (
     <section className="timetable-grid__broken-locks" role="alert">
-      <strong>修復が必要なTT固定 {violations.length}件</strong>
+      <strong>修復が必要なTT固定 {repairSummary.affectedLockIds.length}件</strong>
       <ul>
         {violations.map((violation, index) => (
           <li key={`${violation.code}-${violation.lockIds.join('-')}-${index}`}>
             <span>{violation.message}</span>
-            {violation.lockIds.map((lockId, lockIndex) => (
+            {getUniqueLockIdsForViolation(violation).map((lockId) => (
               <button
                 type="button"
-                key={`${lockId}-${lockIndex}`}
+                key={lockId}
                 onClick={() => onUnlockTimetableLock(lockId)}
               >
                 固定を解除
