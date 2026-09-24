@@ -11,6 +11,7 @@ export type ScheduleItemId = string
 export type PaAssignmentId = string
 export type DutyTypeId = string
 export type DutyAssignmentId = string
+export type TimetableLockId = string
 
 // Values are stored as ISO-like strings and validated at the input boundary.
 export type LocalDate = string // YYYY-MM-DD
@@ -160,6 +161,15 @@ export interface BreakScheduleItem extends ScheduleItemBase {
 }
 
 export type ScheduleItem = PerformanceScheduleItem | BreakScheduleItem
+
+export interface TimetableLock {
+  id: TimetableLockId
+  eventId: EventId
+  scheduleItemId: ScheduleItemId
+  stageId: StageId
+  sectionId?: SectionId
+  position: FixedPosition
+}
 
 export interface PaAssignment {
   id: PaAssignmentId

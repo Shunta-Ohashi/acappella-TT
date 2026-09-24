@@ -50,6 +50,7 @@ const createEmptyState = () => ({
   paAssignments: [],
   dutyTypes: [],
   dutyAssignments: [],
+  timetableLocks: [],
 })
 
 test('主要domain collectionをversion付き単一snapshotでround-tripする', () => {
@@ -73,6 +74,60 @@ test('ScheduleBoundaryを含む全IDをround-trip後も維持する', () => {
   )
   assert.deepEqual(parsed.paAssignments, demo.paAssignments)
   assert.deepEqual(parsed.dutyAssignments, demo.dutyAssignments)
+})
+
+test('TimetableLockをIDと配置条件を変えずにround-tripする', () => {
+  const demo = createDemoData()
+  const state = {
+    ...demo,
+    timetableLocks: [{
+      id: 'lock-1',
+      eventId: demo.events[0].id,
+      scheduleItemId: demo.scheduleItems[0].id,
+      stageId: demo.scheduleItems[0].stageId,
+      sectionId: demo.scheduleItems[0].sectionId,
+      position: { kind: 'index', index: 0 },
+    }],
+  }
+
+  const restored = parsePersistedState(serializePersistedState(state))
+
+  assert.ok(restored)
+  assert.deepEqual(restored.timetableLocks, state.timetableLocks)
+})
+
+test('timetableLocksがない旧snapshotは空配列として復元する', () => {
+  const current = createPersistedAppState(createEmptyState())
+  const { timetableLocks: _omitted, ...legacy } = current
+
+  const restored = parsePersistedState(JSON.stringify(legacy))
+
+  assert.ok(restored)
+  assert.deepEqual(restored.timetableLocks, [])
+})
+
+test('malformed TimetableLockはsnapshotを拒否し、参照切れLockは保持する', () => {
+  const empty = createPersistedAppState(createEmptyState())
+  assert.equal(parsePersistedState(JSON.stringify({
+    ...empty,
+    timetableLocks: [{
+      id: 'bad-lock', eventId: 'event', scheduleItemId: 'item',
+      stageId: 'stage', position: { kind: 'index', index: -1 },
+    }],
+  })), undefined)
+
+  const brokenReferenceLock = {
+    id: 'broken-lock', eventId: 'missing-event',
+    scheduleItemId: 'missing-item', stageId: 'missing-stage',
+    sectionId: 'missing-section', position: { kind: 'last' },
+  }
+  const restored = parsePersistedState(JSON.stringify({
+    ...empty,
+    timetableLocks: [brokenReferenceLock],
+  }))
+
+  assert.ok(restored)
+  assert.deepEqual(restored.timetableLocks, [brokenReferenceLock])
 })
 
 test('version 1だけを受理し未知versionを拒否する', () => {
@@ -238,16 +293,25 @@ test('localStorageへの保存失敗を外へ投げずstate更新を継続でき
   }
 })
 
-test('demoDataの全13 collectionで実際の要素がstructural validatorを通る', () => {
+test('全14 collectionの代表要素がstructural validatorを通る', () => {
   const demo = createDemoData()
   const empty = createEmptyState()
+  const collections = {
+    ...demo,
+    timetableLocks: [{
+      id: 'lock-1', eventId: demo.events[0].id,
+      scheduleItemId: demo.scheduleItems[0].id,
+      stageId: demo.scheduleItems[0].stageId,
+      position: { kind: 'first' },
+    }],
+  }
 
   for (const collection of Object.keys(empty)) {
-    assert.ok(demo[collection].length > 0, `${collection}に検証対象がありません`)
+    assert.ok(collections[collection].length > 0, `${collection}に検証対象がありません`)
     assert.ok(parsePersistedState(JSON.stringify({
       ...createPersistedAppState(empty),
       ...(collection === 'scheduleItems' ? { eventBands: demo.eventBands } : {}),
-      [collection]: [demo[collection][0]],
+      [collection]: [collections[collection][0]],
     })), `${collection}の正常要素が拒否されました`)
   }
 })

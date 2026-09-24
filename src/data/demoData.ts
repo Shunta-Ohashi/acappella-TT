@@ -12,6 +12,7 @@ import type {
   ScheduleItem,
   Section,
   Stage,
+  TimetableLock,
 } from '../domain/models'
 
 export interface DemoData {
@@ -28,6 +29,7 @@ export interface DemoData {
   paAssignments: PaAssignment[]
   dutyTypes: DutyType[]
   dutyAssignments: DutyAssignment[]
+  timetableLocks: TimetableLock[]
   initialEventId: string
   initialEventDayId: string
   initialStageId: string
@@ -711,6 +713,7 @@ export const createDemoData = (): DemoData => ({
     from: { ...assignment.from },
     until: { ...assignment.until },
   })),
+  timetableLocks: [],
   initialEventId: 'event-demo-main',
   initialEventDayId: 'event-day-demo-main-01',
   initialStageId: 'stage-demo-main-day1',

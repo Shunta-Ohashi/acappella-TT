@@ -3753,7 +3753,8 @@
 }
 
 .timetable-grid__broken-pa,
-.timetable-grid__broken-duty {
+.timetable-grid__broken-duty,
+.timetable-grid__lock-feedback {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3763,6 +3764,54 @@
   background: #fffbeb;
   border-bottom: 1px solid #d8c78d;
   font-size: 11px;
+}
+
+.timetable-grid__broken-locks {
+  display: grid;
+  gap: 5px;
+  min-width: var(--timetable-grid-min-width);
+  padding: 8px 10px;
+  color: #7a2520;
+  background: #fff5f4;
+  border-bottom: 1px solid #d9a39e;
+  font-size: 10px;
+}
+
+.timetable-grid__lock-feedback {
+  margin: 0;
+}
+
+.timetable-empty-state .timetable-grid__broken-locks,
+.timetable-data-error .timetable-grid__broken-locks {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+}
+
+.timetable-grid__broken-locks ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.timetable-grid__broken-locks li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.timetable-grid__broken-locks button {
+  padding: 2px 5px;
+  color: #7a2520;
+  background: #fff;
+  border: 1px solid #d9a39e;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 750;
 }
 
 .timetable-grid__off-grid-pa,
@@ -3988,6 +4037,37 @@
   border-color: #dccb91;
 }
 
+.timetable-grid__meta-line .timetable-grid__lock-badge {
+  color: #174b8c;
+  background: #eef7ff;
+  border-color: #a8c3dd;
+}
+
+.timetable-grid__lock-control {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #344154;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.timetable-grid__lock-control select {
+  min-width: 0;
+  max-width: 170px;
+  min-height: 24px;
+  padding: 2px 4px;
+  color: #24364b;
+  background: #fff;
+  border: 1px solid #aeb9c6;
+  border-radius: 4px;
+  font: inherit;
+}
+
+.timetable-grid__drag-handle[aria-label$='TT固定中です'] {
+  cursor: not-allowed;
+}
+
 .timetable-grid__issue {
   padding: 2px 4px;
   border: 1px solid currentcolor;
@@ -4024,6 +4104,13 @@
   font-size: 9px;
   font-weight: 750;
   transform: translateY(-50%);
+}
+
+.timetable-grid__remove:disabled {
+  color: #677487;
+  background: #eef2f6;
+  border-color: #cbd5e1;
+  cursor: not-allowed;
 }
 
 .timetable-grid__pa-cell {

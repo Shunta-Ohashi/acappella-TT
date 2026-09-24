@@ -28,9 +28,10 @@ const emptyState = () => ({
   paAssignments: [],
   dutyTypes: [],
   dutyAssignments: [],
+  timetableLocks: [],
 })
 
-test('13 collectionのバックアップは既存version付きsnapshotと同じ内容でround-tripする', () => {
+test('14 collectionのバックアップは既存version付きsnapshotと同じ内容でround-tripする', () => {
   const demo = createDemoData()
   const json = createBackupJson(demo)
   const restored = parseBackupJson(json)
@@ -42,8 +43,28 @@ test('13 collectionのバックアップは既存version付きsnapshotと同じ�
   assert.deepEqual(restored.eventBands, demo.eventBands)
   assert.deepEqual(restored.paAssignments, demo.paAssignments)
   assert.deepEqual(restored.dutyAssignments, demo.dutyAssignments)
+  assert.deepEqual(restored.timetableLocks, demo.timetableLocks)
   assert.deepEqual(Object.keys(restored).sort(), ['version', ...Object.keys(emptyState())].sort())
   assert.equal('selectedEventId' in restored, false)
+})
+
+test('TimetableLockをバックアップでround-tripし、旧backupでは空配列にする', () => {
+  const state = {
+    ...emptyState(),
+    timetableLocks: [{
+      id: 'lock-1', eventId: 'event-1', scheduleItemId: 'item-1',
+      stageId: 'stage-1', sectionId: 'section-1',
+      position: { kind: 'first' },
+    }],
+  }
+  assert.deepEqual(
+    parseBackupJson(createBackupJson(state))?.timetableLocks,
+    state.timetableLocks,
+  )
+
+  const current = createPersistedAppState(emptyState())
+  const { timetableLocks: _omitted, ...legacy } = current
+  assert.deepEqual(parseBackupJson(JSON.stringify(legacy))?.timetableLocks, [])
 })
 
 test('Section間Breakの配置情報をJSON export/importで維持する', () => {
@@ -117,7 +138,7 @@ test('有効なバックアップを保存するとlocalStorageも同じ全snaps
   assert.deepEqual([...values.keys()], [STORAGE_KEY])
 })
 
-test('空の13 collectionも有効でdemoDataに置換されない', () => {
+test('空の14 collectionも有効でdemoDataに置換されない', () => {
   const empty = emptyState()
   assert.deepEqual(parseBackupJson(createBackupJson(empty)), createPersistedAppState(empty))
 })

@@ -73,11 +73,11 @@ const isSoftIssueCode = (code: ScheduleIssueCode): code is SoftIssueCode =>
   softIssueCodeSet.has(code)
 
 const withoutSectionPlacement = (item: ScheduleItem): ScheduleItem => {
-  const {
-    sectionId: _sectionId,
-    afterSectionId: _afterSectionId,
-    ...itemWithoutPlacement
-  } = item as ScheduleItem & { afterSectionId?: SectionId }
+  const itemWithoutPlacement = {
+    ...item,
+  } as ScheduleItem & { afterSectionId?: SectionId }
+  delete itemWithoutPlacement.sectionId
+  delete itemWithoutPlacement.afterSectionId
   return itemWithoutPlacement as ScheduleItem
 }
 
