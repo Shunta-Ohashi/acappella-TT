@@ -97,6 +97,18 @@ const getPositionIndex = (
     ? performanceCount - 1
     : position.index
 
+const reservesSamePosition = (
+  fixed: FixedPosition,
+  locked: FixedPosition,
+): boolean => {
+  if (fixed.kind === 'last' || locked.kind === 'last') {
+    return fixed.kind === 'last' && locked.kind === 'last'
+  }
+  const fixedIndex = fixed.kind === 'first' ? 0 : fixed.index
+  const lockedIndex = locked.kind === 'first' ? 0 : locked.index
+  return fixedIndex === lockedIndex
+}
+
 const fixedPositionLabel = (position: FixedPosition): string =>
   position.kind === 'first'
     ? 'トッパー'
@@ -127,6 +139,30 @@ export const evaluateTimetableLocks = ({
   const stageById = new Map(stages.map((stage) => [stage.id, stage]))
   const sectionById = new Map(sections.map((section) => [section.id, section]))
   const violations: TimetableLockViolation[] = []
+  const fixedReservationsByLane = new Map<string, Array<{
+    bandId: EventBand['id']
+    position: FixedPosition
+  }>>()
+  for (const band of [...eventBands].sort((left, right) => left.id.localeCompare(right.id))) {
+    const placement = band.fixedPlacement
+    if (band.eventId !== eventId || !placement?.position ||
+      !isPosition(placement.position)) continue
+    const stage = stageById.get(placement.stageId)
+    const day = stage ? dayById.get(stage.eventDayId) : undefined
+    if (!stage || day?.eventId !== eventId ||
+      stage.eventDayId !== band.eventDayId) continue
+    const stageSections = sections.filter((section) => section.stageId === stage.id)
+    if (stageSections.length > 0) {
+      if (!placement.sectionId ||
+        sectionById.get(placement.sectionId)?.stageId !== stage.id) continue
+    } else if (placement.sectionId !== undefined) {
+      continue
+    }
+    const key = laneKey(stage.id, placement.sectionId)
+    const reservations = fixedReservationsByLane.get(key) ?? []
+    reservations.push({ bandId: band.id, position: placement.position })
+    fixedReservationsByLane.set(key, reservations)
+  }
 
   const locksByItem = new Map<ScheduleItemId, TimetableLock[]>()
   for (const lock of locks) {
@@ -296,6 +332,22 @@ export const evaluateTimetableLocks = ({
           code: 'FIXED_PLACEMENT_CONFLICT', lockIds: [lock.id],
           scheduleItemIds: [item.id],
           message: 'TT固定がStep 5の必須配置条件と競合しています。',
+        })
+      }
+    }
+
+    if (hasResolvableLane && band?.eventId === eventId) {
+      const reservations = fixedReservationsByLane.get(
+        laneKey(lock.stageId, lock.sectionId),
+      ) ?? []
+      if (reservations.some((reservation) =>
+        reservation.bandId !== band.id &&
+        reservesSamePosition(reservation.position, lock.position)
+      )) {
+        violations.push({
+          code: 'FIXED_PLACEMENT_CONFLICT', lockIds: [lock.id],
+          scheduleItemIds: [item.id],
+          message: 'TT固定が別バンドのStep 5必須位置と競合しています。',
         })
       }
     }

@@ -293,6 +293,156 @@ test('fixedPlacementのStage・Section・position競合を検出する', () => {
   }
 })
 
+test('別バンドの同じlaneの固定位置予約とTT固定の明確な競合を検出する', () => {
+  const cases = [
+    [{ kind: 'first' }, { kind: 'first' }],
+    [{ kind: 'first' }, { kind: 'index', index: 0 }],
+    [{ kind: 'index', index: 0 }, { kind: 'first' }],
+    [{ kind: 'index', index: 2 }, { kind: 'index', index: 2 }],
+    [{ kind: 'last' }, { kind: 'last' }],
+  ]
+  for (const [fixedPosition, lockPosition] of cases) {
+    const bands = eventBands.map((band) => band.id === 'band-a'
+      ? { ...band, fixedPlacement: {
+        stageId: 'stage-1', sectionId: 'section-1', position: fixedPosition,
+      } }
+      : band)
+    const result = evaluate(
+      [lock('lock-b', 'item-b', lockPosition)], scheduleItems,
+      { eventBands: bands },
+    )
+    const conflict = result.violations.find((violation) =>
+      violation.code === 'FIXED_PLACEMENT_CONFLICT')
+    assert.deepEqual(conflict?.lockIds, ['lock-b'])
+    assert.deepEqual(conflict?.scheduleItemIds, ['item-b'])
+  }
+})
+
+test('別Section・別Stageの固定位置は競合せず、自身の同じ固定位置も許可する', () => {
+  const fixedBand = {
+    ...eventBands[0],
+    fixedPlacement: {
+      stageId: 'stage-1', sectionId: 'section-1', position: { kind: 'first' },
+    },
+  }
+  const bands = [fixedBand, ...eventBands.slice(1)]
+  assert.equal(evaluate([
+    lock('lock-d', 'item-d', { kind: 'first' }, { sectionId: 'section-2' }),
+  ], scheduleItems, { eventBands: bands }).valid, true)
+  assert.equal(evaluate([
+    lock('lock-f', 'item-f', { kind: 'first' }, {
+      stageId: 'stage-2', sectionId: undefined,
+    }),
+  ], scheduleItems, { eventBands: bands }).valid, true)
+  assert.equal(evaluate([
+    lock('lock-a', 'item-a', { kind: 'first' }),
+  ], scheduleItems, { eventBands: bands }).valid, true)
+  assert.ok(codes(evaluate([
+    lock('lock-a', 'item-a', { kind: 'last' }),
+  ], scheduleItems, { eventBands: bands })).includes('FIXED_PLACEMENT_CONFLICT'))
+})
+
+test('未配置バンドの固定位置予約も考慮し、無効なlane参照は予約にしない', () => {
+  const fixedBand = {
+    ...eventBands.find((band) => band.id === 'band-x'),
+    fixedPlacement: {
+      stageId: 'stage-1', sectionId: 'section-1', position: { kind: 'first' },
+    },
+  }
+  const bands = [...eventBands.filter((band) => band.id !== 'band-x'), fixedBand]
+  const target = [lock('lock-a', 'item-a', { kind: 'first' })]
+  assert.ok(codes(evaluate(target, scheduleItems, { eventBands: bands }))
+    .includes('FIXED_PLACEMENT_CONFLICT'))
+
+  for (const fixedPlacement of [
+    { ...fixedBand.fixedPlacement, stageId: 'missing-stage' },
+    { ...fixedBand.fixedPlacement, sectionId: 'section-2', stageId: 'stage-2' },
+    { ...fixedBand.fixedPlacement, sectionId: undefined },
+  ]) {
+    const invalidBands = bands.map((band) => band.id === fixedBand.id
+      ? { ...band, fixedPlacement }
+      : band)
+    assert.equal(evaluate(target, scheduleItems, { eventBands: invalidBands }).valid, true)
+  }
+  assert.equal(evaluate(target, scheduleItems, {
+    eventBands: bands.map((band) => band.id === fixedBand.id
+      ? { ...band, eventDayId: 'day-2' }
+      : band),
+  }).valid, true)
+  assert.equal(evaluate(target, scheduleItems, {
+    eventBands: bands.map((band) => band.id === fixedBand.id
+      ? { ...band, eventId: 'event-2' }
+      : band),
+  }).valid, true)
+})
+
+test('トッパー適用と現在位置固定は別バンドの予約を侵害せずatomicに失敗する', () => {
+  const bands = eventBands.map((band) => band.id === 'band-a'
+    ? { ...band, fixedPlacement: {
+      stageId: 'stage-1', sectionId: 'section-1', position: { kind: 'first' },
+    } }
+    : band)
+  const beforeItems = structuredClone(scheduleItems)
+  const beforeBands = structuredClone(bands)
+  const existingLocks = [lock('lock-c', 'item-c', { kind: 'last' })]
+  const beforeLocks = structuredClone(existingLocks)
+  const topper = applyTimetableLock({
+    lockId: 'lock-b', eventId: 'event-1', scheduleItemId: 'item-b', mode: 'first',
+    timetableLocks: existingLocks, scheduleItems,
+    eventBands: bands, eventDays, stages, sections,
+  })
+  assert.equal(topper.ok, false)
+  assert.ok(codes(topper).includes('FIXED_PLACEMENT_CONFLICT'))
+  assert.deepEqual(scheduleItems, beforeItems)
+  assert.deepEqual(bands, beforeBands)
+  assert.deepEqual(existingLocks, beforeLocks)
+
+  const misplacedItems = scheduleItems.map((item) => item.id === 'item-b'
+    ? { ...item, order: 0 }
+    : item.id === 'item-a'
+      ? { ...item, order: 2 }
+      : item)
+  const current = applyTimetableLock({
+    lockId: 'current-b', eventId: 'event-1', scheduleItemId: 'item-b', mode: 'current',
+    timetableLocks: [], scheduleItems: misplacedItems,
+    eventBands: bands, eventDays, stages, sections,
+  })
+  assert.equal(current.ok, false)
+  assert.ok(codes(current).includes('FIXED_PLACEMENT_CONFLICT'))
+  assert.deepEqual(misplacedItems, scheduleItems.map((item) => item.id === 'item-b'
+    ? { ...item, order: 0 }
+    : item.id === 'item-a'
+      ? { ...item, order: 2 }
+      : item))
+})
+
+test('lastと任意indexは静的競合にせず、入力順に依存せず評価する', () => {
+  const fixedBand = {
+    ...eventBands[0],
+    fixedPlacement: {
+      stageId: 'stage-1', sectionId: 'section-1', position: { kind: 'last' },
+    },
+  }
+  const bands = [fixedBand, ...eventBands.slice(1)]
+  const locks = [lock('lock-c', 'item-c', { kind: 'index', index: 2 })]
+  const first = evaluate(locks, scheduleItems, { eventBands: bands })
+  const reordered = evaluate(locks, scheduleItems, { eventBands: [...bands].reverse() })
+  assert.equal(first.valid, true)
+  assert.deepEqual(first, reordered)
+  assert.deepEqual(bands[0], fixedBand)
+
+  const indexBand = {
+    ...fixedBand,
+    fixedPlacement: {
+      ...fixedBand.fixedPlacement,
+      position: { kind: 'index', index: 2 },
+    },
+  }
+  assert.equal(evaluate([
+    lock('lock-c', 'item-c', { kind: 'last' }),
+  ], scheduleItems, { eventBands: [indexBand, ...eventBands.slice(1)] }).valid, true)
+})
+
 test('参照切れScheduleItem・Stage・SectionとBreak targetをthrowせず返す', () => {
   const locks = [
     lock('missing-item', 'missing-item', { kind: 'first' }),
