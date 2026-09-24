@@ -309,6 +309,23 @@ test('ScheduleItemのdiscriminatorとkind別必須fieldを検証する', () => {
   })), undefined)
 })
 
+test('PerformanceのafterSectionIdをpersisted snapshotとして拒否する', () => {
+  const demo = createDemoData()
+  const snapshot = createPersistedAppState(demo)
+  const performance = snapshot.scheduleItems.find(
+    (item) => item.kind === 'performance',
+  )
+  assert.ok(performance)
+
+  assert.equal(parsePersistedState(JSON.stringify({
+    ...snapshot,
+    scheduleItems: snapshot.scheduleItems.map((item) =>
+      item.id === performance.id
+        ? { ...item, afterSectionId: 'hidden-section-reference' }
+        : item),
+  })), undefined)
+})
+
 test('domainで作成できるBreakは保存・復元しても同じdurationMinutesを保つ', () => {
   const demo = createDemoData()
   const stage = demo.stages.find((candidate) =>

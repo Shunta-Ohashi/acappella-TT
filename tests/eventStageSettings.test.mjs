@@ -690,13 +690,20 @@ test('Section内・Section間ScheduleItemまたは固定配置から参照され
   const noSectionReferences = { scheduleItems: [], eventBands: [] }
   assert.equal(canDeleteSection(existingSection.id, noSectionReferences), true)
   assert.equal(canDeleteSection(existingSection.id, {
-    scheduleItems: [{ sectionId: existingSection.id }],
+    scheduleItems: [{ kind: 'performance', sectionId: existingSection.id }],
     eventBands: [],
   }), false)
   assert.equal(canDeleteSection(existingSection.id, {
-    scheduleItems: [{ afterSectionId: existingSection.id }],
+    scheduleItems: [{ kind: 'break', afterSectionId: existingSection.id }],
     eventBands: [],
   }), false)
+  assert.equal(canDeleteSection(existingSection.id, {
+    scheduleItems: [{
+      kind: 'performance',
+      afterSectionId: existingSection.id,
+    }],
+    eventBands: [],
+  }), true)
   assert.equal(canDeleteSection(existingSection.id, {
     scheduleItems: [],
     eventBands: [{
@@ -707,7 +714,7 @@ test('Section内・Section間ScheduleItemまたは固定配置から参照され
     }],
   }), false)
   assert.equal(canDeleteSection(existingSection.id, {
-    scheduleItems: [{ sectionId: 'another-section' }],
+    scheduleItems: [{ kind: 'performance', sectionId: 'another-section' }],
     eventBands: [{
       fixedPlacement: {
         stageId: existingStage.id,

@@ -579,6 +579,33 @@ test('Sectionあり・なしの不正な所属をHardにする', () => {
   }).feasible, true)
 })
 
+test('Performanceのhidden afterSectionIdをSectionの有無にかかわらずHardにする', () => {
+  for (const sections of [[], [section('section-1', 0), section('section-2', 1)]]) {
+    const candidate = input({
+      sections,
+      scheduleItems: [{
+        ...performance(
+          'item-1',
+          'band-1',
+          'stage-a',
+          0,
+          sections.length > 0 ? 'section-1' : undefined,
+        ),
+        afterSectionId: 'section-1',
+      }],
+    })
+    const original = structuredClone(candidate)
+    const result = evaluateScheduleConstraints(candidate)
+
+    assert.deepEqual(
+      find(result.hardViolations, 'INVALID_SECTION_ASSIGNMENT').scheduleItemIds,
+      ['item-1'],
+    )
+    assert.deepEqual(result, evaluateScheduleConstraints(candidate))
+    assert.deepEqual(candidate, original)
+  }
+})
+
 test('Section間Breakを有効配置としてTimelineへ反映し、Break自体はgapBandsへ数えない', () => {
   const candidate = input({
     event: {

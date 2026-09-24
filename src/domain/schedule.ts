@@ -270,6 +270,11 @@ export const isValidScheduleItemSectionAssignment = (
   const stageUsesSections = sectionIds.size > 0
 
   if (scheduleItem.kind === 'performance') {
+    if (
+      'afterSectionId' in scheduleItem &&
+      scheduleItem.afterSectionId !== undefined
+    ) return false
+
     return stageUsesSections
       ? scheduleItem.sectionId !== undefined && sectionIds.has(scheduleItem.sectionId)
       : scheduleItem.sectionId === undefined

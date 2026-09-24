@@ -275,6 +275,45 @@ test('Section間Breakは最後のSection・不明Section・曖昧配置では計
   }
 })
 
+test('SectionなしStageでも不正なSection配置を計算前に拒否する', () => {
+  for (const placement of [
+    { sectionId: 'missing-section' },
+    { afterSectionId: 'missing-section' },
+  ]) {
+    assert.throws(() => calculateStageTimeline({
+      event,
+      stage: createStage(),
+      sections: [],
+      scheduleItems: [{
+        id: 'invalid-break', stageId: 'stage-1', order: 0,
+        kind: 'break', title: '休憩', durationMinutes: 10, ...placement,
+      }],
+      eventBands,
+    }), /Invalid Section placement for Break/)
+  }
+})
+
+test('PerformanceのafterSectionIdはSectionの有無にかかわらず計算前に拒否する', () => {
+  for (const sections of [
+    [],
+    [
+      { id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 },
+      { id: 'section-2', stageId: 'stage-1', name: '2部', order: 1 },
+    ],
+  ]) {
+    assert.throws(() => calculateStageTimeline({
+      event,
+      stage: createStage(),
+      sections,
+      scheduleItems: [performance('invalid-performance', 'event-band-1', 0, {
+        ...(sections.length > 0 ? { sectionId: 'section-1' } : {}),
+        afterSectionId: 'section-1',
+      })],
+      eventBands,
+    }), /Invalid Section placement for Performance/)
+  }
+})
+
 test('次Sectionの開始アンカーが前Sectionの終了より前でも、その時刻を優先する', () => {
   const result = calculateStageTimeline({
     event,

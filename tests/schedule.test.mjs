@@ -141,6 +141,29 @@ test('PerformanceはSection間laneへ配置できない', () => {
     destinationLane: { stageId: stage.id, afterSectionId: 'section-1' },
     destinationIndex: 0,
   }), scheduleItems)
+
+  assert.deepEqual(getInvalidSectionScheduleItemIds(
+    stage,
+    stageSections,
+    [{
+      ...scheduleItems[0],
+      afterSectionId: 'section-1',
+    }],
+  ), ['performance-inside'])
+
+  const sectionlessStage = stages[0]
+  assert.deepEqual(getInvalidSectionScheduleItemIds(
+    sectionlessStage,
+    [],
+    [{
+      id: 'performance-with-hidden-after-section',
+      stageId: sectionlessStage.id,
+      afterSectionId: 'section-1',
+      order: 0,
+      kind: 'performance',
+      eventBandId: 'band-a',
+    }],
+  ), ['performance-with-hidden-after-section'])
 })
 
 test('EventBandを選択中Eventかつ現在のEventDayで絞り込む', () => {

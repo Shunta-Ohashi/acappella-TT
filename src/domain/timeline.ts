@@ -127,11 +127,6 @@ export const calculateStageTimeline = ({
     }
   }
 
-  if (stageSections.length === 0) {
-    calculateItems(stageScheduleItems)
-    return calculatedItems
-  }
-
   for (const scheduleItem of stageScheduleItems) {
     if (isValidScheduleItemSectionAssignment(
       stage.id,
@@ -140,17 +135,33 @@ export const calculateStageTimeline = ({
     )) continue
 
     if (scheduleItem.kind === 'performance') {
-      if (!scheduleItem.sectionId) {
+      if (
+        'afterSectionId' in scheduleItem &&
+        scheduleItem.afterSectionId !== undefined
+      ) {
+        throw new Error(
+          `Invalid Section placement for Performance: ${scheduleItem.id}`,
+        )
+      }
+      if (stageSections.length > 0 && !scheduleItem.sectionId) {
         throw new Error(
           `ScheduleItem must belong to a Section when Stage has Sections: ${scheduleItem.id}`,
         )
       }
-      throw new Error(
-        `Section not found for ScheduleItem ${scheduleItem.id}: ${scheduleItem.sectionId}`,
-      )
+      if (scheduleItem.sectionId) {
+        throw new Error(
+          `Section not found for ScheduleItem ${scheduleItem.id}: ${scheduleItem.sectionId}`,
+        )
+      }
+      throw new Error(`Invalid Section placement for Performance: ${scheduleItem.id}`)
     }
 
     throw new Error(`Invalid Section placement for Break: ${scheduleItem.id}`)
+  }
+
+  if (stageSections.length === 0) {
+    calculateItems(stageScheduleItems)
+    return calculatedItems
   }
 
   for (const [sectionIndex, section] of stageSections.entries()) {
