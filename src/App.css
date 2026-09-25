@@ -3027,6 +3027,12 @@
   }
 }
 
+@media (max-width: 840px) {
+  .stage-settings-card__timing {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 760px) {
   .top-navigation__inner {
     align-items: stretch;
@@ -3138,10 +3144,6 @@
   }
 
   .stage-settings-card__fields {
-    grid-template-columns: 1fr;
-  }
-
-  .stage-settings-card__timing {
     grid-template-columns: 1fr;
   }
 
