@@ -170,8 +170,18 @@ const getBandGap = (
   if (bandGap >= 2) return { bandGap, bandGapLevel: 'good', penalty: 0 }
   if (bandGap === 1) return { bandGap, bandGapLevel: 'last-resort', penalty: 50 }
 
-  const hasExplicitBreak = between.some(item => item.kind === 'break')
-  return hasExplicitBreak && restMinutes >= sufficientMinutes
+  const breaks = between
+    .filter(item => item.kind === 'break')
+    .sort((left, right) => left.plannedStartMinute - right.plannedStartMinute)
+  let explicitBreakMinutes = 0
+  let coveredUntil = previous.untilMinute
+  for (const item of breaks) {
+    explicitBreakMinutes += Math.max(0, item.plannedEndMinute - Math.max(item.plannedStartMinute, coveredUntil))
+    coveredUntil = Math.max(coveredUntil, item.plannedEndMinute)
+  }
+  return breaks.length > 0 &&
+    restMinutes >= sufficientMinutes &&
+    explicitBreakMinutes >= sufficientMinutes
     ? { bandGap, bandGapLevel: 'break-substituted', penalty: 0 }
     : { bandGap, bandGapLevel: 'hard-violation', penalty: 0 }
 }

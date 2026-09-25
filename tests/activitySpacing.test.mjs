@@ -163,6 +163,42 @@ test('明示Breakと十分な実休憩があれば0 bandを代替し、29分で�
   assert.equal(short.penalty, 0)
 })
 
+test('短い明示BreakとSection anchor由来のidle gapを合算して代替しない', () => {
+  const previous = activity('a', 'performance', 0, 10)
+  for (const breakEnd of [11, 39]) {
+    const next = activity('b', 'performance', 40, 50)
+    const result = evaluateActivityPair({
+      previous, next,
+      stageItems: [
+        item('a', 'performance', 0, 10),
+        item('break', 'break', 10, breakEnd),
+        item('b', 'performance', 40, 50),
+      ],
+    })
+    assert.equal(result.restMinutes, 30)
+    assert.equal(result.bandGap, 0)
+    assert.equal(result.bandGapLevel, 'hard-violation')
+    assert.equal(result.feasible, false)
+  }
+})
+
+test('複数Breakの重複時間は代替時間へ二重計上しない', () => {
+  const previous = activity('a', 'performance', 0, 10)
+  const next = activity('b', 'performance', 40, 50)
+  const evaluate = breaks => evaluateActivityPair({
+    previous, next,
+    stageItems: [item('a', 'performance', 0, 10), ...breaks, item('b', 'performance', 40, 50)],
+  })
+  assert.equal(evaluate([
+    item('break-1', 'break', 10, 25),
+    item('break-2', 'break', 25, 40),
+  ]).bandGapLevel, 'break-substituted')
+  assert.equal(evaluate([
+    item('break-1', 'break', 10, 30),
+    item('break-2', 'break', 10, 30),
+  ]).bandGapLevel, 'hard-violation')
+})
+
 test('同StageのPerformance↔workにもband gapを適用し、work↔workは実時間のみで判定する', () => {
   const stageItems = [item('a', 'performance', 0, 10),
     item('b', 'performance', 50, 60)]
