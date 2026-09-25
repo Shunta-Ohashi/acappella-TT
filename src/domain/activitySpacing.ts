@@ -217,11 +217,13 @@ export const evaluateActivityPair = ({
       : restMinutes < sufficientMinutes
         ? 'preferred'
         : 'sufficient'
-  // A fixed zone cost keeps every last-resort candidate worse than a preferred one.
+  // Normalize within disjoint ranges so custom threshold widths cannot invert severity.
   const restPenalty = restLevel === 'last-resort'
-    ? 100 + preferredMinutes - restMinutes
+    ? 100 + 99 * (preferredMinutes - restMinutes) /
+      Math.max(1, preferredMinutes - minimumMinutes)
     : restLevel === 'preferred'
-      ? 20 + sufficientMinutes - restMinutes
+      ? 1 + 19 * (sufficientMinutes - restMinutes) /
+        Math.max(1, sufficientMinutes - preferredMinutes)
       : 0
   const gap = getBandGap(
     previous, next, stageItems, sufficientMinutes, restMinutes,

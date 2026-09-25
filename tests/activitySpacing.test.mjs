@@ -85,6 +85,52 @@ test('DEFAULT policyは各categoryの厳密な境界でHard・最終手段・適
   }
 })
 
+test('幅の広いcustom policyでもpreferred penaltyはlast-resortより低い', () => {
+  const policy = {
+    ...DEFAULT_ACTIVITY_SPACING_POLICY,
+    'performance-to-performance': {
+      minimumMinutes: 0, preferredMinutes: 1, sufficientMinutes: 1000,
+    },
+  }
+  const evaluate = rest => evaluateRest('performance', 'performance', rest, { policy })
+  const lastResort = evaluate(0)
+  const preferred = evaluate(1)
+  assert.equal(lastResort.restLevel, 'last-resort')
+  assert.equal(preferred.restLevel, 'preferred')
+  assert.ok(preferred.penalty < lastResort.penalty)
+  assert.deepEqual([evaluate(1000).penalty, evaluate(1030).penalty], [0, 0])
+})
+
+test('極端なcustom policyでも休憩が長いほどpenaltyは増えずzone間で逆転しない', () => {
+  for (const [minimumMinutes, preferredMinutes, sufficientMinutes] of [
+    [0, 1, 1000], [0, 1000, 1001], [5, 5, 1000], [5, 1000, 1000], [5, 5, 5],
+  ]) {
+    const policy = {
+      ...DEFAULT_ACTIVITY_SPACING_POLICY,
+      'performance-to-performance': { minimumMinutes, preferredMinutes, sufficientMinutes },
+    }
+    const evaluate = rest => evaluateRest('performance', 'performance', rest, { policy })
+    const boundaries = [minimumMinutes, preferredMinutes - 1, preferredMinutes,
+      sufficientMinutes - 1, sufficientMinutes]
+      .filter(rest => rest >= minimumMinutes)
+    const results = [...new Set(boundaries)].sort((left, right) => left - right).map(evaluate)
+    for (const result of results) {
+      assert.equal(result.feasible, true)
+      assert.ok(Number.isFinite(result.penalty) && result.penalty >= 0)
+      assert.equal(result.penalty, evaluate(result.restMinutes).penalty)
+      if (result.restLevel === 'last-resort') assert.ok(result.penalty >= 100 && result.penalty <= 199)
+      if (result.restLevel === 'preferred') assert.ok(result.penalty >= 1 && result.penalty <= 20)
+      if (result.restLevel === 'sufficient') assert.equal(result.penalty, 0)
+    }
+    for (let index = 1; index < results.length; index += 1) {
+      assert.ok(results[index].penalty <= results[index - 1].penalty)
+    }
+    if (minimumMinutes < preferredMinutes && preferredMinutes < sufficientMinutes) {
+      assert.ok(evaluate(preferredMinutes).penalty < evaluate(preferredMinutes - 1).penalty)
+    }
+  }
+})
+
 test('半開区間では接触をoverlapにせず休憩0分、実overlapはHardにする', () => {
   const previous = activity('first', 'performance', 600, 610)
   const overlap = evaluateActivityPair({
