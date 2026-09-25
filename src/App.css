@@ -80,15 +80,24 @@
   background: #2563a6;
 }
 
+.event-editor {
+  --event-editor-shell-width: 1304px;
+  --event-editor-standard-width: 1240px;
+  --event-editor-workspace-width: 1800px;
+  --event-editor-step-1-width: 900px;
+  --event-editor-step-2-width: 1120px;
+  --event-editor-step-3-width: 1180px;
+}
+
 .event-editor__header {
   background: #fff;
   border-bottom: 1px solid #e1e6ec;
 }
 
 .event-editor__header-inner {
-  width: min(100%, 1540px);
+  width: min(100%, var(--event-editor-shell-width));
   margin: 0 auto;
-  padding: 22px 32px 26px;
+  padding: 20px 32px 22px;
 }
 
 .event-editor__back {
@@ -154,7 +163,7 @@
 }
 
 .event-step-navigation__inner {
-  width: min(100%, 1800px);
+  width: min(100%, var(--event-editor-workspace-width));
   margin: 0 auto;
   padding: 7px 24px;
   overflow-x: auto;
@@ -163,8 +172,9 @@
 .event-step-navigation__list {
   display: flex;
   gap: 4px;
+  width: max-content;
   min-width: max-content;
-  margin: 0;
+  margin: 0 auto;
   padding: 0;
   list-style: none;
 }
@@ -219,18 +229,37 @@
 }
 
 .event-editor__layout {
-  width: min(100%, 1240px);
+  width: min(100%, var(--event-editor-shell-width));
   margin: 0 auto;
   padding: 28px 32px;
 }
 
 .event-editor__layout--workspace {
-  width: min(100%, 1800px);
+  width: min(100%, var(--event-editor-workspace-width));
   padding: 16px 18px 28px;
 }
 
 .event-editor__content {
+  width: 100%;
   min-width: 0;
+  margin: 0 auto;
+}
+
+.event-editor__content--step-1 {
+  max-width: var(--event-editor-step-1-width);
+}
+
+.event-editor__content--step-2 {
+  max-width: var(--event-editor-step-2-width);
+}
+
+.event-editor__content--step-3 {
+  max-width: var(--event-editor-step-3-width);
+}
+
+.event-editor__content--step-4,
+.event-editor__content--step-5 {
+  max-width: var(--event-editor-standard-width);
 }
 
 .event-editor__content--workspace .event-editor__step-header {
@@ -953,18 +982,18 @@
 }
 
 .event-basic-info {
-  width: min(100%, 780px);
+  width: 100%;
 }
 
 .event-basic-info > form {
   display: grid;
-  gap: 20px;
+  gap: 18px;
 }
 
 .event-basic-info__card {
   display: grid;
-  gap: 26px;
-  padding: 28px;
+  gap: 22px;
+  padding: 24px;
   background: #fff;
   border: 1px solid #e1e6ec;
   border-radius: 12px;
@@ -1007,7 +1036,7 @@
 }
 
 .event-basic-info__field textarea {
-  min-height: 116px;
+  min-height: 92px;
   resize: vertical;
   line-height: 1.6;
 }
@@ -1024,12 +1053,12 @@
 
 .event-basic-info__date-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 38px;
+  grid-template-columns: minmax(0, 1fr) 42px;
   gap: 8px;
 }
 
 .event-basic-info__remove-date {
-  min-height: 38px;
+  min-height: 42px;
   padding: 0;
   color: #8f2d25;
   background: #fff;
@@ -1079,6 +1108,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e5eaf0;
 }
 
 .event-basic-info__actions > div {
@@ -1094,12 +1125,12 @@
 }
 
 .event-stage-settings {
-  width: min(100%, 900px);
+  width: 100%;
 }
 
 .event-stage-settings > form {
   display: grid;
-  gap: 20px;
+  gap: 18px;
 }
 
 .event-stage-settings__overview,
@@ -1112,13 +1143,14 @@
 
 .event-stage-settings__overview {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(210px, 0.45fr);
-  gap: 28px;
-  padding: 24px 26px;
+  grid-template-columns: minmax(300px, 1.35fr) minmax(190px, 0.7fr) minmax(260px, 1fr);
+  align-items: start;
+  gap: 20px;
+  padding: 20px 22px;
 }
 
 .event-stage-settings__days {
-  grid-row: span 2;
+  min-width: 0;
 }
 
 .event-stage-settings__days > p,
@@ -1140,8 +1172,8 @@
 .event-day-tabs__button {
   display: grid;
   gap: 2px;
-  min-width: 132px;
-  padding: 9px 13px;
+  min-width: 124px;
+  padding: 8px 12px;
   color: #344154;
   background: #f7f9fb;
   border: 1px solid #c8d1dc;
@@ -1183,7 +1215,7 @@
 }
 
 .event-stage-settings__common-transition {
-  min-width: 210px;
+  min-width: 0;
 }
 
 .event-stage-settings__common-transition > div {
@@ -1209,7 +1241,7 @@
 }
 
 .event-stage-settings__day-panel {
-  padding: 26px;
+  padding: 22px;
 }
 
 .event-stage-settings__day-header,
@@ -1221,7 +1253,7 @@
 }
 
 .event-stage-settings__day-header {
-  padding-bottom: 20px;
+  padding-bottom: 16px;
   border-bottom: 1px solid #e5e9ee;
 }
 
@@ -1247,7 +1279,7 @@
 
 .event-stage-settings__empty {
   display: grid;
-  min-height: 220px;
+  min-height: 180px;
   place-content: center;
   justify-items: center;
   gap: 16px;
@@ -1261,21 +1293,23 @@
 
 .stage-settings-list {
   display: grid;
-  gap: 18px;
-  padding-top: 22px;
+  gap: 16px;
+  padding-top: 18px;
 }
 
 .stage-settings-card {
   display: grid;
-  gap: 22px;
-  padding: 22px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding: 20px;
   background: #fbfcfd;
   border: 1px solid #dce3ea;
   border-radius: 10px;
 }
 
 .stage-settings-card__header {
-  padding-bottom: 16px;
+  grid-column: 1 / -1;
+  padding-bottom: 13px;
   border-bottom: 1px solid #e5e9ee;
 }
 
@@ -1300,8 +1334,28 @@
 
 .stage-settings-card__fields {
   display: grid;
+  grid-column: 1 / -1;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
+  gap: 14px;
+}
+
+.stage-settings-card__timing {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.55fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+  min-width: 0;
+  padding: 14px;
+  background: #fff;
+  border: 1px solid #e1e6ec;
+  border-radius: 8px;
+}
+
+.stage-settings-card__timing .stage-settings-choice {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 .stage-settings-field {
@@ -1341,9 +1395,10 @@
   gap: 12px 20px;
   min-width: 0;
   margin: 0;
-  padding: 17px 0 0;
-  border: 0;
-  border-top: 1px solid #e5e9ee;
+  padding: 14px;
+  background: #fff;
+  border: 1px solid #e1e6ec;
+  border-radius: 8px;
 }
 
 .stage-settings-choice > legend {
@@ -1373,7 +1428,7 @@
   grid-template-columns: minmax(120px, 180px);
   gap: 7px;
   width: 100%;
-  padding-left: 24px;
+  padding-left: 23px;
 }
 
 .stage-settings-choice__value--minutes {
@@ -1392,8 +1447,9 @@
 
 .stage-section-settings {
   display: grid;
-  gap: 16px;
-  padding-top: 20px;
+  grid-column: 1 / -1;
+  gap: 14px;
+  padding-top: 16px;
   border-top: 1px solid #d7dee6;
 }
 
@@ -1437,8 +1493,8 @@
 
 .section-settings-card {
   display: grid;
-  gap: 16px;
-  padding: 18px;
+  gap: 14px;
+  padding: 16px;
   background: #fff;
   border: 1px solid #dce3ea;
   border-radius: 9px;
@@ -1500,16 +1556,16 @@
 .section-settings-card__time-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 12px;
 }
 
 .section-settings-time {
   display: grid;
   align-content: start;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
   margin: 0;
-  padding: 14px;
+  padding: 12px;
   background: #f8fafc;
   border: 1px solid #e1e6ec;
   border-radius: 8px;
@@ -1556,11 +1612,17 @@
   line-height: 1.55;
 }
 
+.stage-settings-card__error {
+  grid-column: 1 / -1;
+}
+
 .event-stage-settings__actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e5eaf0;
 }
 
 .event-stage-settings__actions > div {
@@ -1576,12 +1638,12 @@
 }
 
 .event-member-settings {
-  width: min(100%, 1120px);
+  width: 100%;
 }
 
 .event-member-settings > form {
   display: grid;
-  gap: 20px;
+  gap: 18px;
 }
 
 .event-member-settings__toolbar {
@@ -1589,7 +1651,7 @@
   align-items: flex-end;
   justify-content: space-between;
   gap: 20px;
-  padding: 22px 24px;
+  padding: 18px 20px;
   background: #fff;
   border: 1px solid #e1e6ec;
   border-radius: 12px;
@@ -1641,7 +1703,7 @@
 
 .event-member-settings__table th,
 .event-member-settings__table td {
-  padding: 13px 15px;
+  padding: 12px 14px;
   border-bottom: 1px solid #e5e9ee;
   text-align: left;
   vertical-align: middle;
@@ -1709,7 +1771,7 @@
 }
 
 .event-member-settings__empty {
-  padding: 48px 24px;
+  padding: 34px 24px;
   color: #526174;
   border-top: 1px solid #e5e9ee;
   text-align: center;
@@ -1760,6 +1822,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e5eaf0;
 }
 
 .event-member-settings__actions > div {
@@ -2932,6 +2996,11 @@
 }
 
 @media (max-width: 1100px) {
+  .event-editor__header-inner {
+    padding-right: 24px;
+    padding-left: 24px;
+  }
+
   .event-editor__layout {
     padding: 24px;
   }
@@ -2940,9 +3009,27 @@
     padding: 14px;
   }
 
+  .event-stage-settings__overview {
+    grid-template-columns: minmax(280px, 1.3fr) minmax(190px, 0.7fr);
+  }
+
+  .event-stage-settings__common-slots {
+    grid-column: 1 / -1;
+  }
+
+  .stage-settings-card__fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .timetable-master-grid,
   .timetable-board {
     grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 840px) {
+  .stage-settings-card__timing {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -3052,6 +3139,7 @@
   }
 
   .stage-settings-card {
+    grid-template-columns: 1fr;
     padding: 18px 14px;
   }
 
@@ -4575,7 +4663,7 @@
 /* Step 4: EventBand settings */
 .event-band-settings > form {
   display: grid;
-  gap: 24px;
+  gap: 20px;
 }
 
 .event-band-settings__toolbar,
@@ -4586,6 +4674,14 @@
   gap: 20px;
 }
 
+.event-band-settings__toolbar {
+  padding: 18px 20px;
+  background: #fff;
+  border: 1px solid #e1e6ec;
+  border-radius: 12px;
+  box-shadow: 0 4px 18px rgba(24, 34, 48, 0.035);
+}
+
 .event-band-settings__toolbar > div > p {
   margin: 0 0 8px;
   color: #475569;
@@ -4594,7 +4690,7 @@
 }
 
 .event-band-settings__empty {
-  padding: 36px;
+  padding: 30px 24px;
   border: 1px dashed #cbd5e1;
   border-radius: 12px;
   background: #f8fafc;
@@ -4617,7 +4713,7 @@
 
 .event-band-settings__table th,
 .event-band-settings__table td {
-  padding: 14px 16px;
+  padding: 12px 14px;
   border-bottom: 1px solid #e5eaf0;
   text-align: left;
   vertical-align: top;
@@ -4671,7 +4767,7 @@
 }
 
 .event-band-settings__footer {
-  padding-top: 18px;
+  padding-top: 16px;
   border-top: 1px solid #e5eaf0;
 }
 
@@ -4821,7 +4917,7 @@
 /* Step 5: EventBand conditions */
 .event-band-conditions > form {
   display: grid;
-  gap: 24px;
+  gap: 20px;
 }
 
 .event-band-conditions__toolbar,
@@ -4830,6 +4926,14 @@
   align-items: flex-end;
   justify-content: space-between;
   gap: 20px;
+}
+
+.event-band-conditions__toolbar {
+  padding: 18px 20px;
+  background: #fff;
+  border: 1px solid #e1e6ec;
+  border-radius: 12px;
+  box-shadow: 0 4px 18px rgba(24, 34, 48, 0.035);
 }
 
 .event-band-conditions__toolbar > div > p {
@@ -4848,7 +4952,7 @@
 }
 
 .event-band-conditions__empty {
-  padding: 36px;
+  padding: 30px 24px;
   border: 1px dashed #cbd5e1;
   border-radius: 12px;
   background: #f8fafc;
@@ -4877,7 +4981,7 @@
 
 .event-band-conditions__table th,
 .event-band-conditions__table td {
-  padding: 14px 16px;
+  padding: 12px 14px;
   border-bottom: 1px solid #e5eaf0;
   color: #334155;
   font-size: 14px;
@@ -4912,7 +5016,7 @@
 }
 
 .event-band-conditions__footer {
-  padding-top: 18px;
+  padding-top: 16px;
   border-top: 1px solid #e5eaf0;
 }
 

@@ -74,12 +74,12 @@ export function EventEditorShell({
       </nav>
 
       <div className={activeStep === 6
-        ? 'event-editor__layout event-editor__layout--workspace'
-        : 'event-editor__layout'}>
+        ? `event-editor__layout event-editor__layout--step-${activeStep} event-editor__layout--workspace`
+        : `event-editor__layout event-editor__layout--step-${activeStep}`}>
         <section
           className={activeStep === 6
-            ? 'event-editor__content event-editor__content--workspace'
-            : 'event-editor__content'}
+            ? `event-editor__content event-editor__content--step-${activeStep} event-editor__content--workspace`
+            : `event-editor__content event-editor__content--step-${activeStep}`}
           aria-labelledby="current-step-title"
         >
           <header className="event-editor__step-header">
