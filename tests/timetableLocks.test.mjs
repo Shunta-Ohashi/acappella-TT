@@ -10,9 +10,12 @@ import {
 import {
   clearTimetableLockFeedback,
   getAffectedTimetableLockIds,
+  getTimetableLockControlAccessibleName,
   getTimetableLockFeedbackMessage,
   getTimetableLockRepairSummary,
+  getTimetableLockUnlockAccessibleName,
   getUniqueLockIdsForViolation,
+  TIMETABLE_LOCK_UNLOCK_VISIBLE_TEXT,
 } from '../src/ui/timetableLockPresentation.ts'
 
 const eventDays = [
@@ -91,6 +94,31 @@ test('現在位置固定はBreakを数えずPerformance indexを保存する', (
     'lock-b', 'item-b', { kind: 'index', index: 1 },
   ))
   assert.equal(evaluate(result.timetableLocks, result.scheduleItems).valid, true)
+})
+
+test('同じorderの現在位置固定はID順へ変えず表示上の配列順を記録する', () => {
+  const tiedItems = [
+    { ...performance('a', 0), id: 'item-z' },
+    { ...performance('b', 0), id: 'item-a' },
+  ]
+  const first = applyTimetableLock({
+    lockId: 'lock-z', eventId: 'event-1', scheduleItemId: 'item-z', mode: 'current',
+    timetableLocks: [], scheduleItems: tiedItems,
+    eventBands, eventDays, stages, sections,
+  })
+  const second = applyTimetableLock({
+    lockId: 'lock-a', eventId: 'event-1', scheduleItemId: 'item-a', mode: 'current',
+    timetableLocks: [], scheduleItems: tiedItems,
+    eventBands, eventDays, stages, sections,
+  })
+
+  assert.equal(first.ok, true)
+  assert.equal(second.ok, true)
+  if (!first.ok || !second.ok) return
+  assert.deepEqual(first.timetableLocks[0].position, { kind: 'index', index: 0 })
+  assert.deepEqual(second.timetableLocks[0].position, { kind: 'index', index: 1 })
+  assert.equal(evaluate(first.timetableLocks, tiedItems).valid, true)
+  assert.equal(evaluate(second.timetableLocks, tiedItems).valid, true)
 })
 
 test('firstとlastをSectionごと・SectionなしStageごとに評価する', () => {
@@ -580,4 +608,24 @@ test('修復パネル用のTT固定件数はViolation数ではなくunique Lock�
     visible: false,
     affectedLockIds: [],
   })
+})
+
+test('TT固定controlと解除buttonへ対象を識別できるaccessible nameを付ける', () => {
+  assert.equal(getTimetableLockControlAccessibleName('Band A'), 'Band AのTT固定')
+  assert.equal(getTimetableLockControlAccessibleName('Band B'), 'Band BのTT固定')
+
+  const locks = [
+    lock('lock-a', 'item-a', { kind: 'first' }),
+    lock('lock-b', 'item-b', { kind: 'index', index: 1 }),
+  ]
+  const firstName = getTimetableLockUnlockAccessibleName({
+    lockId: 'lock-a', timetableLocks: locks, scheduleItems, eventBands,
+  })
+  const secondName = getTimetableLockUnlockAccessibleName({
+    lockId: 'lock-b', timetableLocks: locks, scheduleItems, eventBands,
+  })
+  assert.match(firstName, /AのTT固定.*トッパー.*lock-a.*解除/)
+  assert.match(secondName, /BのTT固定.*2番目固定.*lock-b.*解除/)
+  assert.notEqual(firstName, secondName)
+  assert.equal(TIMETABLE_LOCK_UNLOCK_VISIBLE_TEXT, '固定を解除')
 })

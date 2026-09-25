@@ -2,7 +2,9 @@ import { Draggable, Droppable } from '@hello-pangea/dnd'
 import { Fragment, type CSSProperties, type FormEvent } from 'react'
 import type {
   DutyType,
+  EventBand,
   PaRole,
+  ScheduleItem,
   ScheduleItemId,
   Section,
   SectionId,
@@ -16,8 +18,11 @@ import {
   type TimetableLockViolation,
 } from '../domain/timetableLocks'
 import {
+  getTimetableLockControlAccessibleName,
   getTimetableLockRepairSummary,
+  getTimetableLockUnlockAccessibleName,
   getUniqueLockIdsForViolation,
+  TIMETABLE_LOCK_UNLOCK_VISIBLE_TEXT,
 } from '../ui/timetableLockPresentation'
 import { formatMinuteAsLocalTime } from '../domain/timeline'
 import type {
@@ -52,6 +57,8 @@ interface TimetableGridProps {
   onAddInterSectionBreak: (afterSectionId: SectionId) => void
   onRemoveScheduleItem: (scheduleItemId: ScheduleItemId) => void
   timetableLocks: TimetableLock[]
+  scheduleItems: ScheduleItem[]
+  eventBands: EventBand[]
   lockViolations: TimetableLockViolation[]
   lockFeedback: string
   onSetTimetableLock: (
@@ -64,9 +71,15 @@ interface TimetableGridProps {
 
 export function TimetableLockRepairPanel({
   violations,
+  timetableLocks,
+  scheduleItems,
+  eventBands,
   onUnlockTimetableLock,
 }: {
   violations: TimetableLockViolation[]
+  timetableLocks: TimetableLock[]
+  scheduleItems: ScheduleItem[]
+  eventBands: EventBand[]
   onUnlockTimetableLock: (lockId: TimetableLockId) => void
 }) {
   const repairSummary = getTimetableLockRepairSummary(violations)
@@ -83,9 +96,15 @@ export function TimetableLockRepairPanel({
               <button
                 type="button"
                 key={lockId}
+                aria-label={getTimetableLockUnlockAccessibleName({
+                  lockId,
+                  timetableLocks,
+                  scheduleItems,
+                  eventBands,
+                })}
                 onClick={() => onUnlockTimetableLock(lockId)}
               >
-                固定を解除
+                {TIMETABLE_LOCK_UNLOCK_VISIBLE_TEXT}
               </button>
             ))}
           </li>
@@ -279,6 +298,7 @@ const TimetableRow = ({
                 <label className="timetable-grid__lock-control">
                   TT固定
                   <select
+                    aria-label={getTimetableLockControlAccessibleName(itemLabel)}
                     value={timetableLock
                       ? timetableLock.position.kind === 'index'
                         ? 'current'
@@ -349,6 +369,8 @@ export function TimetableGrid({
   onAddInterSectionBreak,
   onRemoveScheduleItem,
   timetableLocks,
+  scheduleItems,
+  eventBands,
   lockViolations,
   lockFeedback,
   onSetTimetableLock,
@@ -494,6 +516,9 @@ export function TimetableGrid({
 
       <TimetableLockRepairPanel
         violations={lockViolations}
+        timetableLocks={timetableLocks}
+        scheduleItems={scheduleItems}
+        eventBands={eventBands}
         onUnlockTimetableLock={onUnlockTimetableLock}
       />
 

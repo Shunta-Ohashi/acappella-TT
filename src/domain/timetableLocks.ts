@@ -12,6 +12,7 @@ import type {
   TimetableLockId,
 } from './models'
 import {
+  compareScheduleItemOrder,
   getScheduleLaneItems,
   reorderScheduleLaneItems,
   type ScheduleLane,
@@ -86,7 +87,7 @@ const getLanePerformances = (
     item.stageId === stageId &&
     item.sectionId === sectionId,
   )
-  .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+  .sort(compareScheduleItemOrder)
 
 const getPositionIndex = (
   position: FixedPosition,

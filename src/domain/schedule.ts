@@ -25,6 +25,11 @@ export interface ScheduleLane {
   afterSectionId?: SectionId
 }
 
+export const compareScheduleItemOrder = (
+  left: Pick<ScheduleItem, 'order'>,
+  right: Pick<ScheduleItem, 'order'>,
+): number => left.order - right.order
+
 const reorder = <T,>(
   items: T[],
   sourceIndex: number,
@@ -224,14 +229,14 @@ export const getStageScheduleItems = (
 ): ScheduleItem[] =>
   scheduleItems
     .filter(item => item.stageId === stageId)
-    .sort((left, right) => left.order - right.order)
+    .sort(compareScheduleItemOrder)
 
 export const getScheduleLaneItems = (
   scheduleItems: ScheduleItem[],
   lane: ScheduleLane,
 ): ScheduleItem[] => scheduleItems
   .filter(item => isItemInLane(item, lane))
-  .sort((left, right) => left.order - right.order)
+  .sort(compareScheduleItemOrder)
 
 export const isValidScheduleLane = (
   stage: Stage,

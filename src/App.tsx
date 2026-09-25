@@ -1334,6 +1334,9 @@ function App() {
   const unavailableTimetableLockRepair = (
     <TimetableLockRepairPanel
       violations={timetableLockEvaluation.violations}
+      timetableLocks={selectedEventTimetableLocks}
+      scheduleItems={selectedScheduleItems}
+      eventBands={selectedEventBands}
       onUnlockTimetableLock={handleUnlockTimetableLock}
     />
   )
@@ -1578,6 +1581,8 @@ function App() {
                     onAddInterSectionBreak={handleAddInterSectionBreak}
                     onRemoveScheduleItem={handleRemoveScheduleItem}
                     timetableLocks={selectedEventTimetableLocks}
+                    scheduleItems={selectedScheduleItems}
+                    eventBands={selectedEventBands}
                     lockViolations={timetableLockEvaluation.violations}
                     lockFeedback={getTimetableLockFeedbackMessage(
                       timetableLockFeedback,
