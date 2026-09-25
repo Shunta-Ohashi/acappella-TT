@@ -633,7 +633,9 @@ export function EventStageSettings({
                           )}
                         />
                       </div>
+                    </div>
 
+                    <div className="stage-settings-card__timing">
                       <div className="stage-settings-field stage-settings-field--time">
                         <label htmlFor={`${idPrefix}-start-time`}>
                           開始時刻 <span aria-hidden="true">*</span>
@@ -667,70 +669,70 @@ export function EventStageSettings({
                           </p>
                         )}
                       </div>
-                    </div>
 
-                    <fieldset className="stage-settings-choice">
-                      <legend>終了時刻</legend>
-                      <label>
-                        <input
-                          type="radio"
-                          name={`${idPrefix}-end-mode`}
-                          checked={stage.endMode === 'automatic'}
-                          onChange={() => updateStage(
-                            stage.draftId,
-                            (current) => ({ ...current, endMode: 'automatic' }),
-                          )}
-                        />
-                        自動
-                      </label>
-                      <label>
-                        <input
-                          type="radio"
-                          name={`${idPrefix}-end-mode`}
-                          checked={stage.endMode === 'fixed'}
-                          onChange={() => updateStage(
-                            stage.draftId,
-                            (current) => ({ ...current, endMode: 'fixed' }),
-                          )}
-                        />
-                        固定
-                      </label>
-                      {stage.endMode === 'fixed' && (
-                        <div className="stage-settings-choice__value">
-                          <label className="visually-hidden" htmlFor={`${idPrefix}-end-time`}>
-                            固定終了時刻
-                          </label>
+                      <fieldset className="stage-settings-choice">
+                        <legend>終了時刻</legend>
+                        <label>
                           <input
-                            id={`${idPrefix}-end-time`}
-                            type="time"
-                            required
-                            value={stage.plannedEndTime}
-                            aria-invalid={stageErrors.plannedEndTime
-                              ? 'true'
-                              : undefined}
-                            aria-describedby={stageErrors.plannedEndTime
-                              ? `${idPrefix}-end-time-error`
-                              : undefined}
-                            onChange={(changeEvent) => updateStage(
+                            type="radio"
+                            name={`${idPrefix}-end-mode`}
+                            checked={stage.endMode === 'automatic'}
+                            onChange={() => updateStage(
                               stage.draftId,
-                              (current) => ({
-                                ...current,
-                                plannedEndTime: changeEvent.target.value,
-                              }),
+                              (current) => ({ ...current, endMode: 'automatic' }),
                             )}
                           />
-                          {stageErrors.plannedEndTime && (
-                            <p
-                              id={`${idPrefix}-end-time-error`}
-                              className="form-error"
-                              role="alert"
-                            >
-                              {stageErrors.plannedEndTime}
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </fieldset>
+                          自動
+                        </label>
+                        <label>
+                          <input
+                            type="radio"
+                            name={`${idPrefix}-end-mode`}
+                            checked={stage.endMode === 'fixed'}
+                            onChange={() => updateStage(
+                              stage.draftId,
+                              (current) => ({ ...current, endMode: 'fixed' }),
+                            )}
+                          />
+                          固定
+                        </label>
+                        {stage.endMode === 'fixed' && (
+                          <div className="stage-settings-choice__value">
+                            <label className="visually-hidden" htmlFor={`${idPrefix}-end-time`}>
+                              固定終了時刻
+                            </label>
+                            <input
+                              id={`${idPrefix}-end-time`}
+                              type="time"
+                              required
+                              value={stage.plannedEndTime}
+                              aria-invalid={stageErrors.plannedEndTime
+                                ? 'true'
+                                : undefined}
+                              aria-describedby={stageErrors.plannedEndTime
+                                ? `${idPrefix}-end-time-error`
+                                : undefined}
+                              onChange={(changeEvent) => updateStage(
+                                stage.draftId,
+                                (current) => ({
+                                  ...current,
+                                  plannedEndTime: changeEvent.target.value,
+                                }),
+                              )}
+                            />
+                            {stageErrors.plannedEndTime && (
+                              <p
+                                id={`${idPrefix}-end-time-error`}
+                                className="form-error"
+                                role="alert"
+                              >
+                                {stageErrors.plannedEndTime}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </fieldset>
+                    </div>
 
                     <fieldset className="stage-settings-choice">
                       <legend>転換時間</legend>
