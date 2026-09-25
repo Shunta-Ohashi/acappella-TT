@@ -733,8 +733,8 @@ export const detectScheduleIssues = ({
         })
       }
 
-      const member = memberById.get(assignment.memberId)
-      if (!member?.paCapabilities?.[assignment.role]) {
+      const eventMember = eventMemberByMemberId.get(assignment.memberId)
+      if (eventMember && !eventMember.paCapabilities[assignment.role]) {
         addIssue({
           severity: 'ERROR',
           code: 'PA_CAPABILITY_MISMATCH',
@@ -745,7 +745,6 @@ export const detectScheduleIssues = ({
         })
       }
 
-      const eventMember = eventMemberByMemberId.get(assignment.memberId)
       const memberDay = eventMember
         ? eventMemberDayByEventMemberId
             .get(eventMember.id)

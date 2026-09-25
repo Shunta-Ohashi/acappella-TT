@@ -36,7 +36,7 @@ test('14 collectionのバックアップは既存version付きsnapshotと同じ�
   const json = createBackupJson(demo)
   const restored = parseBackupJson(json)
 
-  assert.ok(json.includes('\n  "version": 1,'))
+  assert.ok(json.includes('\n  "version": 2,'))
   assert.deepEqual(restored, createPersistedAppState(demo))
   assert.equal(restored.version, CURRENT_STORAGE_VERSION)
   assert.deepEqual(restored.scheduleItems.map((item) => item.id), demo.scheduleItems.map((item) => item.id))
@@ -64,7 +64,28 @@ test('TimetableLockをバックアップでround-tripし、旧backupでは空配
 
   const current = createPersistedAppState(emptyState())
   const { timetableLocks: _omitted, ...legacy } = current
+  legacy.version = 1
   assert.deepEqual(parseBackupJson(JSON.stringify(legacy))?.timetableLocks, [])
+})
+
+test('V1バックアップをV2へ移行し、V2出力ではPA可否をEventMemberへ置く', () => {
+  const legacy = {
+    ...createPersistedAppState(emptyState()),
+    version: 1,
+    members: [{ id: 'member-1', realName: '佐藤', active: true,
+      paCapabilities: { main: true, sub: false } }],
+    eventMembers: [{ id: 'event-member-1', eventId: 'event-1', memberId: 'member-1' }],
+  }
+  const restored = parseBackupJson(JSON.stringify(legacy))
+  assert.ok(restored)
+  assert.equal(restored.version, 2)
+  assert.deepEqual(restored.eventMembers[0].paCapabilities, { main: true, sub: false })
+  assert.equal('paCapabilities' in restored.members[0], false)
+
+  const exported = JSON.parse(createBackupJson(restored))
+  assert.equal(exported.version, 2)
+  assert.equal('paCapabilities' in exported.members[0], false)
+  assert.deepEqual(exported.eventMembers[0].paCapabilities, { main: true, sub: false })
 })
 
 test('Section間Breakの配置情報をJSON export/importで維持する', () => {
@@ -89,7 +110,7 @@ test('不正JSON、未知version、必須collection不足、malformed elementを
   const valid = createPersistedAppState(emptyState())
 
   assert.equal(parseBackupJson('{broken'), undefined)
-  assert.equal(parseBackupJson(JSON.stringify({ ...valid, version: 2 })), undefined)
+  assert.equal(parseBackupJson(JSON.stringify({ ...valid, version: 3 })), undefined)
   assert.equal(parseBackupJson(JSON.stringify({ version: 1 })), undefined)
   assert.equal(parseBackupJson(JSON.stringify({ ...valid, events: [null] })), undefined)
 })

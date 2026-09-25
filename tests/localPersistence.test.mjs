@@ -12,7 +12,7 @@ import {
   STORAGE_KEY,
   clearPersistedState,
   createPersistedAppState,
-  isPersistedAppStateV1,
+  isPersistedAppStateV2,
   loadPersistedState,
   loadPersistedStateOrFallback,
   parsePersistedState,
@@ -51,6 +51,22 @@ const createEmptyState = () => ({
   dutyTypes: [],
   dutyAssignments: [],
   timetableLocks: [],
+})
+
+const createLegacyState = () => ({
+  ...createPersistedAppState(createEmptyState()),
+  version: 1,
+  members: [
+    { id: 'member-shared', realName: '共有', active: true,
+      paCapabilities: { main: true, sub: false } },
+    { id: 'member-unset', realName: '未設定', active: true },
+  ],
+  eventMembers: [
+    { id: 'event-member-a', eventId: 'event-a', memberId: 'member-shared' },
+    { id: 'event-member-b', eventId: 'event-b', memberId: 'member-shared' },
+    { id: 'event-member-unset', eventId: 'event-a', memberId: 'member-unset' },
+    { id: 'event-member-broken', eventId: 'event-a', memberId: 'missing-member' },
+  ],
 })
 
 test('主要domain collectionをversion付き単一snapshotでround-tripする', () => {
@@ -99,6 +115,7 @@ test('TimetableLockをIDと配置条件を変えずにround-tripする', () => {
 test('timetableLocksがない旧snapshotは空配列として復元する', () => {
   const current = createPersistedAppState(createEmptyState())
   const { timetableLocks: _omitted, ...legacy } = current
+  legacy.version = 1
 
   const restored = parsePersistedState(JSON.stringify(legacy))
 
@@ -130,12 +147,77 @@ test('malformed TimetableLockはsnapshotを拒否し、参照切れLockは保持
   assert.deepEqual(restored.timetableLocks, [brokenReferenceLock])
 })
 
-test('version 1だけを受理し未知versionを拒否する', () => {
+test('version 2を受理し未知versionを拒否する', () => {
   const valid = createPersistedAppState(createEmptyState())
 
-  assert.equal(isPersistedAppStateV1(valid), true)
-  assert.equal(parsePersistedState(JSON.stringify(valid))?.version, 1)
-  assert.equal(parsePersistedState(JSON.stringify({ ...valid, version: 2 })), undefined)
+  assert.equal(isPersistedAppStateV2(valid), true)
+  assert.equal(parsePersistedState(JSON.stringify(valid))?.version, 2)
+  assert.equal(parsePersistedState(JSON.stringify({ ...valid, version: 3 })), undefined)
+})
+
+test('V1の共通PA可否を各EventMemberへ移し、未設定と参照切れはfalseにする', () => {
+  const legacy = createLegacyState()
+  const restored = parsePersistedState(JSON.stringify(legacy))
+  assert.ok(restored)
+  assert.equal(restored.version, 2)
+  assert.deepEqual(restored.eventMembers.map(({ id, paCapabilities }) =>
+    [id, paCapabilities]), [
+    ['event-member-a', { main: true, sub: false }],
+    ['event-member-b', { main: true, sub: false }],
+    ['event-member-unset', { main: false, sub: false }],
+    ['event-member-broken', { main: false, sub: false }],
+  ])
+  assert.equal(restored.eventMembers.length, legacy.eventMembers.length)
+  assert.ok(restored.members.every((member) => !('paCapabilities' in member)))
+  assert.ok(restored.eventMembers.every((member) => 'paCapabilities' in member))
+})
+
+test('V1のTimetableLock有無を移行し、V2の必須PA可否を検証する', () => {
+  const legacy = createLegacyState()
+  const { timetableLocks: _omitted, ...withoutLocks } = legacy
+  assert.deepEqual(parsePersistedState(JSON.stringify(withoutLocks))?.timetableLocks, [])
+  const locks = [{ id: 'lock-1', eventId: 'event-a', scheduleItemId: 'item-1',
+    stageId: 'stage-1', position: { kind: 'first' } }]
+  assert.deepEqual(parsePersistedState(JSON.stringify({ ...legacy,
+    timetableLocks: locks }))?.timetableLocks, locks)
+
+  const current = createPersistedAppState(createEmptyState())
+  assert.equal(parsePersistedState(JSON.stringify({ ...current,
+    eventMembers: [{ id: 'event-member-1', eventId: 'event-a', memberId: 'member-1' }],
+  })), undefined)
+  assert.equal(parsePersistedState(JSON.stringify({ ...current,
+    eventMembers: [{ id: 'event-member-1', eventId: 'event-a', memberId: 'member-1',
+      paCapabilities: { main: true } }],
+  })), undefined)
+  assert.equal(parsePersistedState(JSON.stringify({ ...current,
+    members: [{ id: 'member-1', realName: '旧形式', active: true,
+      paCapabilities: { main: true, sub: true } }],
+  })), undefined)
+})
+
+test('V1の既存PA Assignmentは移行後も同じIDと担当可能roleを維持する', () => {
+  const demo = createDemoData()
+  const legacy = {
+    ...createPersistedAppState(demo),
+    version: 1,
+    members: demo.members.map((member) => ({
+      ...member,
+      paCapabilities: demo.eventMembers.find((eventMember) =>
+        eventMember.memberId === member.id)?.paCapabilities,
+    })),
+    eventMembers: demo.eventMembers.map(({
+      paCapabilities: _capabilities, ...eventMember
+    }) => eventMember),
+  }
+  const restored = parsePersistedState(JSON.stringify(legacy))
+  assert.ok(restored)
+  assert.deepEqual(restored.paAssignments, demo.paAssignments)
+  for (const assignment of restored.paAssignments) {
+    const eventMember = restored.eventMembers.find((candidate) =>
+      candidate.eventId === assignment.eventId &&
+      candidate.memberId === assignment.memberId)
+    assert.ok(eventMember?.paCapabilities[assignment.role], assignment.id)
+  }
 })
 
 test('壊れたJSONを例外なく拒否しstorage entryを削除する', () => {

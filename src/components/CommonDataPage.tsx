@@ -33,15 +33,6 @@ type MemberEditorState =
   | { mode: 'edit'; memberId: MemberId }
   | undefined
 
-const formatPaCapabilities = (member: Member): string => {
-  const capabilities = [
-    member.paCapabilities?.main ? 'メイン' : undefined,
-    member.paCapabilities?.sub ? 'サブ' : undefined,
-  ].filter((capability): capability is string => capability !== undefined)
-
-  return capabilities.length > 0 ? capabilities.join(' / ') : '－'
-}
-
 export function CommonDataPage({
   members,
   bands,
@@ -152,7 +143,6 @@ export function CommonDataPage({
                     <th scope="col">アカペラネーム</th>
                     <th scope="col">入学年度</th>
                     <th scope="col">状態</th>
-                    <th scope="col">PA</th>
                     <th scope="col">固定バンド</th>
                     <th scope="col"><span className="visually-hidden">操作</span></th>
                   </tr>
@@ -173,7 +163,6 @@ export function CommonDataPage({
                             {member.active ? '在籍中' : '非在籍'}
                           </span>
                         </td>
-                        <td>{formatPaCapabilities(member)}</td>
                         <td>
                           <strong>{memberBands.length}組</strong>
                           {memberBands.length > 0 && (

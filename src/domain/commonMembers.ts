@@ -2,7 +2,6 @@ import type {
   Band,
   Member,
   MemberId,
-  PaCapabilities,
 } from './models'
 
 export type CommonMemberStatusFilter = 'active' | 'inactive' | 'all'
@@ -12,7 +11,6 @@ export interface CommonMemberDraft {
   acaName: string
   entryAcademicYear: string
   active: boolean
-  paCapabilities: PaCapabilities
   notes: string
 }
 
@@ -47,10 +45,6 @@ export const createCommonMemberDraft = (
   acaName: member?.acaName ?? '',
   entryAcademicYear: member?.entryAcademicYear?.toString() ?? '',
   active: member?.active ?? true,
-  paCapabilities: {
-    main: member?.paCapabilities?.main ?? false,
-    sub: member?.paCapabilities?.sub ?? false,
-  },
   notes: member?.notes ?? '',
 })
 
@@ -102,10 +96,6 @@ export const createCommonMemberUpdate = ({
         : undefined,
       notes: normalizeOptionalText(draft.notes),
       active: existingMember ? draft.active : true,
-      paCapabilities: {
-        main: draft.paCapabilities.main,
-        sub: draft.paCapabilities.sub,
-      },
     },
   }
 }

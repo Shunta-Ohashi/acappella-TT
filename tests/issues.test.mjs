@@ -34,6 +34,7 @@ const createEventMember = (memberId, overrides = {}) => ({
   id: `event-member-${memberId}`,
   eventId: 'event-1',
   memberId,
+  paCapabilities: { main: false, sub: false },
   ...overrides,
 })
 
