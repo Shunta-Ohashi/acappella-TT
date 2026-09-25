@@ -159,7 +159,7 @@ import { createDemoData } from './data/demoData'
 import {
   loadPersistedStateOrFallback,
   savePersistedState,
-  type PersistedAppStateV1,
+  type PersistedAppStateV2,
   type PersistedDomainState,
 } from './persistence/localPersistence'
 import {
@@ -352,7 +352,7 @@ function App() {
     savePersistedState(domainState)
   }, [domainState])
 
-  const applyPersistedSnapshot = (snapshot: PersistedAppStateV1) => {
+  const applyPersistedSnapshot = (snapshot: PersistedAppStateV2) => {
     setMembers(snapshot.members)
     setBands(snapshot.bands)
     setEvents(snapshot.events)

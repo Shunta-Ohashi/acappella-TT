@@ -14,7 +14,6 @@ const createDraft = (overrides = {}) => ({
   acaName: '',
   entryAcademicYear: '',
   active: true,
-  paCapabilities: { main: false, sub: false },
   notes: '',
   ...overrides,
 })
@@ -33,7 +32,6 @@ test('共通Memberを正規化して作成し、新規Memberは在籍中にな�
       acaName: '  はな  ',
       entryAcademicYear: ' 2027 ',
       active: false,
-      paCapabilities: { main: true, sub: false },
       notes: '  共通メモ  ',
     }),
   })
@@ -47,7 +45,6 @@ test('共通Memberを正規化して作成し、新規Memberは在籍中にな�
     entryAcademicYear: 2027,
     notes: '共通メモ',
     active: true,
-    paCapabilities: { main: true, sub: false },
   })
 })
 
@@ -66,7 +63,7 @@ test('任意文字列と入学年度の空欄をundefinedへ正規化する', ()
   assert.equal(result.member.acaName, undefined)
   assert.equal(result.member.entryAcademicYear, undefined)
   assert.equal(result.member.notes, undefined)
-  assert.deepEqual(result.member.paCapabilities, { main: false, sub: false })
+  assert.equal('paCapabilities' in result.member, false)
 })
 
 test('空の本名と不正な入学年度を拒否する', () => {
@@ -98,7 +95,6 @@ test('既存MemberのIDを維持して全編集項目を更新できる', () => 
     entryAcademicYear: 2022,
     notes: '変更前メモ',
     active: true,
-    paCapabilities: { main: false, sub: true },
   }
   const result = createCommonMemberUpdate({
     memberId: 'ignored-new-id',
@@ -109,7 +105,6 @@ test('既存MemberのIDを維持して全編集項目を更新できる', () => 
       entryAcademicYear: '2025',
       notes: '更新メモ',
       active: false,
-      paCapabilities: { main: true, sub: false },
     }),
   })
 
@@ -121,10 +116,10 @@ test('既存MemberのIDを維持して全編集項目を更新できる', () => 
   assert.equal(result.member.entryAcademicYear, 2025)
   assert.equal(result.member.notes, '更新メモ')
   assert.equal(result.member.active, false)
-  assert.deepEqual(result.member.paCapabilities, { main: true, sub: false })
+  assert.equal('paCapabilities' in result.member, false)
 })
 
-test('非在籍Memberを在籍中へ戻せ、既存の未設定PAはfalseとしてdraft化する', () => {
+test('非在籍Memberを在籍中へ戻しメモを維持する', () => {
   const existingMember = {
     id: 'member-inactive',
     realName: '卒業生',
@@ -133,7 +128,7 @@ test('非在籍Memberを在籍中へ戻せ、既存の未設定PAはfalseとし�
   }
   const draft = createCommonMemberDraft(existingMember)
 
-  assert.deepEqual(draft.paCapabilities, { main: false, sub: false })
+  assert.equal('paCapabilities' in draft, false)
   assert.equal(draft.notes, '維持するメモ')
 
   const result = createCommonMemberUpdate({

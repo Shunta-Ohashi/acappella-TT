@@ -54,7 +54,6 @@ export interface Member {
   entryAcademicYear?: number
   notes?: string
   active: boolean
-  paCapabilities?: PaCapabilities
 }
 
 export interface Band {
@@ -103,6 +102,7 @@ export interface EventMember {
   id: EventMemberId
   eventId: EventId
   memberId: MemberId
+  paCapabilities: PaCapabilities
   notes?: string
 }
 

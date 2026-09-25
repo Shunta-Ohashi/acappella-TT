@@ -10,6 +10,7 @@ import type {
   EventMemberId,
   Member,
   MemberId,
+  PaCapabilities,
   ParticipationStatus,
   TimeRange,
 } from './models'
@@ -33,6 +34,7 @@ export interface EventMemberSettingsMemberDraft {
   draftId: string
   eventMemberId?: EventMemberId
   memberId: MemberId
+  paCapabilities: PaCapabilities
   days: EventMemberDaySettingsDraft[]
 }
 
@@ -155,6 +157,7 @@ export const createEventMemberSettingsDraft = (
         draftId: `existing-${eventMember.id}`,
         eventMemberId: eventMember.id,
         memberId: eventMember.memberId,
+        paCapabilities: { ...eventMember.paCapabilities },
         days: orderedEventDays.map((eventDay) => {
           const existing = eventMemberDayByPair.get(
             `${eventMember.id}:${eventDay.id}`,
@@ -209,6 +212,7 @@ export const addEventMembersToDraft = ({
       ...uniqueNewMemberIds.map((memberId, index) => ({
         draftId: newDraftIds[index],
         memberId,
+        paCapabilities: { main: false, sub: false },
         days: orderedEventDays.map((eventDay) => ({
           eventDayId: eventDay.id,
           participationStatus: 'undecided' as const,
@@ -319,6 +323,13 @@ export const validateEventMemberSettingsDraft = ({
     if (!memberIds.has(memberDraft.memberId)) {
       errors.members[memberDraft.draftId] =
         '共通データに存在しないメンバーは追加できません。'
+    }
+
+    if (
+      typeof memberDraft.paCapabilities?.main !== 'boolean' ||
+      typeof memberDraft.paCapabilities?.sub !== 'boolean'
+    ) {
+      errors.members[memberDraft.draftId] = 'PA担当可否が正しくありません。'
     }
 
     if (memberDraft.eventMemberId) {
@@ -505,10 +516,12 @@ export const createEventMemberSettingsUpdate = ({
     const existingEventMember = memberDraft.eventMemberId
       ? currentEventMemberById.get(memberDraft.eventMemberId)
       : undefined
-    const eventMember: EventMember = existingEventMember ?? {
-      id: newEventMemberIds[newEventMemberIndex++],
+    const eventMember: EventMember = {
+      ...existingEventMember,
+      id: existingEventMember?.id ?? newEventMemberIds[newEventMemberIndex++],
       eventId: event.id,
       memberId: memberDraft.memberId,
+      paCapabilities: { ...memberDraft.paCapabilities },
     }
     updatedEventMembers.push(eventMember)
 

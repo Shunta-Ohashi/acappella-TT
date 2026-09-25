@@ -1,14 +1,14 @@
 import {
   createPersistedAppState,
   parsePersistedState,
-  type PersistedAppStateV1,
+  type PersistedAppStateV2,
   type PersistedDomainState,
 } from './localPersistence.ts'
 
 export const createBackupJson = (state: PersistedDomainState): string =>
   JSON.stringify(createPersistedAppState(state), null, 2)
 
-export const parseBackupJson = (json: string): PersistedAppStateV1 | undefined =>
+export const parseBackupJson = (json: string): PersistedAppStateV2 | undefined =>
   parsePersistedState(json)
 
 export const createBackupFilename = (date: Date): string => {

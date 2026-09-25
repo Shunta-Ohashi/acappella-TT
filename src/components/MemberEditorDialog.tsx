@@ -177,38 +177,6 @@ export function MemberEditorDialog({
           )}
         </div>
 
-        <fieldset className="member-editor-choice member-editor-choice--pa">
-          <legend>PA対応</legend>
-          <label>
-            <input
-              type="checkbox"
-              checked={draft.paCapabilities.main}
-              onChange={(event) => setDraft((previous) => ({
-                ...previous,
-                paCapabilities: {
-                  ...previous.paCapabilities,
-                  main: event.target.checked,
-                },
-              }))}
-            />
-            メインPA対応可
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={draft.paCapabilities.sub}
-              onChange={(event) => setDraft((previous) => ({
-                ...previous,
-                paCapabilities: {
-                  ...previous.paCapabilities,
-                  sub: event.target.checked,
-                },
-              }))}
-            />
-            サブPA対応可
-          </label>
-        </fieldset>
-
         <div className="member-editor-field">
           <label htmlFor="member-editor-notes">共通メモ</label>
           <textarea

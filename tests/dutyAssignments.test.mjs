@@ -68,7 +68,6 @@ const members = [
     id: 'member-2',
     realName: '担当者',
     active: true,
-    paCapabilities: { main: true, sub: true },
   },
   { id: 'member-3', realName: '別担当者', active: true },
 ]
@@ -76,6 +75,7 @@ const eventMembers = members.map((member) => ({
   id: `event-member-${member.id}`,
   eventId: event.id,
   memberId: member.id,
+  paCapabilities: { main: member.id === 'member-2', sub: member.id === 'member-2' },
 }))
 const createMemberDays = (overrides = {}) => eventMembers.map((eventMember) => ({
   id: `member-day-${eventMember.memberId}`,

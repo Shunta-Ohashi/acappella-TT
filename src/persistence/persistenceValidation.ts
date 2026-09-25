@@ -90,7 +90,15 @@ export const isMember = (value: unknown): value is Member =>
   isOptional(value.entryAcademicYear, isPositiveInteger) &&
   isOptional(value.notes, isString) &&
   isBoolean(value.active) &&
-  isOptional(value.paCapabilities, isPaCapabilities)
+  !('paCapabilities' in value)
+
+export const isLegacyMemberV1 = (
+  value: unknown,
+): value is Member & { paCapabilities?: PaCapabilities } => {
+  if (!isRecord(value)) return false
+  const { paCapabilities, ...member } = value
+  return isMember(member) && isOptional(paCapabilities, isPaCapabilities)
+}
 
 export const isBand = (value: unknown): value is Band =>
   isRecord(value) &&
@@ -152,6 +160,17 @@ export const isEventMember = (value: unknown): value is EventMember =>
   isString(value.id) &&
   isString(value.eventId) &&
   isString(value.memberId) &&
+  isPaCapabilities(value.paCapabilities) &&
+  isOptional(value.notes, isString)
+
+export const isLegacyEventMemberV1 = (
+  value: unknown,
+): value is Omit<EventMember, 'paCapabilities'> =>
+  isRecord(value) &&
+  isString(value.id) &&
+  isString(value.eventId) &&
+  isString(value.memberId) &&
+  value.paCapabilities === undefined &&
   isOptional(value.notes, isString)
 
 export const isEventMemberDay = (value: unknown): value is EventMemberDay =>

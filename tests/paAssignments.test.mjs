@@ -51,9 +51,9 @@ const stages = [
 ]
 
 const members = [
-  { id: 'member-main', realName: 'Main担当', active: true, paCapabilities: { main: true, sub: false } },
-  { id: 'member-sub', realName: 'Sub担当', active: true, paCapabilities: { main: false, sub: true } },
-  { id: 'member-both', realName: '両方担当', active: true, paCapabilities: { main: true, sub: true } },
+  { id: 'member-main', realName: 'Main担当', active: true },
+  { id: 'member-sub', realName: 'Sub担当', active: true },
+  { id: 'member-both', realName: '両方担当', active: true },
   { id: 'member-none', realName: 'PA不可', active: true },
 ]
 
@@ -61,6 +61,10 @@ const eventMembers = members.map((member) => ({
   id: `event-member-${member.id}`,
   eventId: event.id,
   memberId: member.id,
+  paCapabilities: {
+    main: member.id === 'member-main' || member.id === 'member-both',
+    sub: member.id === 'member-sub' || member.id === 'member-both',
+  },
 }))
 
 const createMemberDays = (overrides = {}) => eventMembers.map((eventMember) => ({
@@ -159,13 +163,14 @@ const assignment = (id, overrides = {}) => ({
 const detect = ({
   paAssignments,
   configuredMembers = members,
+  configuredEventMembers = eventMembers,
   configuredMemberDays = createMemberDays(),
   configuredBands = eventBands,
   items = calculatedItems,
 }) => detectScheduleIssues({
   event,
   members: configuredMembers,
-  eventMembers,
+  eventMembers: configuredEventMembers,
   eventMemberDays: configuredMemberDays,
   eventBands: configuredBands,
   stages,
@@ -259,6 +264,66 @@ test('Main/Sub capabilityを持つEventMemberだけをrole候補にする', () =
   assert.ok(validate(createItem({ memberId: 'member-sub' })).memberId)
   assert.equal(validate(createItem({ memberId: 'member-sub', role: 'sub' })).memberId, undefined)
   assert.ok(validate(createItem({ memberId: 'member-main', role: 'sub' })).memberId)
+})
+
+test('PA候補は現在Eventの可否だけを使い、不参加を除き未定を警告する', () => {
+  const own = eventMembers.find((member) => member.memberId === 'member-main')
+  assert.ok(own)
+  const configured = [
+    ...eventMembers.map((member) => member.id === own.id
+      ? { ...member, paCapabilities: { main: false, sub: true } }
+      : member),
+    { ...own, id: 'foreign-event-member', eventId: 'other-event',
+      paCapabilities: { main: true, sub: true } },
+  ]
+  const configuredDays = [
+    ...createMemberDays({
+      'member-sub': { participationStatus: 'absent' },
+      'member-both': { participationStatus: 'undecided' },
+    }),
+    { id: 'foreign-day', eventMemberId: 'foreign-event-member',
+      eventDayId: 'day-1', participationStatus: 'participating' },
+  ]
+  const main = getPaMemberCandidates({
+    event, eventDayId: 'day-1', role: 'main', members,
+    eventMembers: configured, eventMemberDays: configuredDays,
+  })
+  const sub = getPaMemberCandidates({
+    event, eventDayId: 'day-1', role: 'sub', members,
+    eventMembers: configured, eventMemberDays: configuredDays,
+  })
+  assert.deepEqual(main.map(({ member }) => member.id), ['member-both'])
+  assert.ok(main[0].warning)
+  assert.deepEqual(sub.map(({ member }) => member.id), ['member-main', 'member-both'])
+})
+
+test('PA保存とIssueは別Eventの可否を流用せず未登録と担当不可を区別する', () => {
+  const own = eventMembers.find((member) => member.memberId === 'member-main')
+  assert.ok(own)
+  const foreign = { ...own, id: 'foreign-event-member', eventId: 'other-event',
+    paCapabilities: { main: true, sub: false } }
+  const withoutOwn = [...eventMembers.filter((member) => member.id !== own.id), foreign]
+  const missingErrors = validatePaAssignmentDraftItem({
+    item: createItem(), event, eventDays, stages, members,
+    eventMembers: withoutOwn, eventMemberDays: createMemberDays(),
+    eventBands, calculatedItems,
+  })
+  assert.match(missingErrors.memberId, /登録されていません/)
+  const missingIssues = detect({ paAssignments: [assignment('pa-missing-member')],
+    configuredEventMembers: withoutOwn })
+  assert.equal(findIssues(missingIssues, 'PA_MEMBER_NOT_CONFIGURED').length, 1)
+  assert.equal(findIssues(missingIssues, 'PA_CAPABILITY_MISMATCH').length, 0)
+
+  const disabled = [...withoutOwn, { ...own, paCapabilities: { main: false, sub: false } }]
+  const disabledErrors = validatePaAssignmentDraftItem({
+    item: createItem(), event, eventDays, stages, members,
+    eventMembers: disabled, eventMemberDays: createMemberDays(),
+    eventBands, calculatedItems,
+  })
+  assert.match(disabledErrors.memberId, /Main PA/)
+  const disabledIssues = detect({ paAssignments: [assignment('pa-disabled')],
+    configuredEventMembers: disabled })
+  assert.equal(findIssues(disabledIssues, 'PA_CAPABILITY_MISMATCH').length, 1)
 })
 
 test('participatingは許可し、absentと日別設定不足は拒否し、undecidedはwarningにする', () => {

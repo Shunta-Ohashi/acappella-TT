@@ -8,6 +8,7 @@ import type {
   EventMember,
   EventMemberDay,
   Member,
+  PaCapabilities,
   PaAssignment,
   ScheduleItem,
   Section,
@@ -24,6 +25,8 @@ import {
   isEventDay,
   isEventMember,
   isEventMemberDay,
+  isLegacyEventMemberV1,
+  isLegacyMemberV1,
   isMember,
   isPaAssignment,
   isPersistedCollection,
@@ -34,7 +37,7 @@ import {
   isTimetableLock,
 } from './persistenceValidation.ts'
 
-export const CURRENT_STORAGE_VERSION = 1 as const
+export const CURRENT_STORAGE_VERSION = 2 as const
 export const STORAGE_KEY = 'acappella-tt:app-state'
 
 export interface PersistedDomainState {
@@ -54,8 +57,17 @@ export interface PersistedDomainState {
   timetableLocks: TimetableLock[]
 }
 
-export interface PersistedAppStateV1 extends PersistedDomainState {
+export interface PersistedAppStateV2 extends PersistedDomainState {
   version: typeof CURRENT_STORAGE_VERSION
+}
+
+interface PersistedAppStateV1 extends Omit<
+  PersistedDomainState, 'members' | 'eventMembers' | 'timetableLocks'
+> {
+  version: 1
+  members: Array<Member & { paCapabilities?: PaCapabilities }>
+  eventMembers: Array<Omit<EventMember, 'paCapabilities'>>
+  timetableLocks?: TimetableLock[]
 }
 
 export interface StorageLike {
@@ -103,40 +115,75 @@ const hasValidSectionStageIntervals = ({
   })
 }
 
-export const isPersistedAppStateV1 = (
-  value: unknown,
+const hasValidSnapshotRelationships = (
+  value: PersistedDomainState,
 ): boolean =>
-  isRecord(value) &&
-  value.version === CURRENT_STORAGE_VERSION &&
-  isPersistedCollection(value.members, isMember) &&
+  hasResolvablePerformanceEventBands(value) &&
+  hasValidSectionStageIntervals(value)
+
+const hasValidSharedCollections = (
+  value: Record<string, unknown>,
+): boolean =>
   isPersistedCollection(value.bands, isBand) &&
   isPersistedCollection(value.events, isEvent) &&
   isPersistedCollection(value.eventDays, isEventDay) &&
   isPersistedCollection(value.stages, isStage) &&
   isPersistedCollection(value.sections, isSection) &&
-  isPersistedCollection(value.eventMembers, isEventMember) &&
   isPersistedCollection(value.eventMemberDays, isEventMemberDay) &&
   isPersistedCollection(value.eventBands, isEventBand) &&
   isPersistedCollection(value.scheduleItems, isScheduleItem) &&
   isPersistedCollection(value.paAssignments, isPaAssignment) &&
   isPersistedCollection(value.dutyTypes, isDutyType) &&
-  isPersistedCollection(value.dutyAssignments, isDutyAssignment) &&
+  isPersistedCollection(value.dutyAssignments, isDutyAssignment)
+
+export const isPersistedAppStateV2 = (
+  value: unknown,
+): boolean =>
+  isRecord(value) &&
+  value.version === CURRENT_STORAGE_VERSION &&
+  isPersistedCollection(value.members, isMember) &&
+  isPersistedCollection(value.eventMembers, isEventMember) &&
+  hasValidSharedCollections(value) &&
+  isPersistedCollection(value.timetableLocks, isTimetableLock) &&
+  hasValidSnapshotRelationships(value as unknown as PersistedDomainState)
+
+const isPersistedAppStateV1 = (value: unknown): boolean =>
+  isRecord(value) &&
+  value.version === 1 &&
+  isPersistedCollection(value.members, isLegacyMemberV1) &&
+  isPersistedCollection(value.eventMembers, isLegacyEventMemberV1) &&
+  hasValidSharedCollections(value) &&
   (value.timetableLocks === undefined ||
     isPersistedCollection(value.timetableLocks, isTimetableLock)) &&
-  hasResolvablePerformanceEventBands({
-    eventBands: value.eventBands,
-    eventDays: value.eventDays,
-    scheduleItems: value.scheduleItems,
-    stages: value.stages,
-  }) &&
-  hasValidSectionStageIntervals({
-    sections: value.sections,
-    stages: value.stages,
-  })
+  hasValidSnapshotRelationships(value as unknown as PersistedDomainState)
+
+const migrateV1ToV2 = (legacy: PersistedAppStateV1): PersistedAppStateV2 => {
+  const capabilitiesByMemberId = new Map(legacy.members.map((member) => [
+    member.id,
+    member.paCapabilities,
+  ]))
+  return {
+    ...legacy,
+    version: CURRENT_STORAGE_VERSION,
+    members: legacy.members.map((member) => {
+      const migratedMember = { ...member }
+      delete migratedMember.paCapabilities
+      return migratedMember
+    }),
+    eventMembers: legacy.eventMembers.map((eventMember) => ({
+      ...eventMember,
+      paCapabilities: {
+        main: capabilitiesByMemberId.get(eventMember.memberId)?.main ?? false,
+        sub: capabilitiesByMemberId.get(eventMember.memberId)?.sub ?? false,
+      },
+    })),
+    timetableLocks: legacy.timetableLocks ?? [],
+  }
+}
 
 export const createPersistedAppState = (
   state: PersistedDomainState,
-): PersistedAppStateV1 => ({
+): PersistedAppStateV2 => ({
   version: CURRENT_STORAGE_VERSION,
   members: state.members,
   bands: state.bands,
@@ -160,17 +207,14 @@ export const serializePersistedState = (
 
 export const parsePersistedState = (
   serialized: string,
-): PersistedAppStateV1 | undefined => {
+): PersistedAppStateV2 | undefined => {
   try {
     const parsed: unknown = JSON.parse(serialized)
-    if (!isPersistedAppStateV1(parsed)) return undefined
-    const valid = parsed as Omit<PersistedAppStateV1, 'timetableLocks'> & {
-      timetableLocks?: TimetableLock[]
+    if (isPersistedAppStateV2(parsed)) return parsed as PersistedAppStateV2
+    if (isPersistedAppStateV1(parsed)) {
+      return migrateV1ToV2(parsed as PersistedAppStateV1)
     }
-    return {
-      ...valid,
-      timetableLocks: valid.timetableLocks ?? [],
-    }
+    return undefined
   } catch {
     return undefined
   }
@@ -187,7 +231,7 @@ const getBrowserStorage = (): StorageLike | undefined => {
 
 export const loadPersistedState = (
   storage: StorageLike | undefined = getBrowserStorage(),
-): PersistedAppStateV1 | undefined => {
+): PersistedAppStateV2 | undefined => {
   if (!storage) return undefined
 
   try {
@@ -207,7 +251,7 @@ export const loadPersistedState = (
 export const loadPersistedStateOrFallback = (
   createFallback: () => PersistedDomainState,
   storage: StorageLike | undefined = getBrowserStorage(),
-): PersistedAppStateV1 =>
+): PersistedAppStateV2 =>
   loadPersistedState(storage) ?? createPersistedAppState(createFallback())
 
 export const savePersistedState = (

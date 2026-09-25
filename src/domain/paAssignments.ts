@@ -122,7 +122,7 @@ export const getPaMemberCandidates = ({
       const member = memberById.get(eventMember.memberId)
       const memberDay = memberDayByEventMemberId.get(eventMember.id)
       if (
-        !member || !member.paCapabilities?.[role] || !memberDay ||
+        !member || !eventMember.paCapabilities[role] || !memberDay ||
         memberDay.participationStatus === 'absent'
       ) {
         return []
@@ -237,7 +237,12 @@ export const validatePaAssignmentDraftItem = ({
   )
   const stage = stages.find((candidate) => candidate.id === item.stageId)
   const member = members.find((candidate) => candidate.id === item.memberId)
-  const memberDay = getMemberDay({ item, eventMembers, eventMemberDays })
+  const eventMember = eventMembers.find((candidate) =>
+    candidate.eventId === event.id && candidate.memberId === item.memberId,
+  )
+  const memberDay = getMemberDay({
+    item: { ...item, eventId: event.id }, eventMembers, eventMemberDays,
+  })
 
   if (item.eventId !== event.id || !eventDayExists) {
     errors.form = 'PA担当のイベントまたは開催日が正しくありません。'
@@ -247,7 +252,9 @@ export const validatePaAssignmentDraftItem = ({
   }
   if (!item.memberId || !member) {
     errors.memberId = 'PA担当メンバーを選択してください。'
-  } else if (!member.paCapabilities?.[item.role]) {
+  } else if (!eventMember) {
+    errors.memberId = 'このイベントのメンバーとして登録されていません。'
+  } else if (!eventMember.paCapabilities[item.role]) {
     errors.memberId = item.role === 'main'
       ? 'Main PAを担当できるメンバーを選択してください。'
       : 'Sub PAを担当できるメンバーを選択してください。'
@@ -272,7 +279,7 @@ export const validatePaAssignmentDraftItem = ({
   }
 
   if (
-    resolution.ok && member && member.paCapabilities?.[item.role] &&
+    resolution.ok && member && eventMember?.paCapabilities[item.role] &&
     getOverlappingMemberPerformances({
       memberId: member.id,
       eventDayId: item.eventDayId,

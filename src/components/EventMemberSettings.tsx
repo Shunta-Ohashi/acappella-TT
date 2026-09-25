@@ -8,6 +8,7 @@ import type {
   EventMemberDay,
   Member,
   MemberId,
+  PaRole,
   ParticipationStatus,
 } from '../domain/models'
 import {
@@ -211,6 +212,24 @@ export function EventMemberSettings({
     setSaveMessage('')
   }
 
+  const updatePaCapability = (
+    memberDraftId: string,
+    role: PaRole,
+    enabled: boolean,
+  ) => {
+    setDraft((previous) => ({
+      members: previous.members.map((memberDraft) =>
+        memberDraft.draftId === memberDraftId
+          ? {
+              ...memberDraft,
+              paCapabilities: { ...memberDraft.paCapabilities, [role]: enabled },
+            }
+          : memberDraft,
+      ),
+    }))
+    clearFeedback()
+  }
+
   const setAllParticipationStatuses = (
     eventDayId: EventDayId,
     participationStatus: ParticipationStatus,
@@ -358,6 +377,8 @@ export function EventMemberSettings({
                   <th scope="col">名前</th>
                   <th scope="col">アカペラネーム</th>
                   <th scope="col">出演予定</th>
+                  <th scope="col">Main PA</th>
+                  <th scope="col">Sub PA</th>
                   {orderedEventDays.map((eventDay) => (
                     <th key={eventDay.id} scope="col">
                       {formatEventDay(eventDay)}
@@ -386,6 +407,20 @@ export function EventMemberSettings({
                       <td>
                         <strong>{eventBandCountByMember.get(memberDraft.memberId) ?? 0}</strong>枠
                       </td>
+                      {(['main', 'sub'] as const).map((role) => (
+                        <td key={role}>
+                          <input
+                            type="checkbox"
+                            aria-label={`${memberName}（${memberDraft.memberId}）を${role === 'main' ? 'Main' : 'Sub'} PA担当可にする`}
+                            checked={memberDraft.paCapabilities[role]}
+                            onChange={(event) => updatePaCapability(
+                              memberDraft.draftId,
+                              role,
+                              event.target.checked,
+                            )}
+                          />
+                        </td>
+                      ))}
                       {orderedEventDays.map((eventDay) => {
                         const dayDraft = memberDraft.days.find(
                           (candidate) => candidate.eventDayId === eventDay.id,

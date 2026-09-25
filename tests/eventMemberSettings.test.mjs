@@ -43,6 +43,7 @@ const createEventMember = (id, memberId, eventId = event.id) => ({
   id,
   eventId,
   memberId,
+  paCapabilities: { main: false, sub: false },
 })
 
 const createEventMemberDay = (
@@ -74,7 +75,10 @@ const createEventBand = (
 })
 
 test('既存EventMemberと日別statusを読み込み、不足日はundecidedで補完する', () => {
-  const eventMember = createEventMember('event-member-1', 'member-1')
+  const eventMember = {
+    ...createEventMember('event-member-1', 'member-1'),
+    paCapabilities: { main: true, sub: false },
+  }
   const otherEventMember = createEventMember(
     'event-member-other',
     'member-2',
@@ -102,6 +106,7 @@ test('既存EventMemberと日別statusを読み込み、不足日はundecidedで
 
   assert.equal(draft.members.length, 1)
   assert.equal(draft.members[0].eventMemberId, eventMember.id)
+  assert.deepEqual(draft.members[0].paCapabilities, { main: true, sub: false })
   assert.deepEqual(draft.members[0].days, [
     {
       eventMemberDayId: 'event-member-day-1',
@@ -150,6 +155,33 @@ test('共通Memberを重複させず追加し、全EventDayをundecidedで用意
     newDraftIds: ['single-day-member'],
   })
   assert.equal(singleDay.members[0].days.length, 1)
+  assert.deepEqual(singleDay.members[0].paCapabilities, { main: false, sub: false })
+})
+
+test('PA可否の変更は選択Eventの該当EventMemberだけへ保存する', () => {
+  const first = createEventMember('event-member-1', 'member-1')
+  const second = createEventMember('event-member-2', 'member-2')
+  const other = createEventMember('event-member-other', 'member-1', otherEvent.id)
+  const draft = createEventMemberSettingsDraft(
+    event, eventDays, [first, second, other], [],
+  )
+  draft.members[0].paCapabilities.main = true
+  draft.members[1].paCapabilities.sub = true
+  const result = createEventMemberSettingsUpdate({
+    event, eventDays, members,
+    eventMembers: [first, second, other],
+    eventMemberDays: [], eventBands: [], draft,
+    newEventMemberIds: [],
+    newEventMemberDayIds: ['new-day-1', 'new-day-2', 'new-day-3', 'new-day-4'],
+  })
+
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.deepEqual(result.eventMembers.find((member) => member.id === first.id)?.paCapabilities,
+    { main: true, sub: false })
+  assert.deepEqual(result.eventMembers.find((member) => member.id === second.id)?.paCapabilities,
+    { main: false, sub: true })
+  assert.equal(result.eventMembers.find((member) => member.id === other.id), other)
 })
 
 test('出演予定数はEventBand単位で集計し、別Eventを混ぜない', () => {
@@ -166,7 +198,10 @@ test('出演予定数はEventBand単位で集計し、別Eventを混ぜない', 
 })
 
 test('既存IDと時間条件を維持し、日別statusと不足EventMemberDayだけ更新する', () => {
-  const eventMember = createEventMember('event-member-1', 'member-1')
+  const eventMember = {
+    ...createEventMember('event-member-1', 'member-1'),
+    paCapabilities: { main: true, sub: true },
+  }
   const otherEventMember = createEventMember(
     'event-member-other',
     'member-2',
@@ -211,7 +246,10 @@ test('既存IDと時間条件を維持し、日別statusと不足EventMemberDay�
 
   assert.equal(result.ok, true)
   if (!result.ok) return
-  assert.ok(result.eventMembers.some((candidate) => candidate === eventMember))
+  assert.ok(result.eventMembers.some((candidate) =>
+    candidate.id === eventMember.id &&
+    candidate.paCapabilities.main === eventMember.paCapabilities.main &&
+    candidate.paCapabilities.sub === eventMember.paCapabilities.sub))
   const updatedExistingDay = result.eventMemberDays.find(
     (day) => day.id === existingDay.id,
   )
@@ -257,6 +295,7 @@ test('新規EventMemberと全EventDayに指定された新規IDだけを使用�
     id: 'new-event-member-1',
     eventId: event.id,
     memberId: 'member-1',
+    paCapabilities: { main: false, sub: false },
   }])
   assert.deepEqual(
     result.eventMemberDays.map((day) => ({

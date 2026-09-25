@@ -178,7 +178,6 @@ const members: Member[] = [
     acaName: 'あおい',
     entryAcademicYear: 2023,
     active: true,
-    paCapabilities: { main: true, sub: false },
   },
   {
     id: 'member-demo-02',
@@ -186,7 +185,6 @@ const members: Member[] = [
     acaName: 'れん',
     entryAcademicYear: 2024,
     active: true,
-    paCapabilities: { main: false, sub: true },
   },
   {
     id: 'member-demo-03',
@@ -194,7 +192,6 @@ const members: Member[] = [
     acaName: 'みさき',
     entryAcademicYear: 2022,
     active: true,
-    paCapabilities: { main: true, sub: true },
   },
   {
     id: 'member-demo-04',
@@ -209,7 +206,6 @@ const members: Member[] = [
     acaName: 'りん',
     entryAcademicYear: 2024,
     active: true,
-    paCapabilities: { main: true, sub: false },
   },
   {
     id: 'member-demo-06',
@@ -217,7 +213,6 @@ const members: Member[] = [
     acaName: 'みなと',
     entryAcademicYear: 2022,
     active: true,
-    paCapabilities: { main: false, sub: true },
   },
   {
     id: 'member-demo-07',
@@ -232,7 +227,6 @@ const members: Member[] = [
     acaName: 'しょう',
     entryAcademicYear: 2023,
     active: true,
-    paCapabilities: { main: true, sub: true },
   },
   {
     id: 'member-demo-09',
@@ -299,10 +293,24 @@ const bands: Band[] = [
   },
 ]
 
+const demoPaCapabilities = [
+  { main: true, sub: false },
+  { main: false, sub: true },
+  { main: true, sub: true },
+  { main: false, sub: false },
+  { main: true, sub: false },
+  { main: false, sub: true },
+  { main: false, sub: false },
+  { main: true, sub: true },
+  { main: false, sub: false },
+  { main: false, sub: false },
+]
+
 const mainEventMembers: EventMember[] = members.map((member, index) => ({
   id: `event-member-demo-main-${String(index + 1).padStart(2, '0')}`,
   eventId: 'event-demo-main',
   memberId: member.id,
+  paCapabilities: { ...demoPaCapabilities[index] },
 }))
 
 const festivalEventMembers: EventMember[] = members.slice(0, 4).map((
@@ -312,6 +320,7 @@ const festivalEventMembers: EventMember[] = members.slice(0, 4).map((
   id: `event-member-demo-festival-${String(index + 1).padStart(2, '0')}`,
   eventId: 'event-demo-festival',
   memberId: member.id,
+  paCapabilities: { ...demoPaCapabilities[index] },
 }))
 
 const eventMembers: EventMember[] = [
@@ -657,17 +666,15 @@ export const createDemoData = (): DemoData => ({
   eventDays: eventDays.map((eventDay) => ({ ...eventDay })),
   stages: stages.map((stage) => ({ ...stage })),
   sections: sections.map((section) => ({ ...section })),
-  members: members.map((member) => ({
-    ...member,
-    ...(member.paCapabilities
-      ? { paCapabilities: { ...member.paCapabilities } }
-      : {}),
-  })),
+  members: members.map((member) => ({ ...member })),
   bands: bands.map((band) => ({
     ...band,
     defaultMemberIds: [...band.defaultMemberIds],
   })),
-  eventMembers: eventMembers.map((eventMember) => ({ ...eventMember })),
+  eventMembers: eventMembers.map((eventMember) => ({
+    ...eventMember,
+    paCapabilities: { ...eventMember.paCapabilities },
+  })),
   eventMemberDays: eventMemberDays.map((eventMemberDay) => ({
     ...eventMemberDay,
     ...(eventMemberDay.availabilityWindows
