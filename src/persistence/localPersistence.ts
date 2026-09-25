@@ -12,6 +12,7 @@ import type {
   ScheduleItem,
   Section,
   Stage,
+  TimetableLock,
 } from '../domain/models'
 import { isSectionWithinStageTimeRange } from '../domain/eventStageSettings.ts'
 import {
@@ -30,6 +31,7 @@ import {
   isScheduleItem,
   isSection,
   isStage,
+  isTimetableLock,
 } from './persistenceValidation.ts'
 
 export const CURRENT_STORAGE_VERSION = 1 as const
@@ -49,6 +51,7 @@ export interface PersistedDomainState {
   paAssignments: PaAssignment[]
   dutyTypes: DutyType[]
   dutyAssignments: DutyAssignment[]
+  timetableLocks: TimetableLock[]
 }
 
 export interface PersistedAppStateV1 extends PersistedDomainState {
@@ -102,7 +105,7 @@ const hasValidSectionStageIntervals = ({
 
 export const isPersistedAppStateV1 = (
   value: unknown,
-): value is PersistedAppStateV1 =>
+): boolean =>
   isRecord(value) &&
   value.version === CURRENT_STORAGE_VERSION &&
   isPersistedCollection(value.members, isMember) &&
@@ -118,6 +121,8 @@ export const isPersistedAppStateV1 = (
   isPersistedCollection(value.paAssignments, isPaAssignment) &&
   isPersistedCollection(value.dutyTypes, isDutyType) &&
   isPersistedCollection(value.dutyAssignments, isDutyAssignment) &&
+  (value.timetableLocks === undefined ||
+    isPersistedCollection(value.timetableLocks, isTimetableLock)) &&
   hasResolvablePerformanceEventBands({
     eventBands: value.eventBands,
     eventDays: value.eventDays,
@@ -146,6 +151,7 @@ export const createPersistedAppState = (
   paAssignments: state.paAssignments,
   dutyTypes: state.dutyTypes,
   dutyAssignments: state.dutyAssignments,
+  timetableLocks: state.timetableLocks ?? [],
 })
 
 export const serializePersistedState = (
@@ -157,7 +163,14 @@ export const parsePersistedState = (
 ): PersistedAppStateV1 | undefined => {
   try {
     const parsed: unknown = JSON.parse(serialized)
-    return isPersistedAppStateV1(parsed) ? parsed : undefined
+    if (!isPersistedAppStateV1(parsed)) return undefined
+    const valid = parsed as Omit<PersistedAppStateV1, 'timetableLocks'> & {
+      timetableLocks?: TimetableLock[]
+    }
+    return {
+      ...valid,
+      timetableLocks: valid.timetableLocks ?? [],
+    }
   } catch {
     return undefined
   }

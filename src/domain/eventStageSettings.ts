@@ -11,6 +11,7 @@ import type {
   SectionId,
   Stage,
   StageId,
+  TimetableLock,
 } from './models'
 import {
   isValidLocalTime,
@@ -81,6 +82,7 @@ export interface StageReferences {
   eventBands: Pick<EventBand, 'fixedPlacement'>[]
   paAssignments: Pick<PaAssignment, 'stageId'>[]
   dutyAssignments: Pick<DutyAssignment, 'stageId'>[]
+  timetableLocks: Pick<TimetableLock, 'stageId'>[]
 }
 
 export interface SectionReferences {
@@ -93,6 +95,7 @@ export interface SectionReferences {
       }
   >
   eventBands: Pick<EventBand, 'fixedPlacement'>[]
+  timetableLocks: Pick<TimetableLock, 'sectionId'>[]
 }
 
 interface CreateEventStageSettingsUpdateInput {
@@ -107,6 +110,7 @@ interface CreateEventStageSettingsUpdateInput {
   eventBands: EventBand[]
   paAssignments: PaAssignment[]
   dutyAssignments: DutyAssignment[]
+  timetableLocks: TimetableLock[]
 }
 
 export type EventStageSettingsUpdateResult =
@@ -496,10 +500,10 @@ export const getEventStageSettingsErrorEventDayIds = (
 }
 
 export const STAGE_DELETE_BLOCKED_MESSAGE =
-  'このStageにはSection、タイムテーブル、固定配置、PA担当、または一般業務担当の設定があるため削除できません。関連する設定を先に解除してください。'
+  'このStageにはSection、タイムテーブル、固定配置、TT固定、PA担当、または一般業務担当の設定があるため削除できません。関連する設定を先に解除してください。'
 
 export const SECTION_DELETE_BLOCKED_MESSAGE =
-  'このSectionにはタイムテーブルまたは固定配置の設定があるため削除できません。関連する設定を先に解除してください。'
+  'このSectionにはタイムテーブル、固定配置、またはTT固定の設定があるため削除できません。関連する設定を先に解除してください。'
 
 export const FIRST_SECTION_ADD_BLOCKED_MESSAGE =
   'このStageにはすでにタイムテーブルが設定されています。Sectionを追加するには、先にタイムテーブルの配置を削除してください。'
@@ -512,6 +516,7 @@ export const canDeleteStage = (
     eventBands,
     paAssignments,
     dutyAssignments,
+    timetableLocks,
   }: StageReferences,
 ): boolean =>
   !sections.some((section) => section.stageId === stageId) &&
@@ -520,11 +525,12 @@ export const canDeleteStage = (
     eventBand.fixedPlacement?.stageId === stageId,
   ) &&
   !paAssignments.some((assignment) => assignment.stageId === stageId) &&
-  !dutyAssignments.some((assignment) => assignment.stageId === stageId)
+  !dutyAssignments.some((assignment) => assignment.stageId === stageId) &&
+  !timetableLocks.some((lock) => lock.stageId === stageId)
 
 export const canDeleteSection = (
   sectionId: SectionId,
-  { scheduleItems, eventBands }: SectionReferences,
+  { scheduleItems, eventBands, timetableLocks }: SectionReferences,
 ): boolean =>
   !scheduleItems.some((scheduleItem) =>
     scheduleItem.sectionId === sectionId ||
@@ -533,7 +539,8 @@ export const canDeleteSection = (
   ) &&
   !eventBands.some((eventBand) =>
     eventBand.fixedPlacement?.sectionId === sectionId,
-  )
+  ) &&
+  !timetableLocks.some((lock) => lock.sectionId === sectionId)
 
 export const canAddFirstSection = (
   stageId: StageId,
@@ -555,6 +562,7 @@ export const createEventStageSettingsUpdate = ({
   eventBands,
   paAssignments,
   dutyAssignments,
+  timetableLocks,
 }: CreateEventStageSettingsUpdateInput): EventStageSettingsUpdateResult => {
   const errors = validateEventStageSettingsDraft(draft)
   if (hasEventStageSettingsErrors(errors)) return { ok: false, errors }
@@ -591,6 +599,7 @@ export const createEventStageSettingsUpdate = ({
       eventBands,
       paAssignments,
       dutyAssignments,
+      timetableLocks,
     }),
   )
 
@@ -657,7 +666,7 @@ export const createEventStageSettingsUpdate = ({
   )
   const blockedSectionDeletion = currentSections.find((section) =>
     !retainedSectionIds.has(section.id) &&
-    !canDeleteSection(section.id, { scheduleItems, eventBands }),
+    !canDeleteSection(section.id, { scheduleItems, eventBands, timetableLocks }),
   )
 
   if (blockedSectionDeletion) {

@@ -2,12 +2,28 @@ import { Draggable, Droppable } from '@hello-pangea/dnd'
 import { Fragment, type CSSProperties, type FormEvent } from 'react'
 import type {
   DutyType,
+  EventBand,
   PaRole,
+  ScheduleItem,
   ScheduleItemId,
   Section,
   SectionId,
   Stage,
+  TimetableLock,
+  TimetableLockId,
 } from '../domain/models'
+import {
+  getTimetableLockLabel,
+  type TimetableLockMode,
+  type TimetableLockViolation,
+} from '../domain/timetableLocks'
+import {
+  getTimetableLockControlAccessibleName,
+  getTimetableLockRepairSummary,
+  getTimetableLockUnlockAccessibleName,
+  getUniqueLockIdsForViolation,
+  TIMETABLE_LOCK_UNLOCK_VISIBLE_TEXT,
+} from '../ui/timetableLockPresentation'
 import { formatMinuteAsLocalTime } from '../domain/timeline'
 import type {
   OffGridPaAssignment,
@@ -40,6 +56,62 @@ interface TimetableGridProps {
   onAddBreak: (sectionId?: SectionId) => void
   onAddInterSectionBreak: (afterSectionId: SectionId) => void
   onRemoveScheduleItem: (scheduleItemId: ScheduleItemId) => void
+  timetableLocks: TimetableLock[]
+  scheduleItems: ScheduleItem[]
+  eventBands: EventBand[]
+  lockViolations: TimetableLockViolation[]
+  lockFeedback: string
+  onSetTimetableLock: (
+    scheduleItemId: ScheduleItemId,
+    mode: TimetableLockMode,
+  ) => void
+  onUnlockTimetableLock: (lockId: TimetableLockId) => void
+  onUnlockAllTimetableLocks: () => void
+}
+
+export function TimetableLockRepairPanel({
+  violations,
+  timetableLocks,
+  scheduleItems,
+  eventBands,
+  onUnlockTimetableLock,
+}: {
+  violations: TimetableLockViolation[]
+  timetableLocks: TimetableLock[]
+  scheduleItems: ScheduleItem[]
+  eventBands: EventBand[]
+  onUnlockTimetableLock: (lockId: TimetableLockId) => void
+}) {
+  const repairSummary = getTimetableLockRepairSummary(violations)
+  if (!repairSummary.visible) return null
+
+  return (
+    <section className="timetable-grid__broken-locks" role="alert">
+      <strong>修復が必要なTT固定 {repairSummary.affectedLockIds.length}件</strong>
+      <ul>
+        {violations.map((violation, index) => (
+          <li key={`${violation.code}-${violation.lockIds.join('-')}-${index}`}>
+            <span>{violation.message}</span>
+            {getUniqueLockIdsForViolation(violation).map((lockId) => (
+              <button
+                type="button"
+                key={lockId}
+                aria-label={getTimetableLockUnlockAccessibleName({
+                  lockId,
+                  timetableLocks,
+                  scheduleItems,
+                  eventBands,
+                })}
+                onClick={() => onUnlockTimetableLock(lockId)}
+              >
+                {TIMETABLE_LOCK_UNLOCK_VISIBLE_TEXT}
+              </button>
+            ))}
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
 }
 
 const issueLabels = (row: TimetableWorkspaceRow): string[] => [
@@ -123,11 +195,20 @@ const TimetableRow = ({
   index,
   onRemoveScheduleItem,
   dutyTypes,
+  timetableLock,
+  onSetTimetableLock,
+  onUnlockTimetableLock,
 }: {
   row: TimetableWorkspaceRow
   index: number
   onRemoveScheduleItem: (scheduleItemId: ScheduleItemId) => void
   dutyTypes: DutyType[]
+  timetableLock?: TimetableLock
+  onSetTimetableLock: (
+    scheduleItemId: ScheduleItemId,
+    mode: TimetableLockMode,
+  ) => void
+  onUnlockTimetableLock: (lockId: TimetableLockId) => void
 }) => {
   const labels = issueLabels(row)
   const isBreak = row.scheduleItem.kind === 'break'
@@ -136,7 +217,11 @@ const TimetableRow = ({
     : row.eventBand?.name ?? '不明なバンド'
 
   return (
-    <Draggable draggableId={row.scheduleItem.id} index={index}>
+    <Draggable
+      draggableId={row.scheduleItem.id}
+      index={index}
+      isDragDisabled={timetableLock !== undefined}
+    >
       {(provided) => (
         <div
           ref={provided.innerRef}
@@ -166,9 +251,11 @@ const TimetableRow = ({
               <span
                 {...provided.dragHandleProps}
                 className="timetable-grid__drag-handle"
-                aria-label={`${itemLabel}を並べ替える`}
+                aria-label={timetableLock
+                  ? `${itemLabel}はTT固定中です`
+                  : `${itemLabel}を並べ替える`}
               >
-                ⠿
+                {timetableLock ? '🔒' : '⠿'}
               </span>
               <strong>{isBreak ? '休憩' : itemLabel}</strong>
               {labels.map((label) => (
@@ -198,9 +285,42 @@ const TimetableRow = ({
                   {row.hasHardTimeCondition && <span>必須時間あり</span>}
                   {row.hasPreferredTimeCondition && <span>希望あり</span>}
                   {row.fixedPlacementLabels.map((label) => (
-                    <span className="timetable-grid__fixed" key={label}>🔒 {label}</span>
+                    <span className="timetable-grid__fixed" key={label}>
+                      📌 必須条件：{label}
+                    </span>
                   ))}
+                  {timetableLock && (
+                    <span className="timetable-grid__lock-badge">
+                      🔒 TT固定：{getTimetableLockLabel(timetableLock)}
+                    </span>
+                  )}
                 </div>
+                <label className="timetable-grid__lock-control">
+                  TT固定
+                  <select
+                    aria-label={getTimetableLockControlAccessibleName(itemLabel)}
+                    value={timetableLock
+                      ? timetableLock.position.kind === 'index'
+                        ? 'current'
+                        : timetableLock.position.kind
+                      : ''}
+                    onChange={(event) => {
+                      const mode = event.target.value
+                      if (!mode && timetableLock) {
+                        onUnlockTimetableLock(timetableLock.id)
+                      } else if (mode === 'current' || mode === 'first' || mode === 'last') {
+                        onSetTimetableLock(row.scheduleItem.id, mode)
+                      }
+                    }}
+                  >
+                    <option value="">
+                      {timetableLock ? 'TT固定を解除' : '固定なし'}
+                    </option>
+                    <option value="current">現在の並び順を固定</option>
+                    <option value="first">トッパーにして固定</option>
+                    <option value="last">トリにして固定</option>
+                  </select>
+                </label>
               </>
             )}
 
@@ -210,8 +330,10 @@ const TimetableRow = ({
               aria-label={isBreak
                 ? `${itemLabel}を削除`
                 : `${itemLabel}を未配置バンドへ戻す`}
-            onClick={() => onRemoveScheduleItem(row.scheduleItem.id)}
-          >
+              disabled={timetableLock !== undefined}
+              title={timetableLock ? '先にTT固定を解除してください。' : undefined}
+              onClick={() => onRemoveScheduleItem(row.scheduleItem.id)}
+            >
               {isBreak ? '削除' : '戻す'}
             </button>
           </div>
@@ -246,6 +368,14 @@ export function TimetableGrid({
   onAddBreak,
   onAddInterSectionBreak,
   onRemoveScheduleItem,
+  timetableLocks,
+  scheduleItems,
+  eventBands,
+  lockViolations,
+  lockFeedback,
+  onSetTimetableLock,
+  onUnlockTimetableLock,
+  onUnlockAllTimetableLocks,
 }: TimetableGridProps) {
   const timetableGridColumns = createTimetableGridColumns(dutyTypes)
   const gridTemplateColumns = timetableGridColumns
@@ -259,6 +389,9 @@ export function TimetableGrid({
   } as CSSProperties
   const orderedSections = [...sections].sort((first, second) =>
     first.order - second.order,
+  )
+  const timetableLockByScheduleItemId = new Map(
+    timetableLocks.map((lock) => [lock.scheduleItemId, lock]),
   )
 
   const renderBreakForm = (
@@ -336,6 +469,9 @@ export function TimetableGrid({
               index={index}
               onRemoveScheduleItem={onRemoveScheduleItem}
               dutyTypes={dutyTypes}
+              timetableLock={timetableLockByScheduleItemId.get(row.scheduleItem.id)}
+              onSetTimetableLock={onSetTimetableLock}
+              onUnlockTimetableLock={onUnlockTimetableLock}
             />
           ))}
           {laneRows.length === 0 && (
@@ -361,7 +497,30 @@ export function TimetableGrid({
           <span>転換 {transitionMinutes}分</span>
         </div>
         {orderedSections.length === 0 && renderBreakForm(stage.name)}
+        {timetableLocks.length > 0 && (
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={onUnlockAllTimetableLocks}
+          >
+            すべてのTT固定を解除
+          </button>
+        )}
       </header>
+
+      {lockFeedback && (
+        <p className="timetable-grid__lock-feedback" role="status">
+          {lockFeedback}
+        </p>
+      )}
+
+      <TimetableLockRepairPanel
+        violations={lockViolations}
+        timetableLocks={timetableLocks}
+        scheduleItems={scheduleItems}
+        eventBands={eventBands}
+        onUnlockTimetableLock={onUnlockTimetableLock}
+      />
 
       {unresolvedPaAssignments.length > 0 && (
         <div className="timetable-grid__broken-pa" role="status">

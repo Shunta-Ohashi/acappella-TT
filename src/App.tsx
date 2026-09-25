@@ -21,6 +21,8 @@ import type {
   SectionId,
   Stage,
   StageId,
+  TimetableLock,
+  TimetableLockId,
 } from './domain/models'
 import {
   createBreakScheduleItemForLane,
@@ -66,7 +68,10 @@ import {
   DutySettings,
   type DutySettingsHandle,
 } from './components/DutySettings'
-import { TimetableGrid } from './components/TimetableGrid'
+import {
+  TimetableGrid,
+  TimetableLockRepairPanel,
+} from './components/TimetableGrid'
 import { TimetableOperationsWorkspace } from './components/TimetableOperationsWorkspace'
 import { EventList } from './components/EventList'
 import { DataBackupSettings } from './components/DataBackupSettings'
@@ -138,6 +143,18 @@ import {
   TIMETABLE_POOL_DROPPABLE_ID,
 } from './ui/timetableDnd'
 import { createTimetableWorkspaceRows } from './ui/timetableWorkspaceRows'
+import {
+  clearTimetableLockFeedback,
+  getTimetableLockFeedbackMessage,
+  type TimetableLockFeedback,
+} from './ui/timetableLockPresentation'
+import {
+  applyTimetableLock,
+  evaluateTimetableLocks,
+  removeTimetableLock,
+  removeTimetableLocksForEvent,
+  type TimetableLockMode,
+} from './domain/timetableLocks'
 import { createDemoData } from './data/demoData'
 import {
   loadPersistedStateOrFallback,
@@ -276,6 +293,12 @@ function App() {
   const [dutyAssignments, setDutyAssignments] = useState<DutyAssignment[]>(
     initialAppState.dutyAssignments,
   )
+  const [timetableLocks, setTimetableLocks] = useState<TimetableLock[]>(
+    initialAppState.timetableLocks,
+  )
+  const [timetableLockFeedback, setTimetableLockFeedback] = useState<
+    TimetableLockFeedback | null
+  >(null)
   const paSettingsRef = useRef<PaSettingsHandle>(null)
   const dutySettingsRef = useRef<DutySettingsHandle>(null)
   const selectedEventBands = eventBands.filter(
@@ -308,6 +331,7 @@ function App() {
     paAssignments,
     dutyTypes,
     dutyAssignments,
+    timetableLocks,
   }), [
     members,
     bands,
@@ -322,6 +346,7 @@ function App() {
     paAssignments,
     dutyTypes,
     dutyAssignments,
+    timetableLocks,
   ])
   useEffect(() => {
     savePersistedState(domainState)
@@ -341,6 +366,8 @@ function App() {
     setPaAssignments(snapshot.paAssignments)
     setDutyTypes(snapshot.dutyTypes)
     setDutyAssignments(snapshot.dutyAssignments)
+    setTimetableLocks(snapshot.timetableLocks)
+    setTimetableLockFeedback(clearTimetableLockFeedback())
     setSelectedEventId('')
     setSelectedTimetableEventDayId(undefined)
     setSelectedTimetableStageId(undefined)
@@ -406,6 +433,9 @@ function App() {
 
   const selectedScheduleItems = scheduleItems.filter((scheduleItem) =>
     selectedStageIds.has(scheduleItem.stageId),
+  )
+  const selectedEventTimetableLocks = timetableLocks.filter(
+    (lock) => lock.eventId === selectedEventId,
   )
 
   const [breakDuration, setBreakDuration] = useState<number>(10)
@@ -513,6 +543,7 @@ function App() {
   const handleOpenEvent = (eventId: EventId) => {
     if (!events.some((event) => event.id === eventId)) return
 
+    setTimetableLockFeedback(clearTimetableLockFeedback())
     setSelectedEventId(eventId)
     setSelectedTimetableEventDayId(undefined)
     setSelectedTimetableStageId(undefined)
@@ -541,6 +572,7 @@ function App() {
       defaults: DEFAULT_EVENT_SETTINGS,
     })
 
+    setTimetableLockFeedback(clearTimetableLockFeedback())
     setEvents((previous) => [...previous, created.event])
     setEventDays((previous) => [...previous, ...created.eventDays])
     setSelectedEventId(created.event.id)
@@ -871,6 +903,7 @@ function App() {
       eventBands,
       paAssignments,
       dutyAssignments,
+      timetableLocks,
     })
 
     if (!result.ok) return result
@@ -901,6 +934,37 @@ function App() {
 
   // ==================== 🎴 プール・タイムテーブル操作ロジック ====================
 
+  const evaluateSelectedEventLocks = (
+    candidateScheduleItems: ScheduleItem[],
+    candidateLocks: TimetableLock[] = timetableLocks,
+  ) => evaluateTimetableLocks({
+    eventId: selectedEventId,
+    timetableLocks: candidateLocks,
+    scheduleItems: candidateScheduleItems,
+    eventBands,
+    eventDays,
+    stages,
+    sections,
+  })
+
+  const commitScheduleItemsIfLocksAllow = (
+    candidateScheduleItems: ScheduleItem[],
+  ): boolean => {
+    const evaluation = evaluateSelectedEventLocks(candidateScheduleItems)
+    if (!evaluation.valid) {
+      setTimetableLockFeedback(
+        {
+          eventId: selectedEventId,
+          message: evaluation.violations[0]?.message ?? 'TT固定により操作できません。',
+        },
+      )
+      return false
+    }
+    setScheduleItems(candidateScheduleItems)
+    setTimetableLockFeedback(clearTimetableLockFeedback())
+    return true
+  }
+
   const handleAddBreak = (sectionId?: SectionId) => {
     if (
       !currentStage ||
@@ -922,13 +986,13 @@ function App() {
     })
     if (!newBreakItem) return
 
-    setScheduleItems(prev => insertScheduleItemInLane(
-      prev,
+    const candidate = insertScheduleItemInLane(
+      scheduleItems,
       lane,
       newBreakItem,
-      getScheduleLaneItems(prev, lane).length,
-    ))
-    setBreakDuration(10)
+      getScheduleLaneItems(scheduleItems, lane).length,
+    )
+    if (commitScheduleItemsIfLocksAllow(candidate)) setBreakDuration(10)
   }
 
   const handleAddInterSectionBreak = (afterSectionId: SectionId) => {
@@ -952,18 +1016,68 @@ function App() {
     })
     if (!newBreakItem) return
 
-    setScheduleItems(prev => insertScheduleItemInLane(
-      prev,
+    const candidate = insertScheduleItemInLane(
+      scheduleItems,
       lane,
       newBreakItem,
-      getScheduleLaneItems(prev, lane).length,
-    ))
-    setBreakDuration(10)
+      getScheduleLaneItems(scheduleItems, lane).length,
+    )
+    if (commitScheduleItemsIfLocksAllow(candidate)) setBreakDuration(10)
   }
 
   // 演奏項目を削除すると、参照先のEventBandが算出プールへ戻る。休憩はそのまま削除する
   const handleRemoveScheduleItem = (id: string) => {
-    setScheduleItems(prev => removeScheduleItem(prev, id))
+    commitScheduleItemsIfLocksAllow(removeScheduleItem(scheduleItems, id))
+  }
+
+  const handleSetTimetableLock = (
+    scheduleItemId: string,
+    mode: TimetableLockMode,
+  ) => {
+    const result = applyTimetableLock({
+      lockId: createId('timetable-lock'),
+      eventId: selectedEventId,
+      scheduleItemId,
+      mode,
+      timetableLocks,
+      scheduleItems,
+      eventBands,
+      eventDays,
+      stages,
+      sections,
+    })
+    if (!result.ok) {
+      setTimetableLockFeedback(
+        {
+          eventId: selectedEventId,
+          message: result.violations[0]?.message ?? 'TT固定を設定できません。',
+        },
+      )
+      return
+    }
+    setScheduleItems(result.scheduleItems)
+    setTimetableLocks(result.timetableLocks)
+    setTimetableLockFeedback({
+      eventId: selectedEventId,
+      message: 'TT固定を更新しました。',
+    })
+  }
+
+  const handleUnlockTimetableLock = (lockId: TimetableLockId) => {
+    setTimetableLocks((previous) => removeTimetableLock(previous, lockId))
+    setTimetableLockFeedback({
+      eventId: selectedEventId,
+      message: 'TT固定を解除しました。',
+    })
+  }
+
+  const handleUnlockAllTimetableLocks = () => {
+    setTimetableLocks((previous) =>
+      removeTimetableLocksForEvent(previous, selectedEventId))
+    setTimetableLockFeedback({
+      eventId: selectedEventId,
+      message: 'このイベントのTT固定をすべて解除しました。',
+    })
   }
 
   // ==================== 🔀 安全なドラッグ＆ドロップ処理 ====================
@@ -1040,8 +1154,8 @@ function App() {
           sourceLane,
         )[sourceIndex]
         if (!sourceItem || sourceItem.id !== result.draggableId) return
-        setScheduleItems(prev => reorderScheduleLaneItems(
-          prev, sourceLane, sourceIndex, destinationIndex,
+        commitScheduleItemsIfLocksAllow(reorderScheduleLaneItems(
+          scheduleItems, sourceLane, sourceIndex, destinationIndex,
         ))
       }
       return
@@ -1067,8 +1181,8 @@ function App() {
       })
       if (!newScheduleItem) return
 
-      setScheduleItems(prev => insertScheduleItemInLane(
-        prev,
+      commitScheduleItemsIfLocksAllow(insertScheduleItemInLane(
+        scheduleItems,
         destinationLane,
         newScheduleItem,
         destinationIndex,
@@ -1089,7 +1203,7 @@ function App() {
       ) return
 
       const remainingScheduleItems = removeScheduleItem(scheduleItems, scheduleItem.id)
-      setScheduleItems(remainingScheduleItems)
+      if (!commitScheduleItemsIfLocksAllow(remainingScheduleItems)) return
       setEventBands(previous => {
         const daySpecificBands = getEventBandsForEventDay(
           previous,
@@ -1137,8 +1251,8 @@ function App() {
       )[sourceIndex]
       if (!sourceItem || sourceItem.id !== result.draggableId) return
 
-      setScheduleItems(previous => moveScheduleItemWithinStage({
-        scheduleItems: previous,
+      commitScheduleItemsIfLocksAllow(moveScheduleItemWithinStage({
+        scheduleItems,
         stage: currentStage,
         stageSections: currentStageSections,
         sourceLane,
@@ -1216,6 +1330,16 @@ function App() {
         unresolvedDutyAssignments: [],
         offGridDutyAssignments: [],
       }
+  const timetableLockEvaluation = evaluateSelectedEventLocks(scheduleItems)
+  const unavailableTimetableLockRepair = (
+    <TimetableLockRepairPanel
+      violations={timetableLockEvaluation.violations}
+      timetableLocks={selectedEventTimetableLocks}
+      scheduleItems={selectedScheduleItems}
+      eventBands={selectedEventBands}
+      onUnlockTimetableLock={handleUnlockTimetableLock}
+    />
+  )
 
   return (
     <AppShell
@@ -1273,10 +1397,12 @@ function App() {
                 eventBands,
                 paAssignments,
                 dutyAssignments,
+                timetableLocks,
               })}
               canDeleteSection={(sectionId) => canDeleteSection(sectionId, {
                 scheduleItems,
                 eventBands,
+                timetableLocks,
               })}
               onSave={handleSaveEventStageSettings}
               onSaveAndNext={() => setActiveStep(3)}
@@ -1360,11 +1486,13 @@ function App() {
                   <section className="timetable-empty-state">
                     <h3>開催日が設定されていません</h3>
                     <p>Step 1で開催日を設定してください。</p>
+                    {unavailableTimetableLockRepair}
                   </section>
                 ) : !currentStage ? (
                   <section className="timetable-empty-state">
                     <h3>この開催日にはStageがありません</h3>
                     <p>タイムテーブルを作成するには、Step 2でStageを設定してください。</p>
+                    {unavailableTimetableLockRepair}
                     <button
                       type="button"
                       className="secondary-button"
@@ -1380,6 +1508,7 @@ function App() {
                       Section設定と一致しない項目があります。データを確認してから再度開いてください。
                     </p>
                     <p>対象項目: {invalidCurrentStageScheduleItemIds.join('、')}</p>
+                    {unavailableTimetableLockRepair}
                   </section>
                 ) : undefined}
                 pool={currentStage ? (
@@ -1451,6 +1580,17 @@ function App() {
                     onAddBreak={handleAddBreak}
                     onAddInterSectionBreak={handleAddInterSectionBreak}
                     onRemoveScheduleItem={handleRemoveScheduleItem}
+                    timetableLocks={selectedEventTimetableLocks}
+                    scheduleItems={selectedScheduleItems}
+                    eventBands={selectedEventBands}
+                    lockViolations={timetableLockEvaluation.violations}
+                    lockFeedback={getTimetableLockFeedbackMessage(
+                      timetableLockFeedback,
+                      selectedEventId,
+                    )}
+                    onSetTimetableLock={handleSetTimetableLock}
+                    onUnlockTimetableLock={handleUnlockTimetableLock}
+                    onUnlockAllTimetableLocks={handleUnlockAllTimetableLocks}
                   />
                 ) : null}
                 issuePanel={(

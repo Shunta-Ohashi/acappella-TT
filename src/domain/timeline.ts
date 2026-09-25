@@ -10,7 +10,10 @@ import type {
   Stage,
   StageId,
 } from './models'
-import { isValidScheduleItemSectionAssignment } from './schedule.ts'
+import {
+  compareScheduleItemOrder,
+  isValidScheduleItemSectionAssignment,
+} from './schedule.ts'
 
 export interface CalculatedScheduleItem {
   scheduleItemId: ScheduleItemId
@@ -81,7 +84,7 @@ export const calculateStageTimeline = ({
   let hasExplicitAnchorSincePreviousItem = false
 
   const calculateItems = (items: ScheduleItem[]) => {
-    const orderedItems = [...items].sort((left, right) => left.order - right.order)
+    const orderedItems = [...items].sort(compareScheduleItemOrder)
 
     for (const scheduleItem of orderedItems) {
       if (

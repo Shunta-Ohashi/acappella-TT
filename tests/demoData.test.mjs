@@ -20,6 +20,7 @@ test('demoDataは想定件数と全EventDayのdomain invariantを満たす', () 
     paAssignments: data.paAssignments.length,
     dutyTypes: data.dutyTypes.length,
     dutyAssignments: data.dutyAssignments.length,
+    timetableLocks: data.timetableLocks.length,
   }, {
     events: 2,
     eventDays: 3,
@@ -32,6 +33,7 @@ test('demoDataは想定件数と全EventDayのdomain invariantを満たす', () 
     paAssignments: 2,
     dutyTypes: 2,
     dutyAssignments: 2,
+    timetableLocks: 0,
   })
 
   for (const eventDay of data.eventDays) {

@@ -17,6 +17,7 @@ import type {
   Section,
   Stage,
   TimeRange,
+  TimetableLock,
 } from '../domain/models'
 import { isValidLocalDate } from '../domain/eventCreation.ts'
 import { getTimeRangeValidationError } from '../domain/eventMemberDayDetails.ts'
@@ -194,6 +195,15 @@ export const isScheduleItem = (value: unknown): value is ScheduleItem =>
       isString(value.title) &&
       isValidBreakDurationMinutes(value.durationMinutes))
   )
+
+export const isTimetableLock = (value: unknown): value is TimetableLock =>
+  isRecord(value) &&
+  isString(value.id) &&
+  isString(value.eventId) &&
+  isString(value.scheduleItemId) &&
+  isString(value.stageId) &&
+  isOptional(value.sectionId, isString) &&
+  isFixedPosition(value.position)
 
 export const isPaAssignment = (value: unknown): value is PaAssignment =>
   isRecord(value) &&
