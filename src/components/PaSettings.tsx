@@ -273,9 +273,9 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
                 <p className="pa-stage-card__empty">PA担当はまだ設定されていません。</p>
               )}
               {assignments.length > 0 && (
-                <ul className="pa-assignment-list">
+                <ul className="operations-assignment-list">
                   {assignments.map((item) => (
-                    <li className="pa-assignment-card" key={item.draftId}>
+                    <li className="operations-assignment-card" key={item.draftId}>
                       <header>
                         <strong>{roleLabel(item.role)}</strong>
                         <span>
@@ -292,7 +292,7 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
                           <dd>{getTimeLabel(item)}</dd>
                         </div>
                       </dl>
-                      <div className="pa-settings__row-actions">
+                      <div className="operations-assignment-card__actions">
                         <button
                           type="button"
                           className="secondary-button"
