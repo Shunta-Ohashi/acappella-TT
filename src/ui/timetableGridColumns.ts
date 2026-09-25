@@ -8,10 +8,10 @@ export interface TimetableGridColumn {
 }
 
 const fixedColumns: TimetableGridColumn[] = [
-  { id: 'time', label: '時刻', width: 76 },
-  { id: 'performance', label: '出演', width: 280 },
-  { id: 'main-pa', label: 'Main PA', width: 116 },
-  { id: 'sub-pa', label: 'Sub PA', width: 116 },
+  { id: 'time', label: '時刻', width: 70 },
+  { id: 'performance', label: '出演', width: 270 },
+  { id: 'main-pa', label: 'Main PA', width: 90 },
+  { id: 'sub-pa', label: 'Sub PA', width: 90 },
 ]
 
 export const createTimetableGridColumns = (
@@ -25,7 +25,7 @@ export const createTimetableGridColumns = (
     .map((dutyType) => ({
       id: `duty-${dutyType.id}`,
       label: dutyType.name,
-      width: 116,
+      width: 90,
       dutyTypeId: dutyType.id,
     })),
 ]

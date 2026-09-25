@@ -7,6 +7,7 @@ import { createTimetableGridColumns } from '../src/ui/timetableGridColumns.ts'
 const members = [
   { id: 'member-1', realName: '山田 太郎', acaName: 'やまだ', active: true },
   { id: 'member-2', realName: '佐藤 花子', active: true },
+  { id: 'member-3', realName: '鈴木 蓮', acaName: 'れん', active: true },
 ]
 
 const eventBands = [
@@ -111,12 +112,20 @@ const createRows = (overrides = {}) => createTimetableWorkspaceRows({
   ...overrides,
 })
 
-const assignment = ({ id, role, fromId, fromEdge = 'start', untilId, untilEdge = 'end' }) => ({
+const assignment = ({
+  id,
+  role,
+  memberId = role === 'main' ? 'member-1' : 'member-2',
+  fromId,
+  fromEdge = 'start',
+  untilId,
+  untilEdge = 'end',
+}) => ({
   id,
   eventId: 'event-1',
   eventDayId: 'day-1',
   stageId: 'stage-1',
-  memberId: role === 'main' ? 'member-1' : 'member-2',
+  memberId,
   role,
   from: { scheduleItemId: fromId, edge: fromEdge },
   until: { scheduleItemId: untilId, edge: untilEdge },
@@ -361,6 +370,29 @@ test('DutyTypeをorder順の動的Grid列へ追加する', () => {
     createTimetableGridColumns(dutyTypes).map((column) => column.label),
     ['時刻', '出演', 'Main PA', 'Sub PA', 'TK', '撮影'],
   )
+  assert.deepEqual(
+    createTimetableGridColumns(dutyTypes).map((column) => column.width),
+    [70, 270, 90, 90, 90, 90],
+  )
+})
+
+test('同一rowのMain PA担当が3人でも全員をcoverageへ保持する', () => {
+  const { rows } = createRows({
+    paAssignments: [
+      assignment({ id: 'main-a', role: 'main', memberId: 'member-1',
+        fromId: 'performance-1', untilId: 'performance-1' }),
+      assignment({ id: 'main-b', role: 'main', memberId: 'member-2',
+        fromId: 'performance-1', untilId: 'performance-1' }),
+      assignment({ id: 'main-c', role: 'main', memberId: 'member-3',
+        fromId: 'performance-1', untilId: 'performance-1' }),
+    ],
+  })
+
+  assert.equal(rows[0].paCoverage.main.length, 3)
+  assert.deepEqual(
+    rows[0].paCoverage.main.map((coverage) => coverage.memberName),
+    ['やまだ', '佐藤 花子', 'れん'],
+  )
 })
 
 test('一般業務の複数担当をDutyType列へ分類しhalf-openでcoverageを作る', () => {
@@ -393,6 +425,26 @@ test('一般業務の複数担当をDutyType列へ分類しhalf-openでcoverage�
   )
   assert.equal(rows[1].dutyCoverage['duty-tk'].length, 0)
   assert.equal(rows[2].dutyCoverage['duty-tk'].length, 1)
+})
+
+test('同一DutyType・同一rowの担当が3人でも全員をcoverageへ保持する', () => {
+  const { rows } = createRows({
+    dutyTypes,
+    dutyAssignments: [
+      dutyAssignment({ id: 'photo-a', memberId: 'member-1',
+        fromId: 'performance-1', untilId: 'performance-1' }),
+      dutyAssignment({ id: 'photo-b', memberId: 'member-2',
+        fromId: 'performance-1', untilId: 'performance-1' }),
+      dutyAssignment({ id: 'photo-c', memberId: 'member-3',
+        fromId: 'performance-1', untilId: 'performance-1' }),
+    ],
+  })
+
+  assert.equal(rows[0].dutyCoverage['duty-photo'].length, 3)
+  assert.deepEqual(
+    rows[0].dutyCoverage['duty-photo'].map((coverage) => coverage.memberName),
+    ['やまだ', '佐藤 花子', 'れん'],
+  )
 })
 
 test('transition-only一般業務はGrid外へ保持し、参照切れと区別する', () => {

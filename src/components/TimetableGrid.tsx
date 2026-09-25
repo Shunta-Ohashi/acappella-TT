@@ -145,7 +145,6 @@ const PaTimelineCell = ({
         title={`${role === 'main' ? 'Main' : 'Sub'} PA: ${item.memberName}`}
       >
         <strong>{item.memberName}</strong>
-        <small>{role === 'main' ? 'Main PA' : 'Sub PA'}</small>
       </div>
     ))}
   </div>
@@ -266,6 +265,18 @@ const TimetableRow = ({
                   {label}
                 </span>
               ))}
+              <button
+                type="button"
+                className="timetable-grid__remove"
+                aria-label={isBreak
+                  ? `${itemLabel}を削除`
+                  : `${itemLabel}を未配置バンドへ戻す`}
+                disabled={timetableLock !== undefined}
+                title={timetableLock ? '先にTT固定を解除してください。' : undefined}
+                onClick={() => onRemoveScheduleItem(row.scheduleItem.id)}
+              >
+                {isBreak ? '削除' : '戻す'}
+              </button>
             </div>
 
             {row.scheduleItem.kind === 'break' ? (
@@ -294,48 +305,36 @@ const TimetableRow = ({
                       🔒 TT固定：{getTimetableLockLabel(timetableLock)}
                     </span>
                   )}
+                  <label className="timetable-grid__lock-control">
+                    <span aria-hidden="true">{timetableLock ? '🔒' : '🔓'}</span>
+                    <span className="visually-hidden">TT固定</span>
+                    <select
+                      aria-label={getTimetableLockControlAccessibleName(itemLabel)}
+                      value={timetableLock
+                        ? timetableLock.position.kind === 'index'
+                          ? 'current'
+                          : timetableLock.position.kind
+                        : ''}
+                      onChange={(event) => {
+                        const mode = event.target.value
+                        if (!mode && timetableLock) {
+                          onUnlockTimetableLock(timetableLock.id)
+                        } else if (mode === 'current' || mode === 'first' || mode === 'last') {
+                          onSetTimetableLock(row.scheduleItem.id, mode)
+                        }
+                      }}
+                    >
+                      <option value="">
+                        {timetableLock ? 'TT固定を解除' : '固定なし'}
+                      </option>
+                      <option value="current">現在の並び順を固定</option>
+                      <option value="first">トッパーにして固定</option>
+                      <option value="last">トリにして固定</option>
+                    </select>
+                  </label>
                 </div>
-                <label className="timetable-grid__lock-control">
-                  TT固定
-                  <select
-                    aria-label={getTimetableLockControlAccessibleName(itemLabel)}
-                    value={timetableLock
-                      ? timetableLock.position.kind === 'index'
-                        ? 'current'
-                        : timetableLock.position.kind
-                      : ''}
-                    onChange={(event) => {
-                      const mode = event.target.value
-                      if (!mode && timetableLock) {
-                        onUnlockTimetableLock(timetableLock.id)
-                      } else if (mode === 'current' || mode === 'first' || mode === 'last') {
-                        onSetTimetableLock(row.scheduleItem.id, mode)
-                      }
-                    }}
-                  >
-                    <option value="">
-                      {timetableLock ? 'TT固定を解除' : '固定なし'}
-                    </option>
-                    <option value="current">現在の並び順を固定</option>
-                    <option value="first">トッパーにして固定</option>
-                    <option value="last">トリにして固定</option>
-                  </select>
-                </label>
               </>
             )}
-
-            <button
-              type="button"
-              className="timetable-grid__remove"
-              aria-label={isBreak
-                ? `${itemLabel}を削除`
-                : `${itemLabel}を未配置バンドへ戻す`}
-              disabled={timetableLock !== undefined}
-              title={timetableLock ? '先にTT固定を解除してください。' : undefined}
-              onClick={() => onRemoveScheduleItem(row.scheduleItem.id)}
-            >
-              {isBreak ? '削除' : '戻す'}
-            </button>
           </div>
 
           <PaTimelineCell role="main" coverage={row.paCoverage.main} />

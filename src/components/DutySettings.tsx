@@ -462,12 +462,12 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
                 aria-labelledby="duty-assignment-repair-title"
               >
                 <h4 id="duty-assignment-repair-title">修復が必要な担当</h4>
-                <ul className="duty-assignment-list">
+                <ul className="operations-assignment-list">
                   {invalidScopeAssignments.map(({ assignment, scopeStatus }) => {
                     const dutyTypeName = getDutyTypeName(assignment)
                     const memberName = getMemberName(assignment)
                     return (
-                      <li key={assignment.draftId}>
+                      <li className="operations-assignment-card" key={assignment.draftId}>
                         <header>
                           <strong>{dutyTypeName}</strong>
                           <span>{memberName}</span>
@@ -482,7 +482,11 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
                             仕事の参照も切れています。
                           </p>
                         )}
-                        <div className="pa-settings__row-actions">
+                        <dl>
+                          <div><dt>担当範囲</dt><dd>{getBoundaryLabel(assignment)}</dd></div>
+                          <div><dt>実時間</dt><dd>{getTimeLabel(assignment)}</dd></div>
+                        </dl>
+                        <div className="operations-assignment-card__actions">
                           <button
                             type="button"
                             className="secondary-button"
@@ -528,12 +532,12 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
             ) : selectedAssignments.length === 0 ? (
               <p className="duty-settings__empty">このStageの担当はまだ設定されていません。</p>
             ) : (
-              <ul className="duty-assignment-list">
+              <ul className="operations-assignment-list">
                 {selectedAssignments.map((item) => {
                   const dutyTypeName = getDutyTypeName(item)
                   const memberName = getMemberName(item)
                   return (
-                    <li key={item.draftId}>
+                    <li className="operations-assignment-card" key={item.draftId}>
                       <header>
                         <strong>{item.missingDutyTypeId ? '参照切れの担当' : dutyTypeName}</strong>
                         <span>{memberName}</span>
@@ -547,7 +551,7 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
                         <div><dt>担当範囲</dt><dd>{getBoundaryLabel(item)}</dd></div>
                         <div><dt>実時間</dt><dd>{getTimeLabel(item)}</dd></div>
                       </dl>
-                      <div className="pa-settings__row-actions">
+                      <div className="operations-assignment-card__actions">
                         <button
                           type="button"
                           className="secondary-button"
