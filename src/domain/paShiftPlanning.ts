@@ -9,7 +9,7 @@ import {
 } from './activitySpacing.ts'
 import { isIntervalWithinAvailabilityWindows } from './eventBandSettings.ts'
 import { getPaMemberCandidates } from './paAssignments.ts'
-import { getPaWorkloadImbalance } from './timetableGenerationScore.ts'
+import { getExactPaWorkloadImbalance } from './timetableGenerationScore.ts'
 import type { CalculatedScheduleItem } from './timeline'
 
 export type PlannedScheduleBoundary =
@@ -50,6 +50,23 @@ interface PaState {
   spacingPenalty: number
   undecidedCount: number
   key: string
+}
+
+export const comparePaShiftStates = (
+  left: Pick<PaState, 'shifts' | 'lastResortCount' | 'spacingPenalty' | 'undecidedCount' | 'key'>,
+  right: typeof left,
+  eligibleMemberIds: Record<PaRole, MemberId[]>,
+): number => {
+  const spacingOrder = left.lastResortCount - right.lastResortCount ||
+    left.spacingPenalty - right.spacingPenalty
+  if (spacingOrder !== 0) return spacingOrder
+  for (const role of ['main', 'sub'] as const) {
+    const leftWorkload = getExactPaWorkloadImbalance(role, left.shifts, eligibleMemberIds[role])
+    const rightWorkload = getExactPaWorkloadImbalance(role, right.shifts, eligibleMemberIds[role])
+    if (leftWorkload < rightWorkload) return -1
+    if (leftWorkload > rightWorkload) return 1
+  }
+  return left.undecidedCount - right.undecidedCount || left.key.localeCompare(right.key)
 }
 
 export const planPaShifts = ({
@@ -162,16 +179,7 @@ export const planPaShifts = ({
     if (nextStates.length === 0) return {
       ok: false, code: 'NO_FEASIBLE_PA_PLAN', scope: task.scope,
     }
-    nextStates.sort((left, right) =>
-      left.lastResortCount - right.lastResortCount ||
-      left.spacingPenalty - right.spacingPenalty ||
-      getPaWorkloadImbalance('main', left.shifts, eligibleMemberIds.main) -
-        getPaWorkloadImbalance('main', right.shifts, eligibleMemberIds.main) ||
-      getPaWorkloadImbalance('sub', left.shifts, eligibleMemberIds.sub) -
-        getPaWorkloadImbalance('sub', right.shifts, eligibleMemberIds.sub) ||
-      left.undecidedCount - right.undecidedCount ||
-      left.key.localeCompare(right.key),
-    )
+    nextStates.sort((left, right) => comparePaShiftStates(left, right, eligibleMemberIds))
     states = nextStates.slice(0, beamWidth)
   }
   return { ok: true, plans: states.map(state => ({

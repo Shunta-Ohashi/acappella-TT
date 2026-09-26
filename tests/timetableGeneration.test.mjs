@@ -12,9 +12,11 @@ import { hasSafeStageTimelineArithmetic } from '../src/domain/timetableGeneratio
 import { evaluateTimetableLocks } from '../src/domain/timetableLocks.ts'
 import {
   compareTimetableGenerationScores, getPaWorkloadImbalance, getSectionBalance,
-  getCrossSectionTransitions,
+  getCrossSectionTransitions, getExactSectionBalance, getExactPaWorkloadImbalance,
+  compareExactTimetableGenerationScores, toPublicTimetableGenerationScore,
+  getExactSchedulingSoftPenalty,
 } from '../src/domain/timetableGenerationScore.ts'
-import { planPaShifts } from '../src/domain/paShiftPlanning.ts'
+import { planPaShifts, comparePaShiftStates } from '../src/domain/paShiftPlanning.ts'
 import { resolvePaAssignmentInterval } from '../src/domain/paAssignments.ts'
 
 const createInput = ({ bandCount = 4, sectionCount = 2, paCount = 2 } = {}) => {
@@ -1764,6 +1766,178 @@ const zeroGenerationScore = {
   sectionBandCountImbalance: 0,
   undecidedPaShiftCount: 0,
 }
+
+const zeroExactGenerationScore = {
+  ...zeroGenerationScore,
+  schedulingSoftPenalty: 0n,
+  sectionDurationImbalance: 0n,
+  paMainWorkloadImbalance: 0n,
+  paSubWorkloadImbalance: 0n,
+  sectionBandCountImbalance: 0n,
+}
+
+test('複数Stageのsafe Timelineはscore集約がMAX_SAFEを超えてもexact値の小さい後続候補を選ぶ', () => {
+  const input = createInput({ bandCount: 1, sectionCount: 0, paCount: 1 })
+  input.stages.push({ ...input.stages[0], id: 'stage-2', order: 1 })
+  // Stage 1 has an extra empty Section, so placing the band there does not
+  // reduce max-min duration. Stage 2's empty Section becomes one minute long.
+  input.sections = [
+    { id: 'section-0', stageId: 'stage-1', name: '出演', order: 0 },
+    { id: 'section-1', stageId: 'stage-1', name: '長い休憩', order: 1 },
+    { id: 'section-2', stageId: 'stage-1', name: '空の部', order: 2 },
+    { id: 'section-3', stageId: 'stage-2', name: '出演', order: 0 },
+    { id: 'section-4', stageId: 'stage-2', name: '長い休憩', order: 1 },
+  ]
+  const duration = Number.MAX_SAFE_INTEGER - 601
+  input.scheduleItems = [
+    { id: 'break-1', kind: 'break', stageId: 'stage-1', sectionId: 'section-1',
+      order: 0, title: '休憩', durationMinutes: duration },
+    { id: 'break-2', kind: 'break', stageId: 'stage-2', sectionId: 'section-4',
+      order: 0, title: '休憩', durationMinutes: duration },
+  ]
+  input.eventBands[0].durationMinutes = 1
+  input.eventBands[0].availableTimeRange = { from: '10:00', until: '10:01' }
+  const original = structuredClone(input)
+  const first = generateTimetablePlan({ ...input, options: { maxScheduleCandidates: 1 } })
+  const best = generateTimetablePlan(input)
+  const firstTimeline = verifyGeneratedSchedule(input, first)
+  const bestTimeline = verifyGeneratedSchedule(input, best)
+  assert.equal(first.plan.placements[0].stageId, 'stage-1')
+  assert.equal(best.plan.placements[0].stageId, 'stage-2')
+  const firstBalance = getExactSectionBalance(input.stages, input.sections, firstTimeline)
+  const bestBalance = getExactSectionBalance(input.stages, input.sections, bestTimeline)
+  assert.equal(firstBalance.durationImbalance, 2n * BigInt(duration))
+  assert.equal(bestBalance.durationImbalance, firstBalance.durationImbalance - 1n)
+  assert.ok(bestBalance.durationImbalance > BigInt(Number.MAX_SAFE_INTEGER))
+  // These exact values are also indistinguishable after unsafe Number conversion.
+  assert.equal(Number(firstBalance.durationImbalance), Number(bestBalance.durationImbalance))
+  assert.equal(first.plan.score.sectionDurationImbalance, Number.MAX_SAFE_INTEGER)
+  assert.equal(best.plan.score.sectionDurationImbalance, Number.MAX_SAFE_INTEGER)
+  for (const value of Object.values(best.plan.score)) assert.ok(Number.isSafeInteger(value))
+  assert.ok(best.plan.diagnostics.scheduleCandidatesEvaluated > 1)
+  assert.doesNotThrow(() => JSON.stringify(best))
+  assert.deepEqual(JSON.parse(JSON.stringify(best)), best)
+  assert.deepEqual(generateTimetablePlan(input), best)
+  assert.deepEqual(input, original)
+})
+
+test('public scoreはMAX_SAFE境界を維持し超過値だけsaturate、exact順位は維持する', () => {
+  const maximum = BigInt(Number.MAX_SAFE_INTEGER)
+  for (const field of ['schedulingSoftPenalty', 'sectionDurationImbalance',
+    'paMainWorkloadImbalance', 'paSubWorkloadImbalance', 'sectionBandCountImbalance']) {
+    const smaller = { ...zeroExactGenerationScore, [field]: maximum + 100n }
+    const larger = { ...zeroExactGenerationScore, [field]: maximum + 101n }
+    assert.deepEqual(toPublicTimetableGenerationScore(smaller), toPublicTimetableGenerationScore(larger))
+    assert.equal(toPublicTimetableGenerationScore(smaller)[field], Number.MAX_SAFE_INTEGER)
+    assert.equal(compareExactTimetableGenerationScores(smaller, larger), -1)
+    assert.equal(compareExactTimetableGenerationScores(larger, smaller), 1)
+    assert.equal(compareExactTimetableGenerationScores(smaller, { ...smaller }), 0)
+    for (const value of [0n, maximum - 1n, maximum]) {
+      assert.equal(toPublicTimetableGenerationScore({ ...smaller, [field]: value })[field], Number(value))
+    }
+  }
+})
+
+test('exact comparatorは既存の全score priorityとfractional spacing penaltyを維持する', () => {
+  const keys = Object.keys(zeroExactGenerationScore)
+  for (let index = 0; index < keys.length - 1; index += 1) {
+    const key = keys[index]
+    const laterKey = keys[index + 1]
+    const earlierWorse = { ...zeroExactGenerationScore,
+      [key]: typeof zeroExactGenerationScore[key] === 'bigint' ? 1n : 1 }
+    const laterWorse = { ...zeroExactGenerationScore,
+      [laterKey]: typeof zeroExactGenerationScore[laterKey] === 'bigint'
+        ? 2n * BigInt(Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER }
+    assert.equal(compareExactTimetableGenerationScores(earlierWorse, laterWorse), 1, key)
+  }
+  const fractional = { ...zeroExactGenerationScore, activitySpacingPenalty: 0.25 }
+  assert.equal(toPublicTimetableGenerationScore(fractional).activitySpacingPenalty, 0.25)
+  assert.equal(compareExactTimetableGenerationScores(fractional,
+    { ...fractional, activitySpacingPenalty: 0.5 }), -1)
+})
+
+for (const role of ['main', 'sub']) {
+  test(`${role} PAの複数shift workloadをMAX_SAFE超でもexact集約する`, () => {
+    const duration = Number.MAX_SAFE_INTEGER - 100
+    const shifts = [duration, duration].map(untilMinute => ({
+      role, memberId: 'busy', fromMinute: 0, untilMinute,
+    }))
+    shifts.push({ role, memberId: 'less-busy', fromMinute: 0, untilMinute: 1 })
+    const original = structuredClone(shifts)
+    assert.equal(getExactPaWorkloadImbalance(role, shifts, ['busy', 'less-busy']),
+      2n * BigInt(duration) - 1n)
+    assert.equal(getPaWorkloadImbalance(role, shifts, ['busy', 'less-busy']), Number.MAX_SAFE_INTEGER)
+    assert.deepEqual(shifts, original)
+  })
+
+  test(`${role} PA beamはpublic workload同値でもexact値で残すstateを選ぶ`, () => {
+    const duration = Number.MAX_SAFE_INTEGER - 100
+    const shift = untilMinute => ({
+      ...paScope(0, 0), role, memberId: `${role}-0`, untilMinute,
+    })
+    const worse = { shifts: [shift(duration), shift(duration)],
+      lastResortCount: 0, spacingPenalty: 0, undecidedCount: 0, key: 'a' }
+    const better = { ...worse, shifts: [shift(duration), shift(duration - 1)], key: 'z' }
+    const eligible = { main: ['main-0', 'main-1'], sub: ['sub-0', 'sub-1'] }
+    assert.equal(getPaWorkloadImbalance(role, worse.shifts, eligible[role]),
+      getPaWorkloadImbalance(role, better.shifts, eligible[role]))
+    assert.equal(comparePaShiftStates(better, worse, eligible), -1)
+    assert.equal(comparePaShiftStates(worse, better, eligible), 1)
+    const states = [worse, better]
+    const original = structuredClone(states)
+    // Exercise the comparator used by the beam before truncating to beamWidth 1.
+    assert.equal([...states].sort((a, b) => comparePaShiftStates(a, b, eligible)).slice(0, 1)[0], better)
+    assert.equal(comparePaShiftStates({ ...better, lastResortCount: 1 }, worse, eligible) > 0, true)
+    assert.equal(comparePaShiftStates({ ...better, spacingPenalty: 0.25 }, worse, eligible) > 0, true)
+    assert.deepEqual(states, original)
+  })
+}
+
+test('PA workloadはprevious + untilの中間overflowによる丸めも避ける', () => {
+  const shifts = [
+    { role: 'main', memberId: 'busy', fromMinute: 0, untilMinute: 10 },
+    { role: 'main', memberId: 'busy', fromMinute: Number.MAX_SAFE_INTEGER - 5,
+      untilMinute: Number.MAX_SAFE_INTEGER },
+  ]
+  assert.equal(getExactPaWorkloadImbalance('main', shifts, ['busy', 'idle']), 15n)
+  assert.equal(getPaWorkloadImbalance('main', shifts, ['busy', 'idle']), 15)
+})
+
+test('default scheduling soft penaltyも整数amountを重み付け前からexact集約する', () => {
+  const amount = Number.MAX_SAFE_INTEGER
+  const violations = [
+    { severity: 'soft', code: 'SHORT_GAP', amount, penalty: amount * 5 },
+    { severity: 'soft', code: 'SHORT_GAP', amount: 1, penalty: 5 },
+  ]
+  const penalty = getExactSchedulingSoftPenalty(violations)
+  assert.equal(penalty, BigInt(amount) * 5n + 5n)
+  const score = { ...zeroExactGenerationScore, schedulingSoftPenalty: penalty }
+  assert.equal(toPublicTimetableGenerationScore(score).schedulingSoftPenalty, Number.MAX_SAFE_INTEGER)
+  assert.equal(compareExactTimetableGenerationScores(score,
+    { ...score, schedulingSoftPenalty: penalty + 1n }), -1)
+  // Do not round or reject policies whose existing penalties are fractional.
+  assert.equal(getExactSchedulingSoftPenalty([
+    { severity: 'soft', code: 'SHORT_REST', amount: 0.5, penalty: 0.5 },
+  ]), 0.5)
+})
+
+test('有効な候補のScheduling Soft penaltyもMAX_SAFE超で棄却せずpublic値をsaturateする', () => {
+  const input = createInput({ bandCount: 3, sectionCount: 1, paCount: 1 })
+  input.event.validationPolicy.minimumGapBands = Number.MAX_SAFE_INTEGER
+  input.eventBands[2].memberIds = input.eventBands[0].memberIds
+  for (const index of [0, 2]) input.eventBands[index].fixedPlacement = {
+    stageId: 'stage-1', sectionId: 'section-0', position: { kind: 'index', index },
+  }
+  const original = structuredClone(input)
+  const result = generateTimetablePlan(input)
+  verifyGeneratedSchedule(input, result)
+  assert.equal(getExactSchedulingSoftPenalty(result.plan.diagnostics.schedulingSoftViolations),
+    (BigInt(Number.MAX_SAFE_INTEGER) - 1n) * 5n)
+  assert.equal(result.plan.score.schedulingSoftPenalty, Number.MAX_SAFE_INTEGER)
+  assert.doesNotThrow(() => JSON.stringify(result))
+  assert.deepEqual(generateTimetablePlan(input), result)
+  assert.deepEqual(input, original)
+})
 
 test('他のscoreが同じなら未定PA shift数が少ない候補を優先する', () => {
   const undecided = { ...zeroGenerationScore, undecidedPaShiftCount: 1 }

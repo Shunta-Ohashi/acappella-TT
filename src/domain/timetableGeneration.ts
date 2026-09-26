@@ -24,8 +24,10 @@ import { isValidLocalTime, parseLocalTimeToMinute,
 import { planPaShifts, type PlannedPaShift, type PlannedPaShiftScope,
   type PlannedScheduleBoundary } from './paShiftPlanning.ts'
 import {
-  compareTimetableGenerationScores, getPaWorkloadImbalance,
-  getSectionBalance, getCrossSectionTransitions, type TimetableGenerationScore,
+  compareExactTimetableGenerationScores, getExactPaWorkloadImbalance,
+  getExactSectionBalance, getExactSchedulingSoftPenalty, getCrossSectionTransitions,
+  toPublicTimetableGenerationScore,
+  type ExactTimetableGenerationScore, type TimetableGenerationScore,
 } from './timetableGenerationScore.ts'
 
 export interface TimetableGenerationInput {
@@ -459,8 +461,8 @@ const toInternalBoundary = (
   edge: boundary.edge,
 })
 
-const isPerfectScore = (score: TimetableGenerationScore): boolean =>
-  Object.values(score).every(value => value === 0)
+const isPerfectScore = (score: ExactTimetableGenerationScore): boolean =>
+  Object.values(score).every(value => value === 0 || value === 0n)
 
 const isValidTransitionMinutes = (value: number): boolean =>
   Number.isSafeInteger(value) && value >= 0
@@ -662,6 +664,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     }
   }
   let best: TimetableGenerationPlan | undefined
+  let bestExactScore: ExactTimetableGenerationScore | undefined
   let bestKey = ''
   let attemptedSchedules = 0
   let paPlansEvaluated = 0
@@ -818,16 +821,16 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
         setLastFailure('NO_FEASIBLE_SCHEDULE')
         continue
       }
-      const balance = getSectionBalance(targetStages, targetSections, calculatedItems)
-      const score: TimetableGenerationScore = {
+      const balance = getExactSectionBalance(targetStages, targetSections, calculatedItems)
+      const score: ExactTimetableGenerationScore = {
         lastResortActivityCount: activityResult.lastResortCount,
-        schedulingSoftPenalty: constraints.totalPenalty,
+        schedulingSoftPenalty: getExactSchedulingSoftPenalty(constraints.softViolations),
         activitySpacingPenalty: activityResult.penalty,
         sectionDurationImbalance: balance.durationImbalance,
-        paMainWorkloadImbalance: getPaWorkloadImbalance(
+        paMainWorkloadImbalance: getExactPaWorkloadImbalance(
           'main', paPlan.shifts, paPlan.eligibleMemberIds.main,
         ),
-        paSubWorkloadImbalance: getPaWorkloadImbalance(
+        paSubWorkloadImbalance: getExactPaWorkloadImbalance(
           'sub', paPlan.shifts, paPlan.eligibleMemberIds.sub,
         ),
         sectionBandCountImbalance: balance.bandCountImbalance,
@@ -835,15 +838,15 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
       }
       const candidateKey = `${proposal.key}|${paPlan.shifts.map(shift =>
         `${shift.stageId}:${shift.sectionId ?? ''}:${shift.role}:${shift.memberId}`).join('|')}`
-      if (!best || compareTimetableGenerationScores(score, best.score) < 0 ||
-        (compareTimetableGenerationScores(score, best.score) === 0 &&
+      if (!bestExactScore || compareExactTimetableGenerationScores(score, bestExactScore) < 0 ||
+        (compareExactTimetableGenerationScores(score, bestExactScore) === 0 &&
           candidateKey < bestKey)) {
         best = {
           eventDayId: eventDay.id,
           placements: proposal.placements,
           breaks: proposal.breaks,
           paShifts: paPlan.shifts,
-          score,
+          score: toPublicTimetableGenerationScore(score),
           diagnostics: {
             scheduleCandidatesEvaluated: attemptedSchedules,
             paPlansEvaluated,
@@ -851,9 +854,10 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
           },
         }
         bestKey = candidateKey
+        bestExactScore = score
       }
     }
-    if (best && isPerfectScore(best.score)) break
+    if (bestExactScore && isPerfectScore(bestExactScore)) break
   }
   if (best) return { ok: true, plan: {
     ...best,

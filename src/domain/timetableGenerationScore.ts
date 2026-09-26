@@ -1,5 +1,6 @@
 import type { MemberId, PaRole, Section, Stage } from './models'
 import type { CalculatedScheduleItem } from './timeline'
+import { DEFAULT_SCHEDULING_WEIGHTS, type SoftConstraintViolation } from './schedulingConstraints.ts'
 
 export interface TimetableGenerationScore {
   lastResortActivityCount: number
@@ -12,6 +13,33 @@ export interface TimetableGenerationScore {
   undecidedPaShiftCount: number
 }
 
+/** Internal ranking only: never include these BigInts in a public plan. */
+export interface ExactTimetableGenerationScore extends Omit<TimetableGenerationScore,
+  'schedulingSoftPenalty' | 'sectionDurationImbalance' | 'paMainWorkloadImbalance' |
+  'paSubWorkloadImbalance' | 'sectionBandCountImbalance'> {
+  schedulingSoftPenalty: number | bigint
+  sectionDurationImbalance: bigint
+  paMainWorkloadImbalance: bigint
+  paSubWorkloadImbalance: bigint
+  sectionBandCountImbalance: bigint
+}
+
+/** Saturation is for display/diagnostics only, never for candidate ranking. */
+const toPublicScoreValue = (value: number | bigint): number =>
+  typeof value === 'number' ? value :
+    value > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(value)
+
+export const toPublicTimetableGenerationScore = (
+  score: ExactTimetableGenerationScore,
+): TimetableGenerationScore => ({
+  ...score,
+  schedulingSoftPenalty: toPublicScoreValue(score.schedulingSoftPenalty),
+  sectionDurationImbalance: toPublicScoreValue(score.sectionDurationImbalance),
+  paMainWorkloadImbalance: toPublicScoreValue(score.paMainWorkloadImbalance),
+  paSubWorkloadImbalance: toPublicScoreValue(score.paSubWorkloadImbalance),
+  sectionBandCountImbalance: toPublicScoreValue(score.sectionBandCountImbalance),
+})
+
 const scoreKeys: (keyof TimetableGenerationScore)[] = [
   'lastResortActivityCount',
   'schedulingSoftPenalty',
@@ -23,15 +51,51 @@ const scoreKeys: (keyof TimetableGenerationScore)[] = [
   'undecidedPaShiftCount',
 ]
 
+const compareScores = (
+  left: ExactTimetableGenerationScore | TimetableGenerationScore,
+  right: ExactTimetableGenerationScore | TimetableGenerationScore,
+): number => {
+  for (const key of scoreKeys) {
+    if (left[key] < right[key]) return -1
+    if (left[key] > right[key]) return 1
+  }
+  return 0
+}
+
+export const compareExactTimetableGenerationScores = (
+  left: ExactTimetableGenerationScore,
+  right: ExactTimetableGenerationScore,
+): number => compareScores(left, right)
+
 export const compareTimetableGenerationScores = (
   left: TimetableGenerationScore,
   right: TimetableGenerationScore,
-): number => {
-  for (const key of scoreKeys) {
-    const difference = left[key] - right[key]
-    if (difference !== 0) return difference
+): number => compareScores(left, right)
+
+// Generation uses the default integer weights. Multiply before rounding and
+// aggregate exactly; retain existing number semantics for fractional policies.
+export const getExactSchedulingSoftPenalty = (
+  violations: readonly SoftConstraintViolation[],
+): number | bigint => {
+  const weights = DEFAULT_SCHEDULING_WEIGHTS
+  const weightByCode: Partial<Record<SoftConstraintViolation['code'], number>> = {
+    BACK_TO_BACK: weights.backToBack,
+    SHORT_GAP: weights.shortGapPerBand,
+    SHORT_REST: weights.shortRestPerMinute,
+    PREFERENCE_NOT_MET: weights.preferredOutsidePerMinute,
+    MEMBER_PARTICIPATION_UNDECIDED: weights.undecided,
   }
-  return 0
+  if (violations.some(violation => !Number.isSafeInteger(violation.amount))) {
+    return violations.reduce((total, violation) => total + violation.penalty, 0)
+  }
+  return violations.reduce((total, violation) => total +
+    BigInt(violation.amount!) * BigInt(weightByCode[violation.code]!), 0n)
+}
+
+const getBigIntImbalance = (values: bigint[]): bigint => {
+  const minimum = values.reduce((minimum, value) => value < minimum ? value : minimum)
+  const maximum = values.reduce((maximum, value) => value > maximum ? value : maximum)
+  return maximum - minimum
 }
 
 /** Cross-Section transitions belong to the preceding Section, not idle time. */
@@ -67,47 +131,65 @@ export const getCrossSectionTransitions = (
   return transitions
 }
 
-export const getSectionBalance = (
+export const getExactSectionBalance = (
   stages: Stage[],
   sections: Section[],
   calculatedItems: CalculatedScheduleItem[],
-): { durationImbalance: number; bandCountImbalance: number } => {
+): { durationImbalance: bigint; bandCountImbalance: bigint } => {
   const transitions = getCrossSectionTransitions(sections, calculatedItems)
-  let durationImbalance = 0
-  let bandCountImbalance = 0
+  let durationImbalance = 0n
+  let bandCountImbalance = 0n
   for (const stage of stages) {
     const stageSections = sections.filter(section => section.stageId === stage.id)
     if (stageSections.length < 2) continue
     const durations = stageSections.map(section => {
       const items = calculatedItems.filter(item => item.sectionId === section.id)
-      return items.length === 0 ? 0 :
-        Math.max(...items.map(item => item.plannedEndMinute)) -
-        Math.min(...items.map(item => item.plannedStartMinute)) +
-        (transitions.get(section.id)?.durationMinutes ?? 0)
+      return items.length === 0 ? 0n :
+        BigInt(Math.max(...items.map(item => item.plannedEndMinute))) -
+        BigInt(Math.min(...items.map(item => item.plannedStartMinute))) +
+        BigInt(transitions.get(section.id)?.durationMinutes ?? 0)
     })
     const counts = stageSections.map(section => calculatedItems.filter(item =>
       item.sectionId === section.id && item.kind === 'performance',
-    ).length)
-    durationImbalance += Math.max(...durations) - Math.min(...durations)
-    bandCountImbalance += Math.max(...counts) - Math.min(...counts)
+    ).length).map(count => BigInt(count))
+    durationImbalance += getBigIntImbalance(durations)
+    bandCountImbalance += getBigIntImbalance(counts)
   }
   return { durationImbalance, bandCountImbalance }
 }
 
-export const getPaWorkloadImbalance = (
+export const getSectionBalance = (
+  stages: Stage[],
+  sections: Section[],
+  calculatedItems: CalculatedScheduleItem[],
+): { durationImbalance: number; bandCountImbalance: number } => {
+  const balance = getExactSectionBalance(stages, sections, calculatedItems)
+  return {
+    durationImbalance: toPublicScoreValue(balance.durationImbalance),
+    bandCountImbalance: toPublicScoreValue(balance.bandCountImbalance),
+  }
+}
+
+export const getExactPaWorkloadImbalance = (
   role: PaRole,
   shifts: readonly { role: PaRole; memberId: MemberId; fromMinute: number; untilMinute: number }[],
   eligibleMemberIds: readonly MemberId[],
-): number => {
-  if (eligibleMemberIds.length < 2) return 0
-  const minutesByMember = new Map(eligibleMemberIds.map(id => [id, 0]))
+): bigint => {
+  if (eligibleMemberIds.length < 2) return 0n
+  const minutesByMember = new Map(eligibleMemberIds.map(id => [id, 0n]))
   for (const shift of shifts) {
     if (shift.role !== role || !minutesByMember.has(shift.memberId)) continue
     minutesByMember.set(
       shift.memberId,
-      (minutesByMember.get(shift.memberId) ?? 0) + shift.untilMinute - shift.fromMinute,
+      (minutesByMember.get(shift.memberId) ?? 0n) +
+        BigInt(shift.untilMinute) - BigInt(shift.fromMinute),
     )
   }
-  const minutes = [...minutesByMember.values()]
-  return Math.max(...minutes) - Math.min(...minutes)
+  return getBigIntImbalance([...minutesByMember.values()])
 }
+
+export const getPaWorkloadImbalance = (
+  role: PaRole,
+  shifts: Parameters<typeof getExactPaWorkloadImbalance>[1],
+  eligibleMemberIds: readonly MemberId[],
+): number => toPublicScoreValue(getExactPaWorkloadImbalance(role, shifts, eligibleMemberIds))
