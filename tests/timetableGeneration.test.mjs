@@ -755,6 +755,142 @@ test('Section plannedEndを超える案を採らず、収まるSectionへ配置�
   assert.equal(result.plan.placements.filter(item => item.sectionId === 'section-1').length, 1)
 })
 
+for (const [start, end] of [
+  ['10:00', '10:00'], ['10:00', '09:00'],
+  ['25:00', undefined], ['abc', undefined], ['10:00', '25:00'], ['10:00', 'abc'],
+]) {
+  test(`不正なStage時間範囲 ${start}〜${end ?? '自動'} は探索前にINVALID_INPUT`, () => {
+    const input = createInput({ bandCount: 1, sectionCount: 1 })
+    input.stages[0].plannedStartTime = start
+    input.stages[0].plannedEndTime = end
+    const original = structuredClone(input)
+    assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
+      code: 'INVALID_INPUT', eventDayId: input.eventDay.id, attemptedSchedules: 0,
+    } })
+    assert.deepEqual(input, original)
+  })
+}
+
+for (const [start, end] of [
+  ['09:00', '09:30'], ['11:30', '12:30'], ['11:00', '10:30'], ['10:30', '10:30'],
+  ['12:00', undefined], ['12:30', undefined], [undefined, '10:00'], [undefined, '09:30'],
+  ['abc', undefined], [undefined, '25:00'],
+]) {
+  test(`Stage 10:00〜12:00に不正なSection ${start ?? '自動'}〜${end ?? '自動'} は探索前にINVALID_INPUT`, () => {
+    const input = createInput({ bandCount: 1, sectionCount: 1 })
+    input.stages[0].plannedEndTime = '12:00'
+    input.sections[0].plannedStartTime = start
+    input.sections[0].plannedEndTime = end
+    assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
+      code: 'INVALID_INPUT', eventDayId: input.eventDay.id, attemptedSchedules: 0,
+    } })
+  })
+}
+
+test('Stage範囲内の隣接Section 10:00〜11:00 / 11:00〜12:00は生成可能', () => {
+  const input = createInput({ bandCount: 2, sectionCount: 2 })
+  input.stages[0].plannedEndTime = '12:00'
+  input.sections[0].plannedStartTime = '10:00'
+  input.sections[0].plannedEndTime = '11:00'
+  input.sections[1].plannedStartTime = '11:00'
+  input.sections[1].plannedEndTime = '12:00'
+  input.eventBands.forEach((band, index) => {
+    band.fixedPlacement = { stageId: 'stage-1', sectionId: `section-${index}` }
+  })
+  verifyGeneratedSchedule(input, generateTimetablePlan(input))
+})
+
+for (const [stageEnd, sectionStart, sectionEnd] of [
+  ['12:00', undefined, undefined], ['12:00', '10:30', undefined],
+  ['12:00', undefined, '11:00'], [undefined, '11:00', '12:00'],
+  [undefined, undefined, undefined],
+]) {
+  test(`optional anchorsを維持: Stage終了${stageEnd ?? '自動'} / Section ${sectionStart ?? '自動'}〜${sectionEnd ?? '自動'}`, () => {
+    const input = createInput({ bandCount: 1, sectionCount: 1 })
+    input.stages[0].plannedEndTime = stageEnd
+    input.sections[0].plannedStartTime = sectionStart
+    input.sections[0].plannedEndTime = sectionEnd
+    verifyGeneratedSchedule(input, generateTimetablePlan(input))
+  })
+}
+
+const createDutyFailureInput = ({ dutyFirst = false } = {}) => {
+  const input = createInput({ bandCount: 2, sectionCount: 1, paCount: 1 })
+  input.stages[0].order = dutyFirst ? 1 : 0
+  input.stages.push({ id: 'stage-2', eventDayId: input.eventDay.id, name: 'PA failure Stage',
+    order: dutyFirst ? 0 : 1, plannedStartTime: '11:00' })
+  input.sections.push({ id: 'section-1', stageId: 'stage-2', name: 'PA failure Section', order: 0 })
+  input.eventBands[1].fixedPlacement = {
+    stageId: 'stage-2', sectionId: 'section-1', position: { kind: 'first' },
+  }
+  // Equal lane loads let successive variants move band-00 between the Stages.
+  input.scheduleItems = [
+    { id: 'break-1', kind: 'break', title: '休憩', durationMinutes: 10,
+      stageId: 'stage-1', sectionId: 'section-0', order: 0 },
+    { id: 'existing-0', kind: 'performance', eventBandId: 'band-00',
+      stageId: 'stage-1', sectionId: 'section-0', order: 1 },
+  ]
+  input.dutyTypes = [{ id: 'photo', eventId: input.event.id, name: '撮影', order: 0 }]
+  input.dutyAssignments = [{ id: 'duty-1', dutyTypeId: 'photo', eventDayId: input.eventDay.id,
+    stageId: 'stage-1', memberId: 'performer-1',
+    from: { scheduleItemId: 'existing-0', edge: 'start' },
+    until: { scheduleItemId: 'existing-0', edge: 'end' },
+  }]
+  input.eventMemberDays.find(day => day.eventMemberId === 'event-member-main-0')
+    .availabilityWindows = [{ until: '10:30' }]
+  return input
+}
+
+const fixDutyBoundaryBandToStage = (input, stageId, sectionId) => ({
+  ...input,
+  eventBands: input.eventBands.map((band, index) => index === 0
+    ? { ...band, fixedPlacement: { stageId, sectionId } } : band),
+})
+
+test('PA失敗の後のDuty境界失敗はDutyのStageを返し、以前のPA Stage/Sectionを残さない', () => {
+  const input = createDutyFailureInput()
+  const paFailure = generateTimetablePlan(fixDutyBoundaryBandToStage(input, 'stage-1', 'section-0'))
+  assert.equal(paFailure.failure.code, 'NO_MAIN_PA_CANDIDATE')
+  assert.equal(paFailure.failure.stageId, 'stage-2')
+  assert.equal(paFailure.failure.sectionId, 'section-1')
+  const dutyFailure = generateTimetablePlan(fixDutyBoundaryBandToStage(input, 'stage-2', 'section-1'))
+  assert.equal(dutyFailure.failure.code, 'BROKEN_DUTY_ASSIGNMENT')
+  const original = structuredClone(input)
+  const result = generateTimetablePlan(input)
+  assert.deepEqual(result, { ok: false, failure: {
+    code: 'BROKEN_DUTY_ASSIGNMENT', eventDayId: input.eventDay.id,
+    attemptedSchedules: 2, stageId: 'stage-1',
+  } })
+  assert.deepEqual(generateTimetablePlan(input), result)
+  assert.deepEqual(input, original)
+})
+
+test('Duty境界失敗の後のPA失敗は最新のPA Stage/Sectionを返す', () => {
+  const input = createDutyFailureInput({ dutyFirst: true })
+  assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
+    code: 'NO_MAIN_PA_CANDIDATE', eventDayId: input.eventDay.id,
+    attemptedSchedules: 2, stageId: 'stage-2', sectionId: 'section-1',
+  } })
+})
+
+test('後続Duty失敗はstickyなPA探索上限のStage/Sectionを上書きしない', () => {
+  const input = createDutyFailureInput()
+  input.eventMemberDays.find(day => day.eventMemberId === 'event-member-main-0')
+    .availabilityWindows = undefined
+  input.options = { maxPaExpandedStates: 1 }
+  const limited = generateTimetablePlan(fixDutyBoundaryBandToStage(input, 'stage-1', 'section-0'))
+  assert.equal(limited.failure.code, 'SEARCH_LIMIT_REACHED')
+  const dutyFailure = generateTimetablePlan(fixDutyBoundaryBandToStage(input, 'stage-2', 'section-1'))
+  assert.equal(dutyFailure.failure.code, 'BROKEN_DUTY_ASSIGNMENT')
+  const result = generateTimetablePlan(input)
+  assert.deepEqual(result, { ok: false, failure: {
+    code: 'SEARCH_LIMIT_REACHED', eventDayId: input.eventDay.id,
+    attemptedSchedules: 2, stageId: limited.failure.stageId,
+    sectionId: limited.failure.sectionId,
+  } })
+  assert.deepEqual(generateTimetablePlan(input), result)
+})
+
 test('PA shiftはPerformance間transitionも含むSection全体の実時間で作る', () => {
   const input = createInput({ bandCount: 2, sectionCount: 1 })
   input.event.defaultTransitionMinutes = 5

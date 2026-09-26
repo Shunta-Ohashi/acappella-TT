@@ -14,6 +14,7 @@ import { evaluateScheduleConstraints, type ScheduleConstraintEvaluation } from '
 import { calculateEventDayTimelines } from './timetable.ts'
 import { evaluateTimetableLocks } from './timetableLocks.ts'
 import { detectScheduleIssues } from './issues.ts'
+import { isValidStageTimeRange, isSectionWithinStageTimeRange } from './eventStageSettings.ts'
 import { isValidLocalTime, parseLocalTimeToMinute,
   type CalculatedScheduleItem } from './timeline.ts'
 import { planPaShifts, type PlannedPaShift, type PlannedPaShiftScope,
@@ -487,17 +488,18 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
   const targetStages = stages.filter(stage => stage.eventDayId === eventDay.id)
     .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
   const targetStageIds = new Set(targetStages.map(stage => stage.id))
+  const targetStageById = new Map(targetStages.map(stage => [stage.id, stage]))
   const targetSections = sections.filter(section => targetStageIds.has(section.stageId))
   const targetMemberDays = eventMemberDays.filter(day => day.eventDayId === eventDay.id)
   const targetBands = eventBands.filter(band =>
     band.eventId === event.id && band.eventDayId === eventDay.id,
   ).sort((left, right) => left.id.localeCompare(right.id))
-  if (targetStages.some(stage => !isValidLocalTime(stage.plannedStartTime) ||
-    (stage.plannedEndTime !== undefined && !isValidLocalTime(stage.plannedEndTime)) ||
+  if (targetStages.some(stage => !isValidStageTimeRange(stage.plannedStartTime, stage.plannedEndTime) ||
     (stage.transitionMinutes !== undefined && !isValidTransitionMinutes(stage.transitionMinutes))) ||
-    targetSections.some(section =>
-      ((section.plannedStartTime !== undefined && !isValidLocalTime(section.plannedStartTime)) ||
-        (section.plannedEndTime !== undefined && !isValidLocalTime(section.plannedEndTime)))) ||
+    targetSections.some(section => {
+      const stage = targetStageById.get(section.stageId)
+      return !stage || !isSectionWithinStageTimeRange(stage, section)
+    }) ||
     targetBands.some(band => !isValidBreakDurationMinutes(band.durationMinutes) ||
       (band.fixedPlacement?.plannedStartTime !== undefined &&
         !isValidLocalTime(band.fixedPlacement.plannedStartTime)))) {
@@ -610,6 +612,11 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
   let lastFailure: TimetableGenerationFailureCode = 'NO_FEASIBLE_SCHEDULE'
   let lastFailureReferences: Partial<Pick<TimetableGenerationFailure,
     'stageId' | 'sectionId' | 'eventBandId'>> = {}
+  const setLastFailure = (code: TimetableGenerationFailureCode,
+    references: typeof lastFailureReferences = {}) => {
+    lastFailure = code
+    lastFailureReferences = references
+  }
   let paSearchLimitReached = false
   let paSearchLimitReferences: typeof lastFailureReferences = {}
   const variants = Math.max(1, targetBands.length * 2, lanes.length * 2)
@@ -654,14 +661,19 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
       calculatedItems,
     })
     if (issues.some(issue => issue.severity === 'ERROR')) {
-      if (issues.some(issue => issue.code === 'DUTY_INVALID_BOUNDARY' ||
-        issue.code === 'DUTY_TYPE_NOT_FOUND')) lastFailure = 'BROKEN_DUTY_ASSIGNMENT'
+      const dutyIssue = issues.find(issue => issue.code === 'DUTY_INVALID_BOUNDARY' ||
+        issue.code === 'DUTY_TYPE_NOT_FOUND')
+      if (dutyIssue) setLastFailure('BROKEN_DUTY_ASSIGNMENT', {
+        ...(dutyIssue.stageIds?.[0] ? { stageId: dutyIssue.stageIds[0] } : {}),
+        ...(dutyIssue.sectionIds?.[0] ? { sectionId: dutyIssue.sectionIds[0] } : {}),
+      })
       continue
     }
     const performance = buildPerformanceActivities(calculatedItems, targetBands)
     const duty = buildDutyActivities(targetDuties, calculatedItems)
     if (duty.unresolved.length > 0) {
-      lastFailure = 'BROKEN_DUTY_ASSIGNMENT'
+      const assignment = targetDuties.find(item => item.id === duty.unresolved[0].id)
+      setLastFailure('BROKEN_DUTY_ASSIGNMENT', assignment ? { stageId: assignment.stageId } : {})
       continue
     }
     if (performance.unresolved.length > 0) continue
@@ -674,11 +686,10 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
       beamWidth: options.paBeamWidth, maxExpandedStates: options.maxPaExpandedStates,
     })
     if (!paResult.ok) {
-      lastFailure = paResult.code
-      lastFailureReferences = paResult.scope ? {
+      setLastFailure(paResult.code, paResult.scope ? {
         stageId: paResult.scope.stageId,
         ...(paResult.scope.sectionId ? { sectionId: paResult.scope.sectionId } : {}),
-      } : {}
+      } : {})
       if (paResult.code === 'SEARCH_LIMIT_REACHED' && !paSearchLimitReached) {
         paSearchLimitReached = true
         paSearchLimitReferences = lastFailureReferences
