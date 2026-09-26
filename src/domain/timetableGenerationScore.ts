@@ -34,11 +34,45 @@ export const compareTimetableGenerationScores = (
   return 0
 }
 
+/** Cross-Section transitions belong to the preceding Section, not idle time. */
+export const getCrossSectionTransitions = (
+  sections: Section[],
+  calculatedItems: CalculatedScheduleItem[],
+): Map<Section['id'], { durationMinutes: number; untilItem: CalculatedScheduleItem }> => {
+  const transitions = new Map<Section['id'], {
+    durationMinutes: number; untilItem: CalculatedScheduleItem
+  }>()
+  for (const stageId of new Set(calculatedItems.map(item => item.stageId))) {
+    const stageSections = sections.filter(section => section.stageId === stageId)
+      .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+    // Preserve Timeline traversal order, including explicit Break items.
+    const stageItems = calculatedItems.filter(item => item.stageId === stageId)
+    for (let index = 1; index < stageItems.length; index += 1) {
+      const previous = stageItems[index - 1]
+      const next = stageItems[index]
+      if (previous.kind !== 'performance' || next.kind !== 'performance' ||
+        previous.sectionId === undefined || next.sectionId === undefined ||
+        previous.sectionId === next.sectionId) continue
+      const previousIndex = stageSections.findIndex(section => section.id === previous.sectionId)
+      const nextIndex = stageSections.findIndex(section => section.id === next.sectionId)
+      if (previousIndex < 0 || nextIndex <= previousIndex ||
+        // An anchor in an empty intervening Section also suppresses transition.
+        stageSections.slice(previousIndex + 1, nextIndex + 1)
+          .some(section => section.plannedStartTime !== undefined)) continue
+      const durationMinutes = next.plannedStartMinute - previous.plannedEndMinute
+      if (durationMinutes < 0) continue
+      transitions.set(previous.sectionId, { durationMinutes, untilItem: next })
+    }
+  }
+  return transitions
+}
+
 export const getSectionBalance = (
   stages: Stage[],
   sections: Section[],
   calculatedItems: CalculatedScheduleItem[],
 ): { durationImbalance: number; bandCountImbalance: number } => {
+  const transitions = getCrossSectionTransitions(sections, calculatedItems)
   let durationImbalance = 0
   let bandCountImbalance = 0
   for (const stage of stages) {
@@ -48,7 +82,8 @@ export const getSectionBalance = (
       const items = calculatedItems.filter(item => item.sectionId === section.id)
       return items.length === 0 ? 0 :
         Math.max(...items.map(item => item.plannedEndMinute)) -
-        Math.min(...items.map(item => item.plannedStartMinute))
+        Math.min(...items.map(item => item.plannedStartMinute)) +
+        (transitions.get(section.id)?.durationMinutes ?? 0)
     })
     const counts = stageSections.map(section => calculatedItems.filter(item =>
       item.sectionId === section.id && item.kind === 'performance',

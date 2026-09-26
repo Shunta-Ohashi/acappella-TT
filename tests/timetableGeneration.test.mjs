@@ -8,8 +8,12 @@ import { detectScheduleIssues } from '../src/domain/issues.ts'
 import { evaluateScheduleConstraints } from '../src/domain/schedulingConstraints.ts'
 import { calculateEventDayTimelines } from '../src/domain/timetable.ts'
 import { evaluateTimetableLocks } from '../src/domain/timetableLocks.ts'
-import { compareTimetableGenerationScores, getPaWorkloadImbalance } from '../src/domain/timetableGenerationScore.ts'
+import {
+  compareTimetableGenerationScores, getPaWorkloadImbalance, getSectionBalance,
+  getCrossSectionTransitions,
+} from '../src/domain/timetableGenerationScore.ts'
 import { planPaShifts } from '../src/domain/paShiftPlanning.ts'
+import { resolvePaAssignmentInterval } from '../src/domain/paAssignments.ts'
 
 const createInput = ({ bandCount = 4, sectionCount = 2, paCount = 2 } = {}) => {
   const event = {
@@ -490,6 +494,153 @@ test('Section内・Section間Breakを維持し、PA shiftとSection長から部�
   assert.equal(secondShifts[0].fromMinute - firstShifts[0].untilMinute, 15)
 })
 
+const createCrossSectionInput = ({ existingItems = false, paCount = 2 } = {}) => {
+  const input = createInput({ bandCount: 2, sectionCount: 2, paCount })
+  input.stages[0].transitionMinutes = 5
+  input.eventBands.forEach((band, index) => {
+    band.fixedPlacement = { stageId: 'stage-1', sectionId: `section-${index}` }
+    if (existingItems) input.scheduleItems.push({
+      id: `existing-${index}`, kind: 'performance', eventBandId: band.id,
+      stageId: 'stage-1', sectionId: `section-${index}`, order: 0,
+    })
+  })
+  return input
+}
+
+for (const existingItems of [false, true]) {
+  test(`Cross-Section転換を前Section PAとBoundaryへ含める (${existingItems ? '既存' : '新規'}Performance)`, () => {
+    const input = createCrossSectionInput({ existingItems })
+    const original = structuredClone(input)
+    const result = generateTimetablePlan(input)
+    const calculatedItems = verifyGeneratedSchedule(input, result)
+    assert.deepEqual(calculatedItems.map(item => [item.plannedStartMinute, item.plannedEndMinute]),
+      [[600, 610], [615, 625]])
+    for (const shift of result.plan.paShifts) {
+      assert.deepEqual([shift.fromMinute, shift.untilMinute],
+        shift.sectionId === 'section-0' ? [600, 615] : [615, 625])
+      if (shift.sectionId === 'section-0') {
+        assert.deepEqual(shift.untilBoundary, existingItems
+          ? { kind: 'existing-item', scheduleItemId: 'existing-1', edge: 'start' }
+          : { kind: 'planned-performance', eventBandId: 'band-01', edge: 'start' })
+      }
+    }
+    const assignments = materializePa(input, result.plan)
+    assignments.forEach((assignment, index) => {
+      assert.deepEqual(resolvePaAssignmentInterval(assignment, calculatedItems), {
+        ok: true, interval: {
+          fromMinute: result.plan.paShifts[index].fromMinute,
+          untilMinute: result.plan.paShifts[index].untilMinute,
+        },
+      })
+    })
+    assert.equal(result.plan.score.sectionDurationImbalance, 5)
+    assert.deepEqual(generateTimetablePlan(input), result)
+    assert.deepEqual(input, original)
+  })
+}
+
+test('Cross-Section転換は前Section durationへ加算しMain/Sub workloadに二重加算しない', () => {
+  const input = createCrossSectionInput()
+  const result = generateTimetablePlan(input)
+  const calculatedItems = verifyGeneratedSchedule(input, result)
+  const transition = getCrossSectionTransitions(input.sections, calculatedItems).get('section-0')
+  assert.equal(transition.durationMinutes, 5)
+  assert.equal(transition.untilItem.eventBandId, 'band-01')
+  assert.deepEqual(getSectionBalance(input.stages, input.sections, calculatedItems), {
+    durationImbalance: 5, bandCountImbalance: 0,
+  })
+  for (const role of ['main', 'sub']) {
+    const shifts = result.plan.paShifts.filter(shift => shift.role === role)
+    assert.deepEqual(shifts.map(shift => shift.untilMinute - shift.fromMinute), [15, 10])
+    assert.equal(shifts.reduce((sum, shift) => sum + shift.untilMinute - shift.fromMinute, 0), 25)
+    assert.equal(getPaWorkloadImbalance(role, shifts, [`${role}-0`, `${role}-1`]), 5)
+  }
+  assert.equal(result.plan.score.paMainWorkloadImbalance, 5)
+  assert.equal(result.plan.score.paSubWorkloadImbalance, 5)
+})
+
+test('明示的Section間BreakはPA coverageにもSection durationにも含めない', () => {
+  const input = createCrossSectionInput()
+  input.scheduleItems.push({ id: 'inter-break', kind: 'break', title: '部間休憩',
+    stageId: 'stage-1', afterSectionId: 'section-0', order: 0, durationMinutes: 10 })
+  const result = generateTimetablePlan(input)
+  const calculatedItems = verifyGeneratedSchedule(input, result)
+  assert.equal(getCrossSectionTransitions(input.sections, calculatedItems).size, 0)
+  for (const shift of result.plan.paShifts) {
+    assert.deepEqual([shift.fromMinute, shift.untilMinute],
+      shift.sectionId === 'section-0' ? [600, 610] : [620, 630])
+  }
+  assert.equal(result.plan.score.sectionDurationImbalance, 0)
+})
+
+test('Section anchor idleは転換と同じ5分でも20分でもPA/Section durationへ含めない', () => {
+  for (const anchor of ['10:15', '10:30']) {
+    const input = createCrossSectionInput()
+    input.sections[1].plannedStartTime = anchor
+    const result = generateTimetablePlan(input)
+    const calculatedItems = verifyGeneratedSchedule(input, result)
+    assert.equal(getCrossSectionTransitions(input.sections, calculatedItems).size, 0)
+    assert.ok(result.plan.paShifts.filter(shift => shift.sectionId === 'section-0')
+      .every(shift => shift.untilMinute === 610 && shift.untilBoundary.edge === 'end'))
+    assert.ok(result.plan.paShifts.filter(shift => shift.sectionId === 'section-1')
+      .every(shift => shift.fromMinute === (anchor === '10:15' ? 615 : 630)))
+    assert.equal(result.plan.score.sectionDurationImbalance, 0)
+  }
+})
+
+test('部境界の前後どちらかがSection内BreakならCross-Section転換を追加しない', () => {
+  for (const sectionId of ['section-0', 'section-1']) {
+    const input = createCrossSectionInput({ existingItems: true })
+    if (sectionId === 'section-1') input.scheduleItems[1].order = 1
+    input.scheduleItems.push({ id: 'inside-break', kind: 'break', title: '部内休憩',
+      stageId: 'stage-1', sectionId, order: sectionId === 'section-0' ? 1 : 0, durationMinutes: 5 })
+    const result = generateTimetablePlan(input)
+    const calculatedItems = verifyGeneratedSchedule(input, result)
+    assert.equal(getCrossSectionTransitions(input.sections, calculatedItems).size, 0)
+    for (const shift of result.plan.paShifts) {
+      assert.equal(shift.untilMinute - shift.fromMinute, shift.sectionId === sectionId ? 15 : 10)
+    }
+    assert.equal(result.plan.score.sectionDurationImbalance, 5)
+  }
+})
+
+test('空の中間SectionのanchorによるidleもCross-Section転換と推測しない', () => {
+  const input = createCrossSectionInput()
+  input.sections[1].order = 2
+  input.sections.push({ id: 'empty-section', stageId: 'stage-1', name: 'Empty', order: 1,
+    plannedStartTime: '10:15' })
+  const result = generateTimetablePlan(input)
+  const calculatedItems = verifyGeneratedSchedule(input, result)
+  assert.equal(getCrossSectionTransitions(input.sections, calculatedItems).size, 0)
+  assert.ok(result.plan.paShifts.filter(shift => shift.sectionId === 'section-0')
+    .every(shift => shift.untilMinute === 610))
+  assert.ok(result.plan.paShifts.every(shift => shift.untilMinute - shift.fromMinute === 10))
+  assert.equal(result.plan.score.sectionDurationImbalance, 10) // 10 / 0 / 10
+})
+
+test('transition 0なら部境界に余計な時間を加えない', () => {
+  const input = createCrossSectionInput()
+  input.stages[0].transitionMinutes = 0
+  const result = generateTimetablePlan(input)
+  const calculatedItems = verifyGeneratedSchedule(input, result)
+  assert.equal(getCrossSectionTransitions(input.sections, calculatedItems).get('section-0')
+    .durationMinutes, 0)
+  assert.ok(result.plan.paShifts.every(shift => shift.untilMinute - shift.fromMinute === 10))
+  assert.equal(result.plan.score.sectionDurationImbalance, 0)
+  assert.equal(result.plan.score.paMainWorkloadImbalance, 0)
+})
+
+test('前Section PAのavailabilityをCross-Section転換終了まで確認する', () => {
+  const input = createCrossSectionInput({ paCount: 3 })
+  input.eventMemberDays.find(day => day.eventMemberId === 'event-member-main-0')
+    .availabilityWindows = [{ until: '10:10' }]
+  const result = generateTimetablePlan(input)
+  verifyGeneratedSchedule(input, result)
+  const firstMain = result.plan.paShifts.find(shift => shift.sectionId === 'section-0' && shift.role === 'main')
+  assert.equal(firstMain.untilMinute, 615)
+  assert.notEqual(firstMain.memberId, 'main-0')
+})
+
 test('first・index・lastのTT固定を既存ScheduleItem IDで満たす', () => {
   const input = createInput({ bandCount: 3, sectionCount: 1 })
   input.scheduleItems = input.eventBands.map((band, index) => ({
@@ -636,6 +787,58 @@ test('Stage-only fixedと同じStageのSection Lockは互換、別Stage Lockは�
   input.timetableLocks[0].stageId = 'stage-2'
   delete input.timetableLocks[0].sectionId
   assert.equal(generateTimetablePlan(input).failure.code, 'INVALID_LOCK_CONSTRAINTS')
+})
+
+test('malformed fixedPlacementのStage/Section参照はLock失敗でなくINVALID_INPUT', () => {
+  for (const fixed of [
+    { stageId: 'missing-stage' }, { stageId: 'stage-day-2' },
+    { stageId: 'stage-1', sectionId: 'missing-section' },
+    { stageId: 'stage-1', sectionId: 'section-other-stage' },
+    { stageId: 'stage-1', sectionId: 'section-day-2' }, {}, null,
+  ]) {
+    const input = createInput({ bandCount: 1, sectionCount: 1 })
+    addOtherDay(input)
+    input.stages.push({ id: 'stage-other', eventDayId: 'day-1', name: 'Other',
+      order: 1, plannedStartTime: '11:00' })
+    input.sections.push({ id: 'section-other-stage', stageId: 'stage-other', name: 'Other', order: 0 })
+    input.eventBands[0].fixedPlacement = fixed
+    const original = structuredClone(input)
+    assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
+      code: 'INVALID_INPUT', eventDayId: 'day-1', attemptedSchedules: 0, eventBandId: 'band-00',
+    } }, JSON.stringify(fixed))
+    assert.deepEqual(input, original)
+  }
+})
+
+test('fixedPlacementの不正なposition kind/indexは探索前にINVALID_INPUT', () => {
+  for (const position of [
+    { kind: 'middle' }, {}, null,
+    ...[-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, undefined, '0']
+      .map(index => ({ kind: 'index', index })),
+  ]) {
+    const input = createInput({ bandCount: 1, sectionCount: 1 })
+    input.eventBands[0].fixedPlacement = { stageId: 'stage-1', position }
+    assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
+      code: 'INVALID_INPUT', eventDayId: 'day-1', attemptedSchedules: 0, eventBandId: 'band-00',
+    } })
+  }
+})
+
+test('不正なfixed plannedStartTimeも引き続きINVALID_INPUT', () => {
+  for (const plannedStartTime of ['abc', '25:00']) {
+    const input = createInput({ bandCount: 1, sectionCount: 1 })
+    input.eventBands[0].fixedPlacement = { stageId: 'stage-1', plannedStartTime }
+    assert.equal(generateTimetablePlan(input).failure.code, 'INVALID_INPUT')
+  }
+})
+
+test('別日のmalformed fixedPlacementは対象日の生成に影響しない', () => {
+  const input = createInput({ bandCount: 1, sectionCount: 1, paCount: 1 })
+  const baseline = generateTimetablePlan(input)
+  assert.equal(baseline.ok, true)
+  addOtherDay(input)
+  input.eventBands.at(-1).fixedPlacement = { stageId: 'missing-stage', position: { kind: 'index', index: -1 } }
+  assert.deepEqual(generateTimetablePlan(input), baseline)
 })
 
 test('Stage-wide indexとSection-local Lock positionを混同せず両方満たす', () => {

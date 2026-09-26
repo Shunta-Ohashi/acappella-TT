@@ -12,7 +12,7 @@ import {
 import { isValidBreakDurationMinutes, isValidScheduleLane, compareScheduleItemOrder } from './schedule.ts'
 import { evaluateScheduleConstraints, type ScheduleConstraintEvaluation } from './schedulingConstraints.ts'
 import { calculateEventDayTimelines } from './timetable.ts'
-import { evaluateTimetableLocks } from './timetableLocks.ts'
+import { evaluateTimetableLocks, isValidFixedPosition } from './timetableLocks.ts'
 import { detectScheduleIssues } from './issues.ts'
 import { isValidStageTimeRange, isSectionWithinStageTimeRange } from './eventStageSettings.ts'
 import {
@@ -24,7 +24,7 @@ import { planPaShifts, type PlannedPaShift, type PlannedPaShiftScope,
   type PlannedScheduleBoundary } from './paShiftPlanning.ts'
 import {
   compareTimetableGenerationScores, getPaWorkloadImbalance,
-  getSectionBalance, type TimetableGenerationScore,
+  getSectionBalance, getCrossSectionTransitions, type TimetableGenerationScore,
 } from './timetableGenerationScore.ts'
 
 export interface TimetableGenerationInput {
@@ -406,9 +406,11 @@ const evaluateActivities = (
 
 const getShiftScopes = (
   lanes: GenerationLane[],
+  sections: Section[],
   calculatedItems: CalculatedScheduleItem[],
   internalIds: Map<string, string>,
 ): PlannedPaShiftScope[] => {
+  const transitions = getCrossSectionTransitions(sections, calculatedItems)
   const bandByInternalId = new Map([...internalIds].map(([bandId, id]) => [id, bandId]))
   const boundary = (item: CalculatedScheduleItem, edge: 'start' | 'end'):
     PlannedScheduleBoundary => {
@@ -425,15 +427,16 @@ const getShiftScopes = (
       item.plannedStartMinute < best.plannedStartMinute ? item : best)
     const last = laneItems.reduce((best, item) =>
       item.plannedEndMinute > best.plannedEndMinute ? item : best)
+    const transition = lane.section ? transitions.get(lane.section.id) : undefined
     return [{
       key: lane.key,
       eventDayId: lane.stage.eventDayId,
       stageId: lane.stage.id,
       ...(lane.section ? { sectionId: lane.section.id } : {}),
       fromMinute: first.plannedStartMinute,
-      untilMinute: last.plannedEndMinute,
+      untilMinute: transition?.untilItem.plannedStartMinute ?? last.plannedEndMinute,
       fromBoundary: boundary(first, 'start'),
-      untilBoundary: boundary(last, 'end'),
+      untilBoundary: transition ? boundary(transition.untilItem, 'start') : boundary(last, 'end'),
     }]
   })
 }
@@ -528,6 +531,17 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
       validatePreferredTimeRange(day.preferredTimeRange) !== undefined)) {
     return failure('INVALID_INPUT', 0)
   }
+  const targetSectionById = new Map(targetSections.map(section => [section.id, section]))
+  for (const band of targetBands) {
+    const fixed = band.fixedPlacement
+    if (fixed === undefined) continue
+    if (!fixed || typeof fixed !== 'object' || !targetStageById.has(fixed.stageId) ||
+      (fixed.sectionId !== undefined &&
+        targetSectionById.get(fixed.sectionId)?.stageId !== fixed.stageId) ||
+      (fixed.position !== undefined && !isValidFixedPosition(fixed.position))) {
+      return failure('INVALID_INPUT', 0, { eventBandId: band.id })
+    }
+  }
   if (targetBands.length > 0 && targetStages.length === 0) {
     return failure('NO_FEASIBLE_SCHEDULE', 0)
   }
@@ -586,7 +600,8 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
         (fixed.sectionId === undefined || lane.section?.id === fixed.sectionId)))
       .map(lane => lane.key))
     const lockKey = lock ? laneKey(lock.stageId, lock.sectionId) : undefined
-    if (allowed.size === 0 || (lockKey && (!laneByKey.has(lockKey) || !allowed.has(lockKey)))) {
+    if (allowed.size === 0) return failure('INVALID_INPUT', 0, { eventBandId: band.id })
+    if (lockKey && (!laneByKey.has(lockKey) || !allowed.has(lockKey))) {
       return failure('INVALID_LOCK_CONSTRAINTS', 0, { eventBandId: band.id })
     }
     if (lockKey) allowedLaneKeysByBand.set(band.id, new Set([lockKey]))
@@ -702,7 +717,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     if (performance.unresolved.length > 0) continue
     const baseActivities = [...performance.activities, ...duty.activities]
     if (!evaluateActivities(baseActivities, calculatedItems, activitySpacingPolicy).feasible) continue
-    const scopes = getShiftScopes(lanes, calculatedItems, internalIds)
+    const scopes = getShiftScopes(lanes, targetSections, calculatedItems, internalIds)
     const paResult = planPaShifts({
       event, eventDayId: eventDay.id, scopes, calculatedItems, baseActivities,
       policy: activitySpacingPolicy, members, eventMembers, eventMemberDays: targetMemberDays,
