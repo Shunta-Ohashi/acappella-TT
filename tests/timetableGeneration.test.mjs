@@ -1175,6 +1175,89 @@ test('壊れたDuty Boundaryは推測せず失敗し、既存Dutyを変更しな
   assert.deepEqual(input.dutyAssignments, original)
 })
 
+for (const brokenBoundary of [false, true]) {
+  test(`foreign Event所有Dutyがtarget Day/Stageを再利用しても生成へ混入しない (${brokenBoundary ? '壊れた' : '正常な'}Boundary)`, () => {
+    const input = createInput({ bandCount: 1, sectionCount: 1 })
+    input.scheduleItems.push({ id: 'existing-performance', kind: 'performance',
+      eventBandId: 'band-00', stageId: 'stage-1', sectionId: 'section-0', order: 0 })
+    const baseline = generateTimetablePlan(input)
+    verifyGeneratedSchedule(input, baseline)
+    input.dutyTypes.push({ id: 'foreign-photo', eventId: 'foreign-event', name: '撮影', order: 0 })
+    input.dutyAssignments.push({ id: 'foreign-duty', dutyTypeId: 'foreign-photo',
+      eventDayId: input.eventDay.id, stageId: 'stage-1', memberId: 'performer-0',
+      from: { scheduleItemId: brokenBoundary ? 'missing' : 'existing-performance', edge: 'start' },
+      until: { scheduleItemId: brokenBoundary ? 'missing' : 'existing-performance', edge: 'end' },
+    })
+    // If included, the normal boundary would overlap its assignee's performance;
+    // the broken one would fail preflight. Neither belongs to this Event.
+    const original = structuredClone(input)
+    const result = generateTimetablePlan(input)
+    assert.deepEqual(result, baseline)
+    assert.deepEqual(generateTimetablePlan(input), result)
+    assert.deepEqual(input, original)
+  })
+}
+
+test('missing DutyTypeを持つtarget Day/Stageの担当は除外せずBROKEN_DUTY_ASSIGNMENTにする', () => {
+  const input = createInput({ bandCount: 1, sectionCount: 1 })
+  input.scheduleItems.push({ id: 'existing-performance', kind: 'performance',
+    eventBandId: 'band-00', stageId: 'stage-1', sectionId: 'section-0', order: 0 })
+  input.dutyAssignments.push({ id: 'broken-duty', dutyTypeId: 'missing-duty-type',
+    eventDayId: input.eventDay.id, stageId: 'stage-1', memberId: 'main-0',
+    from: { scheduleItemId: 'existing-performance', edge: 'start' },
+    until: { scheduleItemId: 'existing-performance', edge: 'end' },
+  })
+  const original = structuredClone(input)
+  const result = generateTimetablePlan(input)
+  assert.deepEqual(result, { ok: false, failure: {
+    code: 'BROKEN_DUTY_ASSIGNMENT', eventDayId: input.eventDay.id,
+    stageId: 'stage-1', attemptedSchedules: 0,
+  } })
+  assert.deepEqual(generateTimetablePlan(input), result)
+  assert.deepEqual(input, original)
+})
+
+for (const stageId of ['foreign-stage', 'missing-stage']) {
+  test(`missing DutyTypeの担当がDayだけ一致してもtarget外Stage ${stageId} は生成へ混入しない`, () => {
+    const input = createInput({ bandCount: 1, sectionCount: 1 })
+    input.eventDays.push({ id: 'foreign-day', eventId: 'foreign-event', date: '2027-11-07', order: 0 })
+    input.stages.push({ id: 'foreign-stage', eventDayId: 'foreign-day', name: 'Foreign',
+      order: 0, plannedStartTime: '10:00' })
+    const baseline = generateTimetablePlan(input)
+    verifyGeneratedSchedule(input, baseline)
+    input.dutyAssignments.push({ id: 'unknown-duty', dutyTypeId: 'missing-duty-type',
+      eventDayId: input.eventDay.id, stageId, memberId: 'performer-0',
+      from: { scheduleItemId: 'missing', edge: 'start' },
+      until: { scheduleItemId: 'missing', edge: 'end' },
+    })
+    const original = structuredClone(input)
+    const result = generateTimetablePlan(input)
+    assert.deepEqual(result, baseline)
+    assert.deepEqual(generateTimetablePlan(input), result)
+    assert.deepEqual(input, original)
+  })
+}
+
+test('target Event所有DutyはStageが不正でもscopeから捨てずpreflightで拒否する', () => {
+  const input = createInput({ bandCount: 1, sectionCount: 1 })
+  input.scheduleItems.push({ id: 'existing-performance', kind: 'performance',
+    eventBandId: 'band-00', stageId: 'stage-1', sectionId: 'section-0', order: 0 })
+  input.dutyTypes.push({ id: 'photo', eventId: input.event.id, name: '撮影', order: 0 })
+  input.dutyAssignments.push({ id: 'invalid-stage-duty', dutyTypeId: 'photo',
+    eventDayId: input.eventDay.id, stageId: 'foreign-stage', memberId: 'main-0',
+    from: { scheduleItemId: 'existing-performance', edge: 'start' },
+    until: { scheduleItemId: 'existing-performance', edge: 'end' },
+  })
+  const original = structuredClone(input)
+  const result = generateTimetablePlan(input)
+  assert.deepEqual(result, { ok: false, failure: {
+    code: 'BROKEN_DUTY_ASSIGNMENT', eventDayId: input.eventDay.id,
+    stageId: 'foreign-stage', attemptedSchedules: 0,
+  } })
+  assert.deepEqual(generateTimetablePlan(input), result)
+  assert.deepEqual(input, original)
+})
+
 test('2 Stageを同時に扱い、同じMemberの同時出演を避ける', () => {
   const input = createInput({ bandCount: 2, sectionCount: 0 })
   input.stages.push({
@@ -1466,9 +1549,13 @@ test('DutyとPAの衝突を避け、担当可能な別Memberを選ぶ', () => {
     from: { scheduleItemId: 'break-1', edge: 'start' },
     until: { scheduleItemId: 'break-1', edge: 'end' },
   }]
+  const original = structuredClone(input)
   const result = generateTimetablePlan(input)
   assert.equal(result.ok, true, JSON.stringify(result))
   assert.equal(result.plan.paShifts.find(shift => shift.role === 'main').memberId, 'main-1')
+  verifyGeneratedSchedule(input, result)
+  assert.deepEqual(generateTimetablePlan(input), result)
+  assert.deepEqual(input, original)
 })
 
 test('既存Dutyと出演の衝突を避け、参照BoundaryとBreakを保つ', () => {

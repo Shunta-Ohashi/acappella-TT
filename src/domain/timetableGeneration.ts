@@ -11,6 +11,7 @@ import {
 } from './activitySpacing.ts'
 import { isValidBreakDurationMinutes, isValidScheduleLane, compareScheduleItemOrder } from './schedule.ts'
 import { evaluateScheduleConstraints, type ScheduleConstraintEvaluation } from './schedulingConstraints.ts'
+import { getDutyAssignmentsForEvent } from './dutyAssignments.ts'
 import { calculateEventDayTimelines } from './timetable.ts'
 import { hasSafeStageTimelineArithmetic } from './timetableGenerationArithmetic.ts'
 import { evaluateTimetableLocks, isValidFixedPosition } from './timetableLocks.ts'
@@ -652,9 +653,13 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     return failure('INVALID_LOCK_CONSTRAINTS', 0)
   }
   const internalIds = getInternalIds(targetBands.filter(band => !existingByBand.has(band.id)), scheduleItems)
-  const targetDuties = dutyAssignments.filter(item => item.eventDayId === eventDay.id)
   const dutyTypeIds = new Set(dutyTypes.filter(type => type.eventId === event.id)
     .map(type => type.id))
+  // Known DutyTypes establish Event ownership. Missing types are retained only
+  // for target Stages, so preflight can report broken duties without guessing.
+  const targetDuties = getDutyAssignmentsForEvent({
+    event, stages: targetStages, dutyTypes, dutyAssignments,
+  }).filter(item => item.eventDayId === eventDay.id)
   for (const duty of targetDuties) {
     if (!dutyTypeIds.has(duty.dutyTypeId) ||
       !itemById.has(duty.from.scheduleItemId) ||
