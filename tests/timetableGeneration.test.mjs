@@ -82,6 +82,20 @@ const materializePa = (input, plan) => {
   }))
 }
 
+const verifyGeneratedSchedule = (input, result) => {
+  assert.equal(result.ok, true, JSON.stringify(result))
+  const scheduleItems = materializeSchedule(input, result.plan)
+  const constraints = evaluateScheduleConstraints({ ...input, scheduleItems })
+  assert.deepEqual(constraints.hardViolations, [])
+  const timeline = calculateEventDayTimelines({ ...input,
+    eventDayId: input.eventDay.id, scheduleItems })
+  assert.deepEqual(timeline.invalidStages, [])
+  const issues = detectScheduleIssues({ ...input,
+    calculatedItems: timeline.calculatedItems, paAssignments: materializePa(input, result.plan) })
+  assert.deepEqual(issues.filter(issue => issue.severity === 'ERROR'), [])
+  return timeline.calculatedItems
+}
+
 const addOtherDay = input => {
   input.eventDays.push({ id: 'day-2', eventId: input.event.id, date: '2027-11-07', order: 1 })
   input.stages.push({ id: 'stage-day-2', eventDayId: 'day-2', name: 'Day 2',
@@ -402,6 +416,93 @@ test('fixedPlacementのfirst・index・last予約を同じlaneで満たす', () 
   }).hardViolations.length, 0)
 })
 
+test('Section付きStageのみのfixedPlacementはそのStage内のいずれかのSectionへ配置する', () => {
+  const input = createInput({ bandCount: 4, sectionCount: 2 })
+  input.stages.push({ id: 'stage-2', eventDayId: input.eventDay.id, name: 'Other',
+    order: 1, plannedStartTime: '12:00' })
+  input.eventBands[3].fixedPlacement = { stageId: 'stage-1' }
+  const original = structuredClone(input)
+  const result = generateTimetablePlan(input)
+  verifyGeneratedSchedule(input, result)
+  const placement = result.plan.placements.find(item => item.eventBandId === 'band-03')
+  assert.equal(placement.stageId, 'stage-1')
+  assert.ok(['section-0', 'section-1'].includes(placement.sectionId))
+  assert.deepEqual(input, original)
+})
+
+test('Stage-only first・last・indexはSection内でなくStage全体のPerformance順位を満たす', () => {
+  for (const [position, expectedIndex] of [
+    [{ kind: 'first' }, 0], [{ kind: 'last' }, 3], [{ kind: 'index', index: 2 }, 2],
+  ]) {
+    const input = createInput({ bandCount: 4, sectionCount: 2 })
+    input.eventBands[3].fixedPlacement = { stageId: 'stage-1', position }
+    const result = generateTimetablePlan(input)
+    const timeline = verifyGeneratedSchedule(input, result)
+    const performances = timeline.filter(item => item.kind === 'performance')
+    assert.equal(performances.findIndex(item => item.eventBandId === 'band-03'), expectedIndex)
+    assert.ok(result.plan.placements.some(item => item.sectionId === 'section-0'))
+    assert.ok(result.plan.placements.some(item => item.sectionId === 'section-1'))
+    assert.deepEqual(generateTimetablePlan(input), result)
+  }
+})
+
+test('複数のStage-wide位置予約とexact Section固定を同時に満たす', () => {
+  const input = createInput({ bandCount: 4, sectionCount: 2 })
+  input.eventBands[0].fixedPlacement = { stageId: 'stage-1', position: { kind: 'last' } }
+  input.eventBands[1].fixedPlacement = { stageId: 'stage-1', position: { kind: 'first' } }
+  input.eventBands[2].fixedPlacement = { stageId: 'stage-1', position: { kind: 'index', index: 2 } }
+  input.eventBands[3].fixedPlacement = { stageId: 'stage-1', sectionId: 'section-0' }
+  const result = generateTimetablePlan(input)
+  const timeline = verifyGeneratedSchedule(input, result)
+  assert.deepEqual(timeline.filter(item => item.kind === 'performance').map(item => item.eventBandId),
+    ['band-01', 'band-03', 'band-02', 'band-00'])
+  assert.equal(result.plan.placements.find(item => item.eventBandId === 'band-03').sectionId, 'section-0')
+})
+
+test('Stage-only plannedStartTimeを満たすSectionを探索する', () => {
+  const input = createInput({ bandCount: 1, sectionCount: 2, paCount: 1 })
+  input.sections[1].plannedStartTime = '11:30'
+  input.eventBands[0].fixedPlacement = { stageId: 'stage-1', plannedStartTime: '11:30' }
+  const result = generateTimetablePlan(input)
+  const timeline = verifyGeneratedSchedule(input, result)
+  assert.equal(result.plan.placements[0].sectionId, 'section-1')
+  assert.equal(timeline.find(item => item.kind === 'performance').plannedStartMinute, 690)
+})
+
+test('Stage-only fixedと同じStageのSection Lockは互換、別Stage Lockは競合となる', () => {
+  const input = createInput({ bandCount: 1, sectionCount: 2, paCount: 1 })
+  input.eventBands[0].fixedPlacement = { stageId: 'stage-1' }
+  input.scheduleItems.push({ id: 'existing', kind: 'performance', eventBandId: 'band-00',
+    stageId: 'stage-1', sectionId: 'section-1', order: 0 })
+  input.timetableLocks.push({ id: 'lock', eventId: input.event.id, scheduleItemId: 'existing',
+    stageId: 'stage-1', sectionId: 'section-1', position: { kind: 'first' } })
+  const result = generateTimetablePlan(input)
+  verifyGeneratedSchedule(input, result)
+  assert.equal(result.plan.placements[0].sectionId, 'section-1')
+  input.stages.push({ id: 'stage-2', eventDayId: input.eventDay.id, name: 'Other',
+    order: 1, plannedStartTime: '12:00' })
+  input.timetableLocks[0].stageId = 'stage-2'
+  delete input.timetableLocks[0].sectionId
+  assert.equal(generateTimetablePlan(input).failure.code, 'INVALID_LOCK_CONSTRAINTS')
+})
+
+test('Stage-wide indexとSection-local Lock positionを混同せず両方満たす', () => {
+  const input = createInput({ bandCount: 4, sectionCount: 2 })
+  input.eventBands[3].fixedPlacement = { stageId: 'stage-1', position: { kind: 'index', index: 2 } }
+  input.scheduleItems.push({ id: 'existing', kind: 'performance', eventBandId: 'band-03',
+    stageId: 'stage-1', sectionId: 'section-1', order: 0 })
+  input.timetableLocks.push({ id: 'lock', eventId: input.event.id, scheduleItemId: 'existing',
+    stageId: 'stage-1', sectionId: 'section-1', position: { kind: 'first' } })
+  const original = structuredClone(input)
+  const result = generateTimetablePlan(input)
+  const timeline = verifyGeneratedSchedule(input, result)
+  assert.equal(timeline.filter(item => item.kind === 'performance')[2].eventBandId, 'band-03')
+  const placement = result.plan.placements.find(item => item.eventBandId === 'band-03')
+  assert.equal(placement.sectionId, 'section-1')
+  assert.equal(placement.position, 0)
+  assert.deepEqual(input, original)
+})
+
 test('壊れたDuty Boundaryは推測せず失敗し、既存Dutyを変更しない', () => {
   const input = createInput({ bandCount: 1, sectionCount: 1 })
   input.dutyTypes = [{ id: 'photo', eventId: input.event.id, name: '撮影', order: 0 }]
@@ -449,6 +550,9 @@ const createPaLimitInput = ({ limitFirst = true, laterSuccess = false } = {}) =>
     order: 1, plannedStartTime: limitFirst ? '11:00' : '10:00' })
   input.sections.push({ id: 'section-1', stageId: 'stage-2', name: 'Other Section', order: 0 })
   input.eventMembers.find(member => member.memberId === 'sub-0').paCapabilities.main = true
+  // Try the overlapping shared-role member before the viable Main candidate:
+  // the cap must be reached before any complete PA plan is accumulated.
+  input.members.find(member => member.id === 'sub-0').realName = 'aa-shared'
   input.eventMemberDays.find(day => day.eventMemberId === 'event-member-main-0')
     .availabilityWindows = [{ until: '10:10' }]
   if (laterSuccess) {
@@ -514,6 +618,35 @@ test('複数候補がPA探索上限に達した場合は最初のscopeをdetermi
   assert.equal(result.failure.stageId, 'stage-1')
   assert.equal(result.failure.sectionId, 'section-0')
   assert.deepEqual(generateTimetablePlan(input), result)
+})
+
+test('proposalが0件でも未探索variantがあればSchedule探索上限、全探索済みならNO_FEASIBLEとなる', () => {
+  const input = createInput({ bandCount: 1, sectionCount: 1 })
+  input.eventBands[0].fixedPlacement = { stageId: 'stage-1', sectionId: 'section-0',
+    position: { kind: 'index', index: 2 } }
+  const limited = generateTimetablePlan({ ...input, options: { maxScheduleCandidates: 1 } })
+  assert.deepEqual(limited, { ok: false, failure: {
+    code: 'SEARCH_LIMIT_REACHED', eventDayId: input.eventDay.id, attemptedSchedules: 0,
+  } })
+  const exhaustive = generateTimetablePlan({ ...input, options: { maxScheduleCandidates: 10 } })
+  assert.deepEqual(exhaustive, { ok: false, failure: {
+    code: 'NO_FEASIBLE_SCHEDULE', eventDayId: input.eventDay.id, attemptedSchedules: 0,
+  } })
+})
+
+test('PAとScheduleの両capでも完成planを優先し、完成前ならPA scope付きSEARCH_LIMITを返す', () => {
+  const input = createPaLimitInput()
+  input.options.maxScheduleCandidates = 1
+  assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
+    code: 'SEARCH_LIMIT_REACHED', eventDayId: input.eventDay.id, attemptedSchedules: 1,
+    stageId: 'stage-1', sectionId: 'section-0',
+  } })
+  // A viable final-task candidate is now visited before the expansion cap.
+  input.members.find(member => member.id === 'sub-0').realName = 'zz-shared'
+  const result = generateTimetablePlan(input)
+  verifyGeneratedSchedule(input, result)
+  assert.equal(result.plan.diagnostics.scheduleCandidatesEvaluated, 1)
+  assert.deepEqual(result.plan.paShifts.map(shift => shift.memberId).sort(), ['main-0', 'sub-0'])
 })
 
 test('PAが後付けで不可能な配置を棄却し、BandのSection割当を探索し直す', () => {
@@ -767,6 +900,45 @@ const paScope = (index, fromMinute) => ({
   fromMinute, untilMinute: fromMinute + 10,
   fromBoundary: { kind: 'existing-item', scheduleItemId: `row-${index}`, edge: 'start' },
   untilBoundary: { kind: 'existing-item', scheduleItemId: `row-${index}`, edge: 'end' },
+})
+
+test('最終PA taskでcap到達前に見つけたcomplete planを通常rankingで保持する', () => {
+  const input = createPaBeamInput()
+  input.scopes = [paScope(0, 600)]
+  input.maxExpandedStates = 2
+  const original = structuredClone(input)
+  const result = planPaShifts(input)
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(result.plans.length, 1)
+  assert.deepEqual(result.plans[0].shifts.map(shift => shift.role).sort(), ['main', 'sub'])
+  assert.deepEqual(result.plans[0].shifts.map(shift => shift.memberId).sort(), ['main-0', 'sub-0'])
+  assert.deepEqual(planPaShifts(input), result)
+  assert.deepEqual(input, original)
+})
+
+test('最終PA taskでもcomplete stateを作る前にcapへ達したらSEARCH_LIMIT_REACHEDとなる', () => {
+  const input = createPaBeamInput()
+  input.scopes = [paScope(0, 600)]
+  input.baseActivities = [{ id: 'overlapping-duty', memberId: 'main-0', eventDayId: 'day-1',
+    stageId: 'stage-1', kind: 'duty', fromMinute: 600, untilMinute: 610 }]
+  input.maxExpandedStates = 2
+  const result = planPaShifts(input)
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'SEARCH_LIMIT_REACHED')
+  assert.equal(result.scope.key, 'scope-0')
+  assert.equal(planPaShifts({ ...input, maxExpandedStates: 3 }).ok, true)
+})
+
+test('非最終PA taskでcapに達した場合はpartial stateを成功planとして返さない', () => {
+  const input = createPaBeamInput()
+  input.eventMembers.find(member => member.memberId === 'sub-1').paCapabilities.sub = true
+  input.scopes = [paScope(0, 600), paScope(1, 660)]
+  input.maxExpandedStates = 1
+  const result = planPaShifts(input)
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'SEARCH_LIMIT_REACHED')
+  assert.equal(result.scope.key, 'scope-0')
+  assert.equal(planPaShifts({ ...input, maxExpandedStates: 100 }).ok, true)
 })
 
 test('beamWidth 1でも未定数よりspacing penaltyの小さいPA候補を残す', () => {

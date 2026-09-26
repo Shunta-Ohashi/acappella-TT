@@ -107,12 +107,15 @@ export const planPaShifts = ({
     spacingPenalty: 0, undecidedCount: 0, key: '',
   }]
   let expandedStates = 0
-  for (const task of orderedTasks) {
+  for (const [taskIndex, task] of orderedTasks.entries()) {
     const nextStates: PaState[] = []
+    let expansionLimitReached = false
+    expandTask:
     for (const state of states) {
       for (const candidate of task.candidates) {
         if (expandedStates >= maxExpandedStates) {
-          return { ok: false, code: 'SEARCH_LIMIT_REACHED', scope: task.scope }
+          expansionLimitReached = true
+          break expandTask
         }
         expandedStates += 1
         const shift: PlannedPaShift = {
@@ -151,6 +154,10 @@ export const planPaShifts = ({
           key: `${state.key}|${candidate.member.id}`,
         })
       }
+    }
+    if (expansionLimitReached &&
+      (taskIndex < orderedTasks.length - 1 || nextStates.length === 0)) {
+      return { ok: false, code: 'SEARCH_LIMIT_REACHED', scope: task.scope }
     }
     if (nextStates.length === 0) return {
       ok: false, code: 'NO_FEASIBLE_PA_PLAN', scope: task.scope,

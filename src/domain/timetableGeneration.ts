@@ -168,9 +168,98 @@ const createLanes = (
   })
 })
 
+const orderStageBands = (
+  lanes: GenerationLane[],
+  assigned: Map<string, EventBand[]>,
+  allowedLaneKeysByBand: Map<string, Set<string>>,
+  locksByBand: Map<string, TimetableLock>,
+  variant: number,
+): Map<string, EventBand[]> | undefined => {
+  const ordered = new Map<string, EventBand[]>()
+  for (const stageId of new Set(lanes.map(lane => lane.stage.id))) {
+    const stageLanes = lanes.filter(lane => lane.stage.id === stageId)
+    const preferredLaneByBand = new Map<string, string>()
+    const slotLanes: GenerationLane[] = []
+    const indexesByLane = new Map<string, number[]>()
+    const stageBands = stageLanes.flatMap(lane => {
+      const bands = assigned.get(lane.key) ?? []
+      const rotation = bands.length ? Math.floor(variant / 2) % bands.length : 0
+      const rotated = [...bands.slice(rotation), ...bands.slice(0, rotation)]
+      if (variant % 2) rotated.reverse()
+      const indexes = bands.map(band => {
+        preferredLaneByBand.set(band.id, lane.key)
+        slotLanes.push(lane)
+        return slotLanes.length - 1
+      })
+      indexesByLane.set(lane.key, indexes)
+      return rotated
+    })
+    const slots: (EventBand | undefined)[] = Array(stageBands.length).fill(undefined)
+    const reserved = new Set<number>()
+    const lanePosition = (key: string, position: NonNullable<TimetableLock['position']>) => {
+      const indexes = indexesByLane.get(key) ?? []
+      const index = positionIndex(position, indexes.length)
+      return index === undefined ? undefined : indexes[index]
+    }
+    for (const band of stageBands) {
+      const fixed = band.fixedPlacement
+      const lock = locksByBand.get(band.id)
+      const fixedIndex = fixed?.position
+        ? fixed.sectionId === undefined
+          ? positionIndex(fixed.position, stageBands.length)
+          : lanePosition(laneKey(fixed.stageId, fixed.sectionId), fixed.position)
+        : undefined
+      const lockedIndex = lock ? lanePosition(laneKey(lock.stageId, lock.sectionId), lock.position)
+        : undefined
+      if ((fixed?.position && fixedIndex === undefined) || (lock && lockedIndex === undefined) ||
+        (fixedIndex !== undefined && lockedIndex !== undefined && fixedIndex !== lockedIndex)) {
+        return undefined
+      }
+      const index = lockedIndex ?? fixedIndex
+      if (index === undefined) continue
+      const lane = slotLanes[index]
+      if (!lane || reserved.has(index) ||
+        (allowedLaneKeysByBand.has(band.id) && !allowedLaneKeysByBand.get(band.id)?.has(lane.key))) {
+        return undefined
+      }
+      slots[index] = band
+      reserved.add(index)
+    }
+    // Match the remaining bands to allowed slots without changing lane sizes or
+    // reserved positions. Augmenting paths handle displaced Section-only bands.
+    const place = (band: EventBand, visited: Set<number>): boolean => {
+      const allowed = allowedLaneKeysByBand.get(band.id)
+      const preferred = preferredLaneByBand.get(band.id)
+      const choices = slotLanes.map((lane, index) => ({ lane, index }))
+        .filter(({ lane, index }) => !reserved.has(index) && !visited.has(index) &&
+          (!allowed || allowed.has(lane.key)))
+        .sort((left, right) => Number(right.lane.key === preferred) -
+          Number(left.lane.key === preferred) || left.index - right.index)
+      for (const { index } of choices) {
+        if (!slots[index]) { slots[index] = band; return true }
+      }
+      for (const { index } of choices) {
+        visited.add(index)
+        const occupant = slots[index]
+        if (occupant && place(occupant, visited)) { slots[index] = band; return true }
+      }
+      return false
+    }
+    const remaining = stageBands.filter(band => !slots.includes(band))
+    for (const band of remaining) {
+      if (!place(band, new Set())) return undefined
+    }
+    for (const lane of stageLanes) {
+      ordered.set(lane.key, (indexesByLane.get(lane.key) ?? [])
+        .map(index => slots[index]).filter((band): band is EventBand => band !== undefined))
+    }
+  }
+  return ordered
+}
+
 const buildProposal = ({
   variant, bands, lanes, originalItems, targetStageIds, existingByBand,
-  requiredLaneByBand, locksByBand, internalIds,
+  allowedLaneKeysByBand, locksByBand, internalIds,
 }: {
   variant: number
   bands: EventBand[]
@@ -178,7 +267,7 @@ const buildProposal = ({
   originalItems: ScheduleItem[]
   targetStageIds: Set<StageId>
   existingByBand: Map<string, Extract<ScheduleItem, { kind: 'performance' }>>
-  requiredLaneByBand: Map<string, string>
+  allowedLaneKeysByBand: Map<string, Set<string>>
   locksByBand: Map<string, TimetableLock>
   internalIds: Map<string, string>
 }): ScheduleProposal | undefined => {
@@ -188,21 +277,22 @@ const buildProposal = ({
   const defaultCapacity = Math.max(1,
     (bands.reduce((sum, band) => sum + band.durationMinutes, 0) +
       lanes.reduce((sum, lane) => sum + lane.estimatedMinutes, 0)) / Math.max(1, lanes.length))
-  const forced = bands.filter(band => requiredLaneByBand.has(band.id))
-  const free = bands.filter(band => !requiredLaneByBand.has(band.id))
+  const forced = bands.filter(band => allowedLaneKeysByBand.get(band.id)?.size === 1)
+  const free = bands.filter(band => allowedLaneKeysByBand.get(band.id)?.size !== 1)
     .sort((left, right) => right.durationMinutes - left.durationMinutes ||
       left.id.localeCompare(right.id))
   const rotation = free.length ? Math.floor(variant / 2) % free.length : 0
   const rotated = [...free.slice(rotation), ...free.slice(0, rotation)]
   if (variant % 2) rotated.reverse()
   for (const band of forced) {
-    const key = requiredLaneByBand.get(band.id)
+    const key = allowedLaneKeysByBand.get(band.id)?.values().next().value
     if (!key || !laneByKey.has(key)) return undefined
     assigned.get(key)?.push(band)
     load.set(key, (load.get(key) ?? 0) + band.durationMinutes)
   }
   for (const band of rotated) {
-    const choices = [...lanes].sort((left, right) => {
+    const allowed = allowedLaneKeysByBand.get(band.id)
+    const choices = lanes.filter(lane => !allowed || allowed.has(lane.key)).sort((left, right) => {
       const leftLoad = (load.get(left.key) ?? 0) + band.durationMinutes
       const rightLoad = (load.get(right.key) ?? 0) + band.durationMinutes
       const leftRatio = leftLoad / (left.capacityMinutes && left.capacityMinutes > 0
@@ -218,6 +308,8 @@ const buildProposal = ({
     assigned.get(chosen.key)?.push(band)
     load.set(chosen.key, (load.get(chosen.key) ?? 0) + band.durationMinutes)
   }
+  const orderedByLane = orderStageBands(lanes, assigned, allowedLaneKeysByBand, locksByBand, variant)
+  if (!orderedByLane) return undefined
 
   const items: ScheduleItem[] = originalItems.filter(item =>
     !targetStageIds.has(item.stageId) &&
@@ -226,34 +318,7 @@ const buildProposal = ({
   const breakPlacements: PlannedBreakPlacement[] = []
   const keyParts: string[] = []
   for (const lane of lanes) {
-    const assignedBands = assigned.get(lane.key) ?? []
-    const laneRotation = assignedBands.length ? Math.floor(variant / 2) % assignedBands.length : 0
-    const laneBands = [
-      ...assignedBands.slice(laneRotation), ...assignedBands.slice(0, laneRotation),
-    ]
-    if (variant % 2) laneBands.reverse()
-    const slots: (EventBand | undefined)[] = Array(laneBands.length).fill(undefined)
-    for (const band of laneBands) {
-      const fixed = band.fixedPlacement?.position
-      const locked = locksByBand.get(band.id)?.position
-      const fixedIndex = positionIndex(fixed, laneBands.length)
-      const lockedIndex = positionIndex(locked, laneBands.length)
-      if (fixedIndex !== undefined && lockedIndex !== undefined && fixedIndex !== lockedIndex) {
-        return undefined
-      }
-      const index = lockedIndex ?? fixedIndex
-      if (index === undefined) continue
-      if (index < 0 || index >= slots.length || (slots[index] && slots[index]?.id !== band.id)) {
-        return undefined
-      }
-      slots[index] = band
-    }
-    let remainingIndex = 0
-    const remaining = laneBands.filter(band => !slots.includes(band))
-    for (let index = 0; index < slots.length; index += 1) {
-      if (!slots[index]) slots[index] = remaining[remainingIndex++]
-    }
-    const orderedBands = slots.filter((band): band is EventBand => band !== undefined)
+    const orderedBands = orderedByLane.get(lane.key) ?? []
     keyParts.push(`${lane.key}:${orderedBands.map(band => band.id).join(',')}`)
 
     const oldLaneItems = originalItems.filter(item => item.stageId === lane.stage.id &&
@@ -487,20 +552,30 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     if (locksByBand.has(item.eventBandId)) return failure('INVALID_LOCK_CONSTRAINTS', 0)
     locksByBand.set(item.eventBandId, lock)
   }
-  const requiredLaneByBand = new Map<string, string>()
+  const allowedLaneKeysByBand = new Map<string, Set<string>>()
   for (const band of targetBands) {
     const fixed = band.fixedPlacement
     const lock = locksByBand.get(band.id)
-    const fixedKey = fixed ? laneKey(fixed.stageId, fixed.sectionId) : undefined
+    const allowed = new Set(lanes.filter(lane => !fixed ||
+      (lane.stage.id === fixed.stageId &&
+        (fixed.sectionId === undefined || lane.section?.id === fixed.sectionId)))
+      .map(lane => lane.key))
     const lockKey = lock ? laneKey(lock.stageId, lock.sectionId) : undefined
-    if ((fixedKey && !laneByKey.has(fixedKey)) ||
-      (lockKey && !laneByKey.has(lockKey)) ||
-      (fixedKey && lockKey && fixedKey !== lockKey)) {
+    if (allowed.size === 0 || (lockKey && (!laneByKey.has(lockKey) || !allowed.has(lockKey)))) {
       return failure('INVALID_LOCK_CONSTRAINTS', 0, { eventBandId: band.id })
     }
-    const key = lockKey ?? fixedKey
-    if (key) requiredLaneByBand.set(band.id, key)
+    if (lockKey) allowedLaneKeysByBand.set(band.id, new Set([lockKey]))
+    else if (fixed) allowedLaneKeysByBand.set(band.id, allowed)
   }
+  // Lock positions are lane-local. Stage-wide fixed positions are enforced by
+  // proposal construction and the unchanged constraint/Issue evaluators.
+  const lockEvaluationBands = targetBands.map(band => {
+    if (!band.fixedPlacement?.position || band.fixedPlacement.sectionId !== undefined ||
+      !targetSections.some(section => section.stageId === band.fixedPlacement?.stageId)) return band
+    const fixedPlacement = { ...band.fixedPlacement }
+    delete fixedPlacement.position
+    return { ...band, fixedPlacement }
+  })
   const structuralLockCodes = new Set([
     'DUPLICATE_LOCK_TARGET', 'SCHEDULE_ITEM_NOT_FOUND', 'TARGET_NOT_PERFORMANCE',
     'EVENT_BAND_NOT_FOUND', 'EVENT_MISMATCH', 'EVENT_DAY_MISMATCH',
@@ -509,7 +584,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
   ])
   const currentLockResult = evaluateTimetableLocks({
     eventId: event.id, timetableLocks: targetLocks, scheduleItems,
-    eventBands: targetBands, eventDays: [eventDay],
+    eventBands: lockEvaluationBands, eventDays: [eventDay],
     stages: targetStages, sections: targetSections,
   })
   if (currentLockResult.violations.some(violation =>
@@ -538,11 +613,12 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
   let paSearchLimitReached = false
   let paSearchLimitReferences: typeof lastFailureReferences = {}
   const variants = Math.max(1, targetBands.length * 2, lanes.length * 2)
+  const scheduleSearchLimitReached = variants > options.maxScheduleCandidates
   const seen = new Set<string>()
   for (let variant = 0; variant < Math.min(variants, options.maxScheduleCandidates); variant += 1) {
     const proposal = buildProposal({
       variant, bands: targetBands, lanes, originalItems: eventScheduleItems,
-      targetStageIds, existingByBand, requiredLaneByBand, locksByBand, internalIds,
+      targetStageIds, existingByBand, allowedLaneKeysByBand, locksByBand, internalIds,
     })
     if (!proposal || seen.has(proposal.key)) continue
     seen.add(proposal.key)
@@ -550,7 +626,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     const targetProposalItems = proposal.items.filter(item => targetStageIds.has(item.stageId))
     const locks = evaluateTimetableLocks({
       eventId: event.id, timetableLocks: targetLocks, scheduleItems: targetProposalItems,
-      eventBands: targetBands, eventDays: [eventDay],
+      eventBands: lockEvaluationBands, eventDays: [eventDay],
       stages: targetStages, sections: targetSections,
     })
     if (!locks.valid) continue
@@ -675,11 +751,12 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
       paPlansEvaluated,
     },
   } }
-  if (attemptedSchedules === 0 && seen.size === 0 && targetBands.length > 0) {
+  if (!scheduleSearchLimitReached &&
+    attemptedSchedules === 0 && seen.size === 0 && targetBands.length > 0) {
     return failure('NO_FEASIBLE_SCHEDULE', attemptedSchedules)
   }
   return failure(
-    paSearchLimitReached || variants > options.maxScheduleCandidates
+    paSearchLimitReached || scheduleSearchLimitReached
       ? 'SEARCH_LIMIT_REACHED' : lastFailure,
     attemptedSchedules, paSearchLimitReached ? paSearchLimitReferences : lastFailureReferences,
   )
