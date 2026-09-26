@@ -80,6 +80,130 @@ const materializePa = (input, plan) => {
   }))
 }
 
+const addOtherDay = input => {
+  input.eventDays.push({ id: 'day-2', eventId: input.event.id, date: '2027-11-07', order: 1 })
+  input.stages.push({ id: 'stage-day-2', eventDayId: 'day-2', name: 'Day 2',
+    order: 0, plannedStartTime: '10:00', plannedEndTime: '11:00' })
+  input.sections.push({ id: 'section-day-2', stageId: 'stage-day-2', name: 'Day 2 Section',
+    order: 0 })
+  input.eventBands.push({ id: 'band-day-2', eventId: input.event.id,
+    eventDayId: 'day-2', name: 'Day 2 Band', memberIds: ['performer-0'], durationMinutes: 10 })
+  input.scheduleItems.push({ id: 'day-2-item', kind: 'performance',
+    eventBandId: 'band-day-2', stageId: 'stage-day-2', sectionId: 'section-day-2', order: 0 })
+  input.eventMemberDays.push(...input.eventMembers.map(member => ({
+    id: `day-2-${member.id}`, eventMemberId: member.id,
+    eventDayId: 'day-2', participationStatus: 'participating',
+  })))
+}
+
+test('不正なEvent default transitionはTimeline構築前にINVALID_INPUTとなる', () => {
+  for (const value of [-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    const input = createInput({ bandCount: 2, sectionCount: 1 })
+    input.event.defaultTransitionMinutes = value
+    const original = structuredClone(input)
+    assert.deepEqual(generateTimetablePlan(input), {
+      ok: false, failure: { code: 'INVALID_INPUT', eventDayId: 'day-1', attemptedSchedules: 0 },
+    }, String(value))
+    assert.deepEqual(input, original)
+  }
+})
+
+test('不正な対象Stage transitionはTimeline構築前にINVALID_INPUTとなる', () => {
+  for (const value of [-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    const input = createInput({ bandCount: 2, sectionCount: 1 })
+    input.stages[0].transitionMinutes = value
+    assert.deepEqual(generateTimetablePlan(input), {
+      ok: false, failure: { code: 'INVALID_INPUT', eventDayId: 'day-1', attemptedSchedules: 0 },
+    }, String(value))
+  }
+})
+
+test('非負safe integerのtransitionと未指定Stage overrideを許可し既存の時間計算を維持する', () => {
+  for (const value of [0, 1, 2, 10]) {
+    for (const override of [undefined, value]) {
+      const input = createInput({ bandCount: 2, sectionCount: 1 })
+      input.event.defaultTransitionMinutes = override === undefined ? value : 3
+      input.stages[0].transitionMinutes = override
+      const result = generateTimetablePlan(input)
+      assert.equal(result.ok, true, JSON.stringify(result))
+      assert.ok(result.plan.paShifts.every(shift =>
+        shift.untilMinute - shift.fromMinute === 20 + value))
+    }
+  }
+})
+
+test('別日のHard違反・不正transitionは対象日のplan・score・diagnosticsに混入しない', () => {
+  const input = createInput({ bandCount: 2, sectionCount: 1 })
+  const baseline = generateTimetablePlan(input)
+  assert.equal(baseline.ok, true)
+  addOtherDay(input)
+  assert.deepEqual(generateTimetablePlan(input), baseline)
+  input.stages[1].plannedEndTime = '10:05'
+  input.eventMemberDays.find(day => day.eventDayId === 'day-2' &&
+    day.eventMemberId === 'event-member-performer-0').participationStatus = 'absent'
+  const violations = evaluateScheduleConstraints(input).hardViolations
+  assert.ok(violations.some(violation => violation.code === 'STAGE_END_EXCEEDED'))
+  assert.ok(violations.some(violation => violation.code === 'MEMBER_ABSENT'))
+  const original = structuredClone(input)
+  assert.deepEqual(generateTimetablePlan(input), baseline)
+  assert.deepEqual(input, original)
+  input.stages[1].transitionMinutes = NaN
+  assert.deepEqual(generateTimetablePlan(input), baseline)
+})
+
+test('別日のSoft違反は対象日のplan・score・diagnosticsに混入しない', () => {
+  const input = createInput({ bandCount: 2, sectionCount: 1 })
+  const baseline = generateTimetablePlan(input)
+  assert.equal(baseline.ok, true)
+  addOtherDay(input)
+  assert.deepEqual(generateTimetablePlan(input), baseline)
+  input.eventBands.at(-1).preferredTimeRange = { from: '11:00', until: '12:00' }
+  input.eventMemberDays.find(day => day.eventDayId === 'day-2' &&
+    day.eventMemberId === 'event-member-performer-0').preferredTimeRange = { until: '09:00' }
+  const evaluation = evaluateScheduleConstraints(input)
+  assert.ok(evaluation.softViolations.some(violation => violation.code === 'PREFERENCE_NOT_MET'))
+  assert.ok(evaluation.totalPenalty > 0)
+  assert.deepEqual(generateTimetablePlan(input), baseline)
+})
+
+test('別日の正常・壊れたTT固定とDutyは対象日の生成可否へ混入しない', () => {
+  const input = createInput({ bandCount: 2, sectionCount: 1 })
+  const baseline = generateTimetablePlan(input)
+  assert.equal(baseline.ok, true)
+  addOtherDay(input)
+  const lock = { id: 'day-2-lock', eventId: input.event.id, scheduleItemId: 'day-2-item',
+    stageId: 'stage-day-2', sectionId: 'section-day-2', position: { kind: 'first' } }
+  input.timetableLocks.push(lock)
+  assert.deepEqual(generateTimetablePlan(input), baseline)
+  // A resolvable other-day target with a broken lane must also remain out of scope.
+  lock.stageId = 'missing-stage'
+  lock.sectionId = 'missing-section'
+  assert.deepEqual(generateTimetablePlan(input), baseline)
+  lock.stageId = 'stage-day-2'
+  lock.sectionId = 'section-day-2'
+  lock.scheduleItemId = 'missing-item'
+  input.dutyAssignments.push({ id: 'day-2-duty', dutyTypeId: 'missing-type',
+    eventDayId: 'day-2', stageId: 'stage-day-2', memberId: 'main-0',
+    from: { scheduleItemId: 'missing-item', edge: 'start' },
+    until: { scheduleItemId: 'missing-item', edge: 'end' } })
+  const original = structuredClone(input)
+  assert.deepEqual(generateTimetablePlan(input), baseline)
+  assert.deepEqual(input, original)
+})
+
+test('対象laneまたは対象Bandを参照する壊れたTT固定は引き続き事前失敗する', () => {
+  const input = createInput({ bandCount: 1, sectionCount: 1 })
+  input.timetableLocks.push({ id: 'lock', eventId: input.event.id, scheduleItemId: 'missing',
+    stageId: 'stage-1', sectionId: 'section-0', position: { kind: 'first' } })
+  assert.equal(generateTimetablePlan(input).failure.code, 'INVALID_LOCK_CONSTRAINTS')
+  input.scheduleItems.push({ id: 'existing', kind: 'performance',
+    eventBandId: 'band-00', stageId: 'stage-1', sectionId: 'section-0', order: 0 })
+  input.timetableLocks[0].scheduleItemId = 'existing'
+  input.timetableLocks[0].stageId = 'missing-stage'
+  input.timetableLocks[0].sectionId = 'missing-section'
+  assert.equal(generateTimetablePlan(input).failure.code, 'INVALID_LOCK_CONSTRAINTS')
+})
+
 test('40 Band・4 Section・Main/Sub各4候補を全配置し、時間・担当負担を均等にする', () => {
   const input = createInput({ bandCount: 40, sectionCount: 4, paCount: 4 })
   const result = generateTimetablePlan(input)

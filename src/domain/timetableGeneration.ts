@@ -382,6 +382,9 @@ const toInternalBoundary = (
 const isPerfectScore = (score: TimetableGenerationScore): boolean =>
   Object.values(score).every(value => value === 0)
 
+const isValidTransitionMinutes = (value: number): boolean =>
+  Number.isSafeInteger(value) && value >= 0
+
 export const generateTimetablePlan = (input: TimetableGenerationInput): TimetableGenerationResult => {
   const {
     event, eventDay, eventDays, stages, sections, members, eventMembers,
@@ -396,6 +399,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
   })
   if (eventDay.eventId !== event.id ||
     !eventDays.some(day => day.id === eventDay.id && day.eventId === event.id) ||
+    !isValidTransitionMinutes(event.defaultTransitionMinutes) ||
     Object.values(options).some(value => !Number.isSafeInteger(value) || value < 1)) {
     return failure('INVALID_INPUT', 0)
   }
@@ -418,12 +422,15 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
   const targetStages = stages.filter(stage => stage.eventDayId === eventDay.id)
     .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
   const targetStageIds = new Set(targetStages.map(stage => stage.id))
+  const targetSections = sections.filter(section => targetStageIds.has(section.stageId))
+  const targetMemberDays = eventMemberDays.filter(day => day.eventDayId === eventDay.id)
   const targetBands = eventBands.filter(band =>
     band.eventId === event.id && band.eventDayId === eventDay.id,
   ).sort((left, right) => left.id.localeCompare(right.id))
   if (targetStages.some(stage => !isValidLocalTime(stage.plannedStartTime) ||
-    (stage.plannedEndTime !== undefined && !isValidLocalTime(stage.plannedEndTime))) ||
-    sections.some(section => targetStages.some(stage => stage.id === section.stageId) &&
+    (stage.plannedEndTime !== undefined && !isValidLocalTime(stage.plannedEndTime)) ||
+    (stage.transitionMinutes !== undefined && !isValidTransitionMinutes(stage.transitionMinutes))) ||
+    targetSections.some(section =>
       ((section.plannedStartTime !== undefined && !isValidLocalTime(section.plannedStartTime)) ||
         (section.plannedEndTime !== undefined && !isValidLocalTime(section.plannedEndTime)))) ||
     targetBands.some(band => !isValidBreakDurationMinutes(band.durationMinutes) ||
@@ -440,7 +447,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
   for (const item of targetBreaks) {
     const stage = targetStages.find(candidate => candidate.id === item.stageId)
     if (!stage || !isValidBreakDurationMinutes(item.durationMinutes) ||
-      !isValidScheduleLane(stage, sections.filter(section => section.stageId === stage.id), {
+      !isValidScheduleLane(stage, targetSections.filter(section => section.stageId === stage.id), {
         stageId: stage.id,
         ...(item.sectionId ? { sectionId: item.sectionId } : {}),
         ...(item.afterSectionId ? { afterSectionId: item.afterSectionId } : {}),
@@ -459,11 +466,21 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
       return failure('INVALID_INPUT', 0, { stageId: item.stageId })
     }
   }
-  const lanes = createLanes(targetStages, sections, targetBreaks)
+  const lanes = createLanes(targetStages, targetSections, targetBreaks)
   const laneByKey = new Map(lanes.map(lane => [lane.key, lane]))
   const locksByBand = new Map<string, TimetableLock>()
   const itemById = new Map(scheduleItems.map(item => [item.id, item]))
-  for (const lock of timetableLocks.filter(lock => lock.eventId === event.id)) {
+  const targetSectionIds = new Set(targetSections.map(section => section.id))
+  // Include stale locks tied to a target lane or item, but not unrelated days' locks.
+  const targetLocks = timetableLocks.filter(lock => {
+    if (lock.eventId !== event.id) return false
+    const item = itemById.get(lock.scheduleItemId)
+    return targetStageIds.has(lock.stageId) ||
+      (lock.sectionId !== undefined && targetSectionIds.has(lock.sectionId)) ||
+      (item !== undefined && (targetStageIds.has(item.stageId) ||
+        (item.kind === 'performance' && targetBandIds.has(item.eventBandId))))
+  })
+  for (const lock of targetLocks) {
     const item = itemById.get(lock.scheduleItemId)
     if (!item || item.kind !== 'performance') return failure('INVALID_LOCK_CONSTRAINTS', 0)
     if (!targetBandIds.has(item.eventBandId)) continue
@@ -491,8 +508,9 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     'LOCK_CONFLICT', 'FIXED_PLACEMENT_CONFLICT', 'INVALID_POSITION',
   ])
   const currentLockResult = evaluateTimetableLocks({
-    eventId: event.id, timetableLocks, scheduleItems, eventBands,
-    eventDays, stages, sections,
+    eventId: event.id, timetableLocks: targetLocks, scheduleItems,
+    eventBands: targetBands, eventDays: [eventDay],
+    stages: targetStages, sections: targetSections,
   })
   if (currentLockResult.violations.some(violation =>
     structuralLockCodes.has(violation.code))) {
@@ -527,21 +545,24 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     if (!proposal || seen.has(proposal.key)) continue
     seen.add(proposal.key)
     attemptedSchedules += 1
+    const targetProposalItems = proposal.items.filter(item => targetStageIds.has(item.stageId))
     const locks = evaluateTimetableLocks({
-      eventId: event.id, timetableLocks, scheduleItems: proposal.items,
-      eventBands, eventDays, stages, sections,
+      eventId: event.id, timetableLocks: targetLocks, scheduleItems: targetProposalItems,
+      eventBands: targetBands, eventDays: [eventDay],
+      stages: targetStages, sections: targetSections,
     })
     if (!locks.valid) continue
     const constraints = evaluateScheduleConstraints({
-      event, eventDays, stages, sections, members, eventMembers,
-      eventMemberDays, eventBands, scheduleItems: proposal.items,
+      event, eventDays: [eventDay], stages: targetStages, sections: targetSections,
+      members, eventMembers, eventMemberDays: targetMemberDays,
+      eventBands: targetBands, scheduleItems: targetProposalItems,
     })
     if (!constraints.feasible) continue
     let timeline: ReturnType<typeof calculateEventDayTimelines>
     try {
       timeline = calculateEventDayTimelines({
-        event, eventDayId: eventDay.id, stages, sections,
-        scheduleItems: proposal.items, eventBands,
+        event, eventDayId: eventDay.id, stages: targetStages, sections: targetSections,
+        scheduleItems: targetProposalItems, eventBands: targetBands,
       })
     } catch {
       continue
@@ -549,8 +570,8 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     if (timeline.invalidStages.length > 0) continue
     const calculatedItems = timeline.calculatedItems
     const issues = detectScheduleIssues({
-      event, members, eventMembers, eventMemberDays,
-      eventBands: targetBands, stages: targetStages, sections,
+      event, members, eventMembers, eventMemberDays: targetMemberDays,
+      eventBands: targetBands, stages: targetStages, sections: targetSections,
       paAssignments: [], dutyTypes, dutyAssignments: targetDuties,
       calculatedItems,
     })
@@ -571,7 +592,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     const scopes = getShiftScopes(lanes, calculatedItems, internalIds)
     const paResult = planPaShifts({
       event, eventDayId: eventDay.id, scopes, calculatedItems, baseActivities,
-      policy: activitySpacingPolicy, members, eventMembers, eventMemberDays,
+      policy: activitySpacingPolicy, members, eventMembers, eventMemberDays: targetMemberDays,
       beamWidth: options.paBeamWidth, maxExpandedStates: options.maxPaExpandedStates,
     })
     if (!paResult.ok) {
@@ -591,8 +612,8 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
         until: toInternalBoundary(shift.untilBoundary, internalIds),
       }))
       const paIssues = detectScheduleIssues({
-        event, members, eventMembers, eventMemberDays,
-        eventBands: targetBands, stages: targetStages, sections,
+        event, members, eventMembers, eventMemberDays: targetMemberDays,
+        eventBands: targetBands, stages: targetStages, sections: targetSections,
         paAssignments: plannedAssignments, dutyTypes, dutyAssignments: targetDuties,
         calculatedItems,
       })
@@ -603,7 +624,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
         [...baseActivities, ...pa.activities], calculatedItems, activitySpacingPolicy,
       )
       if (!activityResult.feasible) continue
-      const balance = getSectionBalance(targetStages, sections, calculatedItems)
+      const balance = getSectionBalance(targetStages, targetSections, calculatedItems)
       const score: TimetableGenerationScore = {
         lastResortActivityCount: activityResult.lastResortCount,
         schedulingSoftPenalty: constraints.totalPenalty + paPlan.undecidedCount,
