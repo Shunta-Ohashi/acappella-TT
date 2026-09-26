@@ -59,7 +59,7 @@ export interface EvaluateTimetableLocksInput {
   sections: Section[]
 }
 
-const isPosition = (value: unknown): value is FixedPosition => {
+export const isValidFixedPosition = (value: unknown): value is FixedPosition => {
   if (!value || typeof value !== 'object') return false
   const position = value as { kind?: unknown; index?: unknown }
   return position.kind === 'first' || position.kind === 'last' || (
@@ -147,7 +147,7 @@ export const evaluateTimetableLocks = ({
   for (const band of [...eventBands].sort((left, right) => left.id.localeCompare(right.id))) {
     const placement = band.fixedPlacement
     if (band.eventId !== eventId || !placement?.position ||
-      !isPosition(placement.position)) continue
+      !isValidFixedPosition(placement.position)) continue
     const stage = stageById.get(placement.stageId)
     const day = stage ? dayById.get(stage.eventDayId) : undefined
     if (!stage || day?.eventId !== eventId ||
@@ -205,7 +205,7 @@ export const evaluateTimetableLocks = ({
       })
       continue
     }
-    if (!isPosition(lock.position)) {
+    if (!isValidFixedPosition(lock.position)) {
       violations.push({
         code: 'INVALID_POSITION', lockIds: [lock.id], scheduleItemIds: [item.id],
         message: 'TT固定の並び順設定が不正です。',
