@@ -47,6 +47,7 @@ export interface TimetableGenerationInput {
 }
 
 export interface TimetableGenerationOptions {
+  /** Maximum number of unique Schedule proposals actually evaluated. */
   maxScheduleCandidates: number
   paBeamWidth: number
   maxPaExpandedStates: number
@@ -510,7 +511,10 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
   const targetStageIds = new Set(targetStages.map(stage => stage.id))
   const targetStageById = new Map(targetStages.map(stage => [stage.id, stage]))
   const targetSections = sections.filter(section => targetStageIds.has(section.stageId))
-  const targetMemberDays = eventMemberDays.filter(day => day.eventDayId === eventDay.id)
+  const targetEventMemberIds = new Set(eventMembers.filter(member => member.eventId === event.id)
+    .map(member => member.id))
+  const targetMemberDays = eventMemberDays.filter(day => day.eventDayId === eventDay.id &&
+    targetEventMemberIds.has(day.eventMemberId))
   const targetBands = eventBands.filter(band =>
     band.eventId === event.id && band.eventDayId === eventDay.id,
   ).sort((left, right) => left.id.localeCompare(right.id))
@@ -672,9 +676,9 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
   let paSearchLimitReached = false
   let paSearchLimitReferences: typeof lastFailureReferences = {}
   const variants = Math.max(1, targetBands.length * 2, lanes.length * 2)
-  const scheduleSearchLimitReached = variants > options.maxScheduleCandidates
+  let scheduleSearchLimitReached = false
   const seen = new Set<string>()
-  for (let variant = 0; variant < Math.min(variants, options.maxScheduleCandidates); variant += 1) {
+  for (let variant = 0; variant < variants; variant += 1) {
     const proposal = buildProposal({
       variant, bands: targetBands, lanes, originalItems: eventScheduleItems,
       targetStageIds, existingByBand, allowedLaneKeysByBand, locksByBand, internalIds,
@@ -686,6 +690,12 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     // Duplicate variants are not newly evaluated candidates; retain the last
     // actual rejection rather than overwriting its diagnostics.
     if (seen.has(proposal.key)) continue
+    // Scan past duplicate/unbuildable variants even at the cap. Only an
+    // unevaluated unique proposal makes the Schedule search incomplete.
+    if (attemptedSchedules >= options.maxScheduleCandidates) {
+      scheduleSearchLimitReached = true
+      break
+    }
     seen.add(proposal.key)
     attemptedSchedules += 1
     const targetProposalItems = proposal.items.filter(item => targetStageIds.has(item.stageId))

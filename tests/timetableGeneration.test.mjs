@@ -579,6 +579,30 @@ test('別日のmalformed Band・Member TimeRangeは対象日の生成結果へ�
   }
 })
 
+test('別EventのEventMemberDayが対象Dayを参照してもmalformed TimeRangeは生成へ混入しない', () => {
+  for (const conditions of [
+    { availabilityWindows: [{ from: 'bad' }] },
+    { preferredTimeRange: { from: '12:00', until: '10:00' } },
+    { availabilityWindows: null, preferredTimeRange: {} },
+  ]) {
+    const input = createInput({ bandCount: 1, sectionCount: 1, paCount: 1 })
+    const baseline = generateTimetablePlan(input)
+    assert.equal(baseline.ok, true)
+    // The same master Member can participate in both Events. Ownership must
+    // be established by EventMember ID, not Member ID or EventDay ID alone.
+    input.eventMembers.push({ id: 'foreign-event-member', eventId: 'event-other',
+      memberId: 'main-0', paCapabilities: { main: true, sub: false } })
+    input.eventMemberDays.unshift({ id: 'foreign-member-day', eventMemberId: 'foreign-event-member',
+      eventDayId: input.eventDay.id, participationStatus: 'absent', ...conditions })
+    const original = structuredClone(input)
+    const result = generateTimetablePlan(input)
+    assert.deepEqual(result, baseline)
+    verifyGeneratedSchedule(input, result)
+    assert.deepEqual(generateTimetablePlan(input), result)
+    assert.deepEqual(input, original)
+  }
+})
+
 test('別日のHard違反・不正transitionは対象日のplan・score・diagnosticsに混入しない', () => {
   const input = createInput({ bandCount: 2, sectionCount: 1 })
   const baseline = generateTimetablePlan(input)
@@ -1295,18 +1319,80 @@ test('複数候補がPA探索上限に達した場合は最初のscopeをdetermi
   assert.deepEqual(generateTimetablePlan(input), result)
 })
 
-test('proposalが0件でも未探索variantがあればSchedule探索上限、全探索済みならNO_FEASIBLEとなる', () => {
+test('生成不能variantはcandidate枠を消費せず、全variantが生成不能ならNO_FEASIBLEとなる', () => {
   const input = createInput({ bandCount: 1, sectionCount: 1 })
   input.eventBands[0].fixedPlacement = { stageId: 'stage-1', sectionId: 'section-0',
     position: { kind: 'index', index: 2 } }
   const limited = generateTimetablePlan({ ...input, options: { maxScheduleCandidates: 1 } })
   assert.deepEqual(limited, { ok: false, failure: {
-    code: 'SEARCH_LIMIT_REACHED', eventDayId: input.eventDay.id, attemptedSchedules: 0,
+    code: 'NO_FEASIBLE_SCHEDULE', eventDayId: input.eventDay.id, attemptedSchedules: 0,
   } })
   const exhaustive = generateTimetablePlan({ ...input, options: { maxScheduleCandidates: 10 } })
   assert.deepEqual(exhaustive, { ok: false, failure: {
     code: 'NO_FEASIBLE_SCHEDULE', eventDayId: input.eventDay.id, attemptedSchedules: 0,
   } })
+})
+
+const createDuplicateVariantInput = () => {
+  const input = createInput({ bandCount: 3, sectionCount: 0, paCount: 1 })
+  input.eventBands[0].fixedPlacement = { stageId: 'stage-1', position: { kind: 'first' } }
+  input.eventBands[1].availableTimeRange = { from: '10:20' }
+  // Variant 0 and 1 both yield [00, 01, 02] (infeasible availability).
+  // Variant 2 first yields [00, 02, 01], which is feasible; the later variants
+  // repeat these proposals. There are only two unique candidates in total.
+  return input
+}
+
+test('duplicate variantはcandidate枠を消費せず、後続unique候補から成功できる', () => {
+  const input = createDuplicateVariantInput()
+  input.options = { maxScheduleCandidates: 2 }
+  const original = structuredClone(input)
+  const result = generateTimetablePlan(input)
+  verifyGeneratedSchedule(input, result)
+  assert.equal(result.plan.diagnostics.scheduleCandidatesEvaluated, 2)
+  assert.deepEqual(result.plan.placements.map(item => item.eventBandId), ['band-00', 'band-02', 'band-01'])
+  assert.deepEqual(generateTimetablePlan(input), result)
+  assert.deepEqual(generateTimetablePlan({ ...input, options: { maxScheduleCandidates: 24 } }), result)
+  assert.deepEqual(input, original)
+})
+
+test('全variant確認済みならduplicateだけを理由にSEARCH_LIMIT_REACHEDにしない', () => {
+  for (const maxScheduleCandidates of [2, 3]) {
+    const input = createDuplicateVariantInput()
+    input.eventMembers.forEach(member => { member.paCapabilities.main = false })
+    input.options = { maxScheduleCandidates }
+    const original = structuredClone(input)
+    assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
+      code: 'NO_MAIN_PA_CANDIDATE', eventDayId: 'day-1', attemptedSchedules: 2,
+      stageId: 'stage-1',
+    } })
+    assert.deepEqual(input, original)
+  }
+})
+
+test('unique上限で後続unique候補を未評価のまま残す場合はSEARCH_LIMIT_REACHED', () => {
+  const input = createDuplicateVariantInput()
+  const result = generateTimetablePlan({ ...input, options: { maxScheduleCandidates: 1 } })
+  assert.deepEqual(result, { ok: false, failure: {
+    code: 'SEARCH_LIMIT_REACHED', eventDayId: 'day-1', attemptedSchedules: 1,
+  } })
+  assert.equal(generateTimetablePlan({ ...input, options: { maxScheduleCandidates: 2 } }).ok, true)
+})
+
+test('生成不能variantの後でもunique候補が1件なら上限1で評価して成功できる', () => {
+  const input = createInput({ bandCount: 2, sectionCount: 2, paCount: 1 })
+  input.eventBands[0].fixedPlacement = { stageId: 'stage-1', sectionId: 'section-1',
+    position: { kind: 'index', index: 1 } }
+  input.scheduleItems.push({ id: 'prepare', kind: 'break', title: '準備',
+    stageId: 'stage-1', sectionId: 'section-0', order: 0, durationMinutes: 10 })
+  input.options = { maxScheduleCandidates: 1 }
+  const original = structuredClone(input)
+  const result = generateTimetablePlan(input)
+  verifyGeneratedSchedule(input, result)
+  assert.equal(result.plan.diagnostics.scheduleCandidatesEvaluated, 1)
+  assert.deepEqual(result.plan.placements.map(item => item.eventBandId), ['band-01', 'band-00'])
+  assert.deepEqual(generateTimetablePlan(input), result)
+  assert.deepEqual(input, original)
 })
 
 test('PAとScheduleの両capでも完成planを優先し、完成前ならPA scope付きSEARCH_LIMITを返す', () => {
