@@ -1,7 +1,7 @@
 import type {
   DutyAssignment, DutyType, Event, EventBand, EventDay, EventMember,
   EventMemberDay, Member, PaAssignment, ScheduleItem, Section, SectionId,
-  Stage, StageId, TimetableLock,
+  Stage, StageId, TimeRange, TimetableLock,
 } from './models'
 import {
   buildDutyActivities, buildPaActivities, buildPerformanceActivities,
@@ -15,6 +15,9 @@ import { calculateEventDayTimelines } from './timetable.ts'
 import { evaluateTimetableLocks } from './timetableLocks.ts'
 import { detectScheduleIssues } from './issues.ts'
 import { isValidStageTimeRange, isSectionWithinStageTimeRange } from './eventStageSettings.ts'
+import {
+  getTimeRangeValidationError, validateAvailabilityWindows, validatePreferredTimeRange,
+} from './eventMemberDayDetails.ts'
 import { isValidLocalTime, parseLocalTimeToMinute,
   type CalculatedScheduleItem } from './timeline.ts'
 import { planPaShifts, type PlannedPaShift, type PlannedPaShiftScope,
@@ -451,6 +454,13 @@ const isPerfectScore = (score: TimetableGenerationScore): boolean =>
 const isValidTransitionMinutes = (value: number): boolean =>
   Number.isSafeInteger(value) && value >= 0
 
+// Input validators trim form values, but downstream parsers consume the original
+// persisted boundaries. Check those without normalizing or changing the input.
+const hasParseableTimeRangeBoundaries = (range: TimeRange): boolean =>
+  typeof range === 'object' && range !== null && !Array.isArray(range) &&
+  [range.from, range.until].every(time => time === undefined ||
+    (typeof time === 'string' && isValidLocalTime(time)))
+
 export const generateTimetablePlan = (input: TimetableGenerationInput): TimetableGenerationResult => {
   const {
     event, eventDay, eventDays, stages, sections, members, eventMembers,
@@ -503,6 +513,19 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     targetBands.some(band => !isValidBreakDurationMinutes(band.durationMinutes) ||
       (band.fixedPlacement?.plannedStartTime !== undefined &&
         !isValidLocalTime(band.fixedPlacement.plannedStartTime)))) {
+    return failure('INVALID_INPUT', 0)
+  }
+  if (targetBands.some(band => [band.availableTimeRange, band.preferredTimeRange]
+    .some(range => range !== undefined &&
+      (!hasParseableTimeRangeBoundaries(range) || getTimeRangeValidationError(range) !== undefined))) ||
+    targetMemberDays.some(day =>
+      (day.availabilityWindows !== undefined &&
+        (!Array.isArray(day.availabilityWindows) ||
+          !day.availabilityWindows.every(hasParseableTimeRangeBoundaries))) ||
+      (day.preferredTimeRange !== undefined &&
+        !hasParseableTimeRangeBoundaries(day.preferredTimeRange)) ||
+      validateAvailabilityWindows(day.availabilityWindows) !== undefined ||
+      validatePreferredTimeRange(day.preferredTimeRange) !== undefined)) {
     return failure('INVALID_INPUT', 0)
   }
   if (targetBands.length > 0 && targetStages.length === 0) {

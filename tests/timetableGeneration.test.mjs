@@ -148,6 +148,158 @@ test('非負safe integerのtransitionと未指定Stage overrideを許可し既�
   }
 })
 
+const malformedTimeRanges = [
+  { from: 'abc' }, { from: '25:00' }, { until: 'invalid' },
+  { from: '12:00', until: '10:00' }, { from: '10:00', until: '10:00' }, {},
+  { from: ' 10:00 ' }, { until: '15:00 ' },
+  { from: '', until: '15:00' }, { from: '10:00', until: '' },
+  { from: 600 }, null,
+]
+
+for (const [field, setRange] of [
+  ['EventBand.availableTimeRange', (input, range) => { input.eventBands[0].availableTimeRange = range }],
+  ['EventBand.preferredTimeRange', (input, range) => { input.eventBands[0].preferredTimeRange = range }],
+  ['EventMemberDay.availabilityWindows', (input, range) => {
+    input.eventMemberDays[0].availabilityWindows = [{ from: '10:00', until: '12:00' }, range]
+  }],
+  ['EventMemberDay.preferredTimeRange', (input, range) => {
+    input.eventMemberDays[0].preferredTimeRange = range
+  }],
+]) {
+  test(`対象日の不正な${field}はthrowせず探索前にINVALID_INPUT`, () => {
+    for (const range of malformedTimeRanges) {
+      const input = createInput({ bandCount: 1, sectionCount: 1, paCount: 1 })
+      setRange(input, range)
+      const original = structuredClone(input)
+      let result
+      assert.doesNotThrow(() => { result = generateTimetablePlan(input) })
+      assert.deepEqual(result, { ok: false, failure: {
+        code: 'INVALID_INPUT', eventDayId: input.eventDay.id, attemptedSchedules: 0,
+      } }, JSON.stringify(range))
+      assert.deepEqual(input, original)
+    }
+  })
+}
+
+for (const field of ['availabilityWindows', 'preferredTimeRange']) {
+  test(`対象日のPA候補の不正な${field}もPA探索前にINVALID_INPUT`, () => {
+    for (const memberId of ['main-0', 'sub-0']) {
+      const input = createInput({ bandCount: 1, sectionCount: 1, paCount: 1 })
+      const memberDay = input.eventMemberDays.find(day =>
+        day.eventMemberId === `event-member-${memberId}`)
+      memberDay[field] = field === 'availabilityWindows' ? [{ from: 'abc' }] : { from: 'abc' }
+      assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
+        code: 'INVALID_INPUT', eventDayId: input.eventDay.id, attemptedSchedules: 0,
+      } })
+    }
+  })
+}
+
+test('availabilityWindowsの不正なcollection shapeをthrowせずINVALID_INPUTにする', () => {
+  for (const value of [null, {}, '10:00']) {
+    const input = createInput({ bandCount: 1, sectionCount: 1 })
+    input.eventMemberDays[0].availabilityWindows = value
+    assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
+      code: 'INVALID_INPUT', eventDayId: input.eventDay.id, attemptedSchedules: 0,
+    } })
+  }
+})
+
+test('undefined availabilityは終日、未指定のBand条件・希望もvalidで入力を変更しない', () => {
+  const input = createInput({ bandCount: 1, sectionCount: 1, paCount: 1 })
+  input.eventBands[0].availableTimeRange = undefined
+  input.eventBands[0].preferredTimeRange = undefined
+  input.eventMemberDays.forEach(day => {
+    day.availabilityWindows = undefined
+    day.preferredTimeRange = undefined
+  })
+  const original = structuredClone(input)
+  verifyGeneratedSchedule(input, generateTimetablePlan(input))
+  assert.deepEqual(input, original)
+})
+
+test('片側TimeRangeと正常な両側TimeRangeはBand・Member条件ともそのまま生成可能', () => {
+  for (const range of [{ from: '10:00' }, { until: '15:00' }, { from: '10:00', until: '12:00' }]) {
+    const input = createInput({ bandCount: 1, sectionCount: 1, paCount: 1 })
+    input.eventBands[0].availableTimeRange = range
+    input.eventBands[0].preferredTimeRange = range
+    input.eventMemberDays.forEach(day => {
+      day.availabilityWindows = [range]
+      day.preferredTimeRange = range
+    })
+    const original = structuredClone(input)
+    verifyGeneratedSchedule(input, generateTimetablePlan(input))
+    assert.deepEqual(input, original)
+  }
+})
+
+test('複数availability windowのoverlap・adjacentを新たに拒否・normalizeしない', () => {
+  for (const secondRange of [
+    { from: '10:30', until: '12:00' }, { from: '11:00', until: '12:00' },
+  ]) {
+    const input = createInput({ bandCount: 1, sectionCount: 1, paCount: 1 })
+    input.eventMemberDays.forEach(day => {
+      day.availabilityWindows = [{ from: '10:00', until: '11:00' }, secondRange]
+    })
+    const original = structuredClone(input)
+    verifyGeneratedSchedule(input, generateTimetablePlan(input))
+    assert.deepEqual(input, original)
+  }
+})
+
+test('Memberのavailability []は入力としてvalidだが出演可能時間なしのため配置できない', () => {
+  const input = createInput({ bandCount: 1, sectionCount: 1 })
+  input.eventMemberDays[0].availabilityWindows = []
+  const original = structuredClone(input)
+  const result = generateTimetablePlan(input)
+  assert.equal(result.ok, false)
+  assert.equal(result.failure.code, 'NO_FEASIBLE_SCHEDULE')
+  assert.ok(result.failure.attemptedSchedules > 0)
+  assert.deepEqual(input, original)
+})
+
+test('PAのavailability []は入力としてvalidだがPA候補にはならない', () => {
+  const input = createInput({ bandCount: 1, sectionCount: 1, paCount: 1 })
+  input.eventMemberDays.find(day => day.eventMemberId === 'event-member-main-0')
+    .availabilityWindows = []
+  const result = generateTimetablePlan(input)
+  assert.equal(result.ok, false)
+  assert.equal(result.failure.code, 'NO_MAIN_PA_CANDIDATE')
+  assert.ok(result.failure.attemptedSchedules > 0)
+})
+
+test('希望がavailability外でもTimeRange自体がvalidならSoft違反として生成可能', () => {
+  const input = createInput({ bandCount: 1, sectionCount: 1, paCount: 1 })
+  input.eventBands[0].availableTimeRange = { from: '10:00', until: '11:00' }
+  input.eventBands[0].preferredTimeRange = { from: '15:00', until: '16:00' }
+  input.eventMemberDays[0].availabilityWindows = [{ from: '10:00', until: '11:00' }]
+  input.eventMemberDays[0].preferredTimeRange = { from: '15:00', until: '16:00' }
+  const result = generateTimetablePlan(input)
+  verifyGeneratedSchedule(input, result)
+  assert.ok(result.plan.score.schedulingSoftPenalty > 0)
+  assert.ok(result.plan.diagnostics.schedulingSoftViolations.length >= 2)
+})
+
+test('別日のmalformed Band・Member TimeRangeは対象日の生成結果へ影響しない', () => {
+  for (const field of ['bandAvailability', 'bandPreference', 'memberAvailability', 'memberPreference']) {
+    const input = createInput({ bandCount: 1, sectionCount: 1, paCount: 1 })
+    const baseline = generateTimetablePlan(input)
+    assert.equal(baseline.ok, true)
+    addOtherDay(input)
+    const otherBand = input.eventBands.at(-1)
+    const otherMemberDays = input.eventMemberDays.filter(day => day.eventDayId === 'day-2')
+    if (field === 'bandAvailability') otherBand.availableTimeRange = { from: 'abc' }
+    if (field === 'bandPreference') otherBand.preferredTimeRange = { from: '12:00', until: '10:00' }
+    otherMemberDays.forEach(day => {
+      if (field === 'memberAvailability') day.availabilityWindows = [{ from: ' 10:00 ' }]
+      if (field === 'memberPreference') day.preferredTimeRange = {}
+    })
+    const original = structuredClone(input)
+    assert.deepEqual(generateTimetablePlan(input), baseline)
+    assert.deepEqual(input, original)
+  }
+})
+
 test('別日のHard違反・不正transitionは対象日のplan・score・diagnosticsに混入しない', () => {
   const input = createInput({ bandCount: 2, sectionCount: 1 })
   const baseline = generateTimetablePlan(input)
