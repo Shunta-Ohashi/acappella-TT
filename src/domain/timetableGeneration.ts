@@ -12,6 +12,7 @@ import {
 import { isValidBreakDurationMinutes, isValidScheduleLane, compareScheduleItemOrder } from './schedule.ts'
 import { evaluateScheduleConstraints, type ScheduleConstraintEvaluation } from './schedulingConstraints.ts'
 import { calculateEventDayTimelines } from './timetable.ts'
+import { hasSafeStageTimelineArithmetic } from './timetableGenerationArithmetic.ts'
 import { evaluateTimetableLocks, isValidFixedPosition } from './timetableLocks.ts'
 import { detectScheduleIssues } from './issues.ts'
 import { isValidStageTimeRange, isSectionWithinStageTimeRange } from './eventStageSettings.ts'
@@ -113,7 +114,7 @@ interface GenerationLane {
   stage: Stage
   section?: Section
   breaks: Extract<ScheduleItem, { kind: 'break' }>[]
-  estimatedMinutes: number
+  estimatedMinutes: bigint
   capacityMinutes?: number
 }
 
@@ -166,7 +167,7 @@ const createLanes = (
     return {
       key: laneKey(stage.id, section?.id), stage, section,
       breaks: laneBreaks,
-      estimatedMinutes: laneBreaks.reduce((sum, item) => sum + item.durationMinutes, 0),
+      estimatedMinutes: laneBreaks.reduce((sum, item) => sum + BigInt(item.durationMinutes), 0n),
       ...(until ? { capacityMinutes: parseLocalTimeToMinute(until) - from } : {}),
     }
   })
@@ -278,9 +279,15 @@ const buildProposal = ({
   const laneByKey = new Map(lanes.map(lane => [lane.key, lane]))
   const assigned = new Map(lanes.map(lane => [lane.key, [] as EventBand[]]))
   const load = new Map(lanes.map(lane => [lane.key, lane.estimatedMinutes]))
-  const defaultCapacity = Math.max(1,
-    (bands.reduce((sum, band) => sum + band.durationMinutes, 0) +
-      lanes.reduce((sum, lane) => sum + lane.estimatedMinutes, 0)) / Math.max(1, lanes.length))
+  const laneCount = BigInt(Math.max(1, lanes.length))
+  const totalLoad = bands.reduce((sum, band) => sum + BigInt(band.durationMinutes), 0n) +
+    lanes.reduce((sum, lane) => sum + lane.estimatedMinutes, 0n)
+  // The default capacity is max(1, totalLoad / laneCount). Retain its exact
+  // rational representation instead of accumulating or rounding large Numbers.
+  const defaultCapacityNumerator = totalLoad > laneCount ? totalLoad : laneCount
+  const capacity = (lane: GenerationLane) => lane.capacityMinutes !== undefined && lane.capacityMinutes > 0
+    ? { numerator: BigInt(lane.capacityMinutes), denominator: 1n }
+    : { numerator: defaultCapacityNumerator, denominator: laneCount }
   const forced = bands.filter(band => allowedLaneKeysByBand.get(band.id)?.size === 1)
   const free = bands.filter(band => allowedLaneKeysByBand.get(band.id)?.size !== 1)
     .sort((left, right) => right.durationMinutes - left.durationMinutes ||
@@ -292,25 +299,25 @@ const buildProposal = ({
     const key = allowedLaneKeysByBand.get(band.id)?.values().next().value
     if (!key || !laneByKey.has(key)) return undefined
     assigned.get(key)?.push(band)
-    load.set(key, (load.get(key) ?? 0) + band.durationMinutes)
+    load.set(key, (load.get(key) ?? 0n) + BigInt(band.durationMinutes))
   }
   for (const band of rotated) {
     const allowed = allowedLaneKeysByBand.get(band.id)
     const choices = lanes.filter(lane => !allowed || allowed.has(lane.key)).sort((left, right) => {
-      const leftLoad = (load.get(left.key) ?? 0) + band.durationMinutes
-      const rightLoad = (load.get(right.key) ?? 0) + band.durationMinutes
-      const leftRatio = leftLoad / (left.capacityMinutes && left.capacityMinutes > 0
-        ? left.capacityMinutes : defaultCapacity)
-      const rightRatio = rightLoad / (right.capacityMinutes && right.capacityMinutes > 0
-        ? right.capacityMinutes : defaultCapacity)
-      return leftRatio - rightRatio ||
+      const leftLoad = (load.get(left.key) ?? 0n) + BigInt(band.durationMinutes)
+      const rightLoad = (load.get(right.key) ?? 0n) + BigInt(band.durationMinutes)
+      const leftCapacity = capacity(left)
+      const rightCapacity = capacity(right)
+      const difference = leftLoad * leftCapacity.denominator * rightCapacity.numerator -
+        rightLoad * rightCapacity.denominator * leftCapacity.numerator
+      return (difference < 0n ? -1 : difference > 0n ? 1 : 0) ||
         ((lanes.indexOf(left) + variant) % lanes.length) -
           ((lanes.indexOf(right) + variant) % lanes.length)
     })
     const chosen = choices[0]
     if (!chosen) return undefined
     assigned.get(chosen.key)?.push(band)
-    load.set(chosen.key, (load.get(chosen.key) ?? 0) + band.durationMinutes)
+    load.set(chosen.key, (load.get(chosen.key) ?? 0n) + BigInt(band.durationMinutes))
   }
   const orderedByLane = orderStageBands(lanes, assigned, allowedLaneKeysByBand, locksByBand, variant)
   if (!orderedByLane) return undefined
@@ -345,7 +352,7 @@ const buildProposal = ({
         items.push({ ...breakItem, order })
         breakPlacements.push({
           scheduleItemId: breakItem.id, stageId: breakItem.stageId,
-          ...(breakItem.sectionId ? { sectionId: breakItem.sectionId } : {}), order,
+          ...(breakItem.sectionId !== undefined ? { sectionId: breakItem.sectionId } : {}), order,
         })
         order += 1
       }
@@ -553,33 +560,22 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     if (!stage || !isValidBreakDurationMinutes(item.durationMinutes) ||
       !isValidScheduleLane(stage, targetSections.filter(section => section.stageId === stage.id), {
         stageId: stage.id,
-        ...(item.sectionId ? { sectionId: item.sectionId } : {}),
-        ...(item.afterSectionId ? { afterSectionId: item.afterSectionId } : {}),
+        ...(item.sectionId !== undefined ? { sectionId: item.sectionId } : {}),
+        ...(item.afterSectionId !== undefined ? { afterSectionId: item.afterSectionId } : {}),
       })) return failure('INVALID_INPUT', 0, { stageId: item.stageId })
-  }
-  // Bound any candidate Stage timeline before Number arithmetic: each target
-  // Performance/Break is used once, and only Performance pairs add transitions.
-  // BigInt is confined to preflight, after individual safe-integer validation.
-  const latestStartAnchor = targetSections.reduce((latest, section) =>
-    section.plannedStartTime === undefined ? latest :
-      Math.max(latest, parseLocalTimeToMinute(section.plannedStartTime)),
-  targetStages.reduce((latest, stage) =>
-    Math.max(latest, parseLocalTimeToMinute(stage.plannedStartTime)), 0))
-  const maxTransition = targetStages.reduce((maximum, stage) =>
-    Math.max(maximum, stage.transitionMinutes ?? event.defaultTransitionMinutes),
-  event.defaultTransitionMinutes)
-  const timelineUpperBound = BigInt(latestStartAnchor) +
-    targetBands.reduce((total, band) => total + BigInt(band.durationMinutes), 0n) +
-    targetBreaks.reduce((total, item) => total + BigInt(item.durationMinutes), 0n) +
-    BigInt(maxTransition) * BigInt(Math.max(0, targetBands.length - 1))
-  if (timelineUpperBound > BigInt(Number.MAX_SAFE_INTEGER)) {
-    return failure('INVALID_INPUT', 0)
   }
   const targetBandIds = new Set(targetBands.map(band => band.id))
   const existingByBand = new Map<string, Extract<ScheduleItem, { kind: 'performance' }>>()
   for (const item of eventScheduleItems) {
     if (item.kind !== 'performance') continue
     if (targetBandIds.has(item.eventBandId)) {
+      // Reassignment may repair stale Stage/Section references, but must not
+      // silently normalize malformed runtime fields into absent lane values.
+      if ((item.sectionId !== undefined &&
+        (typeof item.sectionId !== 'string' || item.sectionId.length === 0)) ||
+        ('afterSectionId' in item && item.afterSectionId !== undefined)) {
+        return failure('INVALID_INPUT', 0, { eventBandId: item.eventBandId })
+      }
       if (existingByBand.has(item.eventBandId)) {
         return failure('INVALID_INPUT', 0, { eventBandId: item.eventBandId })
       }
@@ -693,6 +689,13 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     seen.add(proposal.key)
     attemptedSchedules += 1
     const targetProposalItems = proposal.items.filter(item => targetStageIds.has(item.stageId))
+    if (targetStages.some(stage => !hasSafeStageTimelineArithmetic({
+      event, stage, sections: targetSections, scheduleItems: targetProposalItems,
+      eventBands: targetBands,
+    }))) {
+      setLastFailure('NO_FEASIBLE_SCHEDULE')
+      continue
+    }
     const locks = evaluateTimetableLocks({
       eventId: event.id, timetableLocks: targetLocks, scheduleItems: targetProposalItems,
       eventBands: lockEvaluationBands, eventDays: [eventDay],
