@@ -157,12 +157,12 @@ export const planPaShifts = ({
     }
     nextStates.sort((left, right) =>
       left.lastResortCount - right.lastResortCount ||
-      left.undecidedCount - right.undecidedCount ||
       left.spacingPenalty - right.spacingPenalty ||
       getPaWorkloadImbalance('main', left.shifts, eligibleMemberIds.main) -
         getPaWorkloadImbalance('main', right.shifts, eligibleMemberIds.main) ||
       getPaWorkloadImbalance('sub', left.shifts, eligibleMemberIds.sub) -
         getPaWorkloadImbalance('sub', right.shifts, eligibleMemberIds.sub) ||
+      left.undecidedCount - right.undecidedCount ||
       left.key.localeCompare(right.key),
     )
     states = nextStates.slice(0, beamWidth)

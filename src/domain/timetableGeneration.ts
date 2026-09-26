@@ -535,6 +535,8 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
   let lastFailure: TimetableGenerationFailureCode = 'NO_FEASIBLE_SCHEDULE'
   let lastFailureReferences: Partial<Pick<TimetableGenerationFailure,
     'stageId' | 'sectionId' | 'eventBandId'>> = {}
+  let paSearchLimitReached = false
+  let paSearchLimitReferences: typeof lastFailureReferences = {}
   const variants = Math.max(1, targetBands.length * 2, lanes.length * 2)
   const seen = new Set<string>()
   for (let variant = 0; variant < Math.min(variants, options.maxScheduleCandidates); variant += 1) {
@@ -601,6 +603,10 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
         stageId: paResult.scope.stageId,
         ...(paResult.scope.sectionId ? { sectionId: paResult.scope.sectionId } : {}),
       } : {}
+      if (paResult.code === 'SEARCH_LIMIT_REACHED' && !paSearchLimitReached) {
+        paSearchLimitReached = true
+        paSearchLimitReferences = lastFailureReferences
+      }
       continue
     }
     for (const paPlan of paResult.plans) {
@@ -673,7 +679,8 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     return failure('NO_FEASIBLE_SCHEDULE', attemptedSchedules)
   }
   return failure(
-    variants > options.maxScheduleCandidates ? 'SEARCH_LIMIT_REACHED' : lastFailure,
-    attemptedSchedules, lastFailureReferences,
+    paSearchLimitReached || variants > options.maxScheduleCandidates
+      ? 'SEARCH_LIMIT_REACHED' : lastFailure,
+    attemptedSchedules, paSearchLimitReached ? paSearchLimitReferences : lastFailureReferences,
   )
 }

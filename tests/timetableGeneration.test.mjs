@@ -8,7 +8,8 @@ import { detectScheduleIssues } from '../src/domain/issues.ts'
 import { evaluateScheduleConstraints } from '../src/domain/schedulingConstraints.ts'
 import { calculateEventDayTimelines } from '../src/domain/timetable.ts'
 import { evaluateTimetableLocks } from '../src/domain/timetableLocks.ts'
-import { compareTimetableGenerationScores } from '../src/domain/timetableGenerationScore.ts'
+import { compareTimetableGenerationScores, getPaWorkloadImbalance } from '../src/domain/timetableGenerationScore.ts'
+import { planPaShifts } from '../src/domain/paShiftPlanning.ts'
 
 const createInput = ({ bandCount = 4, sectionCount = 2, paCount = 2 } = {}) => {
   const event = {
@@ -441,6 +442,80 @@ test('探索上限で未発見の場合はNO_FEASIBLEと区別する', () => {
   assert.equal(result.failure.code, 'SEARCH_LIMIT_REACHED')
 })
 
+const createPaLimitInput = ({ limitFirst = true, laterSuccess = false } = {}) => {
+  const input = createInput({ bandCount: 1, sectionCount: 1, paCount: laterSuccess ? 2 : 1 })
+  input.stages[0].plannedStartTime = limitFirst ? '10:00' : '11:00'
+  input.stages.push({ id: 'stage-2', eventDayId: input.eventDay.id, name: 'Other',
+    order: 1, plannedStartTime: limitFirst ? '11:00' : '10:00' })
+  input.sections.push({ id: 'section-1', stageId: 'stage-2', name: 'Other Section', order: 0 })
+  input.eventMembers.find(member => member.memberId === 'sub-0').paCapabilities.main = true
+  input.eventMemberDays.find(day => day.eventMemberId === 'event-member-main-0')
+    .availabilityWindows = [{ until: '10:10' }]
+  if (laterSuccess) {
+    input.eventMemberDays.find(day => day.eventMemberId === 'event-member-sub-0')
+      .availabilityWindows = [{ until: '10:10' }]
+    for (const memberId of ['main-1', 'sub-1']) {
+      input.eventMemberDays.find(day => day.eventMemberId === `event-member-${memberId}`)
+        .availabilityWindows = [{ from: '11:00' }]
+    }
+  }
+  input.options = { maxPaExpandedStates: 2 }
+  return input
+}
+
+const generateInFixedLane = (input, stageId, sectionId) => generateTimetablePlan({
+  ...input,
+  eventBands: input.eventBands.map(band => ({ ...band, fixedPlacement: { stageId, sectionId } })),
+})
+
+test('PA探索上限の後にNO_FEASIBLE_PA_PLANが出ても上限と最初のscopeを維持する', () => {
+  const input = createPaLimitInput()
+  const limited = generateInFixedLane(input, 'stage-1', 'section-0')
+  assert.equal(limited.failure.code, 'SEARCH_LIMIT_REACHED')
+  const impossible = generateInFixedLane(input, 'stage-2', 'section-1')
+  assert.equal(impossible.failure.code, 'NO_FEASIBLE_PA_PLAN')
+  const original = structuredClone(input)
+  const result = generateTimetablePlan(input)
+  assert.deepEqual(result, { ok: false, failure: {
+    code: 'SEARCH_LIMIT_REACHED', eventDayId: input.eventDay.id, attemptedSchedules: 2,
+    stageId: 'stage-1', sectionId: 'section-0',
+  } })
+  assert.deepEqual(generateTimetablePlan(input), result)
+  assert.deepEqual(input, original)
+})
+
+test('NO_FEASIBLE_PA_PLANの後にPA探索上限が出てもSEARCH_LIMIT_REACHEDとなる', () => {
+  const input = createPaLimitInput({ limitFirst: false })
+  assert.equal(generateInFixedLane(input, 'stage-1', 'section-0').failure.code, 'NO_FEASIBLE_PA_PLAN')
+  assert.equal(generateInFixedLane(input, 'stage-2', 'section-1').failure.code, 'SEARCH_LIMIT_REACHED')
+  assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
+    code: 'SEARCH_LIMIT_REACHED', eventDayId: input.eventDay.id, attemptedSchedules: 2,
+    stageId: 'stage-2', sectionId: 'section-1',
+  } })
+})
+
+test('PA探索上限の後でもfeasible planが見つかれば成功を優先する', () => {
+  const input = createPaLimitInput({ laterSuccess: true })
+  assert.equal(generateInFixedLane(input, 'stage-1', 'section-0').failure.code, 'SEARCH_LIMIT_REACHED')
+  assert.equal(generateInFixedLane(input, 'stage-2', 'section-1').ok, true)
+  const result = generateTimetablePlan(input)
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(result.plan.diagnostics.scheduleCandidatesEvaluated, 2)
+  assert.ok(result.plan.placements.every(item => item.stageId === 'stage-2'))
+  assert.deepEqual(result.plan.paShifts.map(shift => shift.memberId).sort(), ['main-1', 'sub-1'])
+})
+
+test('複数候補がPA探索上限に達した場合は最初のscopeをdeterministicに維持する', () => {
+  const input = createPaLimitInput()
+  input.stages[1].plannedStartTime = '10:00'
+  const result = generateTimetablePlan(input)
+  assert.equal(result.failure.code, 'SEARCH_LIMIT_REACHED')
+  assert.equal(result.failure.attemptedSchedules, 2)
+  assert.equal(result.failure.stageId, 'stage-1')
+  assert.equal(result.failure.sectionId, 'section-0')
+  assert.deepEqual(generateTimetablePlan(input), result)
+})
+
 test('PAが後付けで不可能な配置を棄却し、BandのSection割当を探索し直す', () => {
   const input = createInput({ bandCount: 2, sectionCount: 2, paCount: 2 })
   input.eventBands[1].memberIds = ['main-0']
@@ -674,6 +749,64 @@ test('未定PA shift数は既存の全earlier priorityを追い越さない', ()
     assert.ok(compareTimetableGenerationScores(confirmedButWorse, undecidedButBetter) > 0, key)
     assert.ok(compareTimetableGenerationScores(undecidedButBetter, confirmedButWorse) < 0, key)
   }
+})
+
+const createPaBeamInput = () => {
+  const input = createInput({ bandCount: 0, sectionCount: 0, paCount: 2 })
+  input.eventMembers.find(member => member.memberId === 'sub-1').paCapabilities.sub = false
+  input.eventMemberDays.find(day => day.eventMemberId === 'event-member-main-1')
+    .participationStatus = 'undecided'
+  return {
+    ...input, eventDayId: input.eventDay.id,
+    calculatedItems: [], baseActivities: [], scopes: [], beamWidth: 1, maxExpandedStates: 100,
+  }
+}
+
+const paScope = (index, fromMinute) => ({
+  key: `scope-${index}`, eventDayId: 'day-1', stageId: 'stage-1',
+  fromMinute, untilMinute: fromMinute + 10,
+  fromBoundary: { kind: 'existing-item', scheduleItemId: `row-${index}`, edge: 'start' },
+  untilBoundary: { kind: 'existing-item', scheduleItemId: `row-${index}`, edge: 'end' },
+})
+
+test('beamWidth 1でも未定数よりspacing penaltyの小さいPA候補を残す', () => {
+  const input = createPaBeamInput()
+  input.scopes = [paScope(0, 600)]
+  input.baseActivities = [{ id: 'prior-duty', memberId: 'main-0', eventDayId: 'day-1',
+    stageId: 'stage-1', kind: 'duty', fromMinute: 570, untilMinute: 590 }]
+  const confirmedActivity = { id: 'hypothetical-pa', memberId: 'main-0', eventDayId: 'day-1',
+    stageId: 'stage-1', kind: 'pa', fromMinute: 600, untilMinute: 610 }
+  const confirmedSpacing = evaluateMemberActivitySpacing({
+    activities: [...input.baseActivities, confirmedActivity], stageItems: [],
+  })
+  assert.equal(confirmedSpacing.feasible, true)
+  assert.equal(confirmedSpacing.pairs[0].level, 'preferred')
+  assert.ok(confirmedSpacing.totalPenalty > 0)
+  const original = structuredClone(input)
+  const result = planPaShifts(input)
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(result.plans.length, 1)
+  assert.equal(result.plans[0].shifts.find(shift => shift.role === 'main').memberId, 'main-1')
+  assert.equal(result.plans[0].undecidedCount, 1)
+  assert.deepEqual(planPaShifts(input), result)
+  assert.deepEqual(input, original)
+})
+
+test('beamWidth 1でもspacing同値なら未定数よりMain PAの負担バランスを優先する', () => {
+  const input = createPaBeamInput()
+  input.scopes = [paScope(0, 600), paScope(1, 660)]
+  input.eventMemberDays.find(day => day.eventMemberId === 'event-member-main-1')
+    .availabilityWindows = [{ from: '11:00' }]
+  const result = planPaShifts(input)
+  assert.equal(result.ok, true, JSON.stringify(result))
+  const plan = result.plans[0]
+  assert.deepEqual(plan.shifts.filter(shift => shift.role === 'main')
+    .map(shift => shift.memberId), ['main-0', 'main-1'])
+  assert.equal(plan.undecidedCount, 1)
+  assert.equal(getPaWorkloadImbalance('main', plan.shifts, plan.eligibleMemberIds.main), 0)
+  const allConfirmed = plan.shifts.map(shift => shift.role === 'main'
+    ? { ...shift, memberId: 'main-0' } : shift)
+  assert.equal(getPaWorkloadImbalance('main', allConfirmed, plan.eligibleMemberIds.main), 20)
 })
 
 test('PA workloadはSection件数ではなく担当分数をMain/Sub別に均等化する', () => {
