@@ -3,7 +3,7 @@ import test from 'node:test'
 
 import { generateTimetablePlan } from '../src/domain/timetableGeneration.ts'
 import { buildPaActivities, buildPerformanceActivities,
-  evaluateMemberActivitySpacing } from '../src/domain/activitySpacing.ts'
+  evaluateMemberActivitySpacing, DEFAULT_ACTIVITY_SPACING_POLICY } from '../src/domain/activitySpacing.ts'
 import { detectScheduleIssues } from '../src/domain/issues.ts'
 import { evaluateScheduleConstraints } from '../src/domain/schedulingConstraints.ts'
 import { calculateEventDayTimelines } from '../src/domain/timetable.ts'
@@ -115,6 +115,115 @@ const addOtherDay = input => {
     eventDayId: 'day-2', participationStatus: 'participating',
   })))
 }
+
+for (const [name, configure] of [
+  ['Stage開始 + 単独Performance', input => {
+    input.eventBands = [input.eventBands[0]]
+    input.eventBands[0].durationMinutes = Number.MAX_SAFE_INTEGER
+  }],
+  ['複数Performanceのduration合計', input => {
+    input.eventBands.forEach(band => { band.durationMinutes = Math.floor(Number.MAX_SAFE_INTEGER / 2) + 1 })
+  }],
+  ['Stage override transition × 発生回数', input => {
+    input.stages[0].transitionMinutes = Math.floor(Number.MAX_SAFE_INTEGER / 2) + 1
+    input.eventBands.push({ ...input.eventBands[0], id: 'third-band' })
+  }],
+  ['複数Breakのduration合計', input => {
+    input.scheduleItems = [0, 1].map(index => ({
+      id: `huge-break-${index}`, kind: 'break', title: '休憩', stageId: 'stage-1',
+      sectionId: 'section-0', order: index,
+      durationMinutes: Math.floor(Number.MAX_SAFE_INTEGER / 2) + 1,
+    }))
+  }],
+  ['遅いSection開始anchor + Performance', input => {
+    input.sections[0].plannedStartTime = '23:00'
+    input.eventBands = [input.eventBands[0]]
+    input.eventBands[0].durationMinutes = Number.MAX_SAFE_INTEGER - 600
+  }],
+]) {
+  test(`${name}のsafe integer累積超過はthrowせず探索前にINVALID_INPUT`, () => {
+    const input = createInput({ bandCount: 2, sectionCount: 1 })
+    configure(input)
+    const original = structuredClone(input)
+    let result
+    assert.doesNotThrow(() => { result = generateTimetablePlan(input) })
+    assert.deepEqual(result, { ok: false, failure: {
+      code: 'INVALID_INPUT', eventDayId: 'day-1', attemptedSchedules: 0,
+    } })
+    assert.deepEqual(input, original)
+  })
+}
+
+test('大きなdurationも累積上限がMAX_SAFE_INTEGER以内なら入力validationを通過する', () => {
+  for (const durationMinutes of [10000, Number.MAX_SAFE_INTEGER - 600]) {
+    const input = createInput({ bandCount: 1, sectionCount: 0 })
+    input.eventBands[0].durationMinutes = durationMinutes
+    let result
+    assert.doesNotThrow(() => { result = generateTimetablePlan(input) })
+    assert.equal(result.ok, false)
+    assert.notEqual(result.failure.code, 'INVALID_INPUT')
+    assert.ok(result.failure.attemptedSchedules > 0)
+  }
+})
+
+test('別EventDayの巨大duration・Break・transitionは対象日の累積上限へ含めない', () => {
+  const input = createInput({ bandCount: 1, sectionCount: 1 })
+  const expected = generateTimetablePlan(input)
+  assert.equal(expected.ok, true)
+  addOtherDay(input)
+  input.eventBands.find(band => band.eventDayId === 'day-2').durationMinutes = Number.MAX_SAFE_INTEGER
+  input.stages.find(stage => stage.eventDayId === 'day-2').transitionMinutes = Number.MAX_SAFE_INTEGER
+  input.scheduleItems.push({ id: 'huge-other-break', kind: 'break', title: '休憩',
+    stageId: 'stage-day-2', sectionId: 'section-day-2', order: 1,
+    durationMinutes: Number.MAX_SAFE_INTEGER })
+  assert.deepEqual(generateTimetablePlan(input), expected)
+})
+
+test('preflight通過後のTimelineとPerformance / PA Activity時刻はsafe integerを維持する', () => {
+  const input = createInput({ bandCount: 2, sectionCount: 2 })
+  input.event.defaultTransitionMinutes = 5
+  input.scheduleItems.push({ id: 'break-between', kind: 'break', title: '休憩',
+    stageId: 'stage-1', afterSectionId: 'section-0', order: 0, durationMinutes: 15 })
+  const result = generateTimetablePlan(input)
+  const calculatedItems = verifyGeneratedSchedule(input, result)
+  for (const item of calculatedItems) {
+    assert.ok(Number.isSafeInteger(item.plannedStartMinute))
+    assert.ok(Number.isSafeInteger(item.plannedEndMinute))
+  }
+  const performance = buildPerformanceActivities(calculatedItems, input.eventBands)
+  const pa = buildPaActivities(materializePa(input, result.plan), calculatedItems)
+  assert.deepEqual(performance.unresolved, [])
+  assert.deepEqual(pa.unresolved, [])
+  for (const activity of [...performance.activities, ...pa.activities]) {
+    assert.ok(Number.isSafeInteger(activity.fromMinute))
+    assert.ok(Number.isSafeInteger(activity.untilMinute))
+  }
+})
+
+test('null / falsy / 不完全なActivity policyもthrowせずpreflightでINVALID_INPUT', () => {
+  const badThresholds = structuredClone(DEFAULT_ACTIVITY_SPACING_POLICY)
+  badThresholds['performance-to-performance'].minimumMinutes = NaN
+  const missingCategory = structuredClone(DEFAULT_ACTIVITY_SPACING_POLICY)
+  delete missingCategory['work-to-work']
+  for (const policy of [null, false, 0, {}, missingCategory, badThresholds]) {
+    const input = { ...createInput(), activitySpacingPolicy: policy }
+    const original = structuredClone(input)
+    let result
+    assert.doesNotThrow(() => { result = generateTimetablePlan(input) })
+    assert.deepEqual(result, { ok: false, failure: {
+      code: 'INVALID_INPUT', eventDayId: 'day-1', attemptedSchedules: 0,
+    } })
+    assert.deepEqual(input, original)
+  }
+})
+
+test('undefinedのActivity policyは既存DEFAULT policyと同じ正常な結果を返す', () => {
+  const input = createInput()
+  const result = generateTimetablePlan({ ...input, activitySpacingPolicy: undefined })
+  assert.equal(result.ok, true)
+  assert.deepEqual(result, generateTimetablePlan({ ...input,
+    activitySpacingPolicy: DEFAULT_ACTIVITY_SPACING_POLICY }))
+})
 
 test('不正なEvent default transitionはTimeline構築前にINVALID_INPUTとなる', () => {
   for (const value of [-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
@@ -925,6 +1034,51 @@ const createPaLimitInput = ({ limitFirst = true, laterSuccess = false } = {}) =>
 const generateInFixedLane = (input, stageId, sectionId) => generateTimetablePlan({
   ...input,
   eventBands: input.eventBands.map(band => ({ ...band, fixedPlacement: { stageId, sectionId } })),
+})
+
+const createPaThenGenericInput = ({ genericFirst = false } = {}) => {
+  const input = createInput({ bandCount: 1, sectionCount: 1, paCount: 1 })
+  input.stages[0].order = genericFirst ? 1 : 0
+  input.stages.push({ id: 'stage-2', eventDayId: input.eventDay.id, name: 'Other',
+    order: genericFirst ? 0 : 1, plannedStartTime: '11:00' })
+  input.sections.push({ id: 'section-1', stageId: 'stage-2', name: 'Other Section', order: 0 })
+  // At 10:00 the only Main PA is performing; at 11:00 band availability
+  // rejects the candidate before PA evaluation. Both are real unique proposals.
+  input.eventBands[0].memberIds = ['main-0']
+  input.eventBands[0].availableTimeRange = { until: '10:10' }
+  return input
+}
+
+test('PA固有failureの後にgeneric棄却が来たら古いcodeとStage / Section参照を消す', () => {
+  const input = createPaThenGenericInput()
+  assert.equal(generateInFixedLane(input, 'stage-1', 'section-0').failure.code, 'NO_FEASIBLE_PA_PLAN')
+  assert.equal(generateInFixedLane(input, 'stage-2', 'section-1').failure.code, 'NO_FEASIBLE_SCHEDULE')
+  const original = structuredClone(input)
+  const result = generateTimetablePlan(input)
+  assert.deepEqual(result, { ok: false, failure: {
+    code: 'NO_FEASIBLE_SCHEDULE', eventDayId: 'day-1', attemptedSchedules: 2,
+  } })
+  assert.deepEqual(generateTimetablePlan(input), result)
+  assert.deepEqual(input, original)
+})
+
+test('generic棄却の後にPA固有failureが来たら最新PA codeとscopeを返す', () => {
+  const input = createPaThenGenericInput({ genericFirst: true })
+  assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
+    code: 'NO_FEASIBLE_PA_PLAN', eventDayId: 'day-1', attemptedSchedules: 2,
+    stageId: 'stage-1', sectionId: 'section-0',
+  } })
+})
+
+test('PA探索上限の後のgeneric棄却でもstickyなSEARCH_LIMITと最初のPA scopeは消えない', () => {
+  const input = createPaLimitInput()
+  input.eventBands[0].availableTimeRange = { until: '10:10' }
+  assert.equal(generateInFixedLane(input, 'stage-1', 'section-0').failure.code, 'SEARCH_LIMIT_REACHED')
+  assert.equal(generateInFixedLane(input, 'stage-2', 'section-1').failure.code, 'NO_FEASIBLE_SCHEDULE')
+  assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
+    code: 'SEARCH_LIMIT_REACHED', eventDayId: 'day-1', attemptedSchedules: 2,
+    stageId: 'stage-1', sectionId: 'section-0',
+  } })
 })
 
 test('PA探索上限の後にNO_FEASIBLE_PA_PLANが出ても上限と最初のscopeを維持する', () => {

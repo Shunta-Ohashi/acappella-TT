@@ -482,7 +482,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     Object.values(options).some(value => !Number.isSafeInteger(value) || value < 1)) {
     return failure('INVALID_INPUT', 0)
   }
-  if (activitySpacingPolicy) {
+  if (activitySpacingPolicy !== undefined) {
     try {
       validateActivitySpacingPolicy(activitySpacingPolicy)
     } catch {
@@ -556,6 +556,24 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
         ...(item.sectionId ? { sectionId: item.sectionId } : {}),
         ...(item.afterSectionId ? { afterSectionId: item.afterSectionId } : {}),
       })) return failure('INVALID_INPUT', 0, { stageId: item.stageId })
+  }
+  // Bound any candidate Stage timeline before Number arithmetic: each target
+  // Performance/Break is used once, and only Performance pairs add transitions.
+  // BigInt is confined to preflight, after individual safe-integer validation.
+  const latestStartAnchor = targetSections.reduce((latest, section) =>
+    section.plannedStartTime === undefined ? latest :
+      Math.max(latest, parseLocalTimeToMinute(section.plannedStartTime)),
+  targetStages.reduce((latest, stage) =>
+    Math.max(latest, parseLocalTimeToMinute(stage.plannedStartTime)), 0))
+  const maxTransition = targetStages.reduce((maximum, stage) =>
+    Math.max(maximum, stage.transitionMinutes ?? event.defaultTransitionMinutes),
+  event.defaultTransitionMinutes)
+  const timelineUpperBound = BigInt(latestStartAnchor) +
+    targetBands.reduce((total, band) => total + BigInt(band.durationMinutes), 0n) +
+    targetBreaks.reduce((total, item) => total + BigInt(item.durationMinutes), 0n) +
+    BigInt(maxTransition) * BigInt(Math.max(0, targetBands.length - 1))
+  if (timelineUpperBound > BigInt(Number.MAX_SAFE_INTEGER)) {
+    return failure('INVALID_INPUT', 0)
   }
   const targetBandIds = new Set(targetBands.map(band => band.id))
   const existingByBand = new Map<string, Extract<ScheduleItem, { kind: 'performance' }>>()
@@ -665,7 +683,13 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
       variant, bands: targetBands, lanes, originalItems: eventScheduleItems,
       targetStageIds, existingByBand, allowedLaneKeysByBand, locksByBand, internalIds,
     })
-    if (!proposal || seen.has(proposal.key)) continue
+    if (!proposal) {
+      setLastFailure('NO_FEASIBLE_SCHEDULE')
+      continue
+    }
+    // Duplicate variants are not newly evaluated candidates; retain the last
+    // actual rejection rather than overwriting its diagnostics.
+    if (seen.has(proposal.key)) continue
     seen.add(proposal.key)
     attemptedSchedules += 1
     const targetProposalItems = proposal.items.filter(item => targetStageIds.has(item.stageId))
@@ -674,13 +698,19 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
       eventBands: lockEvaluationBands, eventDays: [eventDay],
       stages: targetStages, sections: targetSections,
     })
-    if (!locks.valid) continue
+    if (!locks.valid) {
+      setLastFailure('NO_FEASIBLE_SCHEDULE')
+      continue
+    }
     const constraints = evaluateScheduleConstraints({
       event, eventDays: [eventDay], stages: targetStages, sections: targetSections,
       members, eventMembers, eventMemberDays: targetMemberDays,
       eventBands: targetBands, scheduleItems: targetProposalItems,
     })
-    if (!constraints.feasible) continue
+    if (!constraints.feasible) {
+      setLastFailure('NO_FEASIBLE_SCHEDULE')
+      continue
+    }
     let timeline: ReturnType<typeof calculateEventDayTimelines>
     try {
       timeline = calculateEventDayTimelines({
@@ -688,9 +718,13 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
         scheduleItems: targetProposalItems, eventBands: targetBands,
       })
     } catch {
+      setLastFailure('NO_FEASIBLE_SCHEDULE')
       continue
     }
-    if (timeline.invalidStages.length > 0) continue
+    if (timeline.invalidStages.length > 0) {
+      setLastFailure('NO_FEASIBLE_SCHEDULE')
+      continue
+    }
     const calculatedItems = timeline.calculatedItems
     const issues = detectScheduleIssues({
       event, members, eventMembers, eventMemberDays: targetMemberDays,
@@ -705,6 +739,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
         ...(dutyIssue.stageIds?.[0] ? { stageId: dutyIssue.stageIds[0] } : {}),
         ...(dutyIssue.sectionIds?.[0] ? { sectionId: dutyIssue.sectionIds[0] } : {}),
       })
+      else setLastFailure('NO_FEASIBLE_SCHEDULE')
       continue
     }
     const performance = buildPerformanceActivities(calculatedItems, targetBands)
@@ -714,9 +749,15 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
       setLastFailure('BROKEN_DUTY_ASSIGNMENT', assignment ? { stageId: assignment.stageId } : {})
       continue
     }
-    if (performance.unresolved.length > 0) continue
+    if (performance.unresolved.length > 0) {
+      setLastFailure('NO_FEASIBLE_SCHEDULE')
+      continue
+    }
     const baseActivities = [...performance.activities, ...duty.activities]
-    if (!evaluateActivities(baseActivities, calculatedItems, activitySpacingPolicy).feasible) continue
+    if (!evaluateActivities(baseActivities, calculatedItems, activitySpacingPolicy).feasible) {
+      setLastFailure('NO_FEASIBLE_SCHEDULE')
+      continue
+    }
     const scopes = getShiftScopes(lanes, targetSections, calculatedItems, internalIds)
     const paResult = planPaShifts({
       event, eventDayId: eventDay.id, scopes, calculatedItems, baseActivities,
@@ -748,13 +789,22 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
         paAssignments: plannedAssignments, dutyTypes, dutyAssignments: targetDuties,
         calculatedItems,
       })
-      if (paIssues.some(issue => issue.severity === 'ERROR')) continue
+      if (paIssues.some(issue => issue.severity === 'ERROR')) {
+        setLastFailure('NO_FEASIBLE_SCHEDULE')
+        continue
+      }
       const pa = buildPaActivities(plannedAssignments, calculatedItems)
-      if (pa.unresolved.length > 0) continue
+      if (pa.unresolved.length > 0) {
+        setLastFailure('NO_FEASIBLE_SCHEDULE')
+        continue
+      }
       const activityResult = evaluateActivities(
         [...baseActivities, ...pa.activities], calculatedItems, activitySpacingPolicy,
       )
-      if (!activityResult.feasible) continue
+      if (!activityResult.feasible) {
+        setLastFailure('NO_FEASIBLE_SCHEDULE')
+        continue
+      }
       const balance = getSectionBalance(targetStages, targetSections, calculatedItems)
       const score: TimetableGenerationScore = {
         lastResortActivityCount: activityResult.lastResortCount,
