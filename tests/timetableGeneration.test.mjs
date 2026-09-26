@@ -8,6 +8,7 @@ import { detectScheduleIssues } from '../src/domain/issues.ts'
 import { evaluateScheduleConstraints } from '../src/domain/schedulingConstraints.ts'
 import { calculateEventDayTimelines } from '../src/domain/timetable.ts'
 import { evaluateTimetableLocks } from '../src/domain/timetableLocks.ts'
+import { compareTimetableGenerationScores } from '../src/domain/timetableGenerationScore.ts'
 
 const createInput = ({ bandCount = 4, sectionCount = 2, paCount = 2 } = {}) => {
   const event = {
@@ -611,6 +612,68 @@ test('PA availabilityと未定statusを考慮して参加確定者を優先す�
   const unavailable = generateTimetablePlan(input)
   assert.equal(unavailable.ok, true, JSON.stringify(unavailable))
   assert.equal(unavailable.plan.paShifts.find(shift => shift.role === 'main').memberId, 'main-1')
+})
+
+test('未定PAは専用件数のみへ計上しScheduling Soft penaltyとdiagnosticsはConstraint評価に一致する', () => {
+  for (const hasPreferenceViolation of [false, true]) {
+    let confirmedScore
+    for (const undecidedCount of [0, 1, 2]) {
+      const input = createInput({ bandCount: 1, sectionCount: 1, paCount: 1 })
+      input.scheduleItems.push({ id: 'existing', kind: 'performance',
+        eventBandId: 'band-00', stageId: 'stage-1', sectionId: 'section-0', order: 0 })
+      if (hasPreferenceViolation) {
+        input.eventBands[0].preferredTimeRange = { until: '09:00' }
+      }
+      for (const memberId of ['main-0', 'sub-0'].slice(0, undecidedCount)) {
+        input.eventMemberDays.find(day => day.eventMemberId === `event-member-${memberId}`)
+          .participationStatus = 'undecided'
+      }
+      const original = structuredClone(input)
+      const result = generateTimetablePlan(input)
+      assert.equal(result.ok, true, JSON.stringify(result))
+      const constraints = evaluateScheduleConstraints({
+        ...input, scheduleItems: materializeSchedule(input, result.plan),
+      })
+      assert.equal(constraints.feasible, true)
+      assert.equal(result.plan.score.schedulingSoftPenalty, constraints.totalPenalty)
+      assert.deepEqual(result.plan.diagnostics.schedulingSoftViolations, constraints.softViolations)
+      assert.equal(constraints.totalPenalty > 0, hasPreferenceViolation)
+      assert.equal(result.plan.score.undecidedPaShiftCount, undecidedCount)
+      assert.equal(result.plan.paShifts.filter(shift =>
+        input.eventMemberDays.find(day => day.eventMemberId === `event-member-${shift.memberId}`)
+          .participationStatus === 'undecided').length, undecidedCount)
+      if (undecidedCount === 0) confirmedScore = result.plan.score
+      assert.deepEqual(result.plan.score, { ...confirmedScore, undecidedPaShiftCount: undecidedCount })
+      assert.deepEqual(input, original)
+    }
+  }
+})
+
+const zeroGenerationScore = {
+  lastResortActivityCount: 0,
+  schedulingSoftPenalty: 0,
+  activitySpacingPenalty: 0,
+  sectionDurationImbalance: 0,
+  paMainWorkloadImbalance: 0,
+  paSubWorkloadImbalance: 0,
+  sectionBandCountImbalance: 0,
+  undecidedPaShiftCount: 0,
+}
+
+test('他のscoreが同じなら未定PA shift数が少ない候補を優先する', () => {
+  const undecided = { ...zeroGenerationScore, undecidedPaShiftCount: 1 }
+  assert.ok(compareTimetableGenerationScores(zeroGenerationScore, undecided) < 0)
+  assert.ok(compareTimetableGenerationScores(undecided, zeroGenerationScore) > 0)
+  assert.equal(compareTimetableGenerationScores(undecided, { ...undecided }), 0)
+})
+
+test('未定PA shift数は既存の全earlier priorityを追い越さない', () => {
+  for (const key of Object.keys(zeroGenerationScore).filter(key => key !== 'undecidedPaShiftCount')) {
+    const confirmedButWorse = { ...zeroGenerationScore, [key]: 1 }
+    const undecidedButBetter = { ...zeroGenerationScore, undecidedPaShiftCount: 1 }
+    assert.ok(compareTimetableGenerationScores(confirmedButWorse, undecidedButBetter) > 0, key)
+    assert.ok(compareTimetableGenerationScores(undecidedButBetter, confirmedButWorse) < 0, key)
+  }
 })
 
 test('PA workloadはSection件数ではなく担当分数をMain/Sub別に均等化する', () => {

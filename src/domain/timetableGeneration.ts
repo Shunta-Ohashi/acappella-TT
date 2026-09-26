@@ -627,7 +627,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
       const balance = getSectionBalance(targetStages, targetSections, calculatedItems)
       const score: TimetableGenerationScore = {
         lastResortActivityCount: activityResult.lastResortCount,
-        schedulingSoftPenalty: constraints.totalPenalty + paPlan.undecidedCount,
+        schedulingSoftPenalty: constraints.totalPenalty,
         activitySpacingPenalty: activityResult.penalty,
         sectionDurationImbalance: balance.durationImbalance,
         paMainWorkloadImbalance: getPaWorkloadImbalance(
