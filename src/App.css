@@ -4104,34 +4104,59 @@
 
 .timetable-grid__inter-section-breaks {
   background: #f8fbfa;
+  border-top: 1px dashed #9cbeb9;
   border-bottom: 1px solid #cbd5e1;
 }
 
-.timetable-grid__inter-section-heading {
+.timetable-grid__inter-section-cell {
+  display: grid;
+  grid-column: 2 / -1;
+  align-content: center;
+  gap: 3px;
+}
+
+.timetable-grid__inter-section-content,
+.timetable-grid__inter-section-summary,
+.timetable-grid__inter-section-coverage {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  min-width: 0;
+}
+
+.timetable-grid__inter-section-content {
   justify-content: space-between;
-  gap: 10px;
-  padding: 6px 9px;
-  background: #edf7f5;
-  border-top: 1px dashed #9cbeb9;
-  border-bottom: 1px dashed #9cbeb9;
+  color: #344154;
+  font-size: 10px;
 }
 
-.timetable-grid__inter-section-heading > div {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
+.timetable-grid__inter-section-summary {
+  overflow-wrap: anywhere;
 }
 
-.timetable-grid__inter-section-heading strong {
+.timetable-grid__inter-section-summary strong {
   color: #234d49;
   font-size: 11px;
 }
 
-.timetable-grid__inter-section-heading span {
+.timetable-grid__inter-section-title,
+.timetable-grid__inter-section-coverage {
   color: #526174;
   font-size: 9px;
+}
+
+.timetable-grid__inter-section-summary .timetable-grid__remove {
+  margin-left: 0;
+}
+
+.timetable-grid__inter-section-actions {
+  margin-left: auto;
+  min-width: 0;
+}
+
+.timetable-grid__inter-section-actions .timetable-grid__break-form {
+  flex-wrap: wrap;
 }
 
 .timetable-grid__section:first-child .timetable-grid__section-heading {

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import { createTimetableWorkspaceRows } from '../src/ui/timetableWorkspaceRows.ts'
 import { createTimetableGridColumns } from '../src/ui/timetableGridColumns.ts'
+import { getInterSectionBreakPresentation } from '../src/ui/interSectionBreakPresentation.ts'
 
 const members = [
   { id: 'member-1', realName: '山田 太郎', acaName: 'やまだ', active: true },
@@ -199,6 +200,59 @@ test('Section間Breakの配置参照をStep 6 rowへ維持する', () => {
 
   assert.equal(result.rows[0].scheduleItem.afterSectionId, 'section-1')
   assert.equal(result.rows[0].calculatedItem.afterSectionId, 'section-1')
+})
+
+const previousSection = { id: 'section-1', stageId: 'stage-1', name: '第1部', order: 0 }
+const nextSection = { id: 'section-2', stageId: 'stage-1', name: '第2部', order: 1 }
+const betweenBreak = { id: 'between-break', kind: 'break', stageId: 'stage-1',
+  afterSectionId: previousSection.id, title: '機材転換と休憩', durationMinutes: 30, order: 0 }
+
+test('部間休憩の統合セルは実Section名・title・durationと対象を識別できる削除名を使う', () => {
+  const original = structuredClone(betweenBreak)
+  const result = getInterSectionBreakPresentation(previousSection, nextSection,
+    createTimetableGridColumns([]), betweenBreak)
+  assert.deepEqual(result, {
+    sectionLabel: '第1部 → 第2部', contentColumnSpan: 3,
+    title: '機材転換と休憩', durationLabel: '30分',
+    removeAccessibleName: '第1部と第2部の間の休憩「機材転換と休憩」（30分）を削除',
+  })
+  assert.deepEqual(betweenBreak, original, '表示用helperはScheduleItemを変更しない')
+})
+
+for (const count of [0, 1, 5]) {
+  test(`Duty列${count}件でも部間休憩のcolSpanは時刻以外の全列を覆う`, () => {
+    const columns = createTimetableGridColumns(Array.from({ length: count }, (_, index) => ({
+      id: `duty-${index}`, eventId: 'event-1', name: `仕事${index}`, order: index,
+    })))
+    const result = getInterSectionBreakPresentation(previousSection, nextSection, columns, betweenBreak)
+    assert.equal(result.contentColumnSpan, columns.length - 1)
+    assert.equal(result.contentColumnSpan, 3 + count)
+  })
+}
+
+test('部間休憩が0件でも同じ統合セルで追加先を表示し、架空のBreakを作らない', () => {
+  const result = getInterSectionBreakPresentation(previousSection, nextSection, createTimetableGridColumns([]))
+  assert.equal(result.sectionLabel, '第1部 → 第2部')
+  assert.equal(result.durationLabel, '休憩未設定')
+  assert.equal(result.title, undefined)
+  assert.equal(result.removeAccessibleName, undefined)
+})
+
+test('同一afterSectionIdの複数Breakをそれぞれ表示でき、元ID・時刻・配置先を保つ', () => {
+  const items = [betweenBreak, { ...betweenBreak, id: 'between-break-2', durationMinutes: 5, order: 1 }]
+  const result = createRows({ scheduleItems: items, calculatedItems: items.map((item, index) => ({
+    scheduleItemId: item.id, eventDayId: 'day-1', stageId: item.stageId,
+    afterSectionId: item.afterSectionId, kind: 'break',
+    plannedStartMinute: index === 0 ? 620 : 650,
+    plannedEndMinute: index === 0 ? 650 : 655,
+  })) })
+  assert.deepEqual(result.rows.map(row => row.scheduleItem.id), ['between-break', 'between-break-2'])
+  const presentations = result.rows.map(row => getInterSectionBreakPresentation(previousSection,
+    nextSection, createTimetableGridColumns(dutyTypes), row.scheduleItem))
+  assert.deepEqual(presentations.map(item => item.durationLabel), ['30分', '5分'])
+  assert.deepEqual(result.rows.map(row => row.scheduleItem.afterSectionId), ['section-1', 'section-1'])
+  assert.deepEqual(result.rows.map(row => [row.calculatedItem.plannedStartMinute, row.calculatedItem.plannedEndMinute]),
+    [[620, 650], [650, 655]])
 })
 
 test('Section所属と実出演メンバー順、条件indicatorをrowへ引き継ぐ', () => {
