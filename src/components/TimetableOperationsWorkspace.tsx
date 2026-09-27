@@ -14,6 +14,7 @@ interface TimetableOperationsWorkspaceProps {
   poolCount: number
   issueCounts: IssueSeverityCounts
   settings: ReactNode
+  generationAction?: ReactNode
   unavailableContent?: ReactNode
   pool: ReactNode
   timetable: ReactNode
@@ -45,6 +46,7 @@ export function TimetableOperationsWorkspace({
   poolCount,
   issueCounts,
   settings,
+  generationAction,
   unavailableContent,
   pool,
   timetable,
@@ -116,6 +118,7 @@ export function TimetableOperationsWorkspace({
         </div>
 
         <div className="timetable-workspace-toolbar__actions">
+          {generationAction}
           <button
             type="button"
             className="workspace-toggle-button"

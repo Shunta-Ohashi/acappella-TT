@@ -506,7 +506,7 @@ test('存在しないStage・別日Stage・別Stage Sectionを固定できない
   }
 })
 
-test('SectionありStageではSection指定を必須とし、SectionなしStageでは不要にする', () => {
+test('Sectionあり・なしStageの両方でStage-only固定を保存できる', () => {
   const missingSection = createItem({
     fixedPlacement: {
       stageId: 'stage-1',
@@ -515,7 +515,8 @@ test('SectionありStageではSection指定を必須とし、SectionなしStage�
       plannedStartTime: '',
     },
   })
-  assert.ok(validate({ item: missingSection }).fixedPlacement)
+  assert.equal(validate({ item: missingSection }).fixedPlacement, undefined)
+  assert.equal(update({ item: missingSection }).ok, true)
 
   const withoutSections = createItem({
     fixedPlacement: {
@@ -527,6 +528,22 @@ test('SectionありStageではSection指定を必須とし、SectionなしStage�
   })
   assert.equal(validate({ item: withoutSections }).fixedPlacement, undefined)
 })
+
+for (const [positionMode, plannedStartTime, positionIndex] of [
+  ['none', '', undefined], ['first', '', undefined], ['last', '', undefined],
+  ['index', '', 2], ['none', '15:30', undefined], ['first', '15:30', undefined],
+]) {
+  test(`Section付きStageのStage-only ${positionMode} / ${plannedStartTime || '開始未指定'}を保存する`, () => {
+    const item = createItem({ fixedPlacement: {
+      stageId: 'stage-1', sectionId: '', positionMode, plannedStartTime, positionIndex,
+    } })
+    const result = update({ item })
+    assert.equal(result.ok, true, JSON.stringify(result))
+    assert.equal(result.eventBands[0].fixedPlacement.stageId, 'stage-1')
+    assert.equal(result.eventBands[0].fixedPlacement.sectionId, undefined)
+    assert.equal(result.eventBands[0].fixedPlacement.plannedStartTime, plannedStartTime || undefined)
+  })
+}
 
 test('Stage変更後に古いSectionを残すdraftを拒否し、固定開始時刻だけの設定も拒否する', () => {
   const staleSection = createItem({

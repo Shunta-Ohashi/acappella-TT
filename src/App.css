@@ -3635,6 +3635,119 @@
 
 .timetable-workspace-toolbar__actions {
   flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+
+.timetable-generation-action {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  max-width: 360px;
+}
+
+.timetable-generation-action .primary-button {
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
+.timetable-generation-action p {
+  margin: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.timetable-generation-feedback {
+  color: #245936;
+}
+
+.generation-preview-dialog {
+  box-sizing: border-box;
+  width: min(960px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 24px;
+  overflow: auto;
+  color: #1e293b;
+  border: 0;
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgb(15 23 42 / 24%);
+}
+
+.generation-preview-dialog::backdrop {
+  background: rgb(15 23 42 / 52%);
+}
+
+.generation-preview-dialog h2,
+.generation-preview-dialog h3 {
+  margin: 0 0 10px;
+}
+
+.generation-preview-dialog__notice {
+  padding: 10px 14px;
+  color: #5f4810;
+  background: #fffbeb;
+  border: 1px solid #d8c78d;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.generation-preview-dialog__summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 20px 0;
+}
+
+.generation-preview-dialog__summary dt {
+  color: #526175;
+  font-size: 12px;
+}
+
+.generation-preview-dialog__summary dd {
+  margin: 5px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.generation-preview-stage {
+  margin: 18px 0;
+  padding: 14px;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+}
+
+.generation-preview-stage ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.generation-preview-stage li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 16px;
+  padding: 8px 0;
+  overflow-wrap: anywhere;
+  border-top: 1px solid #e5eaf0;
+  font-size: 13px;
+}
+
+.generation-preview-stage li > span {
+  color: #526175;
+}
+
+.generation-preview-dialog > footer {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #e5eaf0;
+}
+
+@media (max-width: 600px) {
+  .generation-preview-dialog { padding: 16px; }
+  .generation-preview-dialog__summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .workspace-toggle-button,

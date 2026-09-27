@@ -73,6 +73,16 @@ import {
   TimetableLockRepairPanel,
 } from './components/TimetableGrid'
 import { TimetableOperationsWorkspace } from './components/TimetableOperationsWorkspace'
+import { TimetableGenerationPreviewDialog } from './components/TimetableGenerationPreviewDialog'
+import { generateTimetablePlan } from './domain/timetableGeneration'
+import {
+  materializeTimetableGenerationPlan, validateTimetableGenerationCandidate,
+  type MaterializedTimetable,
+} from './domain/timetableGenerationApply'
+import {
+  createTimetableGenerationPreview, formatGenerationDay, presentTimetableGenerationFailure,
+  type TimetableGenerationPreview,
+} from './ui/timetableGenerationPresentation'
 import { EventList } from './components/EventList'
 import { DataBackupSettings } from './components/DataBackupSettings'
 import { IssuePanel } from './components/IssuePanel'
@@ -170,6 +180,14 @@ import {
 import './App.css'
 
 type AppView = 'event-editor' | AppSection
+
+interface GenerationPreviewState {
+  eventId: EventId
+  eventDayId: EventDayId
+  sourceState: PersistedDomainState
+  candidate: MaterializedTimetable
+  presentation: TimetableGenerationPreview
+}
 
 const createId = (prefix: string) => `${prefix}-${crypto.randomUUID()}`
 
@@ -301,6 +319,11 @@ function App() {
   >(null)
   const paSettingsRef = useRef<PaSettingsHandle>(null)
   const dutySettingsRef = useRef<DutySettingsHandle>(null)
+  const [generationPreview, setGenerationPreview] = useState<GenerationPreviewState | null>(null)
+  const [generationApplyRevision, setGenerationApplyRevision] = useState(0)
+  const [generationFeedback, setGenerationFeedback] = useState<{
+    eventId: EventId; eventDayId: EventDayId; kind: 'success' | 'error'; message: string
+  } | null>(null)
   const selectedEventBands = eventBands.filter(
     (eventBand) => eventBand.eventId === selectedEventId,
   )
@@ -353,6 +376,8 @@ function App() {
   }, [domainState])
 
   const applyPersistedSnapshot = (snapshot: PersistedAppStateV2) => {
+    setGenerationPreview(null)
+    setGenerationFeedback(null)
     setMembers(snapshot.members)
     setBands(snapshot.bands)
     setEvents(snapshot.events)
@@ -544,6 +569,8 @@ function App() {
     if (!events.some((event) => event.id === eventId)) return
 
     setTimetableLockFeedback(clearTimetableLockFeedback())
+    setGenerationPreview(null)
+    setGenerationFeedback(null)
     setSelectedEventId(eventId)
     setSelectedTimetableEventDayId(undefined)
     setSelectedTimetableStageId(undefined)
@@ -554,6 +581,7 @@ function App() {
     if (!selectedEventDays.some(eventDay => eventDay.id === eventDayId)) return
 
     setSelectedTimetableEventDayId(eventDayId)
+    setGenerationFeedback(null)
     setSelectedTimetableStageId(getStagesForEventDay(stages, eventDayId)[0]?.id)
   }
 
@@ -563,6 +591,8 @@ function App() {
   }
 
   const handleCreateEvent = (draft: NewEventDraft) => {
+    setGenerationPreview(null)
+    setGenerationFeedback(null)
     const eventId = createId('event')
     const eventDayIds = draft.dates.map(() => createId('event-day'))
     const created = createEventData({
@@ -806,6 +836,68 @@ function App() {
     paSettingsRef.current?.commitPrepared(paResult)
     dutySettingsRef.current?.commitPrepared(dutyResult)
     setActiveStep(7)
+  }
+
+  const hasUnsavedOperations = () => Boolean(
+    paSettingsRef.current?.hasUnsavedChanges() || dutySettingsRef.current?.hasUnsavedChanges(),
+  )
+
+  const handleGenerateTimetable = () => {
+    if (!selectedEvent || !timetableEventDay || !timetableStages.length || !currentDayEventBands.length) return
+    const feedback = (message: string) => setGenerationFeedback({
+      eventId: selectedEvent.id, eventDayId: timetableEventDay.id, kind: 'error', message,
+    })
+    if (hasUnsavedOperations()) {
+      feedback('PAまたは当日運営に未保存の変更があります。先に保存してから自動生成してください。')
+      return
+    }
+    setGenerationFeedback(null)
+    const input = { event: selectedEvent, eventDay: timetableEventDay, eventDays, stages, sections,
+      members, eventMembers, eventMemberDays, eventBands, scheduleItems, timetableLocks, dutyTypes, dutyAssignments }
+    const result = generateTimetablePlan(input)
+    if (!result.ok) {
+      feedback(presentTimetableGenerationFailure(result.failure, { stages, sections, eventBands }))
+      return
+    }
+    const candidate = materializeTimetableGenerationPlan({ ...input, paAssignments, plan: result.plan,
+      newScheduleItemIds: result.plan.placements.filter(p => p.scheduleItemId === undefined)
+        .map(() => createId('schedule-performance')),
+      newPaAssignmentIds: result.plan.paShifts.map(() => createId('pa-assignment')),
+    })
+    if (!candidate.ok) {
+      feedback(`生成結果を適用可能な形式へ変換できませんでした。（${candidate.code}）`)
+      return
+    }
+    const validation = validateTimetableGenerationCandidate(input, candidate)
+    if (!validation.ok) { feedback(validation.reason); return }
+    setGenerationPreview({
+      eventId: selectedEvent.id, eventDayId: timetableEventDay.id, sourceState: domainState, candidate,
+      presentation: createTimetableGenerationPreview({ ...input, ...candidate, ...validation,
+        plan: result.plan }),
+    })
+  }
+
+  const handleApplyGeneratedTimetable = () => {
+    if (!generationPreview) return
+    if (generationPreview.eventId !== selectedEvent?.id ||
+      generationPreview.eventDayId !== timetableEventDay?.id ||
+      generationPreview.sourceState !== domainState || hasUnsavedOperations()) {
+      setGenerationPreview(null)
+      if (selectedEvent && timetableEventDay) setGenerationFeedback({
+        eventId: selectedEvent.id, eventDayId: timetableEventDay.id, kind: 'error',
+        message: '設定または編集対象が変わったため適用できません。未保存の編集を保存し、再生成してください。',
+      })
+      return
+    }
+    // Commit precisely the validated preview, in one batched React event.
+    // Autosave observes the resulting complete domain snapshot, never a half apply.
+    setScheduleItems(generationPreview.candidate.scheduleItems)
+    setPaAssignments(generationPreview.candidate.paAssignments)
+    setGenerationApplyRevision(revision => revision + 1)
+    setGenerationFeedback({ eventId: selectedEvent.id, eventDayId: timetableEventDay.id, kind: 'success',
+      message: `✓ ${formatGenerationDay(timetableEventDay)}のタイムテーブルとPA担当を自動生成結果へ更新しました。`,
+    })
+    setGenerationPreview(null)
   }
 
   const handleSaveCommonMember = (
@@ -1460,6 +1552,23 @@ function App() {
                 onSelectStage={handleSelectTimetableStage}
                 poolCount={poolEventBands.length}
                 issueCounts={currentStageIssueCounts}
+                generationAction={(
+                  <div className="timetable-generation-action">
+                    <button type="button" className="primary-button"
+                      disabled={!timetableEventDay || timetableStages.length === 0 || currentDayEventBands.length === 0}
+                      title="選択中の開催日の全Stageを対象に、確認用のプレビューを生成します。"
+                      onClick={handleGenerateTimetable}>
+                      ✨ この開催日を自動生成
+                    </button>
+                    {generationFeedback?.eventId === selectedEvent.id &&
+                      generationFeedback.eventDayId === timetableEventDay?.id && (
+                        <p role={generationFeedback.kind === 'error' ? 'alert' : 'status'}
+                          className={generationFeedback.kind === 'error' ? 'form-error' : 'timetable-generation-feedback'}>
+                          {generationFeedback.message}
+                        </p>
+                      )}
+                  </div>
+                )}
                 settings={currentStage ? (
                   <div className="timetable-toolbar-settings">
                     <label>
@@ -1607,7 +1716,7 @@ function App() {
                 renderPaPanel={(onValidationFailed) => currentStage ? (
                   <PaSettings
                     ref={paSettingsRef}
-                    key={selectedEvent.id}
+                    key={`${selectedEvent.id}:${generationApplyRevision}`}
                     event={selectedEvent}
                     eventDays={selectedEventDays}
                     stages={selectedStages}
@@ -1635,7 +1744,7 @@ function App() {
                 renderOperationsPanel={(onValidationFailed) => currentStage ? (
                   <DutySettings
                     ref={dutySettingsRef}
-                    key={selectedEvent.id}
+                    key={`${selectedEvent.id}:${generationApplyRevision}`}
                     event={selectedEvent}
                     eventDays={selectedEventDays}
                     stages={selectedStages}
@@ -1703,6 +1812,13 @@ function App() {
         <CreateEventDialog
           onCancel={() => setIsCreateEventDialogOpen(false)}
           onCreate={handleCreateEvent}
+        />
+      )}
+      {generationPreview && (
+        <TimetableGenerationPreviewDialog
+          preview={generationPreview.presentation}
+          onCancel={() => setGenerationPreview(null)}
+          onApply={handleApplyGeneratedTimetable}
         />
       )}
     </AppShell>

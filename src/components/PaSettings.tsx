@@ -31,6 +31,7 @@ import {
   type PaAssignmentsValidationErrors,
 } from '../domain/paAssignments'
 import { PaAssignmentEditorDialog } from './PaAssignmentEditorDialog'
+import { hasPaDraftChanges } from '../ui/operationsDraftChanges'
 
 interface PaSettingsProps {
   formId: string
@@ -55,6 +56,7 @@ interface PaSettingsProps {
 }
 
 export interface PaSettingsHandle {
+  hasUnsavedChanges: () => boolean
   prepareDraft: () => PaAssignmentsUpdateResult
   commitPrepared: (
     result: Extract<PaAssignmentsUpdateResult, { ok: true }>,
@@ -94,6 +96,7 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
   const [draft, setDraft] = useState(() =>
     createPaAssignmentsDraft(event, paAssignments),
   )
+  const [savedDraft, setSavedDraft] = useState(() => draft)
   const [editor, setEditor] = useState<EditorState>()
   const [errors, setErrors] = useState<PaAssignmentsValidationErrors>(
     emptyErrors,
@@ -194,12 +197,16 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
     result: Extract<PaAssignmentsUpdateResult, { ok: true }>,
   ) => {
     onCommit(result)
-    setDraft(createPaAssignmentsDraft(event, result.paAssignments))
+    const saved = createPaAssignmentsDraft(event, result.paAssignments)
+    setDraft(saved)
+    setSavedDraft(saved)
     setErrors(emptyErrors())
     setSaveMessage('✓ 保存しました')
   }
 
-  useImperativeHandle(ref, () => ({ prepareDraft, commitPrepared }))
+  useImperativeHandle(ref, () => ({ prepareDraft, commitPrepared,
+    hasUnsavedChanges: () => hasPaDraftChanges(draft, savedDraft) || editor !== undefined,
+  }))
 
   const save = (moveToNext: boolean) => {
     if (moveToNext) {

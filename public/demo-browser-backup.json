@@ -1,0 +1,1834 @@
+{
+  "version": 2,
+  "members": [
+    {
+      "id": "member-demo-01",
+      "realName": "青木 葵",
+      "acaName": "あおい",
+      "entryAcademicYear": 2023,
+      "active": true
+    },
+    {
+      "id": "member-demo-02",
+      "realName": "石井 蓮",
+      "acaName": "れん",
+      "entryAcademicYear": 2024,
+      "active": true
+    },
+    {
+      "id": "member-demo-03",
+      "realName": "上田 美咲",
+      "acaName": "みさき",
+      "entryAcademicYear": 2022,
+      "active": true
+    },
+    {
+      "id": "member-demo-04",
+      "realName": "江藤 奏",
+      "acaName": "かなで",
+      "entryAcademicYear": 2023,
+      "active": true
+    },
+    {
+      "id": "member-demo-05",
+      "realName": "大西 凛",
+      "acaName": "りん",
+      "entryAcademicYear": 2024,
+      "active": true
+    },
+    {
+      "id": "member-demo-06",
+      "realName": "加藤 湊",
+      "acaName": "みなと",
+      "entryAcademicYear": 2022,
+      "active": true
+    },
+    {
+      "id": "member-demo-07",
+      "realName": "木村 結衣",
+      "acaName": "ゆい",
+      "entryAcademicYear": 2025,
+      "active": true
+    },
+    {
+      "id": "member-demo-08",
+      "realName": "佐々木 翔",
+      "acaName": "しょう",
+      "entryAcademicYear": 2023,
+      "active": true
+    },
+    {
+      "id": "member-demo-09",
+      "realName": "高橋 陽菜",
+      "acaName": "ひな",
+      "entryAcademicYear": 2024,
+      "active": true
+    },
+    {
+      "id": "member-demo-10",
+      "realName": "中村 颯",
+      "acaName": "はやて",
+      "entryAcademicYear": 2022,
+      "active": true
+    },
+    {
+      "id": "member-demo-generation-main-haru",
+      "realName": "春野 遥",
+      "acaName": "はる",
+      "active": true
+    },
+    {
+      "id": "member-demo-generation-main-tomo",
+      "realName": "高橋 智",
+      "acaName": "とも",
+      "active": true
+    },
+    {
+      "id": "member-demo-generation-sub-saki",
+      "realName": "佐藤 咲",
+      "acaName": "さき",
+      "active": true
+    },
+    {
+      "id": "member-demo-generation-sub-nao",
+      "realName": "中村 直",
+      "acaName": "なお",
+      "active": true
+    },
+    {
+      "id": "member-demo-generation-duty-koh",
+      "realName": "小林 光",
+      "acaName": "こう",
+      "active": true
+    },
+    {
+      "id": "member-demo-generation-duty-rio",
+      "realName": "鈴木 莉央",
+      "acaName": "りお",
+      "active": true
+    },
+    {
+      "id": "member-demo-generation-duty-sui",
+      "realName": "水野 翠",
+      "acaName": "すい",
+      "active": true
+    }
+  ],
+  "bands": [
+    {
+      "id": "band-demo-01",
+      "name": "Aurora",
+      "defaultMemberIds": [
+        "member-demo-01",
+        "member-demo-02",
+        "member-demo-03",
+        "member-demo-04"
+      ],
+      "active": true
+    },
+    {
+      "id": "band-demo-02",
+      "name": "Blend Note",
+      "defaultMemberIds": [
+        "member-demo-03",
+        "member-demo-04",
+        "member-demo-05",
+        "member-demo-06"
+      ],
+      "active": true
+    },
+    {
+      "id": "band-demo-03",
+      "name": "Ciel",
+      "defaultMemberIds": [
+        "member-demo-01",
+        "member-demo-06",
+        "member-demo-07"
+      ],
+      "active": true
+    },
+    {
+      "id": "band-demo-04",
+      "name": "Drop Chord",
+      "defaultMemberIds": [
+        "member-demo-02",
+        "member-demo-05",
+        "member-demo-08"
+      ],
+      "active": true
+    },
+    {
+      "id": "band-demo-05",
+      "name": "Echo Bloom",
+      "defaultMemberIds": [
+        "member-demo-03",
+        "member-demo-07",
+        "member-demo-09"
+      ],
+      "active": true
+    },
+    {
+      "id": "band-demo-06",
+      "name": "Legacy Vox",
+      "defaultMemberIds": [
+        "member-demo-04",
+        "member-demo-08",
+        "member-demo-10"
+      ],
+      "active": false
+    },
+    {
+      "id": "band-demo-generation-1",
+      "name": "Moonlight",
+      "active": true,
+      "defaultMemberIds": [
+        "member-demo-01",
+        "member-demo-02",
+        "member-demo-03",
+        "member-demo-04"
+      ]
+    },
+    {
+      "id": "band-demo-generation-2",
+      "name": "Breeze",
+      "active": true,
+      "defaultMemberIds": [
+        "member-demo-03",
+        "member-demo-04",
+        "member-demo-05",
+        "member-demo-06"
+      ]
+    },
+    {
+      "id": "band-demo-generation-3",
+      "name": "Amber",
+      "active": true,
+      "defaultMemberIds": [
+        "member-demo-05",
+        "member-demo-06",
+        "member-demo-07",
+        "member-demo-08"
+      ]
+    },
+    {
+      "id": "band-demo-generation-4",
+      "name": "Prism",
+      "active": true,
+      "defaultMemberIds": [
+        "member-demo-01",
+        "member-demo-02",
+        "member-demo-07",
+        "member-demo-08"
+      ]
+    }
+  ],
+  "events": [
+    {
+      "id": "event-demo-main",
+      "name": "2026 デモライブ",
+      "description": "複数日・複数Stageの動作確認用イベントです。",
+      "timeZone": "Asia/Tokyo",
+      "defaultTransitionMinutes": 2,
+      "validationPolicy": {
+        "minimumGapBands": 1,
+        "minimumRestMinutes": 10
+      },
+      "performanceSlotMinutes": [
+        5,
+        7,
+        10,
+        15
+      ]
+    },
+    {
+      "id": "event-demo-festival",
+      "name": "2026 学祭デモ",
+      "timeZone": "Asia/Tokyo",
+      "defaultTransitionMinutes": 2,
+      "validationPolicy": {
+        "minimumGapBands": 1,
+        "minimumRestMinutes": 10
+      },
+      "performanceSlotMinutes": [
+        5,
+        10,
+        15
+      ]
+    },
+    {
+      "id": "event-demo-generation",
+      "name": "自動生成お試しライブ（2日開催）",
+      "description": "両日とも自動生成可能。部内／部間休憩、TT固定、PA、撮影3名を確認できます。",
+      "timeZone": "Asia/Tokyo",
+      "defaultTransitionMinutes": 2,
+      "validationPolicy": {
+        "minimumGapBands": 1,
+        "minimumRestMinutes": 10
+      },
+      "performanceSlotMinutes": [
+        5,
+        7,
+        10,
+        15
+      ]
+    }
+  ],
+  "eventDays": [
+    {
+      "id": "event-day-demo-main-01",
+      "eventId": "event-demo-main",
+      "date": "2026-11-01",
+      "label": "ライブ1日目",
+      "order": 0
+    },
+    {
+      "id": "event-day-demo-main-02",
+      "eventId": "event-demo-main",
+      "date": "2026-11-03",
+      "label": "ライブ2日目",
+      "order": 1
+    },
+    {
+      "id": "event-day-demo-festival-01",
+      "eventId": "event-demo-festival",
+      "date": "2026-11-15",
+      "order": 0
+    },
+    {
+      "id": "day-demo-generation-1",
+      "eventId": "event-demo-generation",
+      "date": "2026-12-05",
+      "label": "お試し1日目",
+      "order": 0
+    },
+    {
+      "id": "day-demo-generation-2",
+      "eventId": "event-demo-generation",
+      "date": "2026-12-06",
+      "label": "お試し2日目",
+      "order": 1
+    }
+  ],
+  "stages": [
+    {
+      "id": "stage-demo-main-day1",
+      "eventDayId": "event-day-demo-main-01",
+      "name": "Main Stage",
+      "location": "大ホール",
+      "order": 0,
+      "plannedStartTime": "10:00",
+      "plannedEndTime": "18:00",
+      "transitionMinutes": 2
+    },
+    {
+      "id": "stage-demo-sub-day1",
+      "eventDayId": "event-day-demo-main-01",
+      "name": "Sub Stage",
+      "location": "中庭",
+      "order": 1,
+      "plannedStartTime": "11:00",
+      "plannedEndTime": "17:00",
+      "transitionMinutes": 2
+    },
+    {
+      "id": "stage-demo-main-day2",
+      "eventDayId": "event-day-demo-main-02",
+      "name": "Main Stage",
+      "location": "大ホール",
+      "order": 0,
+      "plannedStartTime": "10:00",
+      "plannedEndTime": "18:00",
+      "transitionMinutes": 2
+    },
+    {
+      "id": "stage-demo-sub-day2",
+      "eventDayId": "event-day-demo-main-02",
+      "name": "Sub Stage",
+      "location": "中庭",
+      "order": 1,
+      "plannedStartTime": "11:00",
+      "plannedEndTime": "17:00",
+      "transitionMinutes": 2
+    },
+    {
+      "id": "stage-demo-festival",
+      "eventDayId": "event-day-demo-festival-01",
+      "name": "講堂Stage",
+      "location": "大学講堂",
+      "order": 0,
+      "plannedStartTime": "12:00",
+      "plannedEndTime": "17:00"
+    },
+    {
+      "id": "stage-demo-generation-main-1",
+      "eventDayId": "day-demo-generation-1",
+      "name": "Main Stage",
+      "order": 0,
+      "plannedStartTime": "10:00",
+      "plannedEndTime": "17:00"
+    },
+    {
+      "id": "stage-demo-generation-sub-1",
+      "eventDayId": "day-demo-generation-1",
+      "name": "Sub Stage",
+      "order": 1,
+      "plannedStartTime": "14:00",
+      "plannedEndTime": "17:00"
+    },
+    {
+      "id": "stage-demo-generation-main-2",
+      "eventDayId": "day-demo-generation-2",
+      "name": "Main Stage",
+      "order": 0,
+      "plannedStartTime": "10:00",
+      "plannedEndTime": "17:00"
+    },
+    {
+      "id": "stage-demo-generation-sub-2",
+      "eventDayId": "day-demo-generation-2",
+      "name": "Sub Stage",
+      "order": 1,
+      "plannedStartTime": "14:00",
+      "plannedEndTime": "17:00"
+    }
+  ],
+  "sections": [
+    {
+      "id": "section-demo-day1-01",
+      "stageId": "stage-demo-main-day1",
+      "name": "1部",
+      "order": 0,
+      "plannedStartTime": "10:00",
+      "plannedEndTime": "12:30"
+    },
+    {
+      "id": "section-demo-day1-02",
+      "stageId": "stage-demo-main-day1",
+      "name": "2部",
+      "order": 1,
+      "plannedStartTime": "13:30",
+      "plannedEndTime": "16:00"
+    },
+    {
+      "id": "section-demo-day1-03",
+      "stageId": "stage-demo-main-day1",
+      "name": "3部",
+      "order": 2,
+      "plannedStartTime": "16:30"
+    },
+    {
+      "id": "section-demo-day2-01",
+      "stageId": "stage-demo-main-day2",
+      "name": "午前の部",
+      "order": 0,
+      "plannedStartTime": "10:00",
+      "plannedEndTime": "13:00"
+    },
+    {
+      "id": "section-demo-day2-02",
+      "stageId": "stage-demo-main-day2",
+      "name": "午後の部",
+      "order": 1,
+      "plannedStartTime": "14:00"
+    },
+    {
+      "id": "section-demo-generation-1a",
+      "stageId": "stage-demo-generation-main-1",
+      "name": "第1部",
+      "order": 0,
+      "plannedStartTime": "10:00",
+      "plannedEndTime": "11:00"
+    },
+    {
+      "id": "section-demo-generation-1b",
+      "stageId": "stage-demo-generation-main-1",
+      "name": "第2部",
+      "order": 1,
+      "plannedStartTime": "11:30",
+      "plannedEndTime": "12:30"
+    },
+    {
+      "id": "section-demo-generation-1c",
+      "stageId": "stage-demo-generation-main-1",
+      "name": "第3部",
+      "order": 2,
+      "plannedStartTime": "13:00",
+      "plannedEndTime": "14:00"
+    },
+    {
+      "id": "section-demo-generation-2a",
+      "stageId": "stage-demo-generation-main-2",
+      "name": "午前の部",
+      "order": 0,
+      "plannedStartTime": "10:00",
+      "plannedEndTime": "11:00"
+    },
+    {
+      "id": "section-demo-generation-2b",
+      "stageId": "stage-demo-generation-main-2",
+      "name": "午後の部",
+      "order": 1,
+      "plannedStartTime": "12:00",
+      "plannedEndTime": "13:00"
+    }
+  ],
+  "eventMembers": [
+    {
+      "id": "event-member-demo-main-01",
+      "eventId": "event-demo-main",
+      "memberId": "member-demo-01",
+      "paCapabilities": {
+        "main": true,
+        "sub": false
+      }
+    },
+    {
+      "id": "event-member-demo-main-02",
+      "eventId": "event-demo-main",
+      "memberId": "member-demo-02",
+      "paCapabilities": {
+        "main": false,
+        "sub": true
+      }
+    },
+    {
+      "id": "event-member-demo-main-03",
+      "eventId": "event-demo-main",
+      "memberId": "member-demo-03",
+      "paCapabilities": {
+        "main": true,
+        "sub": true
+      }
+    },
+    {
+      "id": "event-member-demo-main-04",
+      "eventId": "event-demo-main",
+      "memberId": "member-demo-04",
+      "paCapabilities": {
+        "main": false,
+        "sub": false
+      }
+    },
+    {
+      "id": "event-member-demo-main-05",
+      "eventId": "event-demo-main",
+      "memberId": "member-demo-05",
+      "paCapabilities": {
+        "main": true,
+        "sub": false
+      }
+    },
+    {
+      "id": "event-member-demo-main-06",
+      "eventId": "event-demo-main",
+      "memberId": "member-demo-06",
+      "paCapabilities": {
+        "main": false,
+        "sub": true
+      }
+    },
+    {
+      "id": "event-member-demo-main-07",
+      "eventId": "event-demo-main",
+      "memberId": "member-demo-07",
+      "paCapabilities": {
+        "main": false,
+        "sub": false
+      }
+    },
+    {
+      "id": "event-member-demo-main-08",
+      "eventId": "event-demo-main",
+      "memberId": "member-demo-08",
+      "paCapabilities": {
+        "main": true,
+        "sub": true
+      }
+    },
+    {
+      "id": "event-member-demo-main-09",
+      "eventId": "event-demo-main",
+      "memberId": "member-demo-09",
+      "paCapabilities": {
+        "main": false,
+        "sub": false
+      }
+    },
+    {
+      "id": "event-member-demo-main-10",
+      "eventId": "event-demo-main",
+      "memberId": "member-demo-10",
+      "paCapabilities": {
+        "main": false,
+        "sub": false
+      }
+    },
+    {
+      "id": "event-member-demo-festival-01",
+      "eventId": "event-demo-festival",
+      "memberId": "member-demo-01",
+      "paCapabilities": {
+        "main": true,
+        "sub": false
+      }
+    },
+    {
+      "id": "event-member-demo-festival-02",
+      "eventId": "event-demo-festival",
+      "memberId": "member-demo-02",
+      "paCapabilities": {
+        "main": false,
+        "sub": true
+      }
+    },
+    {
+      "id": "event-member-demo-festival-03",
+      "eventId": "event-demo-festival",
+      "memberId": "member-demo-03",
+      "paCapabilities": {
+        "main": true,
+        "sub": true
+      }
+    },
+    {
+      "id": "event-member-demo-festival-04",
+      "eventId": "event-demo-festival",
+      "memberId": "member-demo-04",
+      "paCapabilities": {
+        "main": false,
+        "sub": false
+      }
+    },
+    {
+      "id": "em-demo-generation-member-demo-01",
+      "eventId": "event-demo-generation",
+      "memberId": "member-demo-01",
+      "paCapabilities": {
+        "main": false,
+        "sub": false
+      }
+    },
+    {
+      "id": "em-demo-generation-member-demo-02",
+      "eventId": "event-demo-generation",
+      "memberId": "member-demo-02",
+      "paCapabilities": {
+        "main": false,
+        "sub": false
+      }
+    },
+    {
+      "id": "em-demo-generation-member-demo-03",
+      "eventId": "event-demo-generation",
+      "memberId": "member-demo-03",
+      "paCapabilities": {
+        "main": false,
+        "sub": false
+      }
+    },
+    {
+      "id": "em-demo-generation-member-demo-04",
+      "eventId": "event-demo-generation",
+      "memberId": "member-demo-04",
+      "paCapabilities": {
+        "main": false,
+        "sub": false
+      }
+    },
+    {
+      "id": "em-demo-generation-member-demo-05",
+      "eventId": "event-demo-generation",
+      "memberId": "member-demo-05",
+      "paCapabilities": {
+        "main": false,
+        "sub": false
+      }
+    },
+    {
+      "id": "em-demo-generation-member-demo-06",
+      "eventId": "event-demo-generation",
+      "memberId": "member-demo-06",
+      "paCapabilities": {
+        "main": false,
+        "sub": false
+      }
+    },
+    {
+      "id": "em-demo-generation-member-demo-07",
+      "eventId": "event-demo-generation",
+      "memberId": "member-demo-07",
+      "paCapabilities": {
+        "main": false,
+        "sub": false
+      }
+    },
+    {
+      "id": "em-demo-generation-member-demo-08",
+      "eventId": "event-demo-generation",
+      "memberId": "member-demo-08",
+      "paCapabilities": {
+        "main": false,
+        "sub": false
+      }
+    },
+    {
+      "id": "em-demo-generation-member-demo-09",
+      "eventId": "event-demo-generation",
+      "memberId": "member-demo-09",
+      "paCapabilities": {
+        "main": false,
+        "sub": false
+      }
+    },
+    {
+      "id": "em-demo-generation-member-demo-10",
+      "eventId": "event-demo-generation",
+      "memberId": "member-demo-10",
+      "paCapabilities": {
+        "main": false,
+        "sub": false
+      }
+    },
+    {
+      "id": "em-demo-generation-member-demo-generation-main-haru",
+      "eventId": "event-demo-generation",
+      "memberId": "member-demo-generation-main-haru",
+      "paCapabilities": {
+        "main": true,
+        "sub": false
+      }
+    },
+    {
+      "id": "em-demo-generation-member-demo-generation-main-tomo",
+      "eventId": "event-demo-generation",
+      "memberId": "member-demo-generation-main-tomo",
+      "paCapabilities": {
+        "main": true,
+        "sub": false
+      }
+    },
+    {
+      "id": "em-demo-generation-member-demo-generation-sub-saki",
+      "eventId": "event-demo-generation",
+      "memberId": "member-demo-generation-sub-saki",
+      "paCapabilities": {
+        "main": false,
+        "sub": true
+      }
+    },
+    {
+      "id": "em-demo-generation-member-demo-generation-sub-nao",
+      "eventId": "event-demo-generation",
+      "memberId": "member-demo-generation-sub-nao",
+      "paCapabilities": {
+        "main": false,
+        "sub": true
+      }
+    },
+    {
+      "id": "em-demo-generation-member-demo-generation-duty-koh",
+      "eventId": "event-demo-generation",
+      "memberId": "member-demo-generation-duty-koh",
+      "paCapabilities": {
+        "main": false,
+        "sub": false
+      }
+    },
+    {
+      "id": "em-demo-generation-member-demo-generation-duty-rio",
+      "eventId": "event-demo-generation",
+      "memberId": "member-demo-generation-duty-rio",
+      "paCapabilities": {
+        "main": false,
+        "sub": false
+      }
+    },
+    {
+      "id": "em-demo-generation-member-demo-generation-duty-sui",
+      "eventId": "event-demo-generation",
+      "memberId": "member-demo-generation-duty-sui",
+      "paCapabilities": {
+        "main": false,
+        "sub": false
+      }
+    }
+  ],
+  "eventMemberDays": [
+    {
+      "id": "event-member-day-demo-main-01-01",
+      "eventMemberId": "event-member-demo-main-01",
+      "eventDayId": "event-day-demo-main-01",
+      "participationStatus": "participating",
+      "preferredTimeRange": {
+        "from": "15:00"
+      }
+    },
+    {
+      "id": "event-member-day-demo-main-02-01",
+      "eventMemberId": "event-member-demo-main-01",
+      "eventDayId": "event-day-demo-main-02",
+      "participationStatus": "participating",
+      "availabilityWindows": [
+        {
+          "from": "13:00"
+        }
+      ]
+    },
+    {
+      "id": "event-member-day-demo-main-01-02",
+      "eventMemberId": "event-member-demo-main-02",
+      "eventDayId": "event-day-demo-main-01",
+      "participationStatus": "participating",
+      "availabilityWindows": [
+        {
+          "from": "13:00"
+        }
+      ]
+    },
+    {
+      "id": "event-member-day-demo-main-02-02",
+      "eventMemberId": "event-member-demo-main-02",
+      "eventDayId": "event-day-demo-main-02",
+      "participationStatus": "undecided",
+      "availabilityWindows": [
+        {
+          "from": "10:00",
+          "until": "18:00"
+        }
+      ]
+    },
+    {
+      "id": "event-member-day-demo-main-01-03",
+      "eventMemberId": "event-member-demo-main-03",
+      "eventDayId": "event-day-demo-main-01",
+      "participationStatus": "participating",
+      "availabilityWindows": [
+        {
+          "until": "17:30"
+        }
+      ]
+    },
+    {
+      "id": "event-member-day-demo-main-02-03",
+      "eventMemberId": "event-member-demo-main-03",
+      "eventDayId": "event-day-demo-main-02",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "event-member-day-demo-main-01-04",
+      "eventMemberId": "event-member-demo-main-04",
+      "eventDayId": "event-day-demo-main-01",
+      "participationStatus": "participating",
+      "availabilityWindows": [
+        {
+          "from": "10:00",
+          "until": "12:00"
+        },
+        {
+          "from": "15:00",
+          "until": "18:00"
+        }
+      ]
+    },
+    {
+      "id": "event-member-day-demo-main-02-04",
+      "eventMemberId": "event-member-demo-main-04",
+      "eventDayId": "event-day-demo-main-02",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "event-member-day-demo-main-01-05",
+      "eventMemberId": "event-member-demo-main-05",
+      "eventDayId": "event-day-demo-main-01",
+      "participationStatus": "participating",
+      "availabilityWindows": [
+        {
+          "from": "13:00",
+          "until": "18:00"
+        }
+      ]
+    },
+    {
+      "id": "event-member-day-demo-main-02-05",
+      "eventMemberId": "event-member-demo-main-05",
+      "eventDayId": "event-day-demo-main-02",
+      "participationStatus": "absent"
+    },
+    {
+      "id": "event-member-day-demo-main-01-06",
+      "eventMemberId": "event-member-demo-main-06",
+      "eventDayId": "event-day-demo-main-01",
+      "participationStatus": "participating",
+      "availabilityWindows": [
+        {
+          "until": "17:00"
+        }
+      ]
+    },
+    {
+      "id": "event-member-day-demo-main-02-06",
+      "eventMemberId": "event-member-demo-main-06",
+      "eventDayId": "event-day-demo-main-02",
+      "participationStatus": "participating",
+      "availabilityWindows": [
+        {
+          "from": "10:00",
+          "until": "12:00"
+        },
+        {
+          "from": "15:00",
+          "until": "17:00"
+        }
+      ]
+    },
+    {
+      "id": "event-member-day-demo-main-01-07",
+      "eventMemberId": "event-member-demo-main-07",
+      "eventDayId": "event-day-demo-main-01",
+      "participationStatus": "participating",
+      "availabilityWindows": [
+        {
+          "from": "14:00",
+          "until": "16:00"
+        }
+      ]
+    },
+    {
+      "id": "event-member-day-demo-main-02-07",
+      "eventMemberId": "event-member-demo-main-07",
+      "eventDayId": "event-day-demo-main-02",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "event-member-day-demo-main-01-08",
+      "eventMemberId": "event-member-demo-main-08",
+      "eventDayId": "event-day-demo-main-01",
+      "participationStatus": "participating",
+      "preferredTimeRange": {
+        "until": "16:00"
+      }
+    },
+    {
+      "id": "event-member-day-demo-main-02-08",
+      "eventMemberId": "event-member-demo-main-08",
+      "eventDayId": "event-day-demo-main-02",
+      "participationStatus": "participating",
+      "availabilityWindows": [
+        {
+          "until": "16:00"
+        }
+      ]
+    },
+    {
+      "id": "event-member-day-demo-main-01-09",
+      "eventMemberId": "event-member-demo-main-09",
+      "eventDayId": "event-day-demo-main-01",
+      "participationStatus": "participating",
+      "availabilityWindows": [
+        {
+          "from": "10:00",
+          "until": "12:00"
+        },
+        {
+          "from": "15:00",
+          "until": "17:00"
+        }
+      ]
+    },
+    {
+      "id": "event-member-day-demo-main-02-09",
+      "eventMemberId": "event-member-demo-main-09",
+      "eventDayId": "event-day-demo-main-02",
+      "participationStatus": "participating",
+      "preferredTimeRange": {
+        "from": "15:00"
+      }
+    },
+    {
+      "id": "event-member-day-demo-main-01-10",
+      "eventMemberId": "event-member-demo-main-10",
+      "eventDayId": "event-day-demo-main-01",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "event-member-day-demo-main-02-10",
+      "eventMemberId": "event-member-demo-main-10",
+      "eventDayId": "event-day-demo-main-02",
+      "participationStatus": "absent"
+    },
+    {
+      "id": "event-member-day-demo-festival-01",
+      "eventMemberId": "event-member-demo-festival-01",
+      "eventDayId": "event-day-demo-festival-01",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "event-member-day-demo-festival-02",
+      "eventMemberId": "event-member-demo-festival-02",
+      "eventDayId": "event-day-demo-festival-01",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "event-member-day-demo-festival-03",
+      "eventMemberId": "event-member-demo-festival-03",
+      "eventDayId": "event-day-demo-festival-01",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "event-member-day-demo-festival-04",
+      "eventMemberId": "event-member-demo-festival-04",
+      "eventDayId": "event-day-demo-festival-01",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-1-em-demo-generation-member-demo-01",
+      "eventMemberId": "em-demo-generation-member-demo-01",
+      "eventDayId": "day-demo-generation-1",
+      "participationStatus": "participating",
+      "availabilityWindows": [
+        {
+          "from": "09:00",
+          "until": "11:00"
+        },
+        {
+          "from": "13:00",
+          "until": "17:00"
+        }
+      ]
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-1-em-demo-generation-member-demo-02",
+      "eventMemberId": "em-demo-generation-member-demo-02",
+      "eventDayId": "day-demo-generation-1",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-1-em-demo-generation-member-demo-03",
+      "eventMemberId": "em-demo-generation-member-demo-03",
+      "eventDayId": "day-demo-generation-1",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-1-em-demo-generation-member-demo-04",
+      "eventMemberId": "em-demo-generation-member-demo-04",
+      "eventDayId": "day-demo-generation-1",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-1-em-demo-generation-member-demo-05",
+      "eventMemberId": "em-demo-generation-member-demo-05",
+      "eventDayId": "day-demo-generation-1",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-1-em-demo-generation-member-demo-06",
+      "eventMemberId": "em-demo-generation-member-demo-06",
+      "eventDayId": "day-demo-generation-1",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-1-em-demo-generation-member-demo-07",
+      "eventMemberId": "em-demo-generation-member-demo-07",
+      "eventDayId": "day-demo-generation-1",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-1-em-demo-generation-member-demo-08",
+      "eventMemberId": "em-demo-generation-member-demo-08",
+      "eventDayId": "day-demo-generation-1",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-1-em-demo-generation-member-demo-09",
+      "eventMemberId": "em-demo-generation-member-demo-09",
+      "eventDayId": "day-demo-generation-1",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-1-em-demo-generation-member-demo-10",
+      "eventMemberId": "em-demo-generation-member-demo-10",
+      "eventDayId": "day-demo-generation-1",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-1-em-demo-generation-member-demo-generation-main-haru",
+      "eventMemberId": "em-demo-generation-member-demo-generation-main-haru",
+      "eventDayId": "day-demo-generation-1",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-1-em-demo-generation-member-demo-generation-main-tomo",
+      "eventMemberId": "em-demo-generation-member-demo-generation-main-tomo",
+      "eventDayId": "day-demo-generation-1",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-1-em-demo-generation-member-demo-generation-sub-saki",
+      "eventMemberId": "em-demo-generation-member-demo-generation-sub-saki",
+      "eventDayId": "day-demo-generation-1",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-1-em-demo-generation-member-demo-generation-sub-nao",
+      "eventMemberId": "em-demo-generation-member-demo-generation-sub-nao",
+      "eventDayId": "day-demo-generation-1",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-1-em-demo-generation-member-demo-generation-duty-koh",
+      "eventMemberId": "em-demo-generation-member-demo-generation-duty-koh",
+      "eventDayId": "day-demo-generation-1",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-1-em-demo-generation-member-demo-generation-duty-rio",
+      "eventMemberId": "em-demo-generation-member-demo-generation-duty-rio",
+      "eventDayId": "day-demo-generation-1",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-1-em-demo-generation-member-demo-generation-duty-sui",
+      "eventMemberId": "em-demo-generation-member-demo-generation-duty-sui",
+      "eventDayId": "day-demo-generation-1",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-2-em-demo-generation-member-demo-01",
+      "eventMemberId": "em-demo-generation-member-demo-01",
+      "eventDayId": "day-demo-generation-2",
+      "participationStatus": "participating",
+      "availabilityWindows": [
+        {
+          "from": "09:00",
+          "until": "11:00"
+        },
+        {
+          "from": "13:00",
+          "until": "17:00"
+        }
+      ]
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-2-em-demo-generation-member-demo-02",
+      "eventMemberId": "em-demo-generation-member-demo-02",
+      "eventDayId": "day-demo-generation-2",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-2-em-demo-generation-member-demo-03",
+      "eventMemberId": "em-demo-generation-member-demo-03",
+      "eventDayId": "day-demo-generation-2",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-2-em-demo-generation-member-demo-04",
+      "eventMemberId": "em-demo-generation-member-demo-04",
+      "eventDayId": "day-demo-generation-2",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-2-em-demo-generation-member-demo-05",
+      "eventMemberId": "em-demo-generation-member-demo-05",
+      "eventDayId": "day-demo-generation-2",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-2-em-demo-generation-member-demo-06",
+      "eventMemberId": "em-demo-generation-member-demo-06",
+      "eventDayId": "day-demo-generation-2",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-2-em-demo-generation-member-demo-07",
+      "eventMemberId": "em-demo-generation-member-demo-07",
+      "eventDayId": "day-demo-generation-2",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-2-em-demo-generation-member-demo-08",
+      "eventMemberId": "em-demo-generation-member-demo-08",
+      "eventDayId": "day-demo-generation-2",
+      "participationStatus": "undecided"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-2-em-demo-generation-member-demo-09",
+      "eventMemberId": "em-demo-generation-member-demo-09",
+      "eventDayId": "day-demo-generation-2",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-2-em-demo-generation-member-demo-10",
+      "eventMemberId": "em-demo-generation-member-demo-10",
+      "eventDayId": "day-demo-generation-2",
+      "participationStatus": "absent"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-2-em-demo-generation-member-demo-generation-main-haru",
+      "eventMemberId": "em-demo-generation-member-demo-generation-main-haru",
+      "eventDayId": "day-demo-generation-2",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-2-em-demo-generation-member-demo-generation-main-tomo",
+      "eventMemberId": "em-demo-generation-member-demo-generation-main-tomo",
+      "eventDayId": "day-demo-generation-2",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-2-em-demo-generation-member-demo-generation-sub-saki",
+      "eventMemberId": "em-demo-generation-member-demo-generation-sub-saki",
+      "eventDayId": "day-demo-generation-2",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-2-em-demo-generation-member-demo-generation-sub-nao",
+      "eventMemberId": "em-demo-generation-member-demo-generation-sub-nao",
+      "eventDayId": "day-demo-generation-2",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-2-em-demo-generation-member-demo-generation-duty-koh",
+      "eventMemberId": "em-demo-generation-member-demo-generation-duty-koh",
+      "eventDayId": "day-demo-generation-2",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-2-em-demo-generation-member-demo-generation-duty-rio",
+      "eventMemberId": "em-demo-generation-member-demo-generation-duty-rio",
+      "eventDayId": "day-demo-generation-2",
+      "participationStatus": "participating"
+    },
+    {
+      "id": "emd-demo-generation-day-demo-generation-2-em-demo-generation-member-demo-generation-duty-sui",
+      "eventMemberId": "em-demo-generation-member-demo-generation-duty-sui",
+      "eventDayId": "day-demo-generation-2",
+      "participationStatus": "participating"
+    }
+  ],
+  "eventBands": [
+    {
+      "id": "event-band-demo-main-01",
+      "eventId": "event-demo-main",
+      "eventDayId": "event-day-demo-main-01",
+      "bandId": "band-demo-01",
+      "name": "Aurora",
+      "memberIds": [
+        "member-demo-01",
+        "member-demo-02",
+        "member-demo-03",
+        "member-demo-04"
+      ],
+      "durationMinutes": 15
+    },
+    {
+      "id": "event-band-demo-main-02",
+      "eventId": "event-demo-main",
+      "eventDayId": "event-day-demo-main-01",
+      "bandId": "band-demo-02",
+      "name": "Blend Note",
+      "memberIds": [
+        "member-demo-03",
+        "member-demo-04",
+        "member-demo-05",
+        "member-demo-06"
+      ],
+      "durationMinutes": 10
+    },
+    {
+      "id": "event-band-demo-main-03",
+      "eventId": "event-demo-main",
+      "eventDayId": "event-day-demo-main-01",
+      "name": "Availability Trio",
+      "memberIds": [
+        "member-demo-05",
+        "member-demo-06",
+        "member-demo-07"
+      ],
+      "durationMinutes": 10,
+      "availableTimeRange": {
+        "from": "15:00"
+      },
+      "fixedPlacement": {
+        "stageId": "stage-demo-sub-day1"
+      }
+    },
+    {
+      "id": "event-band-demo-main-04",
+      "eventId": "event-demo-main",
+      "eventDayId": "event-day-demo-main-01",
+      "name": "Window Duo",
+      "memberIds": [
+        "member-demo-04",
+        "member-demo-09"
+      ],
+      "durationMinutes": 7,
+      "availableTimeRange": {
+        "from": "11:00",
+        "until": "16:00"
+      },
+      "preferredTimeRange": {
+        "from": "15:00",
+        "until": "16:00"
+      }
+    },
+    {
+      "id": "event-band-demo-main-05",
+      "eventId": "event-demo-main",
+      "eventDayId": "event-day-demo-main-02",
+      "bandId": "band-demo-01",
+      "name": "Aurora（2日目）",
+      "memberIds": [
+        "member-demo-01",
+        "member-demo-03",
+        "member-demo-04"
+      ],
+      "durationMinutes": 15
+    },
+    {
+      "id": "event-band-demo-main-06",
+      "eventId": "event-demo-main",
+      "eventDayId": "event-day-demo-main-02",
+      "bandId": "band-demo-03",
+      "name": "Ciel Special",
+      "memberIds": [
+        "member-demo-02",
+        "member-demo-06",
+        "member-demo-08"
+      ],
+      "durationMinutes": 10,
+      "preferredTimeRange": {
+        "from": "15:00",
+        "until": "17:00"
+      }
+    },
+    {
+      "id": "event-band-demo-main-07",
+      "eventId": "event-demo-main",
+      "eventDayId": "event-day-demo-main-02",
+      "bandId": "band-demo-04",
+      "name": "Drop Chord",
+      "memberIds": [
+        "member-demo-07",
+        "member-demo-08",
+        "member-demo-09"
+      ],
+      "durationMinutes": 5,
+      "fixedPlacement": {
+        "stageId": "stage-demo-main-day2",
+        "sectionId": "section-demo-day2-02",
+        "position": {
+          "kind": "last"
+        }
+      }
+    },
+    {
+      "id": "event-band-demo-main-08",
+      "eventId": "event-demo-main",
+      "eventDayId": "event-day-demo-main-02",
+      "name": "時刻固定ユニット",
+      "memberIds": [
+        "member-demo-03",
+        "member-demo-09"
+      ],
+      "durationMinutes": 7,
+      "fixedPlacement": {
+        "stageId": "stage-demo-sub-day2",
+        "plannedStartTime": "14:00"
+      }
+    },
+    {
+      "id": "event-band-demo-festival-01",
+      "eventId": "event-demo-festival",
+      "eventDayId": "event-day-demo-festival-01",
+      "bandId": "band-demo-02",
+      "name": "Blend Note（学祭）",
+      "memberIds": [
+        "member-demo-01",
+        "member-demo-02"
+      ],
+      "durationMinutes": 10
+    },
+    {
+      "id": "event-band-demo-festival-02",
+      "eventId": "event-demo-festival",
+      "eventDayId": "event-day-demo-festival-01",
+      "name": "学祭限定カルテット",
+      "memberIds": [
+        "member-demo-03",
+        "member-demo-04"
+      ],
+      "durationMinutes": 5
+    },
+    {
+      "id": "eb-demo-generation-1-1",
+      "eventId": "event-demo-generation",
+      "eventDayId": "day-demo-generation-1",
+      "bandId": "band-demo-generation-1",
+      "name": "Moonlight（1日目）",
+      "memberIds": [
+        "member-demo-01",
+        "member-demo-02",
+        "member-demo-03",
+        "member-demo-04"
+      ],
+      "durationMinutes": 10,
+      "fixedPlacement": {
+        "stageId": "stage-demo-generation-main-1",
+        "sectionId": "section-demo-generation-1a"
+      },
+      "notes": "自動生成用サンプル。別日の出演は独立したEventBandです。"
+    },
+    {
+      "id": "eb-demo-generation-1-2",
+      "eventId": "event-demo-generation",
+      "eventDayId": "day-demo-generation-1",
+      "bandId": "band-demo-generation-2",
+      "name": "Breeze（1日目）",
+      "memberIds": [
+        "member-demo-03",
+        "member-demo-04",
+        "member-demo-05",
+        "member-demo-06"
+      ],
+      "durationMinutes": 15,
+      "fixedPlacement": {
+        "stageId": "stage-demo-generation-main-1",
+        "sectionId": "section-demo-generation-1b"
+      },
+      "notes": "自動生成用サンプル。別日の出演は独立したEventBandです。"
+    },
+    {
+      "id": "eb-demo-generation-1-3",
+      "eventId": "event-demo-generation",
+      "eventDayId": "day-demo-generation-1",
+      "bandId": "band-demo-generation-3",
+      "name": "Amber（1日目）",
+      "memberIds": [
+        "member-demo-05",
+        "member-demo-06",
+        "member-demo-07",
+        "member-demo-08"
+      ],
+      "durationMinutes": 7,
+      "fixedPlacement": {
+        "stageId": "stage-demo-generation-main-1",
+        "sectionId": "section-demo-generation-1c"
+      },
+      "notes": "自動生成用サンプル。別日の出演は独立したEventBandです。"
+    },
+    {
+      "id": "eb-demo-generation-1-4",
+      "eventId": "event-demo-generation",
+      "eventDayId": "day-demo-generation-1",
+      "bandId": "band-demo-generation-4",
+      "name": "Prism（1日目）",
+      "memberIds": [
+        "member-demo-01",
+        "member-demo-02",
+        "member-demo-07",
+        "member-demo-08"
+      ],
+      "durationMinutes": 10,
+      "fixedPlacement": {
+        "stageId": "stage-demo-generation-sub-1"
+      },
+      "availableTimeRange": {
+        "from": "14:00",
+        "until": "16:00"
+      },
+      "preferredTimeRange": {
+        "from": "14:00",
+        "until": "15:00"
+      },
+      "notes": "自動生成用サンプル。別日の出演は独立したEventBandです。"
+    },
+    {
+      "id": "eb-demo-generation-2-1",
+      "eventId": "event-demo-generation",
+      "eventDayId": "day-demo-generation-2",
+      "bandId": "band-demo-generation-1",
+      "name": "Moonlight（2日目）",
+      "memberIds": [
+        "member-demo-01",
+        "member-demo-02",
+        "member-demo-03",
+        "member-demo-04"
+      ],
+      "durationMinutes": 10,
+      "fixedPlacement": {
+        "stageId": "stage-demo-generation-main-2",
+        "sectionId": "section-demo-generation-2a"
+      },
+      "notes": "自動生成用サンプル。別日の出演は独立したEventBandです。"
+    },
+    {
+      "id": "eb-demo-generation-2-2",
+      "eventId": "event-demo-generation",
+      "eventDayId": "day-demo-generation-2",
+      "bandId": "band-demo-generation-2",
+      "name": "Breeze（2日目）",
+      "memberIds": [
+        "member-demo-03",
+        "member-demo-04",
+        "member-demo-05",
+        "member-demo-06"
+      ],
+      "durationMinutes": 15,
+      "fixedPlacement": {
+        "stageId": "stage-demo-generation-main-2",
+        "sectionId": "section-demo-generation-2b"
+      },
+      "notes": "自動生成用サンプル。別日の出演は独立したEventBandです。"
+    },
+    {
+      "id": "eb-demo-generation-2-3",
+      "eventId": "event-demo-generation",
+      "eventDayId": "day-demo-generation-2",
+      "bandId": "band-demo-generation-3",
+      "name": "Amber（2日目）",
+      "memberIds": [
+        "member-demo-05",
+        "member-demo-06",
+        "member-demo-07",
+        "member-demo-08"
+      ],
+      "durationMinutes": 7,
+      "fixedPlacement": {
+        "stageId": "stage-demo-generation-sub-2",
+        "plannedStartTime": "14:00"
+      },
+      "notes": "自動生成用サンプル。別日の出演は独立したEventBandです。"
+    },
+    {
+      "id": "eb-demo-generation-2-4",
+      "eventId": "event-demo-generation",
+      "eventDayId": "day-demo-generation-2",
+      "bandId": "band-demo-generation-4",
+      "name": "Prism（2日目）",
+      "memberIds": [
+        "member-demo-01",
+        "member-demo-02",
+        "member-demo-07",
+        "member-demo-08"
+      ],
+      "durationMinutes": 10,
+      "fixedPlacement": {
+        "stageId": "stage-demo-generation-sub-2"
+      },
+      "availableTimeRange": {
+        "from": "14:00",
+        "until": "16:00"
+      },
+      "preferredTimeRange": {
+        "from": "14:00",
+        "until": "15:00"
+      },
+      "notes": "自動生成用サンプル。別日の出演は独立したEventBandです。"
+    }
+  ],
+  "scheduleItems": [
+    {
+      "id": "schedule-demo-main-day1-break",
+      "stageId": "stage-demo-main-day1",
+      "sectionId": "section-demo-day1-02",
+      "order": 0,
+      "kind": "break",
+      "title": "昼休憩",
+      "durationMinutes": 30
+    },
+    {
+      "id": "schedule-demo-main-day1-performance",
+      "stageId": "stage-demo-main-day1",
+      "sectionId": "section-demo-day1-03",
+      "order": 0,
+      "kind": "performance",
+      "eventBandId": "event-band-demo-main-01"
+    },
+    {
+      "id": "schedule-demo-sub-day1-performance",
+      "stageId": "stage-demo-sub-day1",
+      "order": 0,
+      "kind": "performance",
+      "eventBandId": "event-band-demo-main-04"
+    },
+    {
+      "id": "schedule-demo-main-day2-performance",
+      "stageId": "stage-demo-main-day2",
+      "sectionId": "section-demo-day2-01",
+      "order": 0,
+      "kind": "performance",
+      "eventBandId": "event-band-demo-main-06"
+    },
+    {
+      "id": "schedule-demo-main-day2-break",
+      "stageId": "stage-demo-main-day2",
+      "sectionId": "section-demo-day2-01",
+      "order": 1,
+      "kind": "break",
+      "title": "転換調整",
+      "durationMinutes": 10
+    },
+    {
+      "id": "schedule-demo-festival-performance",
+      "stageId": "stage-demo-festival",
+      "order": 0,
+      "kind": "performance",
+      "eventBandId": "event-band-demo-festival-01"
+    },
+    {
+      "id": "schedule-demo-generation-opening",
+      "kind": "performance",
+      "stageId": "stage-demo-generation-main-1",
+      "sectionId": "section-demo-generation-1a",
+      "eventBandId": "eb-demo-generation-1-1",
+      "order": 0
+    },
+    {
+      "id": "schedule-demo-generation-middle",
+      "kind": "performance",
+      "stageId": "stage-demo-generation-main-1",
+      "sectionId": "section-demo-generation-1b",
+      "eventBandId": "eb-demo-generation-1-2",
+      "order": 0
+    },
+    {
+      "id": "schedule-demo-generation-sub",
+      "kind": "performance",
+      "stageId": "stage-demo-generation-sub-1",
+      "eventBandId": "eb-demo-generation-1-4",
+      "order": 0
+    },
+    {
+      "id": "schedule-demo-generation-fixed-start",
+      "kind": "performance",
+      "stageId": "stage-demo-generation-sub-2",
+      "eventBandId": "eb-demo-generation-2-3",
+      "order": 0
+    },
+    {
+      "id": "break-demo-generation-between-1",
+      "kind": "break",
+      "stageId": "stage-demo-generation-main-1",
+      "afterSectionId": "section-demo-generation-1a",
+      "title": "第1部→第2部の休憩",
+      "durationMinutes": 30,
+      "order": 0
+    },
+    {
+      "id": "break-demo-generation-between-2",
+      "kind": "break",
+      "stageId": "stage-demo-generation-main-1",
+      "afterSectionId": "section-demo-generation-1b",
+      "title": "第2部→第3部の休憩",
+      "durationMinutes": 30,
+      "order": 0
+    },
+    {
+      "id": "break-demo-generation-inside",
+      "kind": "break",
+      "stageId": "stage-demo-generation-main-1",
+      "sectionId": "section-demo-generation-1b",
+      "title": "第2部内の小休憩",
+      "durationMinutes": 5,
+      "order": 1
+    },
+    {
+      "id": "break-demo-generation-day2",
+      "kind": "break",
+      "stageId": "stage-demo-generation-main-2",
+      "afterSectionId": "section-demo-generation-2a",
+      "title": "午前→午後の休憩",
+      "durationMinutes": 30,
+      "order": 0
+    },
+    {
+      "id": "break-demo-generation-sub2",
+      "kind": "break",
+      "stageId": "stage-demo-generation-sub-2",
+      "title": "掛け持ちメンバーの休憩・PA交代",
+      "durationMinutes": 30,
+      "order": 1
+    }
+  ],
+  "paAssignments": [
+    {
+      "id": "pa-assignment-demo-main-day1-main",
+      "eventId": "event-demo-main",
+      "eventDayId": "event-day-demo-main-01",
+      "stageId": "stage-demo-main-day1",
+      "memberId": "member-demo-03",
+      "role": "main",
+      "from": {
+        "scheduleItemId": "schedule-demo-main-day1-break",
+        "edge": "start"
+      },
+      "until": {
+        "scheduleItemId": "schedule-demo-main-day1-break",
+        "edge": "end"
+      }
+    },
+    {
+      "id": "pa-assignment-demo-sub-day1-sub",
+      "eventId": "event-demo-main",
+      "eventDayId": "event-day-demo-main-01",
+      "stageId": "stage-demo-sub-day1",
+      "memberId": "member-demo-06",
+      "role": "sub",
+      "from": {
+        "scheduleItemId": "schedule-demo-sub-day1-performance",
+        "edge": "start"
+      },
+      "until": {
+        "scheduleItemId": "schedule-demo-sub-day1-performance",
+        "edge": "end"
+      }
+    },
+    {
+      "id": "pa-demo-generation-main",
+      "eventId": "event-demo-generation",
+      "eventDayId": "day-demo-generation-1",
+      "stageId": "stage-demo-generation-main-1",
+      "memberId": "member-demo-generation-main-haru",
+      "role": "main",
+      "from": {
+        "scheduleItemId": "schedule-demo-generation-opening",
+        "edge": "start"
+      },
+      "until": {
+        "scheduleItemId": "schedule-demo-generation-opening",
+        "edge": "end"
+      }
+    },
+    {
+      "id": "pa-demo-generation-sub",
+      "eventId": "event-demo-generation",
+      "eventDayId": "day-demo-generation-1",
+      "stageId": "stage-demo-generation-main-1",
+      "memberId": "member-demo-generation-sub-saki",
+      "role": "sub",
+      "from": {
+        "scheduleItemId": "schedule-demo-generation-opening",
+        "edge": "start"
+      },
+      "until": {
+        "scheduleItemId": "schedule-demo-generation-opening",
+        "edge": "end"
+      }
+    }
+  ],
+  "dutyTypes": [
+    {
+      "id": "duty-type-demo-photo",
+      "eventId": "event-demo-main",
+      "name": "撮影",
+      "order": 0
+    },
+    {
+      "id": "duty-type-demo-sanitize",
+      "eventId": "event-demo-main",
+      "name": "消毒",
+      "order": 1
+    },
+    {
+      "id": "duty-demo-generation-photo",
+      "eventId": "event-demo-generation",
+      "name": "撮影",
+      "order": 0
+    },
+    {
+      "id": "duty-demo-generation-reception",
+      "eventId": "event-demo-generation",
+      "name": "受付",
+      "order": 1
+    }
+  ],
+  "dutyAssignments": [
+    {
+      "id": "duty-assignment-demo-photo",
+      "dutyTypeId": "duty-type-demo-photo",
+      "eventDayId": "event-day-demo-main-01",
+      "stageId": "stage-demo-main-day1",
+      "memberId": "member-demo-01",
+      "from": {
+        "scheduleItemId": "schedule-demo-main-day1-break",
+        "edge": "start"
+      },
+      "until": {
+        "scheduleItemId": "schedule-demo-main-day1-break",
+        "edge": "end"
+      }
+    },
+    {
+      "id": "duty-assignment-demo-sanitize",
+      "dutyTypeId": "duty-type-demo-sanitize",
+      "eventDayId": "event-day-demo-main-01",
+      "stageId": "stage-demo-main-day1",
+      "memberId": "member-demo-05",
+      "from": {
+        "scheduleItemId": "schedule-demo-main-day1-break",
+        "edge": "start"
+      },
+      "until": {
+        "scheduleItemId": "schedule-demo-main-day1-break",
+        "edge": "end"
+      }
+    },
+    {
+      "id": "duty-assignment-demo-generation-photo-1",
+      "dutyTypeId": "duty-demo-generation-photo",
+      "eventDayId": "day-demo-generation-1",
+      "stageId": "stage-demo-generation-main-1",
+      "memberId": "member-demo-generation-duty-koh",
+      "from": {
+        "scheduleItemId": "break-demo-generation-inside",
+        "edge": "start"
+      },
+      "until": {
+        "scheduleItemId": "break-demo-generation-inside",
+        "edge": "end"
+      }
+    },
+    {
+      "id": "duty-assignment-demo-generation-photo-2",
+      "dutyTypeId": "duty-demo-generation-photo",
+      "eventDayId": "day-demo-generation-1",
+      "stageId": "stage-demo-generation-main-1",
+      "memberId": "member-demo-generation-duty-rio",
+      "from": {
+        "scheduleItemId": "break-demo-generation-inside",
+        "edge": "start"
+      },
+      "until": {
+        "scheduleItemId": "break-demo-generation-inside",
+        "edge": "end"
+      }
+    },
+    {
+      "id": "duty-assignment-demo-generation-photo-3",
+      "dutyTypeId": "duty-demo-generation-photo",
+      "eventDayId": "day-demo-generation-1",
+      "stageId": "stage-demo-generation-main-1",
+      "memberId": "member-demo-generation-duty-sui",
+      "from": {
+        "scheduleItemId": "break-demo-generation-inside",
+        "edge": "start"
+      },
+      "until": {
+        "scheduleItemId": "break-demo-generation-inside",
+        "edge": "end"
+      }
+    }
+  ],
+  "timetableLocks": [
+    {
+      "id": "lock-demo-generation-opening",
+      "eventId": "event-demo-generation",
+      "scheduleItemId": "schedule-demo-generation-opening",
+      "stageId": "stage-demo-generation-main-1",
+      "sectionId": "section-demo-generation-1a",
+      "position": {
+        "kind": "first"
+      }
+    }
+  ]
+}
