@@ -1,8 +1,10 @@
 import { useEffect, useRef } from 'react'
 import type { TimetableGenerationPreview } from '../ui/timetableGenerationPresentation'
+import type { TimetableGenerationUiOptions } from '../domain/timetableGenerationOptions'
 
-export function TimetableGenerationPreviewDialog({ preview, onCancel, onApply }: {
+export function TimetableGenerationPreviewDialog({ preview, options, onCancel, onApply }: {
   preview: TimetableGenerationPreview
+  options: TimetableGenerationUiOptions
   onCancel: () => void
   onApply: () => void
 }) {
@@ -22,7 +24,8 @@ export function TimetableGenerationPreviewDialog({ preview, onCancel, onApply }:
       </header>
       <div className="generation-preview-dialog__notice">
         <p>適用すると、この開催日の出演順とPA担当を自動生成結果で置き換えます。</p>
-        <p>既存の休憩・当日運営(Duty)・TT固定・出演条件は保持されます。</p>
+        <p>部内休憩：{options.keepIntraSectionBreaks ? '保持' : '除外'} ／ 部間休憩：{options.keepInterSectionBreaks ? '保持' : '除外'}</p>
+        <p>SectionなしStageの休憩・当日運営(Duty)・TT固定・出演条件は保持されます。</p>
         <p>PA／当日運営パネルに未保存の編集がある場合は、先に保存してから自動生成してください。</p>
       </div>
       <dl className="generation-preview-dialog__summary">

@@ -1,6 +1,12 @@
 import type { PaAssignmentsDraft } from '../domain/paAssignments'
 import type { DutySettingsDraft } from '../domain/dutyAssignments'
 
+/** Shared guard for generation setup, preview apply, and destructive TT reset. */
+export const hasUnsavedOperationsChanges = (
+  pa?: { hasUnsavedChanges: () => boolean } | null,
+  duty?: { hasUnsavedChanges: () => boolean } | null,
+): boolean => Boolean(pa?.hasUnsavedChanges() || duty?.hasUnsavedChanges())
+
 // Assignment array order and transient draft IDs do not change saved semantics.
 const sortedRows = (rows: unknown[]): string[] => rows.map(row => JSON.stringify(row)).sort()
 

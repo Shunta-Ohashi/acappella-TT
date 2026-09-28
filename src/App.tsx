@@ -74,6 +74,12 @@ import {
 } from './components/TimetableGrid'
 import { TimetableOperationsWorkspace } from './components/TimetableOperationsWorkspace'
 import { TimetableGenerationPreviewDialog } from './components/TimetableGenerationPreviewDialog'
+import { TimetableGenerationOptionsDialog } from './components/TimetableGenerationOptionsDialog'
+import { TimetableResetConfirmDialog } from './components/TimetableResetConfirmDialog'
+import { createScheduleItemsForTimetableGeneration, DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS,
+  type TimetableGenerationUiOptions } from './domain/timetableGenerationOptions'
+import { resetEventDayTimetable } from './domain/timetableReset'
+import { hasUnsavedOperationsChanges } from './ui/operationsDraftChanges'
 import { generateTimetablePlan } from './domain/timetableGeneration'
 import {
   materializeTimetableGenerationPlan, validateTimetableGenerationCandidate,
@@ -187,6 +193,7 @@ interface GenerationPreviewState {
   sourceState: PersistedDomainState
   candidate: MaterializedTimetable
   presentation: TimetableGenerationPreview
+  options: TimetableGenerationUiOptions
 }
 
 const createId = (prefix: string) => `${prefix}-${crypto.randomUUID()}`
@@ -321,6 +328,15 @@ function App() {
   const dutySettingsRef = useRef<DutySettingsHandle>(null)
   const [generationPreview, setGenerationPreview] = useState<GenerationPreviewState | null>(null)
   const [generationApplyRevision, setGenerationApplyRevision] = useState(0)
+  const [generationOptions, setGenerationOptions] = useState<TimetableGenerationUiOptions>(
+    { ...DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS },
+  )
+  const [generationOptionsScope, setGenerationOptionsScope] = useState<{
+    eventId: EventId; eventDayId: EventDayId
+  } | null>(null)
+  const [resetConfirmation, setResetConfirmation] = useState<{
+    eventId: EventId; eventDayId: EventDayId; sourceState: PersistedDomainState
+  } | null>(null)
   const [generationFeedback, setGenerationFeedback] = useState<{
     eventId: EventId; eventDayId: EventDayId; kind: 'success' | 'error'; message: string
   } | null>(null)
@@ -376,6 +392,8 @@ function App() {
   }, [domainState])
 
   const applyPersistedSnapshot = (snapshot: PersistedAppStateV2) => {
+    setGenerationOptionsScope(null)
+    setResetConfirmation(null)
     setGenerationPreview(null)
     setGenerationFeedback(null)
     setMembers(snapshot.members)
@@ -570,6 +588,8 @@ function App() {
 
     setTimetableLockFeedback(clearTimetableLockFeedback())
     setGenerationPreview(null)
+    setGenerationOptionsScope(null)
+    setResetConfirmation(null)
     setGenerationFeedback(null)
     setSelectedEventId(eventId)
     setSelectedTimetableEventDayId(undefined)
@@ -581,6 +601,9 @@ function App() {
     if (!selectedEventDays.some(eventDay => eventDay.id === eventDayId)) return
 
     setSelectedTimetableEventDayId(eventDayId)
+    setGenerationPreview(null)
+    setGenerationOptionsScope(null)
+    setResetConfirmation(null)
     setGenerationFeedback(null)
     setSelectedTimetableStageId(getStagesForEventDay(stages, eventDayId)[0]?.id)
   }
@@ -592,6 +615,8 @@ function App() {
 
   const handleCreateEvent = (draft: NewEventDraft) => {
     setGenerationPreview(null)
+    setGenerationOptionsScope(null)
+    setResetConfirmation(null)
     setGenerationFeedback(null)
     const eventId = createId('event')
     const eventDayIds = draft.dates.map(() => createId('event-day'))
@@ -838,22 +863,45 @@ function App() {
     setActiveStep(7)
   }
 
-  const hasUnsavedOperations = () => Boolean(
-    paSettingsRef.current?.hasUnsavedChanges() || dutySettingsRef.current?.hasUnsavedChanges(),
-  )
+  const hasUnsavedOperations = () => hasUnsavedOperationsChanges(paSettingsRef.current, dutySettingsRef.current)
+
+  const timetableResetInput = selectedEvent && timetableEventDay
+    ? { event: selectedEvent, eventDay: timetableEventDay, eventDays, stages, eventBands,
+      scheduleItems, paAssignments, dutyTypes, dutyAssignments, timetableLocks } : undefined
+  const timetableResetResult = timetableResetInput ? resetEventDayTimetable(timetableResetInput) : undefined
+
+  const handleOpenGenerationOptions = () => {
+    if (!selectedEvent || !timetableEventDay || !timetableStages.length || !currentDayEventBands.length) return
+    if (hasUnsavedOperations()) {
+      setGenerationFeedback({ eventId: selectedEvent.id, eventDayId: timetableEventDay.id, kind: 'error',
+        message: 'PAまたは当日運営に未保存の変更があります。先に保存してから自動生成してください。' })
+      return
+    }
+    setGenerationFeedback(null)
+    setGenerationOptionsScope({ eventId: selectedEvent.id, eventDayId: timetableEventDay.id })
+  }
 
   const handleGenerateTimetable = () => {
     if (!selectedEvent || !timetableEventDay || !timetableStages.length || !currentDayEventBands.length) return
     const feedback = (message: string) => setGenerationFeedback({
       eventId: selectedEvent.id, eventDayId: timetableEventDay.id, kind: 'error', message,
     })
+    if (generationOptionsScope?.eventId !== selectedEvent.id || generationOptionsScope.eventDayId !== timetableEventDay.id) {
+      setGenerationOptionsScope(null)
+      feedback('編集対象が変わりました。自動生成設定を開き直してください。')
+      return
+    }
+    setGenerationOptionsScope(null)
     if (hasUnsavedOperations()) {
       feedback('PAまたは当日運営に未保存の変更があります。先に保存してから自動生成してください。')
       return
     }
     setGenerationFeedback(null)
+    const generationScheduleItems = createScheduleItemsForTimetableGeneration({ event: selectedEvent,
+      eventDay: timetableEventDay, eventDays, stages, sections, scheduleItems, options: generationOptions })
     const input = { event: selectedEvent, eventDay: timetableEventDay, eventDays, stages, sections,
-      members, eventMembers, eventMemberDays, eventBands, scheduleItems, timetableLocks, dutyTypes, dutyAssignments }
+      members, eventMembers, eventMemberDays, eventBands, scheduleItems: generationScheduleItems,
+      timetableLocks, dutyTypes, dutyAssignments }
     const result = generateTimetablePlan(input)
     if (!result.ok) {
       feedback(presentTimetableGenerationFailure(result.failure, { stages, sections, eventBands }))
@@ -872,6 +920,7 @@ function App() {
     if (!validation.ok) { feedback(validation.reason); return }
     setGenerationPreview({
       eventId: selectedEvent.id, eventDayId: timetableEventDay.id, sourceState: domainState, candidate,
+      options: { ...generationOptions },
       presentation: createTimetableGenerationPreview({ ...input, ...candidate, ...validation,
         plan: result.plan }),
     })
@@ -898,6 +947,45 @@ function App() {
       message: `✓ ${formatGenerationDay(timetableEventDay)}のタイムテーブルとPA担当を自動生成結果へ更新しました。`,
     })
     setGenerationPreview(null)
+  }
+
+  const handleOpenTimetableReset = () => {
+    if (!selectedEvent || !timetableEventDay || !timetableResetResult?.ok || !timetableResetResult.hasChanges) return
+    if (hasUnsavedOperations()) {
+      setGenerationFeedback({ eventId: selectedEvent.id, eventDayId: timetableEventDay.id, kind: 'error',
+        message: 'PAまたは当日運営に未保存の変更があります。先に保存してからTTを初期化してください。' })
+      return
+    }
+    setGenerationFeedback(null)
+    setResetConfirmation({ eventId: selectedEvent.id, eventDayId: timetableEventDay.id, sourceState: domainState })
+  }
+
+  const handleResetTimetable = () => {
+    if (!resetConfirmation || !selectedEvent || !timetableEventDay) return
+    setResetConfirmation(null)
+    if (resetConfirmation.eventId !== selectedEvent.id || resetConfirmation.eventDayId !== timetableEventDay.id ||
+      resetConfirmation.sourceState !== domainState || hasUnsavedOperations()) {
+      setGenerationFeedback({ eventId: selectedEvent.id, eventDayId: timetableEventDay.id, kind: 'error',
+        message: '設定または編集対象が変わりました。未保存の編集を保存し、初期化を確認し直してください。' })
+      return
+    }
+    if (!timetableResetInput) return
+    const result = resetEventDayTimetable(timetableResetInput)
+    if (!result.ok) {
+      setGenerationFeedback({ eventId: selectedEvent.id, eventDayId: timetableEventDay.id, kind: 'error',
+        message: '初期化対象の所属を安全に判定できません。データの整合性を確認してください。' })
+      return
+    }
+    // All four collections commit together; existing autosave and draft remount observe this snapshot.
+    setScheduleItems(result.scheduleItems)
+    setPaAssignments(result.paAssignments)
+    setDutyAssignments(result.dutyAssignments)
+    setTimetableLocks(result.timetableLocks)
+    setGenerationApplyRevision(revision => revision + 1)
+    setTimetableLockFeedback(clearTimetableLockFeedback())
+    setGenerationPreview(null)
+    setGenerationFeedback({ eventId: selectedEvent.id, eventDayId: timetableEventDay.id, kind: 'success',
+      message: `✓ ${formatGenerationDay(timetableEventDay)}のタイムテーブルを初期化しました。出演バンドは未配置に戻り、PA・当日運営担当・TT固定を削除しました。` })
   }
 
   const handleSaveCommonMember = (
@@ -1554,12 +1642,20 @@ function App() {
                 issueCounts={currentStageIssueCounts}
                 generationAction={(
                   <div className="timetable-generation-action">
+                    <div className="timetable-generation-action__buttons">
                     <button type="button" className="primary-button"
                       disabled={!timetableEventDay || timetableStages.length === 0 || currentDayEventBands.length === 0}
                       title="選択中の開催日の全Stageを対象に、確認用のプレビューを生成します。"
-                      onClick={handleGenerateTimetable}>
+                      onClick={handleOpenGenerationOptions}>
                       ✨ この開催日を自動生成
                     </button>
+                    <button type="button" className="timetable-reset-button"
+                      disabled={!timetableResetResult?.ok || !timetableResetResult.hasChanges}
+                      title={!timetableResetResult?.ok ? '開催日または配置データの所属を安全に判定できません。'
+                        : !timetableResetResult.hasChanges ? '初期化対象の配置・担当・TT固定がありません。休憩は残ります。'
+                        : 'この開催日の全Stageの出演配置・PA・当日運営担当・TT固定を削除します。休憩と出演条件は残します。'}
+                      onClick={handleOpenTimetableReset}>この開催日のTTを初期化</button>
+                    </div>
                     {generationFeedback?.eventId === selectedEvent.id &&
                       generationFeedback.eventDayId === timetableEventDay?.id && (
                         <p role={generationFeedback.kind === 'error' ? 'alert' : 'status'}
@@ -1817,9 +1913,21 @@ function App() {
       {generationPreview && (
         <TimetableGenerationPreviewDialog
           preview={generationPreview.presentation}
+          options={generationPreview.options}
           onCancel={() => setGenerationPreview(null)}
           onApply={handleApplyGeneratedTimetable}
         />
+      )}
+      {generationOptionsScope?.eventId === selectedEvent?.id &&
+        generationOptionsScope?.eventDayId === timetableEventDay?.id && timetableEventDay && (
+        <TimetableGenerationOptionsDialog dayLabel={formatGenerationDay(timetableEventDay)}
+          options={generationOptions} onChange={setGenerationOptions}
+          onCancel={() => setGenerationOptionsScope(null)} onGenerate={handleGenerateTimetable} />
+      )}
+      {resetConfirmation?.eventId === selectedEvent?.id &&
+        resetConfirmation?.eventDayId === timetableEventDay?.id && timetableEventDay && (
+        <TimetableResetConfirmDialog dayLabel={formatGenerationDay(timetableEventDay)}
+          onCancel={() => setResetConfirmation(null)} onReset={handleResetTimetable} />
       )}
     </AppShell>
   )

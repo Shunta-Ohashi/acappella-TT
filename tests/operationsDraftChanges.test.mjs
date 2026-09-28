@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { hasPaDraftChanges, hasDutyDraftChanges } from '../src/ui/operationsDraftChanges.ts'
+import { hasPaDraftChanges, hasDutyDraftChanges, hasUnsavedOperationsChanges } from '../src/ui/operationsDraftChanges.ts'
 import { createPaAssignmentsDraft } from '../src/domain/paAssignments.ts'
 import { createDutySettingsDraft } from '../src/domain/dutyAssignments.ts'
 import { createGenerationUiInput } from './fixtures/timetableGenerationUi.mjs'
@@ -12,6 +12,22 @@ const drafts = () => {
     duty: createDutySettingsDraft(input.event, input.stages, input.dutyTypes, input.dutyAssignments),
   }
 }
+
+test('生成設定・適用・TT初期化は同じPA/Duty dirty guardを利用できる', () => {
+  const saved = drafts()
+  const current = structuredClone(saved)
+  const paHandle = { hasUnsavedChanges: () => hasPaDraftChanges(current.pa, saved.pa) }
+  const dutyHandle = { hasUnsavedChanges: () => hasDutyDraftChanges(current.duty, saved.duty) }
+  assert.equal(hasUnsavedOperationsChanges(paHandle, dutyHandle), false)
+  current.pa.items[0].memberId = 'changed'
+  assert.equal(hasUnsavedOperationsChanges(paHandle, dutyHandle), true)
+  current.pa = structuredClone(saved.pa)
+  current.duty.assignments = []
+  assert.equal(hasUnsavedOperationsChanges(paHandle, dutyHandle), true)
+  current.duty = structuredClone(saved.duty)
+  assert.equal(hasUnsavedOperationsChanges(paHandle, dutyHandle), false)
+  assert.equal(hasUnsavedOperationsChanges(null, null), false)
+})
 
 test('初期PA/Duty draftと同値の再構築draftは未保存変更なし', () => {
   const first = drafts()

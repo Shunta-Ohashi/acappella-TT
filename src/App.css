@@ -5,12 +5,8 @@
 }
 
 .top-navigation {
-  position: sticky;
-  top: 0;
-  z-index: 20;
   background: rgba(255, 255, 255, 0.96);
   border-bottom: 1px solid #e1e6ec;
-  backdrop-filter: blur(10px);
 }
 
 .top-navigation__inner {
@@ -153,13 +149,8 @@
 }
 
 .event-step-navigation {
-  position: sticky;
-  top: 64px;
-  z-index: 15;
   background: rgba(255, 255, 255, 0.97);
   border-bottom: 1px solid #d9e0e7;
-  box-shadow: 0 3px 10px rgb(15 23 42 / 4%);
-  backdrop-filter: blur(8px);
 }
 
 .event-step-navigation__inner {
@@ -3062,10 +3053,6 @@
     padding: 18px 12px 28px;
   }
 
-  .event-step-navigation {
-    top: 100px;
-  }
-
   .event-step-navigation__inner {
     padding: 6px 12px;
   }
@@ -3642,7 +3629,56 @@
   display: grid;
   gap: 5px;
   min-width: 0;
-  max-width: 360px;
+  max-width: 480px;
+}
+
+.timetable-generation-action__buttons {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.timetable-reset-button {
+  padding: 7px 10px;
+  color: #8b2b23;
+  background: #fff;
+  border: 1px solid #d6aaa5;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.timetable-reset-button:hover:not(:disabled) {
+  background: #fff5f4;
+}
+
+.timetable-reset-button:disabled {
+  color: #64748b;
+  border-color: #cbd5e1;
+  background: #f1f5f9;
+  cursor: not-allowed;
+}
+
+.timetable-action-dialog {
+  width: min(620px, calc(100vw - 32px));
+  line-height: 1.6;
+}
+
+.timetable-generation-options {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+}
+
+.timetable-generation-options label {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
 }
 
 .timetable-generation-action .primary-button {
