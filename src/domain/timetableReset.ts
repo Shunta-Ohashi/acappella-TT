@@ -63,6 +63,8 @@ export const resetEventDayTimetable = (input: TimetableResetInput): TimetableRes
     }
     // An existing item on another day is affirmative ownership evidence, not a broken target Lock.
     if (item && stageById.has(item.stageId) && !targetStageIds.has(item.stageId)) return true
+    // The referenced item's target Stage outranks a stale Stage stored on the Lock.
+    if (item && targetStageIds.has(item.stageId)) return false
     return !targetStageIds.has(lock.stageId)
   })
   return { ok: true,

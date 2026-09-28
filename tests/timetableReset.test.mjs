@@ -49,6 +49,45 @@ test('target PerformanceのLockとtarget Stageを明示するbroken Lockを削�
   assert.deepEqual(result.timetableLocks.map(lock => lock.id), ['other-day-lock', 'foreign-lock'])
 })
 
+test('target StageのBreakを参照するLockはstaleな他日Stageを指していても削除し、Breakを保持する', () => {
+  const input = fixture()
+  input.scheduleItems = input.scheduleItems.filter(item => item.kind === 'break')
+  input.paAssignments = []
+  input.dutyAssignments = []
+  input.timetableLocks = [{ ...input.timetableLocks[0], id: 'break-target-lock',
+    scheduleItemId: 'break-1', stageId: 'stage-a2' }]
+  const original = structuredClone(input)
+
+  const result = resetEventDayTimetable(input)
+  assert.equal(result.ok, true)
+  assert.equal(result.hasChanges, true, 'malformed Lockだけが削除対象でも変更あり')
+  assert.deepEqual(result.scheduleItems, input.scheduleItems, 'Break自体は残す')
+  assert.deepEqual(result.timetableLocks, [])
+  assert.deepEqual(input, original, '入力は変更しない')
+})
+
+test('他日Stage上のBreakを参照するLockはstaleなtarget Stageを指していても保持する', () => {
+  const input = fixture()
+  input.scheduleItems.push({ id: 'break-other-day', kind: 'break', stageId: 'stage-a2',
+    title: '他日の休憩', durationMinutes: 5, order: 1 })
+  input.timetableLocks.push({ ...input.timetableLocks[0], id: 'break-other-day-lock',
+    scheduleItemId: 'break-other-day', stageId: 'stage-a1' })
+
+  const result = resetEventDayTimetable(input)
+  assert.ok(result.scheduleItems.some(item => item.id === 'break-other-day'))
+  assert.ok(result.timetableLocks.some(lock => lock.id === 'break-other-day-lock'))
+})
+
+test('参照先item不明のLockだけは保存Stageをfallbackにしてtargetを削除・他日を保持する', () => {
+  const input = fixture()
+  input.timetableLocks.push({ ...input.timetableLocks[0], id: 'missing-other-lock',
+    scheduleItemId: 'missing-other-item', stageId: 'stage-a2' })
+
+  const result = resetEventDayTimetable(input)
+  assert.equal(result.timetableLocks.some(lock => lock.id === 'broken-target-lock'), false)
+  assert.ok(result.timetableLocks.some(lock => lock.id === 'missing-other-lock'))
+})
+
 test('foreignまたはother-day Band Performanceはtarget Stageへ誤配置されていても削除しない', () => {
   const input = fixture()
   input.scheduleItems.push({ id: 'foreign-on-target', kind: 'performance', eventBandId: 'band-b', stageId: 'stage-a1', order: 8 },
