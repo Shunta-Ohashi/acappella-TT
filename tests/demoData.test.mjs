@@ -112,7 +112,8 @@ for (const dayIndex of [0, 1]) {
     const original = structuredClone(data)
     const generated = generateTimetablePlan(input)
     assert.equal(generated.ok, true, JSON.stringify(generated))
-    const candidate = materializeTimetableGenerationPlan({ ...input, plan: generated.plan,
+    const candidate = materializeTimetableGenerationPlan({ ...input, sourceScheduleItems: input.scheduleItems,
+      plan: generated.plan,
       newScheduleItemIds: generated.plan.placements.filter(p => !p.scheduleItemId).map((_, i) => `generated-demo-${dayIndex}-performance-${i}`),
       newPaAssignmentIds: generated.plan.paShifts.map((_, i) => `generated-demo-${dayIndex}-pa-${i}`),
     })

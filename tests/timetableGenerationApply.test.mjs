@@ -12,7 +12,8 @@ test('生成coreのplanを正式IDへ変換しTimeline・Lock・Issue・Dutyを�
   const original = structuredClone(input)
   const generated = generateTimetablePlan(input)
   assert.equal(generated.ok, true, JSON.stringify(generated))
-  const candidate = materializeTimetableGenerationPlan({ ...input, plan: generated.plan,
+  const candidate = materializeTimetableGenerationPlan({ ...input, sourceScheduleItems: input.scheduleItems,
+    plan: generated.plan,
     newScheduleItemIds: generated.plan.placements.filter(p => !p.scheduleItemId).map((_, i) => `new-${i}`),
     newPaAssignmentIds: generated.plan.paShifts.map((_, i) => `new-pa-${i}`),
   })
@@ -133,6 +134,118 @@ test('target Performanceが古いStageに残っていても同一IDを再利用�
   assert.equal(result.ok, true)
   assert.equal(result.scheduleItems.filter(item => item.eventBandId === 'band-1').length, 1)
   assert.equal(result.scheduleItems.find(item => item.id === 'old-p1').stageId, 'stage-a1')
+})
+
+const boundary = itemId => ({ scheduleItemId: itemId, edge: 'start' })
+const addPaReference = (input, itemId, eventId, eventDayId, stageId) => {
+  input.paAssignments.push({ ...input.paAssignments[0], id: `pa-ref-${eventDayId}`,
+    eventId, eventDayId, stageId, from: boundary(itemId) })
+}
+const addDutyReference = (input, itemId, eventDayId, stageId, dutyTypeId = 'duty-photo') => {
+  input.dutyAssignments.push({ ...input.dutyAssignments[0], id: `duty-ref-${eventDayId}`,
+    dutyTypeId, eventDayId, stageId, from: boundary(itemId) })
+}
+const addLockReference = (input, itemId, eventId, stageId) => {
+  input.timetableLocks.push({ ...input.timetableLocks[0], id: `lock-ref-${eventId}`,
+    eventId, stageId, sectionId: undefined, scheduleItemId: itemId })
+}
+const assertMaterialization = (input, expectedOk) => {
+  const original = structuredClone(input)
+  const result = materializeTimetableGenerationPlan(input)
+  assert.equal(result.ok, expectedOk, JSON.stringify(result))
+  if (!expectedOk) assert.equal(result.code, 'INVALID_PLAN_REFERENCE')
+  assert.deepEqual(input, original)
+  return result
+}
+
+for (const [name, addReference] of [
+  ['other-day PA', input => addPaReference(input, 'old-p1', 'event-a', 'day-a2', 'stage-a2')],
+  ['foreign PA', input => addPaReference(input, 'old-p1', 'event-b', 'day-b', 'stage-b')],
+  ['other-day Duty', input => addDutyReference(input, 'old-p1', 'day-a2', 'stage-a2')],
+  ['foreign Duty', input => {
+    input.dutyTypes.push({ id: 'foreign-type', eventId: 'event-b', name: '他Event', order: 0 })
+    addDutyReference(input, 'old-p1', 'day-b', 'stage-b', 'foreign-type')
+  }],
+  ['foreign Lock', input => addLockReference(input, 'old-p1', 'event-b', 'stage-b')],
+]) {
+  test(`stale target Performance IDを再配置する前に${name}の保持参照を拒否する`, () => {
+    const input = materializationInput()
+    input.scheduleItems[0].stageId = 'stage-a2'
+    addReference(input)
+    assertMaterialization(input, false)
+  })
+}
+
+test('target Dutyとtarget Lockは再配置後のcandidateに対して最終検証できる', () => {
+  const input = materializationInput()
+  input.scheduleItems[0].stageId = 'stage-a2'
+  addDutyReference(input, 'old-p1', 'day-a1', 'stage-a1')
+  input.dutyAssignments.at(-1).until = { scheduleItemId: 'old-p1', edge: 'end' }
+  const candidate = assertMaterialization(input, true)
+  assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true)
+})
+
+for (const [name, addReference] of [
+  ['target PA', input => { input.dutyAssignments = []; input.timetableLocks = [] }],
+  ['target Duty', input => {
+    input.paAssignments = []; input.timetableLocks = []
+    addDutyReference(input, 'old-p1', 'day-a1', 'stage-a1')
+  }],
+  ['target Lock', input => { input.paAssignments = []; input.dutyAssignments = [] }],
+  ['参照なし', input => { input.paAssignments = []; input.dutyAssignments = []; input.timetableLocks = [] }],
+]) {
+  test(`stale target Performance IDは${name}のみなら再利用できる`, () => {
+    const input = materializationInput()
+    input.scheduleItems[0].stageId = 'stage-a2'
+    addReference(input)
+    const result = assertMaterialization(input, true)
+    assert.equal(result.scheduleItems.find(item => item.id === 'old-p1').stageId, 'stage-a1')
+  })
+}
+
+for (const [name, addReference] of [
+  ['foreign PA', input => addPaReference(input, 'break-1', 'event-b', 'day-b', 'stage-b')],
+  ['other-day Duty', input => addDutyReference(input, 'break-1', 'day-a2', 'stage-a2')],
+  ['foreign Lock', input => addLockReference(input, 'break-1', 'event-b', 'stage-b')],
+]) {
+  test(`target Break再配置前に${name}の保持参照を拒否する`, () => {
+    const input = materializationInput()
+    input.plan.breaks[0] = { ...input.plan.breaks[0], sectionId: 'section-2',
+      afterSectionId: undefined, order: 1 }
+    addReference(input)
+    assertMaterialization(input, false)
+  })
+}
+
+const removeBreakFromBaseline = input => {
+  input.scheduleItems = input.scheduleItems.filter(item => item.id !== 'break-1')
+  input.plan.breaks = []
+  input.dutyAssignments = []
+}
+
+for (const [name, addReference] of [
+  ['Lock', input => addLockReference(input, 'break-1', 'event-a', 'stage-a1')],
+  ['Duty', input => addDutyReference(input, 'break-1', 'day-a1', 'stage-a1')],
+  ['other-day PA', input => addPaReference(input, 'break-1', 'event-a', 'day-a2', 'stage-a2')],
+  ['foreign PA', input => addPaReference(input, 'break-1', 'event-b', 'day-b', 'stage-b')],
+]) {
+  test(`optionで除外したBreakを参照する${name}はmaterializer単体でも拒否する`, () => {
+    const input = materializationInput()
+    removeBreakFromBaseline(input)
+    addReference(input)
+    assertMaterialization(input, false)
+  })
+}
+
+test('optionで除外したBreakの参照がtarget PAだけならmaterializeでき、参照なしでも成功する', () => {
+  const input = materializationInput()
+  removeBreakFromBaseline(input)
+  input.paAssignments[0].from = boundary('break-1')
+  const result = assertMaterialization(input, true)
+  assert.equal(result.scheduleItems.some(item => item.id === 'break-1'), false)
+
+  input.paAssignments = []
+  assertMaterialization(input, true)
 })
 
 test('Breakの配置情報だけを反映し古いsectionId/afterSectionIdを残さない', () => {
@@ -326,7 +439,9 @@ test('最終guardは保持したDutyのbroken Boundaryを検出する', () => {
 test('別Dayの壊れたLock/Duty/PAをtarget Dayの最終guardへ混入させない', () => {
   const input = materializationInput()
   input.timetableLocks.push({ ...input.timetableLocks[0], id: 'other-lock', stageId: 'stage-a2', scheduleItemId: 'p-a2', sectionId: undefined })
-  input.dutyAssignments.push({ ...input.dutyAssignments[0], id: 'other-duty', eventDayId: 'day-a2', stageId: 'stage-a2', from: { scheduleItemId: 'missing', edge: 'start' } })
+  input.dutyAssignments.push({ ...input.dutyAssignments[0], id: 'other-duty', eventDayId: 'day-a2',
+    stageId: 'stage-a2', from: { scheduleItemId: 'missing', edge: 'start' },
+    until: { scheduleItemId: 'p-a2', edge: 'end' } })
   const candidate = materializeTimetableGenerationPlan(input)
   assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true)
 })

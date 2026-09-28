@@ -198,7 +198,8 @@ test('同じbaselineを生成・materialization・最終検証へ渡し、除外
   const input = { ...original, scheduleItems: filtered(original, { keepIntraSectionBreaks: false, keepInterSectionBreaks: true }) }
   const result = generateTimetablePlan(input)
   assert.equal(result.ok, true, JSON.stringify(result))
-  const candidate = materializeTimetableGenerationPlan({ ...input, plan: result.plan,
+  const candidate = materializeTimetableGenerationPlan({ ...input, sourceScheduleItems: original.scheduleItems,
+    plan: result.plan,
     newScheduleItemIds: result.plan.placements.filter(p => !p.scheduleItemId).map((_, i) => `option-p-${i}`),
     newPaAssignmentIds: result.plan.paShifts.map((_, i) => `option-pa-${i}`) })
   assert.equal(candidate.ok, true)

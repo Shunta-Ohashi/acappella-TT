@@ -1,4 +1,5 @@
-import type { Event, EventBand, EventDay, PaAssignment, ScheduleBoundary, ScheduleItem, Section, Stage } from './models'
+import type { DutyAssignment, DutyType, Event, EventBand, EventDay, PaAssignment, ScheduleBoundary,
+  ScheduleItem, Section, Stage, TimetableLock } from './models'
 import type { PlannedScheduleBoundary } from './paShiftPlanning'
 import type { TimetableGenerationInput, TimetableGenerationPlan } from './timetableGeneration'
 import { isValidScheduleItemSectionAssignment } from './schedule.ts'
@@ -8,6 +9,7 @@ import { detectScheduleIssues, type ScheduleIssue } from './issues.ts'
 import { getDutyAssignmentsForEvent } from './dutyAssignments.ts'
 import { resolvePaAssignmentInterval } from './paAssignments.ts'
 import { hasSafeStageTimelineArithmetic } from './timetableGenerationArithmetic.ts'
+import { validateTimetableGenerationBreakRemoval } from './timetableGenerationOptions.ts'
 import type { CalculatedScheduleItem } from './timeline'
 
 export interface MaterializedTimetable {
@@ -30,8 +32,12 @@ interface MaterializationInput {
   stages: Stage[]
   sections: Section[]
   eventBands: EventBand[]
+  sourceScheduleItems: ScheduleItem[]
   scheduleItems: ScheduleItem[]
   paAssignments: PaAssignment[]
+  dutyTypes: DutyType[]
+  dutyAssignments: DutyAssignment[]
+  timetableLocks: TimetableLock[]
   plan: TimetableGenerationPlan
   newScheduleItemIds: string[]
   newPaAssignmentIds: string[]
@@ -47,9 +53,25 @@ const hasUnambiguousGenerationScope = (
   hasUniqueIds(sections) && hasUniqueIds(eventBands) &&
   eventDays.filter(day => day.id === eventDay.id && day.eventId === event.id).length === 1
 
+const isTargetTimetableLock = (
+  lock: TimetableLock, eventId: string, stageIds: Set<string>, sectionIds: Set<string>,
+  bandIds: Set<string>, itemById: Map<string, ScheduleItem>,
+): boolean => {
+  const item = itemById.get(lock.scheduleItemId)
+  return lock.eventId === eventId && (stageIds.has(lock.stageId) ||
+    (lock.sectionId !== undefined && sectionIds.has(lock.sectionId)) ||
+    (item !== undefined && (stageIds.has(item.stageId) ||
+      (item.kind === 'performance' && bandIds.has(item.eventBandId)))))
+}
+
+const referencesItem = (
+  assignment: Pick<PaAssignment, 'from' | 'until'>, itemIds: Set<string>,
+): boolean => itemIds.has(assignment.from.scheduleItemId) || itemIds.has(assignment.until.scheduleItemId)
+
 /** Convert a plan without allocating IDs or changing any committed collection. */
 export const materializeTimetableGenerationPlan = ({
-  event, eventDay, eventDays, stages, sections, eventBands, scheduleItems, paAssignments,
+  event, eventDay, eventDays, stages, sections, eventBands, sourceScheduleItems,
+  scheduleItems, paAssignments, dutyTypes, dutyAssignments, timetableLocks,
   plan, newScheduleItemIds, newPaAssignmentIds,
 }: MaterializationInput): MaterializationResult => {
   const fail = (code: MaterializationFailureCode): MaterializationResult => ({ ok: false, code })
@@ -57,6 +79,10 @@ export const materializeTimetableGenerationPlan = ({
     plan.eventDayId !== eventDay.id) {
     return fail('PLAN_SCOPE_MISMATCH')
   }
+  if (!hasUniqueIds(sourceScheduleItems) || !validateTimetableGenerationBreakRemoval({
+    event, eventDay, originalScheduleItems: sourceScheduleItems,
+    generationScheduleItems: scheduleItems, paAssignments, dutyAssignments, timetableLocks,
+  }).ok) return fail('INVALID_PLAN_REFERENCE')
   if (newScheduleItemIds.length !== plan.placements.filter(p => p.scheduleItemId === undefined).length ||
     newPaAssignmentIds.length !== plan.paShifts.length) return fail('ID_COUNT_MISMATCH')
   const newIds = [...newScheduleItemIds, ...newPaAssignmentIds]
@@ -128,6 +154,20 @@ export const materializeTimetableGenerationPlan = ({
     ...targetBreaks.map(item => item.id),
     ...[...existingByBand.values()].map(item => item.id),
   ])
+  const targetStageIds = new Set(targetStages.map(stage => stage.id))
+  const targetSectionIds = new Set(sections.filter(section => targetStageIds.has(section.stageId))
+    .map(section => section.id))
+  const targetBandIds = new Set(targetBands.map(band => band.id))
+  const targetDuties = new Set(getDutyAssignmentsForEvent({
+    event, stages: targetStages, dutyTypes, dutyAssignments,
+  }).filter(duty => duty.eventDayId === eventDay.id))
+  if (paAssignments.some(pa => (pa.eventId !== event.id || pa.eventDayId !== eventDay.id) &&
+    referencesItem(pa, replacedScheduleItemIds)) ||
+    dutyAssignments.some(duty => !targetDuties.has(duty) && referencesItem(duty, replacedScheduleItemIds)) ||
+    timetableLocks.some(lock => replacedScheduleItemIds.has(lock.scheduleItemId) &&
+      !isTargetTimetableLock(lock, event.id, targetStageIds, targetSectionIds, targetBandIds, itemById))) {
+    return fail('INVALID_PLAN_REFERENCE')
+  }
   const candidateItems = [
     ...scheduleItems.filter(item => !replacedScheduleItemIds.has(item.id)),
     ...generated,
@@ -195,13 +235,8 @@ export const validateTimetableGenerationCandidate = (
   }
   const targetItems = candidate.scheduleItems.filter(item => stageIds.has(item.stageId))
   const originalItemById = new Map(input.scheduleItems.map(item => [item.id, item]))
-  const targetLocks = timetableLocks.filter(lock => {
-    const item = originalItemById.get(lock.scheduleItemId)
-    return lock.eventId === event.id && (stageIds.has(lock.stageId) ||
-      (lock.sectionId !== undefined && sectionIds.has(lock.sectionId)) ||
-      (item !== undefined && (stageIds.has(item.stageId) ||
-        (item.kind === 'performance' && bandIds.has(item.eventBandId)))))
-  })
+  const targetLocks = timetableLocks.filter(lock =>
+    isTargetTimetableLock(lock, event.id, stageIds, sectionIds, bandIds, originalItemById))
   // The Lock evaluator compares lane-local positions. Stage-wide fixed positions
   // are checked against the complete Stage sequence by detectScheduleIssues.
   const lockBands = targetBands.map(band => {

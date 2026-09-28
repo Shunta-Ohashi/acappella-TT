@@ -917,7 +917,8 @@ function App() {
       feedback(presentTimetableGenerationFailure(result.failure, { stages, sections, eventBands }))
       return
     }
-    const candidate = materializeTimetableGenerationPlan({ ...input, paAssignments, plan: result.plan,
+    const candidate = materializeTimetableGenerationPlan({ ...input, sourceScheduleItems: scheduleItems,
+      paAssignments, plan: result.plan,
       newScheduleItemIds: result.plan.placements.filter(p => p.scheduleItemId === undefined)
         .map(() => createId('schedule-performance')),
       newPaAssignmentIds: result.plan.paShifts.map(() => createId('pa-assignment')),

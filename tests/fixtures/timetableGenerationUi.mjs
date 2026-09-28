@@ -71,5 +71,8 @@ export const createGenerationUiPlan = () => ({
   diagnostics: { scheduleCandidatesEvaluated: 2, paPlansEvaluated: 4, schedulingSoftViolations: [] },
 })
 
-export const materializationInput = () => ({ ...createGenerationUiInput(), plan: createGenerationUiPlan(),
-  newScheduleItemIds: ['new-p2'], newPaAssignmentIds: ['new-pa-0', 'new-pa-1', 'new-pa-2', 'new-pa-3'] })
+export const materializationInput = () => {
+  const input = createGenerationUiInput()
+  return { ...input, sourceScheduleItems: input.scheduleItems, plan: createGenerationUiPlan(),
+    newScheduleItemIds: ['new-p2'], newPaAssignmentIds: ['new-pa-0', 'new-pa-1', 'new-pa-2', 'new-pa-3'] }
+}

@@ -156,13 +156,24 @@ test('foreignまたはother-day Band Performanceはtarget Stageへ誤配置さ�
   assert.ok(result.timetableLocks.some(lock => lock.id === 'other-day-ref'))
 })
 
-test('missing Bandでもtarget Stageから判定できるPerformanceと対応Lockは初期化できる', () => {
+test('missing BandのPerformanceがtarget Stage上にある場合は所有者を推測せず初期化を拒否する', () => {
   const input = fixture()
   input.scheduleItems.push({ id: 'missing-band-p', kind: 'performance', eventBandId: 'missing-band', stageId: 'stage-a1', order: 5 })
   input.timetableLocks.push({ ...input.timetableLocks[0], id: 'missing-band-lock', scheduleItemId: 'missing-band-p' })
+  const original = structuredClone(input)
   const result = resetEventDayTimetable(input)
-  assert.equal(result.scheduleItems.some(item => item.id === 'missing-band-p'), false)
-  assert.equal(result.timetableLocks.some(lock => lock.id === 'missing-band-lock'), false)
+  assert.deepEqual(result, { ok: false, code: 'INVALID_SCOPE' })
+  assert.deepEqual(input, original)
+})
+
+test('missing BandのPerformanceが非対象Stage上にある場合は保持する', () => {
+  const input = fixture()
+  const missing = { id: 'missing-band-p', kind: 'performance', eventBandId: 'missing-band',
+    stageId: 'stage-a2', order: 5 }
+  input.scheduleItems.push(missing)
+  const result = resetEventDayTimetable(input)
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.scheduleItems.find(item => item.id === missing.id), missing)
 })
 
 test('missing DutyTypeでも既存helperがtarget Eventへ帰属させる担当は初期化する', () => {
@@ -249,7 +260,8 @@ test('デモの撮影担当削除後なら部内OFFで生成・適用でき、�
       options: { keepIntraSectionBreaks: false, keepInterSectionBreaks: !removeInter } })
     const generated = generateTimetablePlan(input)
     assert.equal(generated.ok, true, JSON.stringify(generated))
-    const candidate = materializeTimetableGenerationPlan({ ...input, plan: generated.plan,
+    const candidate = materializeTimetableGenerationPlan({ ...input, sourceScheduleItems: reset.scheduleItems,
+      plan: generated.plan,
       newScheduleItemIds: generated.plan.placements.map((_, i) => `reset-demo-p-${i}`),
       newPaAssignmentIds: generated.plan.paShifts.map((_, i) => `reset-demo-pa-${i}`) })
     assert.equal(candidate.ok, true)
