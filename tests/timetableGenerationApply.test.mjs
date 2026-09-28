@@ -54,6 +54,8 @@ test('一意なStageを持つ複数日では対象日だけ更新し、他日の
   const candidate = materializeTimetableGenerationPlan(input)
   assert.equal(candidate.ok, true)
   assert.deepEqual(candidate.scheduleItems.find(item => item.id === otherDayBreak.id), otherDayBreak)
+  assert.deepEqual(candidate.scheduleItems.find(item => item.id === 'p-a2'),
+    input.scheduleItems.find(item => item.id === 'p-a2'))
   assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true)
 })
 
@@ -191,6 +193,16 @@ for (const [name, edit, code] of [
   ['既存参照missing', i => { i.plan.placements[0].scheduleItemId = 'missing' }, 'INVALID_PLAN_REFERENCE'],
   ['既存参照がBreak', i => { i.plan.placements[0].scheduleItemId = 'break-1' }, 'INVALID_PLAN_REFERENCE'],
   ['既存参照が別Band', i => { i.plan.placements[0].scheduleItemId = 'p-a2' }, 'INVALID_PLAN_REFERENCE'],
+  ['別Day Performanceがtarget Stageにある', i => {
+    i.scheduleItems.find(item => item.id === 'p-a2').stageId = 'stage-a1'
+  }, 'INVALID_PLAN_REFERENCE'],
+  ['別Event Performanceがtarget Stageにある', i => {
+    i.scheduleItems.find(item => item.id === 'p-b').stageId = 'stage-a1'
+  }, 'INVALID_PLAN_REFERENCE'],
+  ['unknown EventBandのPerformanceがtarget Stageにある', i => {
+    i.scheduleItems.push({ id: 'unknown-performance', kind: 'performance',
+      eventBandId: 'missing-band', stageId: 'stage-a1', order: 1 })
+  }, 'INVALID_PLAN_REFERENCE'],
   ['既存ID再利用の省略', i => { delete i.plan.placements[0].scheduleItemId; i.newScheduleItemIds.push('extra') }, 'INVALID_PLAN_REFERENCE'],
   ['missing Band', i => { i.plan.placements[1].eventBandId = 'missing' }, 'INVALID_PLAN_REFERENCE'],
   ['別Day Band', i => { i.plan.placements[1].eventBandId = 'band-a2' }, 'INVALID_PLAN_REFERENCE'],
@@ -229,6 +241,40 @@ test('同一input・ID配列のmaterializationと最終検証はdeterministicか
   assert.deepEqual(validateTimetableGenerationCandidate(input, candidate), first)
   assert.deepEqual(input, original)
 })
+
+for (const [name, edit, reason] of [
+  ['target Performance欠落', candidate => {
+    candidate.scheduleItems = candidate.scheduleItems.filter(item => item.id !== 'new-p2')
+  }, '生成結果に出演バンドの不足・重複、または開催日の不一致があります。'],
+  ['target Performance重複', candidate => {
+    candidate.scheduleItems.push({ ...candidate.scheduleItems.find(item => item.id === 'old-p1'), id: 'duplicate-p1' })
+  }, '生成結果に出演バンドの不足・重複、または開催日の不一致があります。'],
+  ['target Performanceが別Day Stageにある', candidate => {
+    candidate.scheduleItems.find(item => item.id === 'new-p2').stageId = 'stage-a2'
+  }, '生成結果に出演バンドの不足・重複、または開催日の不一致があります。'],
+  ['別Day Performanceがtarget Stageにある', candidate => {
+    candidate.scheduleItems.find(item => item.id === 'p-a2').stageId = 'stage-a1'
+  }, '生成結果に対象外の出演バンドが含まれています。'],
+  ['別Event Performanceがtarget Stageにある', candidate => {
+    candidate.scheduleItems.find(item => item.id === 'p-b').stageId = 'stage-a1'
+  }, '生成結果に対象外の出演バンドが含まれています。'],
+  ['unknown EventBandのPerformanceがtarget Stageにある', candidate => {
+    candidate.scheduleItems.push({ id: 'unknown-performance', kind: 'performance',
+      eventBandId: 'missing-band', stageId: 'stage-a1', order: 1 })
+  }, '生成結果に対象外の出演バンドが含まれています。'],
+]) {
+  test(`最終guardはTimeline計算前に${name}を拒否し、入力を変更しない`, () => {
+    const input = materializationInput()
+    const candidate = materializeTimetableGenerationPlan(input)
+    assert.equal(candidate.ok, true)
+    edit(candidate)
+    const originalInput = structuredClone(input)
+    const originalCandidate = structuredClone(candidate)
+    assert.deepEqual(validateTimetableGenerationCandidate(input, candidate), { ok: false, reason })
+    assert.deepEqual(input, originalInput)
+    assert.deepEqual(candidate, originalCandidate)
+  })
+}
 
 for (const [name, edit] of [
   ['invalid Section', c => { c.scheduleItems.find(item => item.id === 'new-p2').sectionId = 'missing' }],

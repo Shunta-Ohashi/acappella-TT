@@ -124,9 +124,12 @@ export const materializeTimetableGenerationPlan = ({
     }
   }
 
+  const replacedScheduleItemIds = new Set([
+    ...targetBreaks.map(item => item.id),
+    ...[...existingByBand.values()].map(item => item.id),
+  ])
   const candidateItems = [
-    ...scheduleItems.filter(item => !stageById.has(item.stageId) &&
-      !(item.kind === 'performance' && bandById.has(item.eventBandId))),
+    ...scheduleItems.filter(item => !replacedScheduleItemIds.has(item.id)),
     ...generated,
   ]
   const candidateItemById = new Map(candidateItems.map(item => [item.id, item]))
@@ -177,6 +180,16 @@ export const validateTimetableGenerationCandidate = (
   const sectionIds = new Set(targetSections.map(section => section.id))
   const targetBands = eventBands.filter(band => band.eventId === event.id && band.eventDayId === eventDay.id)
   const bandIds = new Set(targetBands.map(band => band.id))
+  const candidatePerformances = candidate.scheduleItems.filter(item => item.kind === 'performance')
+  const targetBandPerformances = candidatePerformances.filter(item => bandIds.has(item.eventBandId))
+  if (targetBandPerformances.length !== targetBands.length ||
+    new Set(targetBandPerformances.map(item => item.eventBandId)).size !== targetBands.length ||
+    targetBandPerformances.some(item => !stageIds.has(item.stageId))) {
+    return fail('生成結果に出演バンドの不足・重複、または開催日の不一致があります。')
+  }
+  if (candidatePerformances.some(item => stageIds.has(item.stageId) && !bandIds.has(item.eventBandId))) {
+    return fail('生成結果に対象外の出演バンドが含まれています。')
+  }
   const targetItems = candidate.scheduleItems.filter(item => stageIds.has(item.stageId))
   const originalItemById = new Map(input.scheduleItems.map(item => [item.id, item]))
   const targetLocks = timetableLocks.filter(lock => {
