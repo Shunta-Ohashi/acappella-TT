@@ -86,7 +86,7 @@ export const materializeTimetableGenerationPlan = ({
   if (newScheduleItemIds.length !== plan.placements.filter(p => p.scheduleItemId === undefined).length ||
     newPaAssignmentIds.length !== plan.paShifts.length) return fail('ID_COUNT_MISMATCH')
   const newIds = [...newScheduleItemIds, ...newPaAssignmentIds]
-  const existingIds = new Set([...scheduleItems, ...paAssignments].map(item => item.id))
+  const existingIds = new Set([...sourceScheduleItems, ...scheduleItems, ...paAssignments].map(item => item.id))
   if (new Set(newIds).size !== newIds.length ||
     newIds.some(id => !id.trim() || existingIds.has(id))) return fail('ID_COLLISION')
 
@@ -216,6 +216,13 @@ export const validateTimetableGenerationCandidate = (
   }
   if (!hasUniqueIds(candidate.scheduleItems)) {
     return fail('生成結果のScheduleItem IDが重複しています。')
+  }
+  if (!hasUniqueIds(candidate.paAssignments)) {
+    return fail('生成結果のPA Assignment IDが重複しています。')
+  }
+  const scheduleItemIds = new Set(candidate.scheduleItems.map(item => item.id))
+  if (candidate.paAssignments.some(pa => scheduleItemIds.has(pa.id))) {
+    return fail('生成結果のScheduleItemとPA AssignmentのIDが重複しています。')
   }
   const targetStages = stages.filter(stage => stage.eventDayId === eventDay.id)
   const stageIds = new Set(targetStages.map(stage => stage.id))

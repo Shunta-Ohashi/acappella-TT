@@ -248,6 +248,36 @@ test('optionで除外したBreakの参照がtarget PAだけならmaterializeで�
   assertMaterialization(input, true)
 })
 
+for (const [name, edit] of [
+  ['除外したBreak IDを新Performanceへ転用', input => { input.newScheduleItemIds = ['break-1'] }],
+  ['除外したBreak IDを新PAへ転用', input => { input.newPaAssignmentIds[0] = 'break-1' }],
+]) {
+  test(`${name}できずID_COLLISIONとなる`, () => {
+    const input = materializationInput()
+    removeBreakFromBaseline(input)
+    edit(input)
+    const original = structuredClone(input)
+    assert.deepEqual(materializeTimetableGenerationPlan(input), { ok: false, code: 'ID_COLLISION' })
+    assert.deepEqual(input, original)
+  })
+}
+
+test('sourceにだけ残るPerformance IDも新IDとして再利用できない', () => {
+  const input = materializationInput()
+  input.scheduleItems = input.scheduleItems.filter(item => item.id !== 'p-b')
+  input.newScheduleItemIds = ['p-b']
+  const original = structuredClone(input)
+  assert.deepEqual(materializeTimetableGenerationPlan(input), { ok: false, code: 'ID_COLLISION' })
+  assert.deepEqual(input, original)
+})
+
+test('既存Performanceの正式なID再利用と新規IDの割り当ては引き続き成功する', () => {
+  const input = materializationInput()
+  const result = assertMaterialization(input, true)
+  assert.equal(result.scheduleItems.find(item => item.eventBandId === 'band-1').id, 'old-p1')
+  assert.equal(result.scheduleItems.find(item => item.eventBandId === 'band-2').id, 'new-p2')
+})
+
 test('Breakの配置情報だけを反映し古いsectionId/afterSectionIdを残さない', () => {
   const input = materializationInput()
   input.plan.breaks[0] = { ...input.plan.breaks[0], afterSectionId: undefined, sectionId: 'section-2', order: 1 }
@@ -376,6 +406,34 @@ for (const [name, edit] of [
     const originalCandidate = structuredClone(candidate)
     assert.deepEqual(validateTimetableGenerationCandidate(input, candidate),
       { ok: false, reason: '生成結果のScheduleItem IDが重複しています。' })
+    assert.deepEqual(input, originalInput)
+    assert.deepEqual(candidate, originalCandidate)
+  })
+}
+
+for (const [name, edit, reason] of [
+  ['target PA同士', candidate => {
+    candidate.paAssignments.find(pa => pa.id === 'new-pa-1').id = 'new-pa-0'
+  }, '生成結果のPA Assignment IDが重複しています。'],
+  ['other-day PAとtarget PA', candidate => {
+    candidate.paAssignments.find(pa => pa.id === 'pa-a2').id = 'new-pa-0'
+  }, '生成結果のPA Assignment IDが重複しています。'],
+  ['foreign PAとtarget PA', candidate => {
+    candidate.paAssignments.find(pa => pa.id === 'pa-b').id = 'new-pa-0'
+  }, '生成結果のPA Assignment IDが重複しています。'],
+  ['ScheduleItemとPA', candidate => {
+    candidate.paAssignments.find(pa => pa.id === 'new-pa-0').id = 'old-p1'
+  }, '生成結果のScheduleItemとPA AssignmentのIDが重複しています。'],
+]) {
+  test(`最終guardは${name}のID重複をTimeline計算前に拒否する`, () => {
+    const input = materializationInput()
+    const candidate = materializeTimetableGenerationPlan(input)
+    assert.equal(candidate.ok, true)
+    assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true, '一意なIDは有効')
+    edit(candidate)
+    const originalInput = structuredClone(input)
+    const originalCandidate = structuredClone(candidate)
+    assert.deepEqual(validateTimetableGenerationCandidate(input, candidate), { ok: false, reason })
     assert.deepEqual(input, originalInput)
     assert.deepEqual(candidate, originalCandidate)
   })
