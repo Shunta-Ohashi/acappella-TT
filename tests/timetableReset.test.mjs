@@ -21,7 +21,8 @@ const fixture = () => {
   input.timetableLocks.push({ ...input.timetableLocks[0], id: 'stale-stage-lock', scheduleItemId: 'stale-p2', stageId: 'missing-stage' },
     { ...input.timetableLocks[0], id: 'broken-target-lock', scheduleItemId: 'missing-item' },
     { ...input.timetableLocks[0], id: 'other-day-lock', scheduleItemId: 'p-a2', stageId: 'stage-a2', sectionId: undefined },
-    { ...input.timetableLocks[0], id: 'foreign-lock', eventId: 'event-b' })
+    { ...input.timetableLocks[0], id: 'foreign-lock', eventId: 'event-b',
+      scheduleItemId: 'p-b', stageId: 'stage-b', sectionId: undefined })
   return input
 }
 
@@ -38,16 +39,70 @@ test('全target Stageとstale Stage上のtarget Band Performanceを削除し、B
 
 test('PAはEvent+Day、Dutyは既存ownership helper+Dayで削除し、他日とforeign Eventを保つ', () => {
   const input = fixture()
-  input.paAssignments.push({ ...input.paAssignments[0], id: 'foreign-pa-same-day', eventId: 'event-b' })
+  input.paAssignments.push({ ...input.paAssignments[0], id: 'foreign-pa-same-day', eventId: 'event-b',
+    from: { scheduleItemId: 'p-b', edge: 'start' }, until: { scheduleItemId: 'p-b', edge: 'end' } })
   const result = resetEventDayTimetable(input)
   assert.deepEqual(result.paAssignments.map(pa => pa.id), ['pa-a2', 'pa-b', 'foreign-pa-same-day'])
   assert.deepEqual(result.dutyAssignments.map(duty => duty.id), ['other-day-duty', 'foreign-duty'])
 })
 
 test('target PerformanceのLockとtarget Stageを明示するbroken Lockを削除し、他日/foreign Lockを保持する', () => {
-  const result = resetEventDayTimetable(fixture())
+  const input = fixture()
+  const result = resetEventDayTimetable(input)
   assert.deepEqual(result.timetableLocks.map(lock => lock.id), ['other-day-lock', 'foreign-lock'])
+  assert.ok(result.scheduleItems.some(item => item.id === 'p-a2'))
+  assert.ok(result.scheduleItems.some(item => item.id === 'p-b'))
+  assert.equal(result.scheduleItems.some(item => item.id === 'old-p1'), false)
 })
+
+test('削除対象Performanceを参照するforeign Lockがあれば初期化全体を拒否する', () => {
+  const input = fixture()
+  input.timetableLocks.push({ ...input.timetableLocks[0], id: 'cross-scope-lock',
+    eventId: 'event-b', scheduleItemId: 'old-p1', stageId: 'stage-b' })
+  const original = structuredClone(input)
+
+  assert.deepEqual(resetEventDayTimetable(input), { ok: false, code: 'INVALID_SCOPE' })
+  assert.deepEqual(input, original)
+})
+
+test('foreign Lockが保持対象のtarget Breakを参照してもBreakとLockを維持する', () => {
+  const input = fixture()
+  input.timetableLocks.push({ ...input.timetableLocks[0], id: 'foreign-break-lock',
+    eventId: 'event-b', scheduleItemId: 'break-1', stageId: 'stage-b' })
+
+  const result = resetEventDayTimetable(input)
+  assert.equal(result.ok, true)
+  assert.ok(result.scheduleItems.some(item => item.id === 'break-1'))
+  assert.ok(result.timetableLocks.some(lock => lock.id === 'foreign-break-lock'))
+})
+
+for (const [name, addReference] of [
+  ['foreign PAの開始Boundary', input => {
+    input.paAssignments.push({ ...input.paAssignments.find(pa => pa.id === 'pa-b'),
+      id: 'cross-scope-pa', from: { scheduleItemId: 'old-p1', edge: 'start' } })
+  }],
+  ['other-day PAの終了Boundary', input => {
+    input.paAssignments.push({ ...input.paAssignments.find(pa => pa.id === 'pa-a2'),
+      id: 'cross-day-pa', until: { scheduleItemId: 'old-p1', edge: 'end' } })
+  }],
+  ['foreign Dutyの開始Boundary', input => {
+    input.dutyAssignments.find(duty => duty.id === 'foreign-duty').from =
+      { scheduleItemId: 'old-p1', edge: 'start' }
+  }],
+  ['other-day Dutyの終了Boundary', input => {
+    input.dutyAssignments.find(duty => duty.id === 'other-day-duty').until =
+      { scheduleItemId: 'old-p1', edge: 'end' }
+  }],
+]) {
+  test(`削除対象Performanceを参照する${name}があれば初期化全体を拒否する`, () => {
+    const input = fixture()
+    addReference(input)
+    const original = structuredClone(input)
+
+    assert.deepEqual(resetEventDayTimetable(input), { ok: false, code: 'INVALID_SCOPE' })
+    assert.deepEqual(input, original)
+  })
+}
 
 test('target StageのBreakを参照するLockはstaleな他日Stageを指していても削除し、Breakを保持する', () => {
   const input = fixture()

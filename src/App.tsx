@@ -973,7 +973,7 @@ function App() {
     const result = resetEventDayTimetable(timetableResetInput)
     if (!result.ok) {
       setGenerationFeedback({ eventId: selectedEvent.id, eventDayId: timetableEventDay.id, kind: 'error',
-        message: '初期化対象の所属を安全に判定できません。データの整合性を確認してください。' })
+        message: '参照関係またはデータの所属を安全に判定できないため、TTを初期化できません。' })
       return
     }
     // All four collections commit together; existing autosave and draft remount observe this snapshot.
@@ -1651,7 +1651,7 @@ function App() {
                     </button>
                     <button type="button" className="timetable-reset-button"
                       disabled={!timetableResetResult?.ok || !timetableResetResult.hasChanges}
-                      title={!timetableResetResult?.ok ? '開催日または配置データの所属を安全に判定できません。'
+                      title={!timetableResetResult?.ok ? '参照関係またはデータの所属を安全に判定できないため、初期化できません。'
                         : !timetableResetResult.hasChanges ? '初期化対象の配置・担当・TT固定がありません。休憩は残ります。'
                         : 'この開催日の全Stageの出演配置・PA・当日運営担当・TT固定を削除します。休憩と出演条件は残します。'}
                       onClick={handleOpenTimetableReset}>この開催日のTTを初期化</button>

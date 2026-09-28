@@ -47,11 +47,20 @@ export const resetEventDayTimetable = (input: TimetableResetInput): TimetableRes
     return band ? band.eventId === event.id && band.eventDayId === eventDay.id
       : targetStageIds.has(item.stageId)
   }).map(item => item.id))
-  const nextItems = scheduleItems.filter(item => !removedPerformanceIds.has(item.id))
-  const nextPa = paAssignments.filter(pa => pa.eventId !== event.id || pa.eventDayId !== eventDay.id)
   const eventStages = stages.filter(stage => eventDayById.get(stage.eventDayId)?.eventId === event.id)
   const targetDuties = new Set(getDutyAssignmentsForEvent({ event, stages: eventStages, dutyTypes, dutyAssignments })
     .filter(duty => duty.eventDayId === eventDay.id))
+  const referencesRemovedPerformance = ({ from, until }: Pick<PaAssignment, 'from' | 'until'>): boolean =>
+    removedPerformanceIds.has(from.scheduleItemId) || removedPerformanceIds.has(until.scheduleItemId)
+  if (timetableLocks.some(lock => lock.eventId !== event.id &&
+    removedPerformanceIds.has(lock.scheduleItemId)) ||
+    paAssignments.some(pa => (pa.eventId !== event.id || pa.eventDayId !== eventDay.id) &&
+      referencesRemovedPerformance(pa)) ||
+    dutyAssignments.some(duty => !targetDuties.has(duty) && referencesRemovedPerformance(duty))) {
+    return { ok: false, code: 'INVALID_SCOPE' }
+  }
+  const nextItems = scheduleItems.filter(item => !removedPerformanceIds.has(item.id))
+  const nextPa = paAssignments.filter(pa => pa.eventId !== event.id || pa.eventDayId !== eventDay.id)
   const nextDuty = dutyAssignments.filter(duty => !targetDuties.has(duty))
   const nextLocks = timetableLocks.filter(lock => {
     if (lock.eventId !== event.id) return true
