@@ -26,6 +26,7 @@ export type MaterializationResult =
 interface MaterializationInput {
   event: Event
   eventDay: EventDay
+  eventDays: EventDay[]
   stages: Stage[]
   sections: Section[]
   eventBands: EventBand[]
@@ -36,13 +37,22 @@ interface MaterializationInput {
   newPaAssignmentIds: string[]
 }
 
+const hasUniqueIds = (items: { id: string }[]): boolean =>
+  new Set(items.map(item => item.id)).size === items.length
+
+const hasUnambiguousGenerationScope = (
+  event: Event, eventDay: EventDay, eventDays: EventDay[], stages: Stage[],
+): boolean => eventDay.eventId === event.id && hasUniqueIds(eventDays) && hasUniqueIds(stages) &&
+  eventDays.filter(day => day.id === eventDay.id && day.eventId === event.id).length === 1
+
 /** Convert a plan without allocating IDs or changing any committed collection. */
 export const materializeTimetableGenerationPlan = ({
-  event, eventDay, stages, sections, eventBands, scheduleItems, paAssignments,
+  event, eventDay, eventDays, stages, sections, eventBands, scheduleItems, paAssignments,
   plan, newScheduleItemIds, newPaAssignmentIds,
 }: MaterializationInput): MaterializationResult => {
   const fail = (code: MaterializationFailureCode): MaterializationResult => ({ ok: false, code })
-  if (eventDay.eventId !== event.id || plan.eventDayId !== eventDay.id) {
+  if (!hasUnambiguousGenerationScope(event, eventDay, eventDays, stages) ||
+    plan.eventDayId !== eventDay.id) {
     return fail('PLAN_SCOPE_MISMATCH')
   }
   if (newScheduleItemIds.length !== plan.placements.filter(p => p.scheduleItemId === undefined).length ||
@@ -153,10 +163,12 @@ export const validateTimetableGenerationCandidate = (
   input: TimetableGenerationInput,
   candidate: MaterializedTimetable,
 ): GenerationCandidateValidation => {
-  const { event, eventDay, stages, sections, eventBands, eventMembers, eventMemberDays,
+  const { event, eventDay, eventDays, stages, sections, eventBands, eventMembers, eventMemberDays,
     timetableLocks, members, dutyTypes, dutyAssignments } = input
   const fail = (reason: string): GenerationCandidateValidation => ({ ok: false, reason })
-  if (eventDay.eventId !== event.id) return fail('開催日とイベントが一致していません。')
+  if (!hasUnambiguousGenerationScope(event, eventDay, eventDays, stages)) {
+    return fail('開催日またはStageの所属を一意に判定できません。')
+  }
   const targetStages = stages.filter(stage => stage.eventDayId === eventDay.id)
   const stageIds = new Set(targetStages.map(stage => stage.id))
   const targetSections = sections.filter(section => stageIds.has(section.stageId))

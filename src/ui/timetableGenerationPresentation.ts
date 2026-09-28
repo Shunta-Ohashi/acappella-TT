@@ -10,7 +10,7 @@ import { getMemberDisplayName } from './eventBandPresentation.ts'
 import { countIssuesBySeverity } from './issuePresentation.ts'
 
 const failureMessages: Record<TimetableGenerationFailureCode, string> = {
-  INVALID_INPUT: '自動生成に必要な設定に不整合があります。Step 1〜5の設定を確認してください。',
+  INVALID_INPUT: '自動生成に必要な設定に不整合があります。Step 1〜6の設定や休憩配置を確認してください。',
   INVALID_LOCK_CONSTRAINTS: 'TT固定または必須配置条件が競合しています。',
   BROKEN_DUTY_ASSIGNMENT: '当日運営の担当範囲に壊れた参照があります。',
   NO_MAIN_PA_CANDIDATE: 'Main PAを担当できるメンバーが見つかりません。',

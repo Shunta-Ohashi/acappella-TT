@@ -24,6 +24,14 @@ test('failure referenceをStage・Section・バンド名へ解決しmissing refe
   assert.match(presentTimetableGenerationFailure({ ...failure, stageId: 'missing-stage' }, materializationInput()), /missing-stage/)
 })
 
+test('INVALID_INPUTではStep 6の休憩配置も確認対象と案内する', () => {
+  const text = presentTimetableGenerationFailure({
+    code: 'INVALID_INPUT', eventDayId: 'day-a1', attemptedSchedules: 0,
+  }, materializationInput())
+  assert.match(text, /Step 1〜6/)
+  assert.match(text, /休憩配置/)
+})
+
 test('read-only previewはStage/Section/実Timeline順と部間Break・PA role/member/正式境界時刻を表示する', () => {
   const input = materializationInput()
   // Presentation must use canonical Stage order, not the collection order.

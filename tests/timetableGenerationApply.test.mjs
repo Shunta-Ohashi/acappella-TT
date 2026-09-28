@@ -46,6 +46,65 @@ test('既存Performance ID・新規IDとBreak内容を維持し、他Event/Day�
   assert.equal('sectionId' in result.paAssignments.find(pa => pa.id === 'new-pa-2'), false)
 })
 
+test('一意なStageを持つ複数日では対象日だけ更新し、他日のBreakを保持する', () => {
+  const input = materializationInput()
+  const otherDayBreak = { id: 'break-a2', kind: 'break', title: '翌日の休憩',
+    durationMinutes: 5, stageId: 'stage-a2', order: 1 }
+  input.scheduleItems.push(otherDayBreak)
+  const candidate = materializeTimetableGenerationPlan(input)
+  assert.equal(candidate.ok, true)
+  assert.deepEqual(candidate.scheduleItems.find(item => item.id === otherDayBreak.id), otherDayBreak)
+  assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true)
+})
+
+for (const [name, edit] of [
+  ['対象EventDay ID重複', input => { input.eventDays.push({ ...input.eventDay }) }],
+  ['foreign EventDayによる対象ID再利用', input => {
+    input.eventDays.push({ ...input.eventDay, eventId: 'event-b' })
+  }],
+  ['他EventDay同士のID重複', input => { input.eventDays.push({ ...input.eventDays[1] }) }],
+  ['対象EventDayがcollectionに存在しない', input => {
+    input.eventDays = input.eventDays.filter(day => day.id !== input.eventDay.id)
+  }],
+  ['異なる開催日のStage ID重複とBreak', input => {
+    input.stages.find(stage => stage.eventDayId === 'day-a2').id = 'stage-a1'
+    input.scheduleItems = input.scheduleItems.filter(item => item.id !== 'p-a2')
+    input.scheduleItems.push({ id: 'break-a2', kind: 'break', title: '翌日の休憩',
+      durationMinutes: 5, stageId: 'stage-a1', order: 1 })
+    input.plan.breaks.push({ ...input.plan.breaks[0], scheduleItemId: 'break-a2', order: 1 })
+  }],
+  ['同一開催日のStage ID重複', input => {
+    input.stages.find(stage => stage.id === 'stage-sub').id = 'stage-a1'
+  }],
+]) {
+  test(`materializationは${name}をcandidate構築前に拒否し、入力を変更しない`, () => {
+    const input = materializationInput()
+    edit(input)
+    const original = structuredClone(input)
+    assert.deepEqual(materializeTimetableGenerationPlan(input), { ok: false, code: 'PLAN_SCOPE_MISMATCH' })
+    assert.deepEqual(input, original)
+  })
+}
+
+for (const [name, edit] of [
+  ['EventDay ID重複', input => { input.eventDays.push({ ...input.eventDay }) }],
+  ['Stage ID重複', input => { input.stages.find(stage => stage.id === 'stage-a2').id = 'stage-a1' }],
+]) {
+  test(`最終guard単独呼び出しでも${name}を拒否する`, () => {
+    const input = materializationInput()
+    const candidate = materializeTimetableGenerationPlan(input)
+    assert.equal(candidate.ok, true)
+    edit(input)
+    const original = structuredClone(input)
+    const originalCandidate = structuredClone(candidate)
+    assert.deepEqual(validateTimetableGenerationCandidate(input, candidate), {
+      ok: false, reason: '開催日またはStageの所属を一意に判定できません。',
+    })
+    assert.deepEqual(input, original)
+    assert.deepEqual(candidate, originalCandidate)
+  })
+}
+
 test('target Performanceが古いStageに残っていても同一IDを再利用し二重に残さない', () => {
   const input = materializationInput()
   input.scheduleItems[0].stageId = 'missing-old-stage'
