@@ -12,35 +12,73 @@ export const DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS: Readonly<TimetableGenerati
   keepInterSectionBreaks: true,
 }
 
-/** Preprocess only valid target-day Breaks; malformed data must reach core validation. */
-export const createScheduleItemsForTimetableGeneration = ({
-  event, eventDay, eventDays, stages, sections, scheduleItems, options,
-}: {
+interface GenerationBreakScope {
   event: Pick<Event, 'id'>
   eventDay: Pick<EventDay, 'id' | 'eventId'>
   eventDays: EventDay[]
   stages: Stage[]
   sections: Section[]
   scheduleItems: ScheduleItem[]
-  options: TimetableGenerationUiOptions
-}): ScheduleItem[] => {
+}
+
+/** Only well-formed Section-anchored Breaks on the target day can be removed by an option. */
+const isTimetableGenerationRemovableBreak = (item: ScheduleItem, {
+  event, eventDay, eventDays, stages, sections, scheduleItems,
+}: GenerationBreakScope): boolean => {
   const matchingDays = eventDays.filter(day => day.id === eventDay.id)
-  const validScope = eventDay.eventId === event.id && matchingDays.length === 1 &&
-    matchingDays[0].eventId === event.id
-  return scheduleItems.filter(item => {
-    if (!validScope || item.kind !== 'break' ||
-      scheduleItems.filter(candidate => candidate.id === item.id).length !== 1) return true
-    const matchingStages = stages.filter(stage => stage.id === item.stageId)
-    if (matchingStages.length !== 1 || matchingStages[0].eventDayId !== eventDay.id) return true
-    const anchorId = item.sectionId ?? item.afterSectionId
-    if (anchorId === undefined) return true // Sectionless Stage Breaks are always retained.
-    if (sections.filter(section => section.id === anchorId).length !== 1 ||
-      !isValidScheduleItemSectionAssignment(item.stageId, sections.filter(s => s.stageId === item.stageId), item) ||
-      !isValidBreakDurationMinutes(item.durationMinutes) || !Number.isSafeInteger(item.order) || item.order < 0 ||
-      typeof item.id !== 'string' || !item.id.trim() || typeof item.title !== 'string') return true
-    return item.sectionId !== undefined
-      ? options.keepIntraSectionBreaks : options.keepInterSectionBreaks
-  })
+  if (eventDay.eventId !== event.id || matchingDays.length !== 1 ||
+    matchingDays[0].eventId !== event.id || item.kind !== 'break' ||
+    scheduleItems.filter(candidate => candidate.id === item.id).length !== 1) return false
+  const matchingStages = stages.filter(stage => stage.id === item.stageId)
+  if (matchingStages.length !== 1 || matchingStages[0].eventDayId !== eventDay.id) return false
+  const anchorId = item.sectionId ?? item.afterSectionId
+  if (anchorId === undefined) return false // Sectionless Stage Breaks are always retained.
+  return sections.filter(section => section.id === anchorId).length === 1 &&
+    isValidScheduleItemSectionAssignment(item.stageId, sections.filter(s => s.stageId === item.stageId), item) &&
+    isValidBreakDurationMinutes(item.durationMinutes) && Number.isSafeInteger(item.order) && item.order >= 0 &&
+    typeof item.id === 'string' && !!item.id.trim() && typeof item.title === 'string'
+}
+
+/** Preprocess only valid target-day Breaks; malformed data must reach core validation. */
+export const createScheduleItemsForTimetableGeneration = (input: GenerationBreakScope & {
+  options: TimetableGenerationUiOptions
+}): ScheduleItem[] => input.scheduleItems.filter(item =>
+  !isTimetableGenerationRemovableBreak(item, input) ||
+    (item.sectionId !== undefined
+      ? input.options.keepIntraSectionBreaks : input.options.keepInterSectionBreaks
+    ))
+
+const hasSameItemContents = (left: ScheduleItem, right: ScheduleItem): boolean => {
+  const leftFields = left as unknown as Record<string, unknown>
+  const rightFields = right as unknown as Record<string, unknown>
+  const keys = Object.keys(leftFields)
+  return keys.length === Object.keys(rightFields).length &&
+    keys.every(key => Object.hasOwn(rightFields, key) && Object.is(leftFields[key], rightFields[key]))
+}
+
+/** A generation baseline must be a pure filter of the source collection. */
+export const validateTimetableGenerationBaseline = ({
+  event, eventDay, eventDays, stages, sections, sourceScheduleItems, generationScheduleItems,
+}: Omit<GenerationBreakScope, 'scheduleItems'> & {
+  sourceScheduleItems: ScheduleItem[]
+  generationScheduleItems: ScheduleItem[]
+}): boolean => {
+  if ([...sourceScheduleItems, ...generationScheduleItems].some(item =>
+    item === null || typeof item !== 'object' || typeof item.id !== 'string')) return false
+  const sourceById = new Map(sourceScheduleItems.map((item, index) => [item.id, { item, index }]))
+  if (sourceById.size !== sourceScheduleItems.length) return false
+  const retainedIds = new Set<string>()
+  let previousIndex = -1
+  for (const item of generationScheduleItems) {
+    const source = sourceById.get(item.id)
+    if (!source || retainedIds.has(item.id) || source.index <= previousIndex ||
+      !hasSameItemContents(source.item, item)) return false
+    retainedIds.add(item.id)
+    previousIndex = source.index
+  }
+  const scope = { event, eventDay, eventDays, stages, sections, scheduleItems: sourceScheduleItems }
+  return sourceScheduleItems.every(item => retainedIds.has(item.id) ||
+    isTimetableGenerationRemovableBreak(item, scope))
 }
 
 export type BreakRemovalValidation = { ok: true } | { ok: false; code: 'CROSS_SCOPE_BREAK_REFERENCE' }

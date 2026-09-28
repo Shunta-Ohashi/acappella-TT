@@ -262,14 +262,110 @@ for (const [name, edit] of [
   })
 }
 
-test('sourceにだけ残るPerformance IDも新IDとして再利用できない', () => {
+test('source Performanceをbaselineから省略した場合は新ID割当より前に拒否する', () => {
   const input = materializationInput()
   input.scheduleItems = input.scheduleItems.filter(item => item.id !== 'p-b')
   input.newScheduleItemIds = ['p-b']
   const original = structuredClone(input)
+  assert.deepEqual(materializeTimetableGenerationPlan(input), { ok: false, code: 'INVALID_PLAN_REFERENCE' })
+  assert.deepEqual(input, original)
+})
+
+test('source Performance IDを新Performance IDとして渡すと衝突する', () => {
+  const input = materializationInput()
+  input.newScheduleItemIds = ['old-p1']
+  const original = structuredClone(input)
   assert.deepEqual(materializeTimetableGenerationPlan(input), { ok: false, code: 'ID_COLLISION' })
   assert.deepEqual(input, original)
 })
+
+for (const [name, edit] of [
+  ['target Performance', input => { input.scheduleItems = input.scheduleItems.filter(item => item.id !== 'old-p1') }],
+  ['other-day Performance', input => { input.scheduleItems = input.scheduleItems.filter(item => item.id !== 'p-a2') }],
+  ['other-day Break', input => {
+    input.sourceScheduleItems.push({ id: 'break-a2', kind: 'break', title: '翌日休憩',
+      durationMinutes: 5, stageId: 'stage-a2', order: 0 })
+    input.scheduleItems = input.sourceScheduleItems.filter(item => item.id !== 'break-a2')
+  }],
+  ['foreign Break', input => {
+    input.sourceScheduleItems.push({ id: 'break-b', kind: 'break', title: '別Event休憩',
+      durationMinutes: 5, stageId: 'stage-b', order: 0 })
+    input.scheduleItems = input.sourceScheduleItems.filter(item => item.id !== 'break-b')
+  }],
+  ['Sectionless target Break', input => {
+    input.sourceScheduleItems.push({ id: 'break-plain', kind: 'break', title: '通常休憩',
+      durationMinutes: 5, stageId: 'stage-sub', order: 0 })
+    input.scheduleItems = input.sourceScheduleItems.filter(item => item.id !== 'break-plain')
+  }],
+  ['malformed target Break', input => {
+    input.sourceScheduleItems.push({ id: 'break-invalid', kind: 'break', title: '不正休憩',
+      durationMinutes: 5, stageId: 'stage-a1', sectionId: 'missing-section', order: 0 })
+    input.scheduleItems = input.sourceScheduleItems.filter(item => item.id !== 'break-invalid')
+  }],
+]) {
+  test(`${name}のbaselineからの不正な省略をmaterializer単体で拒否する`, () => {
+    const input = materializationInput()
+    edit(input)
+    assertMaterialization(input, false)
+  })
+}
+
+test('正常なtarget部内Breakだけを除外したbaselineならmaterializeできる', () => {
+  const input = materializationInput()
+  input.sourceScheduleItems.push({ id: 'break-inside', kind: 'break', title: '部内休憩',
+    durationMinutes: 5, stageId: 'stage-a1', sectionId: 'section-2', order: 1 })
+  input.scheduleItems = input.sourceScheduleItems.filter(item => item.id !== 'break-inside')
+  const result = assertMaterialization(input, true)
+  assert.equal(result.scheduleItems.some(item => item.id === 'break-inside'), false)
+})
+
+test('正常なtarget部間Breakだけを除外したbaselineならmaterializeできる', () => {
+  const input = materializationInput()
+  removeBreakFromBaseline(input)
+  const result = assertMaterialization(input, true)
+  assert.equal(result.scheduleItems.some(item => item.id === 'break-1'), false)
+})
+
+test('baselineにsourceにないItemを追加した場合は拒否する', () => {
+  const input = materializationInput()
+  input.scheduleItems = [...input.scheduleItems, { id: 'extra-break', kind: 'break',
+    title: '追加休憩', durationMinutes: 5, stageId: 'stage-a1', sectionId: 'section-2', order: 1 }]
+  assertMaterialization(input, false)
+})
+
+for (const [name, edit, itemId] of [
+  ['PerformanceのStage', item => { item.stageId = 'stage-a2' }, 'old-p1'],
+  ['Breakのduration', item => { item.durationMinutes = 10 }, 'break-1'],
+  ['BreakのSection anchor', item => { item.afterSectionId = 'section-2' }, 'break-1'],
+]) {
+  test(`baselineに残る${name}を同じIDで変更しても拒否する`, () => {
+    const input = materializationInput()
+    input.scheduleItems = structuredClone(input.sourceScheduleItems)
+    edit(input.scheduleItems.find(item => item.id === itemId))
+    assertMaterialization(input, false)
+  })
+}
+
+test('baselineがsourceと同内容の別objectなら許可し、順序変更は拒否する', () => {
+  const input = materializationInput()
+  input.scheduleItems = structuredClone(input.sourceScheduleItems)
+  assertMaterialization(input, true)
+  input.scheduleItems.reverse()
+  assertMaterialization(input, false)
+})
+
+for (const [name, edit] of [
+  ['newScheduleItemIds', input => { input.newScheduleItemIds = [undefined] }],
+  ['newPaAssignmentIds', input => { input.newPaAssignmentIds[0] = 42 }],
+]) {
+  test(`runtime不正な${name}はthrowせずID_COLLISIONを返す`, () => {
+    const input = materializationInput()
+    edit(input)
+    const original = structuredClone(input)
+    assert.deepEqual(materializeTimetableGenerationPlan(input), { ok: false, code: 'ID_COLLISION' })
+    assert.deepEqual(input, original)
+  })
+}
 
 test('既存Performanceの正式なID再利用と新規IDの割り当ては引き続き成功する', () => {
   const input = materializationInput()

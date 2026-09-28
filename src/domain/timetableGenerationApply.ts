@@ -9,7 +9,8 @@ import { detectScheduleIssues, type ScheduleIssue } from './issues.ts'
 import { getDutyAssignmentsForEvent } from './dutyAssignments.ts'
 import { resolvePaAssignmentInterval } from './paAssignments.ts'
 import { hasSafeStageTimelineArithmetic } from './timetableGenerationArithmetic.ts'
-import { validateTimetableGenerationBreakRemoval } from './timetableGenerationOptions.ts'
+import { validateTimetableGenerationBaseline,
+  validateTimetableGenerationBreakRemoval } from './timetableGenerationOptions.ts'
 import type { CalculatedScheduleItem } from './timeline'
 
 export interface MaterializedTimetable {
@@ -44,6 +45,7 @@ interface MaterializationInput {
 }
 
 const hasUniqueIds = (items: { id: string }[]): boolean =>
+  items.every(item => item !== null && typeof item === 'object' && typeof item.id === 'string') &&
   new Set(items.map(item => item.id)).size === items.length
 
 const hasUnambiguousGenerationScope = (
@@ -79,7 +81,10 @@ export const materializeTimetableGenerationPlan = ({
     plan.eventDayId !== eventDay.id) {
     return fail('PLAN_SCOPE_MISMATCH')
   }
-  if (!hasUniqueIds(sourceScheduleItems) || !validateTimetableGenerationBreakRemoval({
+  if (!hasUniqueIds(sourceScheduleItems) || !validateTimetableGenerationBaseline({
+    event, eventDay, eventDays, stages, sections, sourceScheduleItems,
+    generationScheduleItems: scheduleItems,
+  }) || !validateTimetableGenerationBreakRemoval({
     event, eventDay, originalScheduleItems: sourceScheduleItems,
     generationScheduleItems: scheduleItems, paAssignments, dutyAssignments, timetableLocks,
   }).ok) return fail('INVALID_PLAN_REFERENCE')
@@ -88,7 +93,7 @@ export const materializeTimetableGenerationPlan = ({
   const newIds = [...newScheduleItemIds, ...newPaAssignmentIds]
   const existingIds = new Set([...sourceScheduleItems, ...scheduleItems, ...paAssignments].map(item => item.id))
   if (new Set(newIds).size !== newIds.length ||
-    newIds.some(id => !id.trim() || existingIds.has(id))) return fail('ID_COLLISION')
+    newIds.some(id => typeof id !== 'string' || !id.trim() || existingIds.has(id))) return fail('ID_COLLISION')
 
   const targetStages = stages.filter(stage => stage.eventDayId === eventDay.id)
   const stageById = new Map(targetStages.map(stage => [stage.id, stage]))
