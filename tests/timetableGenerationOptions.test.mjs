@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createScheduleItemsForTimetableGeneration, DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS } from '../src/domain/timetableGenerationOptions.ts'
+import { createScheduleItemsForTimetableGeneration, DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS,
+  validateTimetableGenerationBreakRemoval } from '../src/domain/timetableGenerationOptions.ts'
 import { generateTimetablePlan } from '../src/domain/timetableGeneration.ts'
 import { materializeTimetableGenerationPlan, validateTimetableGenerationCandidate } from '../src/domain/timetableGenerationApply.ts'
 import { createGenerationUiInput } from './fixtures/timetableGenerationUi.mjs'
@@ -16,6 +17,13 @@ const fixture = () => {
   return input
 }
 const filtered = (input, options) => createScheduleItemsForTimetableGeneration({ ...input, options })
+const validateBreakRemoval = (input, options) => validateTimetableGenerationBreakRemoval({
+  event: input.event, eventDay: input.eventDay,
+  originalScheduleItems: input.scheduleItems, generationScheduleItems: filtered(input, options),
+  paAssignments: input.paAssignments, dutyAssignments: input.dutyAssignments,
+  timetableLocks: input.timetableLocks,
+})
+const withoutInterBreak = { keepIntraSectionBreaks: true, keepInterSectionBreaks: false }
 
 test('生成UI optionは初回両方ONで、同値の新配列を返す', () => {
   assert.deepEqual(DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS, { keepIntraSectionBreaks: true, keepInterSectionBreaks: true })
@@ -23,6 +31,95 @@ test('生成UI optionは初回両方ONで、同値の新配列を返す', () => 
   const result = filtered(input, DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS)
   assert.deepEqual(result, input.scheduleItems)
   assert.notEqual(result, input.scheduleItems)
+  assert.deepEqual(validateBreakRemoval(input, DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS), { ok: true })
+})
+
+for (const [name, eventId] of [['target Lock', 'event-a'], ['foreign Lock', 'event-b']]) {
+  test(`除外する部間Breakを参照する${name}は生成前に拒否し、入力を変更しない`, () => {
+    const input = createGenerationUiInput()
+    input.dutyAssignments = []
+    input.timetableLocks.push({ ...input.timetableLocks[0], id: 'break-lock',
+      eventId, scheduleItemId: 'break-1' })
+    const original = structuredClone(input)
+    assert.deepEqual(validateBreakRemoval(input, withoutInterBreak),
+      { ok: false, code: 'CROSS_SCOPE_BREAK_REFERENCE' })
+    assert.deepEqual(input, original)
+  })
+}
+
+test('除外する部内Breakを参照するLockも生成前に拒否する', () => {
+  const input = fixture()
+  input.timetableLocks.push({ ...input.timetableLocks[0], id: 'inside-break-lock',
+    scheduleItemId: 'inside' })
+  const original = structuredClone(input)
+  assert.deepEqual(validateBreakRemoval(input,
+    { keepIntraSectionBreaks: false, keepInterSectionBreaks: true }),
+    { ok: false, code: 'CROSS_SCOPE_BREAK_REFERENCE' })
+  assert.deepEqual(input, original)
+})
+
+test('除外するBreakを参照するtarget Dutyは生成前に拒否する', () => {
+  const input = createGenerationUiInput()
+  const original = structuredClone(input)
+  assert.deepEqual(validateBreakRemoval(input, withoutInterBreak),
+    { ok: false, code: 'CROSS_SCOPE_BREAK_REFERENCE' })
+  assert.deepEqual(input, original)
+})
+
+for (const [name, edit] of [
+  ['other-day Duty', input => {
+    input.dutyAssignments[0] = { ...input.dutyAssignments[0], eventDayId: 'day-a2', stageId: 'stage-a2' }
+  }],
+  ['foreign Duty', input => {
+    input.dutyAssignments[0] = { ...input.dutyAssignments[0], eventDayId: 'day-b', stageId: 'stage-b' }
+  }],
+]) {
+  test(`除外するBreakを参照する${name}は生成前に拒否する`, () => {
+    const input = createGenerationUiInput()
+    edit(input)
+    const original = structuredClone(input)
+    assert.deepEqual(validateBreakRemoval(input, withoutInterBreak),
+      { ok: false, code: 'CROSS_SCOPE_BREAK_REFERENCE' })
+    assert.deepEqual(input, original)
+  })
+}
+
+test('除外するBreakを参照するtarget-day PAは全置換されるため許可する', () => {
+  const input = createGenerationUiInput()
+  input.dutyAssignments = []
+  input.paAssignments.push({ ...input.paAssignments[0], id: 'target-break-pa',
+    from: { scheduleItemId: 'break-1', edge: 'start' } })
+  const original = structuredClone(input)
+  assert.deepEqual(validateBreakRemoval(input, withoutInterBreak), { ok: true })
+  assert.deepEqual(input, original)
+})
+
+for (const [name, createPa] of [
+  ['other-day PA', input => ({ ...input.paAssignments.find(pa => pa.id === 'pa-a2'),
+    id: 'other-day-break-pa', from: { scheduleItemId: 'break-1', edge: 'start' } })],
+  ['foreign PA', input => ({ ...input.paAssignments.find(pa => pa.id === 'pa-b'),
+    id: 'foreign-break-pa', until: { scheduleItemId: 'break-1', edge: 'end' } })],
+]) {
+  test(`除外するBreakを参照する保持対象${name}は生成前に拒否する`, () => {
+    const input = createGenerationUiInput()
+    input.dutyAssignments = []
+    input.paAssignments.push(createPa(input))
+    const original = structuredClone(input)
+    assert.deepEqual(validateBreakRemoval(input, withoutInterBreak),
+      { ok: false, code: 'CROSS_SCOPE_BREAK_REFERENCE' })
+    assert.deepEqual(input, original)
+  })
+}
+
+test('除外対象以外のBreakやPerformanceだけを参照する保持データは許可する', () => {
+  const input = fixture()
+  input.dutyAssignments[0] = { ...input.dutyAssignments[0],
+    from: { scheduleItemId: 'plain', edge: 'start' }, until: { scheduleItemId: 'plain', edge: 'end' } }
+  input.timetableLocks.push({ ...input.timetableLocks[0], id: 'other-break-lock',
+    eventId: 'event-b', scheduleItemId: 'other-day' })
+  const original = structuredClone(input)
+  assert.deepEqual(validateBreakRemoval(input, withoutInterBreak), { ok: true })
+  assert.deepEqual(input, original)
 })
 
 for (const [name, options, removed] of [

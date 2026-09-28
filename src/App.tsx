@@ -77,6 +77,7 @@ import { TimetableGenerationPreviewDialog } from './components/TimetableGenerati
 import { TimetableGenerationOptionsDialog } from './components/TimetableGenerationOptionsDialog'
 import { TimetableResetConfirmDialog } from './components/TimetableResetConfirmDialog'
 import { createScheduleItemsForTimetableGeneration, DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS,
+  validateTimetableGenerationBreakRemoval,
   type TimetableGenerationUiOptions } from './domain/timetableGenerationOptions'
 import { resetEventDayTimetable } from './domain/timetableReset'
 import { hasUnsavedOperationsChanges } from './ui/operationsDraftChanges'
@@ -899,6 +900,15 @@ function App() {
     setGenerationFeedback(null)
     const generationScheduleItems = createScheduleItemsForTimetableGeneration({ event: selectedEvent,
       eventDay: timetableEventDay, eventDays, stages, sections, scheduleItems, options: generationOptions })
+    const breakRemoval = validateTimetableGenerationBreakRemoval({
+      event: selectedEvent, eventDay: timetableEventDay,
+      originalScheduleItems: scheduleItems, generationScheduleItems,
+      paAssignments, dutyAssignments, timetableLocks,
+    })
+    if (!breakRemoval.ok) {
+      feedback('選択した休憩を除外すると、当日運営・TT固定、または保持されるPA担当の参照が壊れるため自動生成できません。担当範囲やTT固定を変更してから再度お試しください。')
+      return
+    }
     const input = { event: selectedEvent, eventDay: timetableEventDay, eventDays, stages, sections,
       members, eventMembers, eventMemberDays, eventBands, scheduleItems: generationScheduleItems,
       timetableLocks, dutyTypes, dutyAssignments }

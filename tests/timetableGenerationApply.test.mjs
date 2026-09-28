@@ -242,6 +242,32 @@ test('同一input・ID配列のmaterializationと最終検証はdeterministicか
   assert.deepEqual(input, original)
 })
 
+for (const [name, edit] of [
+  ['target Stage内', candidate => {
+    candidate.scheduleItems.push({ ...candidate.scheduleItems.find(item => item.id === 'old-p1') })
+  }],
+  ['targetとother-day Stage間', candidate => {
+    candidate.scheduleItems.find(item => item.id === 'p-a2').id = 'old-p1'
+  }],
+  ['BreakとPerformance間', candidate => {
+    candidate.scheduleItems.find(item => item.id === 'break-1').id = 'old-p1'
+  }],
+]) {
+  test(`最終guardはTimeline計算前に${name}のScheduleItem ID重複を拒否する`, () => {
+    const input = materializationInput()
+    const candidate = materializeTimetableGenerationPlan(input)
+    assert.equal(candidate.ok, true)
+    assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true, '一意なIDは従来どおり有効')
+    edit(candidate)
+    const originalInput = structuredClone(input)
+    const originalCandidate = structuredClone(candidate)
+    assert.deepEqual(validateTimetableGenerationCandidate(input, candidate),
+      { ok: false, reason: '生成結果のScheduleItem IDが重複しています。' })
+    assert.deepEqual(input, originalInput)
+    assert.deepEqual(candidate, originalCandidate)
+  })
+}
+
 for (const [name, edit, reason] of [
   ['target Performance欠落', candidate => {
     candidate.scheduleItems = candidate.scheduleItems.filter(item => item.id !== 'new-p2')
