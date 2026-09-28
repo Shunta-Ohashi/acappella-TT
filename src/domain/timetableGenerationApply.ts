@@ -219,6 +219,9 @@ export const validateTimetableGenerationCandidate = (
   if (!hasUnambiguousGenerationScope(event, eventDay, eventDays, stages, sections, eventBands)) {
     return fail('開催日・Stage・Section・出演バンドの所属を一意に判定できません。')
   }
+  if (!hasUniqueIds(input.scheduleItems)) {
+    return fail('元のScheduleItem IDが重複しています。')
+  }
   if (!hasUniqueIds(candidate.scheduleItems)) {
     return fail('生成結果のScheduleItem IDが重複しています。')
   }
