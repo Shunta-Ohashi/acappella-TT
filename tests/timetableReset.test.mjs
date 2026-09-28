@@ -213,6 +213,46 @@ for (const [name, edit] of [
   })
 }
 
+for (const [name, edit] of [
+  ['EventDayの数値ID', input => { input.eventDays[0].id = 123 }],
+  ['Stageのnull ID', input => { input.stages[0].id = null }],
+  ['EventBandの空白ID', input => { input.eventBands[0].id = '   ' }],
+  ['ScheduleItemの空ID', input => { input.scheduleItems[0].id = '' }],
+  ['DutyTypeのobject ID', input => { input.dutyTypes[0].id = {} }],
+  ['Stage collectionのnull要素', input => { input.stages.push(null) }],
+  ['Stage collection自体がnull', input => { input.stages = null }],
+  ['EventDay collectionのundefined要素', input => { input.eventDays.unshift(undefined) }],
+  ['tabのみのID', input => { input.eventBands[0].id = '\t' }],
+  ['改行のみのID', input => { input.eventBands[0].id = '\n' }],
+  ['boolean ID', input => { input.stages[0].id = true }],
+  ['array ID', input => { input.stages[0].id = [] }],
+  ['IDなし要素', input => { input.stages.push({ name: '不正Stage' }) }],
+]) {
+  test(`runtime不正な${name}はthrowせずINVALID_SCOPEで初期化を止める`, () => {
+    const input = fixture()
+    edit(input)
+    const original = structuredClone(input)
+    assert.deepEqual(resetEventDayTimetable(input), { ok: false, code: 'INVALID_SCOPE' })
+    assert.deepEqual(input, original)
+  })
+}
+
+for (const [name, edit] of [
+  ['Event ID', input => { input.event.id = 123 }],
+  ['EventDay ID', input => { input.eventDay.id = null }],
+  ['EventDay eventId', input => { input.eventDay.eventId = '   ' }],
+  ['Event自体', input => { input.event = null }],
+  ['EventDay自体', input => { input.eventDay = null }],
+]) {
+  test(`runtime不正な単体${name}もthrowせずINVALID_SCOPEにする`, () => {
+    const input = fixture()
+    edit(input)
+    const original = structuredClone(input)
+    assert.deepEqual(resetEventDayTimetable(input), { ok: false, code: 'INVALID_SCOPE' })
+    assert.deepEqual(input, original)
+  })
+}
+
 test('resetはdeterministic・non-mutationで、EventBandの条件とDutyTypeもそのまま保持する', () => {
   const input = fixture()
   input.eventBands[0].availableTimeRange = { from: '09:00' }

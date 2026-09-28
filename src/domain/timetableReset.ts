@@ -24,15 +24,32 @@ export type TimetableResetResult = {
   timetableLocks: TimetableLock[]
 } | { ok: false; code: 'INVALID_SCOPE' }
 
-const uniqueIds = (items: { id: string }[]) => new Set(items.map(item => item.id)).size === items.length
+const isNonEmptyId = (value: unknown): value is string =>
+  typeof value === 'string' && !!value.trim()
+
+const hasValidId = (value: unknown): value is { id: string } =>
+  typeof value === 'object' && value !== null && !Array.isArray(value) &&
+  'id' in value && isNonEmptyId(value.id)
+
+const uniqueIds = (items: unknown): boolean => {
+  if (!Array.isArray(items)) return false
+  const ids = new Set<string>()
+  for (const item of items) {
+    if (!hasValidId(item) || ids.has(item.id)) return false
+    ids.add(item.id)
+  }
+  return true
+}
 
 /** Explicit, atomic reset; known foreign/other-day ownership outranks stale Stage references. */
 export const resetEventDayTimetable = (input: TimetableResetInput): TimetableResetResult => {
   const { event, eventDay, eventDays, stages, eventBands, scheduleItems,
     paAssignments, dutyTypes, dutyAssignments, timetableLocks } = input
-  if (eventDay.eventId !== event.id || !eventDays.some(day => day.id === eventDay.id && day.eventId === event.id) ||
-    ![eventDays, stages, eventBands, scheduleItems, dutyTypes].every(uniqueIds)) {
-    // Ambiguous reused IDs must not authorize a destructive operation.
+  if (!hasValidId(event) || !hasValidId(eventDay) || !isNonEmptyId(eventDay.eventId) ||
+    ![eventDays, stages, eventBands, scheduleItems, dutyTypes].every(uniqueIds) ||
+    eventDay.eventId !== event.id ||
+    !eventDays.some(day => day.id === eventDay.id && day.eventId === event.id)) {
+    // Malformed or ambiguous IDs must not authorize a destructive operation.
     return { ok: false, code: 'INVALID_SCOPE' }
   }
   const eventDayById = new Map(eventDays.map(day => [day.id, day]))
