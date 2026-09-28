@@ -42,7 +42,9 @@ const hasUniqueIds = (items: { id: string }[]): boolean =>
 
 const hasUnambiguousGenerationScope = (
   event: Event, eventDay: EventDay, eventDays: EventDay[], stages: Stage[],
+  sections: Section[], eventBands: EventBand[],
 ): boolean => eventDay.eventId === event.id && hasUniqueIds(eventDays) && hasUniqueIds(stages) &&
+  hasUniqueIds(sections) && hasUniqueIds(eventBands) &&
   eventDays.filter(day => day.id === eventDay.id && day.eventId === event.id).length === 1
 
 /** Convert a plan without allocating IDs or changing any committed collection. */
@@ -51,7 +53,7 @@ export const materializeTimetableGenerationPlan = ({
   plan, newScheduleItemIds, newPaAssignmentIds,
 }: MaterializationInput): MaterializationResult => {
   const fail = (code: MaterializationFailureCode): MaterializationResult => ({ ok: false, code })
-  if (!hasUnambiguousGenerationScope(event, eventDay, eventDays, stages) ||
+  if (!hasUnambiguousGenerationScope(event, eventDay, eventDays, stages, sections, eventBands) ||
     plan.eventDayId !== eventDay.id) {
     return fail('PLAN_SCOPE_MISMATCH')
   }
@@ -166,8 +168,8 @@ export const validateTimetableGenerationCandidate = (
   const { event, eventDay, eventDays, stages, sections, eventBands, eventMembers, eventMemberDays,
     timetableLocks, members, dutyTypes, dutyAssignments } = input
   const fail = (reason: string): GenerationCandidateValidation => ({ ok: false, reason })
-  if (!hasUnambiguousGenerationScope(event, eventDay, eventDays, stages)) {
-    return fail('開催日またはStageの所属を一意に判定できません。')
+  if (!hasUnambiguousGenerationScope(event, eventDay, eventDays, stages, sections, eventBands)) {
+    return fail('開催日・Stage・Section・出演バンドの所属を一意に判定できません。')
   }
   const targetStages = stages.filter(stage => stage.eventDayId === eventDay.id)
   const stageIds = new Set(targetStages.map(stage => stage.id))

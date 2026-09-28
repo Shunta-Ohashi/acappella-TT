@@ -76,6 +76,23 @@ for (const [name, edit] of [
   ['同一開催日のStage ID重複', input => {
     input.stages.find(stage => stage.id === 'stage-sub').id = 'stage-a1'
   }],
+  ['targetとforeign EventBandのID重複', input => {
+    input.eventBands.find(band => band.id === 'band-b').id = 'band-1'
+  }],
+  ['target Day内のEventBand ID重複', input => {
+    input.eventBands.push({ ...input.eventBands[0], name: '重複バンド' })
+  }],
+  ['同Event・他DayとのEventBand ID重複', input => {
+    input.eventBands.find(band => band.id === 'band-a2').id = 'band-1'
+  }],
+  ['target外のEventBand ID重複', input => {
+    input.eventBands.push({ ...input.eventBands.find(band => band.id === 'band-b') })
+  }],
+  ['targetと他DayのSection ID重複', input => {
+    input.sections.push({ ...input.sections[0], stageId: 'stage-a2' })
+    input.timetableLocks.push({ ...input.timetableLocks[0], id: 'other-day-section-lock',
+      stageId: 'stage-a2', sectionId: 'section-1', scheduleItemId: 'p-a2' })
+  }],
 ]) {
   test(`materializationは${name}をcandidate構築前に拒否し、入力を変更しない`, () => {
     const input = materializationInput()
@@ -89,6 +106,8 @@ for (const [name, edit] of [
 for (const [name, edit] of [
   ['EventDay ID重複', input => { input.eventDays.push({ ...input.eventDay }) }],
   ['Stage ID重複', input => { input.stages.find(stage => stage.id === 'stage-a2').id = 'stage-a1' }],
+  ['EventBand ID重複', input => { input.eventBands.find(band => band.id === 'band-b').id = 'band-1' }],
+  ['Section ID重複', input => { input.sections.push({ ...input.sections[0], stageId: 'stage-a2' }) }],
 ]) {
   test(`最終guard単独呼び出しでも${name}を拒否する`, () => {
     const input = materializationInput()
@@ -98,7 +117,7 @@ for (const [name, edit] of [
     const original = structuredClone(input)
     const originalCandidate = structuredClone(candidate)
     assert.deepEqual(validateTimetableGenerationCandidate(input, candidate), {
-      ok: false, reason: '開催日またはStageの所属を一意に判定できません。',
+      ok: false, reason: '開催日・Stage・Section・出演バンドの所属を一意に判定できません。',
     })
     assert.deepEqual(input, original)
     assert.deepEqual(candidate, originalCandidate)
@@ -168,6 +187,7 @@ for (const [name, edit, code] of [
   ['既存ID collision', i => { i.newScheduleItemIds = ['old-p1'] }, 'ID_COLLISION'],
   ['新規ID同士のcollision', i => { i.newPaAssignmentIds[0] = 'new-p2' }, 'ID_COLLISION'],
   ['空ID', i => { i.newScheduleItemIds = [''] }, 'ID_COLLISION'],
+  ['既存ScheduleItem ID重複', i => { i.scheduleItems.push({ ...i.scheduleItems[0] }) }, 'INVALID_PLAN_REFERENCE'],
   ['既存参照missing', i => { i.plan.placements[0].scheduleItemId = 'missing' }, 'INVALID_PLAN_REFERENCE'],
   ['既存参照がBreak', i => { i.plan.placements[0].scheduleItemId = 'break-1' }, 'INVALID_PLAN_REFERENCE'],
   ['既存参照が別Band', i => { i.plan.placements[0].scheduleItemId = 'p-a2' }, 'INVALID_PLAN_REFERENCE'],
