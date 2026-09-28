@@ -18,7 +18,7 @@ const fixture = () => {
   input.dutyTypes.push({ id: 'foreign-type', eventId: 'event-b', name: '他Eventの仕事', order: 0 })
   input.dutyAssignments.push({ ...input.dutyAssignments[0], id: 'other-day-duty', eventDayId: 'day-a2', stageId: 'stage-a2' },
     { ...input.dutyAssignments[0], id: 'foreign-duty', dutyTypeId: 'foreign-type' })
-  input.timetableLocks.push({ ...input.timetableLocks[0], id: 'stale-stage-lock', scheduleItemId: 'stale-p2', stageId: 'missing-stage' },
+  input.timetableLocks.push({ ...input.timetableLocks[0], id: 'stale-item-lock', scheduleItemId: 'stale-p2', stageId: 'stage-a1' },
     { ...input.timetableLocks[0], id: 'broken-target-lock', scheduleItemId: 'missing-item' },
     { ...input.timetableLocks[0], id: 'other-day-lock', scheduleItemId: 'p-a2', stageId: 'stage-a2', sectionId: undefined },
     { ...input.timetableLocks[0], id: 'foreign-lock', eventId: 'event-b',
@@ -64,6 +64,21 @@ test('削除対象Performanceを参照するforeign Lockがあれば初期化全
   assert.deepEqual(resetEventDayTimetable(input), { ok: false, code: 'INVALID_SCOPE' })
   assert.deepEqual(input, original)
 })
+
+for (const [name, stageId] of [
+  ['同一Eventの他日Stage', 'stage-a2'],
+  ['同一Eventの不明Stage', 'missing-stage'],
+]) {
+  test(`削除対象Performanceを参照する${name}のLockは保持対象として初期化全体を拒否する`, () => {
+    const input = fixture()
+    input.timetableLocks.push({ ...input.timetableLocks[0], id: 'conflicting-lock',
+      eventId: input.event.id, scheduleItemId: 'old-p1', stageId })
+    const original = structuredClone(input)
+
+    assert.deepEqual(resetEventDayTimetable(input), { ok: false, code: 'INVALID_SCOPE' })
+    assert.deepEqual(input, original)
+  })
+}
 
 test('foreign Lockが保持対象のtarget Breakを参照してもBreakとLockを維持する', () => {
   const input = fixture()
@@ -245,6 +260,45 @@ for (const [name, edit] of [
   ['EventDay自体', input => { input.eventDay = null }],
 ]) {
   test(`runtime不正な単体${name}もthrowせずINVALID_SCOPEにする`, () => {
+    const input = fixture()
+    edit(input)
+    const original = structuredClone(input)
+    assert.deepEqual(resetEventDayTimetable(input), { ok: false, code: 'INVALID_SCOPE' })
+    assert.deepEqual(input, original)
+  })
+}
+
+for (const [name, edit] of [
+  ['other EventDay.eventIdの空白', input => { input.eventDays.find(day => day.id === 'day-a2').eventId = '   ' }],
+  ['Stage.eventDayIdの空白', input => { input.stages[0].eventDayId = '   ' }],
+  ['EventBand.eventIdの空白', input => { input.eventBands[0].eventId = '   ' }],
+  ['EventBand.eventDayIdの空文字', input => { input.eventBands[0].eventDayId = '' }],
+  ['Performance.stageIdの空白', input => { input.scheduleItems.find(item => item.kind === 'performance').stageId = '   ' }],
+  ['Break.stageIdのnull', input => { input.scheduleItems.find(item => item.kind === 'break').stageId = null }],
+  ['Performance.eventBandIdの空白', input => { input.scheduleItems.find(item => item.kind === 'performance').eventBandId = '   ' }],
+  ['DutyType.eventIdの空白', input => { input.dutyTypes[0].eventId = '   ' }],
+  ['PA.eventIdの空白', input => { input.paAssignments[0].eventId = '   ' }],
+  ['PA.eventDayIdの空白', input => { input.paAssignments[0].eventDayId = '   ' }],
+  ['PA.from.scheduleItemIdの空文字', input => { input.paAssignments[0].from.scheduleItemId = '' }],
+  ['PA.until.scheduleItemIdの数値', input => { input.paAssignments[0].until.scheduleItemId = 123 }],
+  ['PA.fromのnull', input => { input.paAssignments[0].from = null }],
+  ['PA.untilのundefined', input => { input.paAssignments[0].until = undefined }],
+  ['Duty.dutyTypeIdの空白', input => { input.dutyAssignments[0].dutyTypeId = '   ' }],
+  ['Duty.eventDayIdの空文字', input => { input.dutyAssignments[0].eventDayId = '' }],
+  ['Duty.stageIdのnull', input => { input.dutyAssignments[0].stageId = null }],
+  ['Duty.from.scheduleItemIdの空白', input => { input.dutyAssignments[0].from.scheduleItemId = '   ' }],
+  ['Duty.until.scheduleItemIdのobject', input => { input.dutyAssignments[0].until.scheduleItemId = {} }],
+  ['Duty.fromのnull', input => { input.dutyAssignments[0].from = null }],
+  ['Duty.untilのundefined', input => { input.dutyAssignments[0].until = undefined }],
+  ['Lock.eventIdの空白', input => { input.timetableLocks[0].eventId = '   ' }],
+  ['Lock.scheduleItemIdの空白', input => { input.timetableLocks[0].scheduleItemId = '   ' }],
+  ['Lock.stageIdの空文字', input => { input.timetableLocks[0].stageId = '' }],
+  ['Lock.sectionIdの空白', input => { input.timetableLocks[0].sectionId = '   ' }],
+  ['PA collectionのnull要素', input => { input.paAssignments.push(null) }],
+  ['Duty collection自体がnull', input => { input.dutyAssignments = null }],
+  ['Lock collectionのnull要素', input => { input.timetableLocks.push(null) }],
+]) {
+  test(`runtime不正な参照（${name}）はthrowせずINVALID_SCOPEで初期化を止める`, () => {
     const input = fixture()
     edit(input)
     const original = structuredClone(input)

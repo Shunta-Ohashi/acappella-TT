@@ -27,9 +27,14 @@ export type TimetableResetResult = {
 const isNonEmptyId = (value: unknown): value is string =>
   typeof value === 'string' && !!value.trim()
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
 const hasValidId = (value: unknown): value is { id: string } =>
-  typeof value === 'object' && value !== null && !Array.isArray(value) &&
-  'id' in value && isNonEmptyId(value.id)
+  isRecord(value) && isNonEmptyId(value.id)
+
+const hasValidBoundary = (value: unknown): value is { scheduleItemId: string } =>
+  isRecord(value) && isNonEmptyId(value.scheduleItemId)
 
 const uniqueIds = (items: unknown): boolean => {
   if (!Array.isArray(items)) return false
@@ -41,12 +46,30 @@ const uniqueIds = (items: unknown): boolean => {
   return true
 }
 
+const hasValidScopeReferences = (input: TimetableResetInput): boolean =>
+  input.eventDays.every(day => isNonEmptyId(day.eventId)) &&
+  input.stages.every(stage => isNonEmptyId(stage.eventDayId)) &&
+  input.eventBands.every(band => isNonEmptyId(band.eventId) && isNonEmptyId(band.eventDayId)) &&
+  input.scheduleItems.every(item => isNonEmptyId(item.stageId) &&
+    (item.kind !== 'performance' || isNonEmptyId(item.eventBandId))) &&
+  input.dutyTypes.every(dutyType => isNonEmptyId(dutyType.eventId)) &&
+  Array.isArray(input.paAssignments) && input.paAssignments.every(pa =>
+    isRecord(pa) && isNonEmptyId(pa.eventId) && isNonEmptyId(pa.eventDayId) &&
+    hasValidBoundary(pa.from) && hasValidBoundary(pa.until)) &&
+  Array.isArray(input.dutyAssignments) && input.dutyAssignments.every(duty =>
+    isRecord(duty) && isNonEmptyId(duty.dutyTypeId) && isNonEmptyId(duty.eventDayId) &&
+    isNonEmptyId(duty.stageId) && hasValidBoundary(duty.from) && hasValidBoundary(duty.until)) &&
+  Array.isArray(input.timetableLocks) && input.timetableLocks.every(lock =>
+    isRecord(lock) && isNonEmptyId(lock.eventId) && isNonEmptyId(lock.scheduleItemId) &&
+    isNonEmptyId(lock.stageId) && (lock.sectionId === undefined || isNonEmptyId(lock.sectionId)))
+
 /** Explicit, atomic reset; known foreign/other-day ownership outranks stale Stage references. */
 export const resetEventDayTimetable = (input: TimetableResetInput): TimetableResetResult => {
   const { event, eventDay, eventDays, stages, eventBands, scheduleItems,
     paAssignments, dutyTypes, dutyAssignments, timetableLocks } = input
   if (!hasValidId(event) || !hasValidId(eventDay) || !isNonEmptyId(eventDay.eventId) ||
     ![eventDays, stages, eventBands, scheduleItems, dutyTypes].every(uniqueIds) ||
+    !hasValidScopeReferences(input) ||
     eventDay.eventId !== event.id ||
     !eventDays.some(day => day.id === eventDay.id && day.eventId === event.id)) {
     // Malformed or ambiguous IDs must not authorize a destructive operation.
@@ -70,8 +93,9 @@ export const resetEventDayTimetable = (input: TimetableResetInput): TimetableRes
     .filter(duty => duty.eventDayId === eventDay.id))
   const referencesRemovedPerformance = ({ from, until }: Pick<PaAssignment, 'from' | 'until'>): boolean =>
     removedPerformanceIds.has(from.scheduleItemId) || removedPerformanceIds.has(until.scheduleItemId)
-  if (timetableLocks.some(lock => lock.eventId !== event.id &&
-    removedPerformanceIds.has(lock.scheduleItemId)) ||
+  // A Lock's own Stage must belong to the reset day before its referenced Performance may be removed.
+  if (timetableLocks.some(lock => removedPerformanceIds.has(lock.scheduleItemId) &&
+    (lock.eventId !== event.id || !targetStageIds.has(lock.stageId))) ||
     paAssignments.some(pa => (pa.eventId !== event.id || pa.eventDayId !== eventDay.id) &&
       referencesRemovedPerformance(pa)) ||
     dutyAssignments.some(duty => !targetDuties.has(duty) && referencesRemovedPerformance(duty))) {
