@@ -4389,9 +4389,9 @@
 .timetable-grid__pa-cell {
   position: relative;
   display: grid;
-  grid-auto-rows: minmax(18px, auto);
-  align-content: center;
-  gap: 2px;
+  grid-auto-rows: minmax(30px, 1fr);
+  align-content: stretch;
+  gap: 0;
   padding: 3px !important;
   background: #fbfcfd;
 }
@@ -4406,43 +4406,47 @@
 .timetable-grid__pa-coverage {
   display: grid;
   align-content: center;
-  min-height: 18px;
+  justify-items: center;
+  min-height: 30px;
   padding: 2px 4px;
   color: #254466;
   background: #e9f2fb;
   border-right: 1px solid #a8c3dd;
   border-left: 1px solid #a8c3dd;
   font-size: 9px;
+  text-align: center;
+}
+
+.timetable-grid__pa-coverage + .timetable-grid__pa-coverage {
+  border-top: 1px solid #a8c3dd;
 }
 
 .timetable-grid__pa-coverage--start {
   border-top: 1px solid #a8c3dd;
-  border-radius: 5px 5px 0 0;
+  border-radius: 2px 2px 0 0;
 }
 
 .timetable-grid__pa-coverage--end {
   border-bottom: 1px solid #a8c3dd;
-  border-radius: 0 0 5px 5px;
+  border-radius: 0 0 2px 2px;
 }
 
 .timetable-grid__pa-coverage--start.timetable-grid__pa-coverage--end {
-  border-radius: 5px;
+  border-radius: 2px;
 }
 
 .timetable-grid__pa-coverage strong,
 .timetable-grid__duty-coverage strong {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .timetable-grid__duty-cell {
   position: relative;
   display: grid;
-  grid-auto-rows: minmax(18px, auto);
-  align-content: center;
-  gap: 2px;
+  grid-auto-rows: minmax(30px, 1fr);
+  align-content: stretch;
+  gap: 0;
   padding: 3px !important;
   background: #fcfdfb;
 }
@@ -4457,27 +4461,33 @@
 .timetable-grid__duty-coverage {
   display: grid;
   align-content: center;
-  min-height: 18px;
+  justify-items: center;
+  min-height: 30px;
   padding: 2px 4px;
   color: #305343;
   background: #edf8f1;
   border-right: 1px solid #a9ccb8;
   border-left: 1px solid #a9ccb8;
   font-size: 9px;
+  text-align: center;
+}
+
+.timetable-grid__duty-coverage + .timetable-grid__duty-coverage {
+  border-top: 1px solid #a9ccb8;
 }
 
 .timetable-grid__duty-coverage--start {
   border-top: 1px solid #a9ccb8;
-  border-radius: 5px 5px 0 0;
+  border-radius: 2px 2px 0 0;
 }
 
 .timetable-grid__duty-coverage--end {
   border-bottom: 1px solid #a9ccb8;
-  border-radius: 0 0 5px 5px;
+  border-radius: 0 0 2px 2px;
 }
 
 .timetable-grid__duty-coverage--start.timetable-grid__duty-coverage--end {
-  border-radius: 5px;
+  border-radius: 2px;
 }
 
 .timetable-grid__duty-coverage--error {
