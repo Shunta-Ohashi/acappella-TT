@@ -66,6 +66,39 @@ for (const [name, malformed] of malformedScheduleItems) {
   })
 }
 
+for (const [name, duplicate] of [
+  ['Performance同士', items => ({ ...items.find(item => item.id === 'old-p1'), eventBandId: 'band-2' })],
+  ['PerformanceとBreak', items => ({ ...items.find(item => item.id === 'break-1'), id: 'old-p1' })],
+  ['同内容clone', items => ({ ...items.find(item => item.id === 'old-p1') })],
+  ['他日Performance', items => ({ ...items.find(item => item.id === 'p-a2'), id: 'old-p1' })],
+  ['別Event Break', items => ({ ...items.find(item => item.id === 'foreign'), id: 'old-p1' })],
+]) {
+  test(`ScheduleItem ID重複（${name}）はpreflight・baselineで拒否し、直接前処理では消さない`, () => {
+    const input = fixture()
+    const scheduleItems = [...input.scheduleItems, duplicate(input.scheduleItems)]
+    const original = structuredClone(scheduleItems)
+    const options = { keepIntraSectionBreaks: false, keepInterSectionBreaks: false }
+    assert.equal(hasValidTimetableGenerationScheduleItems(scheduleItems), false)
+    assert.equal(hasValidTimetableGenerationPreprocessingInput({ ...input, scheduleItems, options }), false)
+    assert.equal(createScheduleItemsForTimetableGeneration({ ...input, scheduleItems, options }), scheduleItems)
+    assert.equal(scheduleItems.filter(item => item.id === 'old-p1').length, 2)
+    const scope = { event: input.event, eventDay: input.eventDay, eventDays: input.eventDays,
+      stages: input.stages, sections: input.sections }
+    assert.equal(validateTimetableGenerationBaseline({ ...scope, sourceScheduleItems: scheduleItems,
+      generationScheduleItems: input.scheduleItems }), false)
+    assert.equal(validateTimetableGenerationBaseline({ ...scope, sourceScheduleItems: input.scheduleItems,
+      generationScheduleItems: scheduleItems }), false)
+    assert.deepEqual(scheduleItems, original)
+  })
+}
+
+test('IDが一意な対象日・他日・別EventのScheduleItemは前処理を通過する', () => {
+  const input = fixture()
+  assert.equal(hasValidTimetableGenerationScheduleItems(input.scheduleItems), true)
+  assert.equal(hasValidTimetableGenerationPreprocessingInput({ ...input,
+    options: DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS }), true)
+})
+
 test('生成UI optionは初回両方ONで、同値の新配列を返す', () => {
   assert.deepEqual(DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS, { keepIntraSectionBreaks: true, keepInterSectionBreaks: true })
   const input = fixture()

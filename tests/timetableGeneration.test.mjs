@@ -18,6 +18,7 @@ import {
 } from '../src/domain/timetableGenerationScore.ts'
 import { planPaShifts, comparePaShiftStates } from '../src/domain/paShiftPlanning.ts'
 import { resolvePaAssignmentInterval } from '../src/domain/paAssignments.ts'
+import { createGenerationUiInput } from './fixtures/timetableGenerationUi.mjs'
 
 const createInput = ({ bandCount = 4, sectionCount = 2, paCount = 2 } = {}) => {
   const event = {
@@ -58,6 +59,23 @@ const createInput = ({ bandCount = 4, sectionCount = 2, paCount = 2 } = {}) => {
     members, eventMembers, eventMemberDays, eventBands,
     scheduleItems: [], timetableLocks: [], dutyTypes: [], dutyAssignments: [],
   }
+}
+
+for (const [name, duplicate] of [
+  ['Performance同士', items => ({ ...items.find(item => item.id === 'old-p1'), eventBandId: 'band-2' })],
+  ['PerformanceとBreak', items => ({ ...items.find(item => item.id === 'break-1'), id: 'old-p1' })],
+  ['他日のPerformance', items => ({ ...items.find(item => item.id === 'p-a2'), id: 'old-p1' })],
+]) {
+  test(`generatorは${name}のID重複を探索前にINVALID_INPUTにする`, () => {
+    const input = createGenerationUiInput()
+    input.scheduleItems.push(duplicate(input.scheduleItems))
+    const original = structuredClone(input)
+    const result = generateTimetablePlan(input)
+    assert.equal(result.ok, false)
+    assert.equal(result.failure.code, 'INVALID_INPUT')
+    assert.equal(result.failure.attemptedSchedules, 0)
+    assert.deepEqual(input, original)
+  })
 }
 
 for (const item of [

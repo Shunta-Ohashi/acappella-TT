@@ -47,7 +47,7 @@ export const hasValidTimetableGenerationScheduleItems = (value: unknown): value 
         (item.afterSectionId === undefined || isNonEmptyId(item.afterSectionId))
     }
     return false
-  })
+  }) && new Set(value.map(item => item.id)).size === value.length
 
 const hasBoundaryId = (value: unknown): boolean => isRecord(value) && isNonEmptyId(value.scheduleItemId)
 
