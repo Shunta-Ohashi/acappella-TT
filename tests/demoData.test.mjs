@@ -118,7 +118,7 @@ for (const dayIndex of [0, 1]) {
       newPaAssignmentIds: generated.plan.paShifts.map((_, i) => `generated-demo-${dayIndex}-pa-${i}`),
     })
     assert.equal(candidate.ok, true, JSON.stringify(candidate))
-    const validation = validateTimetableGenerationCandidate(input, candidate)
+    const validation = validateTimetableGenerationCandidate({ ...input, plan: generated.plan }, candidate)
     assert.equal(validation.ok, true, JSON.stringify(validation))
     assert.equal(validation.issues.filter(issue => issue.severity === 'ERROR').length, 0)
     assert.equal(generated.plan.placements.length, 4)

@@ -14,7 +14,7 @@ import { evaluateScheduleConstraints, type ScheduleConstraintEvaluation } from '
 import { getDutyAssignmentsForEvent } from './dutyAssignments.ts'
 import { calculateEventDayTimelines } from './timetable.ts'
 import { hasSafeStageTimelineArithmetic } from './timetableGenerationArithmetic.ts'
-import { hasValidTimetableGenerationDutyTypes,
+import { hasValidTimetableGenerationDutyTypes, hasValidTimetableGenerationLocks,
   hasValidTimetableGenerationScheduleItems } from './timetableGenerationOptions.ts'
 import { evaluateTimetableLocks, isValidFixedPosition } from './timetableLocks.ts'
 import { detectScheduleIssues } from './issues.ts'
@@ -478,6 +478,16 @@ const hasParseableTimeRangeBoundaries = (range: TimeRange): boolean =>
     (typeof time === 'string' && isValidLocalTime(time)))
 
 export const generateTimetablePlan = (input: TimetableGenerationInput): TimetableGenerationResult => {
+  const rawInput: unknown = input
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === 'object' && !Array.isArray(value)
+  const validId = (value: unknown): value is string => typeof value === 'string' && !!value.trim()
+  const rawEventDay = isRecord(rawInput) ? rawInput.eventDay : undefined
+  const safeEventDayId = isRecord(rawEventDay) && validId(rawEventDay.id) ? rawEventDay.id : ''
+  if (!isRecord(rawInput) || !isRecord(rawInput.event) || !validId(rawInput.event.id) ||
+    !isRecord(rawEventDay) || !validId(rawEventDay.id) || !validId(rawEventDay.eventId)) {
+    return { ok: false, failure: { code: 'INVALID_INPUT', eventDayId: safeEventDayId, attemptedSchedules: 0 } }
+  }
   const {
     event, eventDay, eventDays, stages, sections, members, eventMembers,
     eventMemberDays, eventBands, scheduleItems, timetableLocks, dutyTypes,
@@ -489,7 +499,8 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
       'stageId' | 'sectionId' | 'eventBandId'>> = {}): TimetableGenerationResult => ({
     ok: false, failure: { code, eventDayId: eventDay.id, attemptedSchedules, ...references },
   })
-  if (!hasValidTimetableGenerationDutyTypes(dutyTypes)) return failure('INVALID_INPUT', 0)
+  if (!hasValidTimetableGenerationDutyTypes(dutyTypes) ||
+    !hasValidTimetableGenerationLocks(timetableLocks)) return failure('INVALID_INPUT', 0)
   const rawScheduleItems: unknown = scheduleItems
   if (!hasValidTimetableGenerationScheduleItems(rawScheduleItems)) {
     const malformed: unknown = Array.isArray(rawScheduleItems)

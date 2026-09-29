@@ -61,6 +61,67 @@ const createInput = ({ bandCount = 4, sectionCount = 2, paCount = 2 } = {}) => {
   }
 }
 
+for (const [name, makeInput, expectedDayId] of [
+  ['input null', () => null, ''],
+  ['input undefined', () => undefined, ''],
+  ['event null', () => ({ ...createInput(), event: null }), 'day-1'],
+  ['event ID空文字', () => ({ ...createInput(), event: { id: '' } }), 'day-1'],
+  ['eventDay null', () => ({ ...createInput(), eventDay: null }), ''],
+  ['eventDay nullと不正DutyType', () => ({ ...createInput(), eventDay: null, dutyTypes: [null] }), ''],
+  ['eventDay空object', () => ({ ...createInput(), eventDay: {} }), ''],
+  ['eventDay ID空文字', () => ({ ...createInput(), eventDay: { id: '', eventId: 'event-1' } }), ''],
+  ['eventDay eventId null', () => ({ ...createInput(), eventDay: { id: 'day-1', eventId: null } }), 'day-1'],
+]) {
+  test(`generatorは${name}をthrowせずINVALID_INPUTにする`, () => {
+    const input = makeInput()
+    const original = structuredClone(input)
+    assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
+      code: 'INVALID_INPUT', eventDayId: expectedDayId, attemptedSchedules: 0,
+    } })
+    assert.deepEqual(input, original)
+  })
+}
+
+for (const [name, edit] of [
+  ['ID欠落', lock => { delete lock.id }],
+  ['ID null', lock => { lock.id = null }],
+  ['ID空白', lock => { lock.id = '   ' }],
+  ['eventId欠落', lock => { delete lock.eventId }],
+  ['eventId null', lock => { lock.eventId = null }],
+  ['stageId欠落', lock => { delete lock.stageId }],
+  ['stageId空白', lock => { lock.stageId = ' ' }],
+  ['scheduleItemId欠落', lock => { delete lock.scheduleItemId }],
+  ['scheduleItemId空白', lock => { lock.scheduleItemId = ' ' }],
+  ['sectionId不正', lock => { lock.sectionId = null }],
+  ['position欠落', lock => { delete lock.position }],
+  ['position不正', lock => { lock.position = { kind: 'index', index: -1 } }],
+]) {
+  test(`generatorはLock ${name}を評価前にINVALID_INPUTにする`, () => {
+    const input = createGenerationUiInput()
+    edit(input.timetableLocks[0])
+    const original = structuredClone(input)
+    const result = generateTimetablePlan(input)
+    assert.equal(result.ok, false)
+    assert.equal(result.failure.code, 'INVALID_INPUT')
+    assert.equal(result.failure.attemptedSchedules, 0)
+    assert.deepEqual(input, original)
+  })
+}
+
+test('generatorは重複Lock IDを評価前に拒否し、正常な別Event Lockは許可する', () => {
+  const input = createGenerationUiInput()
+  const foreign = { ...input.timetableLocks[0], id: 'foreign-lock', eventId: 'event-b',
+    stageId: 'stage-b', sectionId: undefined, scheduleItemId: 'p-b' }
+  input.timetableLocks.push(foreign)
+  assert.equal(generateTimetablePlan(input).ok, true)
+  input.timetableLocks.push({ ...foreign, id: input.timetableLocks[0].id })
+  const original = structuredClone(input)
+  const result = generateTimetablePlan(input)
+  assert.equal(result.failure?.code, 'INVALID_INPUT')
+  assert.equal(result.failure?.attemptedSchedules, 0)
+  assert.deepEqual(input, original)
+})
+
 for (const [name, duplicate] of [
   ['Performance同士', items => ({ ...items.find(item => item.id === 'old-p1'), eventBandId: 'band-2' })],
   ['PerformanceとBreak', items => ({ ...items.find(item => item.id === 'break-1'), id: 'old-p1' })],

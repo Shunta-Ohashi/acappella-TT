@@ -2,10 +2,144 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { materializeTimetableGenerationPlan, validateTimetableGenerationCandidate } from '../src/domain/timetableGenerationApply.ts'
 import { generateTimetablePlan } from '../src/domain/timetableGeneration.ts'
+import { detectScheduleIssues } from '../src/domain/issues.ts'
 import { resolveDutyAssignmentInterval } from '../src/domain/dutyAssignments.ts'
 import { resolvePaAssignmentInterval } from '../src/domain/paAssignments.ts'
 import { serializePersistedState, parsePersistedState } from '../src/persistence/localPersistence.ts'
 import { createGenerationUiInput, materializationInput } from './fixtures/timetableGenerationUi.mjs'
+
+for (const [name, edit] of [
+  ['ID欠落', lock => { delete lock.id }],
+  ['ID null', lock => { lock.id = null }],
+  ['ID空白', lock => { lock.id = '   ' }],
+  ['eventId欠落', lock => { delete lock.eventId }],
+  ['eventId null', lock => { lock.eventId = null }],
+  ['stageId欠落', lock => { delete lock.stageId }],
+  ['stageId空白', lock => { lock.stageId = ' ' }],
+  ['scheduleItemId欠落', lock => { delete lock.scheduleItemId }],
+  ['scheduleItemId空白', lock => { lock.scheduleItemId = ' ' }],
+  ['sectionId不正', lock => { lock.sectionId = null }],
+  ['position欠落', lock => { delete lock.position }],
+  ['position不正', lock => { lock.position = { kind: 'index', index: -1 } }],
+]) {
+  test(`materializerとfinal validatorはLock ${name}を安全に拒否する`, () => {
+    const input = materializationInput()
+    const candidate = materializeTimetableGenerationPlan(input)
+    assert.equal(candidate.ok, true)
+    edit(input.timetableLocks[0])
+    const original = structuredClone({ input, candidate })
+    assert.deepEqual(materializeTimetableGenerationPlan(input),
+      { ok: false, code: 'INVALID_PLAN_REFERENCE' })
+    assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, false)
+    assert.deepEqual({ input, candidate }, original)
+  })
+}
+
+test('materializerとfinal validatorは重複Lock IDを拒否し、正常な別Event Lockは許可する', () => {
+  const input = materializationInput()
+  input.timetableLocks.push({ ...input.timetableLocks[0], id: 'foreign-lock', eventId: 'event-b',
+    stageId: 'stage-b', sectionId: undefined, scheduleItemId: 'p-b' })
+  const candidate = materializeTimetableGenerationPlan(input)
+  assert.equal(candidate.ok, true)
+  assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true)
+  input.timetableLocks.push({ ...input.timetableLocks.at(-1), id: input.timetableLocks[0].id })
+  const original = structuredClone({ input, candidate })
+  assert.deepEqual(materializeTimetableGenerationPlan(input),
+    { ok: false, code: 'INVALID_PLAN_REFERENCE' })
+  assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, false)
+  assert.deepEqual({ input, candidate }, original)
+})
+
+test('final validatorはplanにない有効なtarget PAを拒否する', () => {
+  const input = materializationInput()
+  const candidate = materializeTimetableGenerationPlan(input)
+  assert.equal(candidate.ok, true)
+  const baseline = validateTimetableGenerationCandidate(input, candidate)
+  assert.equal(baseline.ok, true)
+  const extra = { id: 'extra-target-pa', eventId: input.event.id, eventDayId: input.eventDay.id,
+    stageId: 'stage-a1', memberId: 'main', role: 'main',
+    from: { scheduleItemId: 'break-1', edge: 'start' },
+    until: { scheduleItemId: 'break-1', edge: 'end' } }
+  assert.equal(resolvePaAssignmentInterval(extra, baseline.calculatedItems).ok, true)
+  const issues = detectScheduleIssues({
+    event: input.event, members: input.members, eventMembers: input.eventMembers,
+    eventMemberDays: input.eventMemberDays,
+    eventBands: input.eventBands.filter(band => band.eventId === input.event.id &&
+      band.eventDayId === input.eventDay.id),
+    stages: input.stages.filter(stage => stage.eventDayId === input.eventDay.id),
+    sections: input.sections,
+    paAssignments: [...candidate.paAssignments.filter(pa => pa.eventId === input.event.id &&
+      pa.eventDayId === input.eventDay.id), extra],
+    dutyTypes: input.dutyTypes, dutyAssignments: input.dutyAssignments,
+    calculatedItems: baseline.calculatedItems,
+  })
+  assert.equal(issues.some(issue => issue.severity === 'ERROR'), false)
+  const original = structuredClone({ input, candidate })
+  const result = validateTimetableGenerationCandidate(input, { ...candidate,
+    paAssignments: [...candidate.paAssignments, extra] })
+  assert.deepEqual(result, { ok: false, reason: '生成計画とPA担当の件数が一致しません。' })
+  assert.deepEqual({ input, candidate }, original)
+})
+
+test('final validatorはplanのtarget PA欠落を拒否する', () => {
+  const input = materializationInput()
+  const candidate = materializeTimetableGenerationPlan(input)
+  assert.equal(candidate.ok, true)
+  const original = structuredClone({ input, candidate })
+  const result = validateTimetableGenerationCandidate(input, { ...candidate,
+    paAssignments: candidate.paAssignments.filter(pa => pa.id !== 'new-pa-0') })
+  assert.deepEqual(result, { ok: false, reason: '生成計画とPA担当の件数が一致しません。' })
+  assert.deepEqual({ input, candidate }, original)
+})
+
+for (const [name, changes] of [
+  ['memberId', { memberId: 'sub' }],
+  ['role', { role: 'sub' }],
+  ['stageId', { stageId: 'stage-sub' }],
+  ['from Boundary', { from: { scheduleItemId: 'break-1', edge: 'start' } }],
+  ['until Boundary', { until: { scheduleItemId: 'break-1', edge: 'end' } }],
+]) {
+  test(`final validatorはplanと異なるtarget PA ${name}を拒否する`, () => {
+    const input = materializationInput()
+    const candidate = materializeTimetableGenerationPlan(input)
+    assert.equal(candidate.ok, true)
+    const original = structuredClone({ input, candidate })
+    const modified = { ...candidate, paAssignments: candidate.paAssignments.map(pa =>
+      pa.id === 'new-pa-0' ? { ...pa, ...changes } : pa) }
+    assert.deepEqual(validateTimetableGenerationCandidate(input, modified),
+      { ok: false, reason: '生成結果に計画外のPA担当があります。' })
+    assert.deepEqual({ input, candidate }, original)
+  })
+}
+
+test('target PAの順序だけを変更したcandidateは受け入れる', () => {
+  const input = materializationInput()
+  const candidate = materializeTimetableGenerationPlan(input)
+  assert.equal(candidate.ok, true)
+  const original = structuredClone({ input, candidate })
+  assert.equal(validateTimetableGenerationCandidate(input, { ...candidate,
+    paAssignments: [...candidate.paAssignments].reverse() }).ok, true)
+  assert.deepEqual({ input, candidate }, original)
+})
+
+for (const [name, malformedPlan] of [
+  ['null', () => null],
+  ['paShifts null', plan => ({ ...plan, paShifts: null })],
+  ['paShifts null要素', plan => ({ ...plan, paShifts: [null] })],
+  ['Boundary null', plan => ({ ...plan, paShifts: [{ ...plan.paShifts[0], fromBoundary: null }] })],
+  ['Boundary不明kind', plan => ({ ...plan, paShifts: [{ ...plan.paShifts[0],
+    fromBoundary: { kind: 'unknown', edge: 'start' } }] })],
+]) {
+  test(`final validatorはplan ${name}をthrowせず拒否する`, () => {
+    const input = materializationInput()
+    const candidate = materializeTimetableGenerationPlan(input)
+    assert.equal(candidate.ok, true)
+    input.plan = malformedPlan(input.plan)
+    const original = structuredClone({ input, candidate })
+    assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, false)
+    assert.deepEqual({ input, candidate }, original)
+  })
+}
 
 test('orphan ScheduleItemをmaterializerのsource・baselineと最終validatorのinput・candidateで拒否する', () => {
   const orphan = { id: 'orphan' }
@@ -144,7 +278,7 @@ test('生成coreのplanを正式IDへ変換しTimeline・Lock・Issue・Dutyを�
     newPaAssignmentIds: generated.plan.paShifts.map((_, i) => `new-pa-${i}`),
   })
   assert.equal(candidate.ok, true, JSON.stringify(candidate))
-  const validation = validateTimetableGenerationCandidate(input, candidate)
+  const validation = validateTimetableGenerationCandidate({ ...input, plan: generated.plan }, candidate)
   assert.equal(validation.ok, true, JSON.stringify(validation))
   assert.equal(validation.issues.filter(issue => issue.severity === 'ERROR').length, 0)
   assert.equal(candidate.scheduleItems.find(item => item.eventBandId === 'band-1').id, 'old-p1')

@@ -1,6 +1,5 @@
 import type { DutyAssignment, DutyType, Event, EventBand, EventDay, PaAssignment, ScheduleBoundary,
   ScheduleItem, Section, Stage, TimetableLock } from './models'
-import type { PlannedScheduleBoundary } from './paShiftPlanning'
 import type { TimetableGenerationInput, TimetableGenerationPlan } from './timetableGeneration'
 import { isValidScheduleItemSectionAssignment } from './schedule.ts'
 import { calculateEventDayTimelines } from './timetable.ts'
@@ -9,7 +8,7 @@ import { detectScheduleIssues, type ScheduleIssue } from './issues.ts'
 import { getDutyAssignmentsForEvent } from './dutyAssignments.ts'
 import { resolvePaAssignmentInterval } from './paAssignments.ts'
 import { hasSafeStageTimelineArithmetic } from './timetableGenerationArithmetic.ts'
-import { hasSameItemContents, hasValidTimetableGenerationDutyTypes,
+import { hasSameItemContents, hasValidTimetableGenerationDutyTypes, hasValidTimetableGenerationLocks,
   hasValidTimetableGenerationScheduleItems, validateTimetableGenerationBaseline,
   validateTimetableGenerationBreakRemoval } from './timetableGenerationOptions.ts'
 import type { CalculatedScheduleItem } from './timeline'
@@ -45,7 +44,10 @@ interface MaterializationInput {
   newPaAssignmentIds: string[]
 }
 
-type CandidateValidationInput = TimetableGenerationInput & { paAssignments: PaAssignment[] }
+type CandidateValidationInput = TimetableGenerationInput & {
+  paAssignments: PaAssignment[]
+  plan: TimetableGenerationPlan
+}
 
 const isNonEmptyId = (value: unknown): value is string =>
   typeof value === 'string' && !!value.trim()
@@ -93,6 +95,29 @@ const isRetainedPaAssignment = (pa: PaAssignment, eventId: string, eventDayId: s
 const hasValidBoundaryReference = (value: unknown): value is Pick<ScheduleBoundary, 'scheduleItemId'> =>
   isRecord(value) && isNonEmptyId(value.scheduleItemId)
 
+const resolvePlannedBoundary = (
+  value: unknown, stageId: string, sourceItemById: ReadonlyMap<string, ScheduleItem>,
+  candidateItemById: ReadonlyMap<string, ScheduleItem>, performanceIdByBand: ReadonlyMap<string, string>,
+): ScheduleBoundary | undefined => {
+  if (!isRecord(value) || (value.edge !== 'start' && value.edge !== 'end')) return undefined
+  let id: string | undefined
+  if (value.kind === 'existing-item' && isNonEmptyId(value.scheduleItemId) &&
+    sourceItemById.has(value.scheduleItemId)) id = value.scheduleItemId
+  if (value.kind === 'planned-performance' && isNonEmptyId(value.eventBandId)) {
+    id = performanceIdByBand.get(value.eventBandId)
+    const performance = id === undefined ? undefined : candidateItemById.get(id)
+    if (performance?.kind !== 'performance' || performance.eventBandId !== value.eventBandId) return undefined
+  }
+  if (!id || candidateItemById.get(id)?.stageId !== stageId) return undefined
+  return { scheduleItemId: id, edge: value.edge }
+}
+
+const paShiftKey = (
+  eventId: string, eventDayId: string, stageId: string, memberId: string, role: string,
+  from: ScheduleBoundary, until: ScheduleBoundary,
+): string => JSON.stringify([eventId, eventDayId, stageId, memberId, role,
+  from.scheduleItemId, from.edge, until.scheduleItemId, until.edge])
+
 const hasValidReferenceInputs = (
   paAssignments: PaAssignment[], dutyAssignments: DutyAssignment[], timetableLocks: TimetableLock[],
 ): boolean =>
@@ -103,10 +128,7 @@ const hasValidReferenceInputs = (
     isRecord(duty) && isNonEmptyId(duty.dutyTypeId) && isNonEmptyId(duty.eventDayId) &&
     isNonEmptyId(duty.stageId) && hasValidBoundaryReference(duty.from) &&
     hasValidBoundaryReference(duty.until)) &&
-  Array.isArray(timetableLocks) && timetableLocks.every(lock =>
-    isRecord(lock) && isNonEmptyId(lock.eventId) && isNonEmptyId(lock.stageId) &&
-    isNonEmptyId(lock.scheduleItemId) &&
-    (lock.sectionId === undefined || isNonEmptyId(lock.sectionId)))
+  hasValidTimetableGenerationLocks(timetableLocks)
 
 const getReservedScheduleReferences = (
   paAssignments: PaAssignment[], dutyAssignments: DutyAssignment[], timetableLocks: TimetableLock[],
@@ -279,22 +301,15 @@ export const materializeTimetableGenerationPlan = ({
     ...generated,
   ]
   const candidateItemById = new Map(candidateItems.map(item => [item.id, item]))
-  const boundary = (value: PlannedScheduleBoundary, stageId: string): ScheduleBoundary | undefined => {
-    if (!isRecord(value)) return undefined
-    if (value.kind === 'existing-item' && !itemById.has(value.scheduleItemId)) return undefined
-    const id = value.kind === 'existing-item' ? value.scheduleItemId
-      : value.kind === 'planned-performance' ? performanceIdByBand.get(value.eventBandId) : undefined
-    if (!id || candidateItemById.get(id)?.stageId !== stageId ||
-      (value.edge !== 'start' && value.edge !== 'end')) return undefined
-    return { scheduleItemId: id, edge: value.edge }
-  }
   const assignments: PaAssignment[] = []
   for (const [index, shift] of plan.paShifts.entries()) {
     if (shift.eventDayId !== eventDay.id || !stageById.has(shift.stageId) ||
       (shift.sectionId !== undefined && !sections.some(s => s.id === shift.sectionId && s.stageId === shift.stageId)) ||
       !shift.memberId || (shift.role !== 'main' && shift.role !== 'sub')) return fail('INVALID_PLAN_REFERENCE')
-    const from = boundary(shift.fromBoundary, shift.stageId)
-    const until = boundary(shift.untilBoundary, shift.stageId)
+    const from = resolvePlannedBoundary(shift.fromBoundary, shift.stageId,
+      itemById, candidateItemById, performanceIdByBand)
+    const until = resolvePlannedBoundary(shift.untilBoundary, shift.stageId,
+      itemById, candidateItemById, performanceIdByBand)
     if (!from || !until) return fail('BOUNDARY_UNRESOLVED')
     assignments.push({
       id: newPaAssignmentIds[index], eventId: event.id, eventDayId: eventDay.id,
@@ -381,6 +396,45 @@ export const validateTimetableGenerationCandidate = (
   if (candidatePerformances.some(item => stageIds.has(item.stageId) && !bandIds.has(item.eventBandId))) {
     return fail('生成結果に対象外の出演バンドが含まれています。')
   }
+  const plan = input.plan
+  if (!isRecord(plan) || plan.eventDayId !== eventDay.id ||
+    !Array.isArray(plan.paShifts) || !plan.paShifts.every(isRecord)) {
+    return fail('生成計画のPA担当の形式が不正です。')
+  }
+  const targetPa = candidate.paAssignments.filter(item => item.eventId === event.id && item.eventDayId === eventDay.id)
+  if (targetPa.length !== plan.paShifts.length) return fail('生成計画とPA担当の件数が一致しません。')
+  const sourceItemById = new Map(input.scheduleItems.map(item => [item.id, item]))
+  const candidateItemById = new Map(candidate.scheduleItems.map(item => [item.id, item]))
+  const performanceIdByBand = new Map(targetBandPerformances.map(item => [item.eventBandId, item.id]))
+  const expectedPaCounts = new Map<string, number>()
+  for (const shift of plan.paShifts) {
+    if (shift.eventDayId !== eventDay.id || !stageIds.has(shift.stageId) ||
+      !isNonEmptyId(shift.memberId) || (shift.role !== 'main' && shift.role !== 'sub') ||
+      (shift.sectionId !== undefined && !targetSections.some(section =>
+        section.id === shift.sectionId && section.stageId === shift.stageId))) {
+      return fail('生成計画のPA担当の所属が不正です。')
+    }
+    const from = resolvePlannedBoundary(shift.fromBoundary, shift.stageId,
+      sourceItemById, candidateItemById, performanceIdByBand)
+    const until = resolvePlannedBoundary(shift.untilBoundary, shift.stageId,
+      sourceItemById, candidateItemById, performanceIdByBand)
+    if (!from || !until) return fail('生成計画のPA担当範囲を解決できません。')
+    const key = paShiftKey(event.id, eventDay.id, shift.stageId, shift.memberId, shift.role, from, until)
+    expectedPaCounts.set(key, (expectedPaCounts.get(key) ?? 0) + 1)
+  }
+  for (const pa of targetPa) {
+    if (!stageIds.has(pa.stageId) || !isNonEmptyId(pa.memberId) ||
+      (pa.role !== 'main' && pa.role !== 'sub') || !isRecord(pa.from) || !isRecord(pa.until) ||
+      !isNonEmptyId(pa.from.scheduleItemId) || !isNonEmptyId(pa.until.scheduleItemId) ||
+      (pa.from.edge !== 'start' && pa.from.edge !== 'end') ||
+      (pa.until.edge !== 'start' && pa.until.edge !== 'end')) {
+      return fail('生成結果のPA担当の形式が不正です。')
+    }
+    const key = paShiftKey(event.id, eventDay.id, pa.stageId, pa.memberId, pa.role, pa.from, pa.until)
+    const remaining = expectedPaCounts.get(key) ?? 0
+    if (remaining === 0) return fail('生成結果に計画外のPA担当があります。')
+    expectedPaCounts.set(key, remaining - 1)
+  }
   const targetItems = candidate.scheduleItems.filter(item => stageIds.has(item.stageId))
   const originalItemById = new Map(input.scheduleItems.map(item => [item.id, item]))
   const targetLocks = timetableLocks.filter(lock =>
@@ -408,7 +462,6 @@ export const validateTimetableGenerationCandidate = (
       eventDays: [eventDay], stages: targetStages, sections: targetSections }).valid) {
       return fail('生成結果がTT固定と一致していません。')
     }
-    const targetPa = candidate.paAssignments.filter(item => item.eventId === event.id && item.eventDayId === eventDay.id)
     if (targetPa.some(item => !resolvePaAssignmentInterval(item, timeline.calculatedItems).ok)) {
       return fail('PA担当の範囲を解決できません。')
     }

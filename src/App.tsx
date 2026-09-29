@@ -935,7 +935,7 @@ function App() {
       feedback(`生成結果を適用可能な形式へ変換できませんでした。（${candidate.code}）`)
       return
     }
-    const validation = validateTimetableGenerationCandidate({ ...input, paAssignments }, candidate)
+    const validation = validateTimetableGenerationCandidate({ ...input, paAssignments, plan: result.plan }, candidate)
     if (!validation.ok) { feedback(validation.reason); return }
     setGenerationPreview({
       eventId: selectedEvent.id, eventDayId: timetableEventDay.id, sourceState: domainState, candidate,

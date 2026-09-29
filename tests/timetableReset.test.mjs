@@ -393,7 +393,7 @@ test('デモの撮影担当削除後なら部内OFFで生成・適用でき、�
       newScheduleItemIds: generated.plan.placements.map((_, i) => `reset-demo-p-${i}`),
       newPaAssignmentIds: generated.plan.paShifts.map((_, i) => `reset-demo-pa-${i}`) })
     assert.equal(candidate.ok, true)
-    assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true)
+    assert.equal(validateTimetableGenerationCandidate({ ...input, plan: generated.plan }, candidate).ok, true)
     assert.equal(candidate.scheduleItems.some(item => item.id === 'break-demo-generation-inside'), false)
     if (removeInter) assert.equal(candidate.scheduleItems.some(item => item.id === 'break-demo-generation-between-1'), false)
     assert.ok(candidate.scheduleItems.some(item => item.id === 'break-demo-generation-sub2'), '別日の通常休憩は保持')

@@ -1,6 +1,7 @@
 import type { DutyAssignment, DutyType, Event, EventDay, PaAssignment, ScheduleItem, Section, Stage,
   TimetableLock } from './models'
 import { isValidBreakDurationMinutes, isValidScheduleItemSectionAssignment } from './schedule.ts'
+import { isValidFixedPosition } from './timetableLocks.ts'
 
 export interface TimetableGenerationUiOptions {
   keepIntraSectionBreaks: boolean
@@ -49,6 +50,15 @@ export const hasValidTimetableGenerationScheduleItems = (value: unknown): value 
     return false
   }) && new Set(value.map(item => item.id)).size === value.length
 
+/** Validate Lock identity and fields consumed by generation and Lock evaluation. */
+export const hasValidTimetableGenerationLocks = (value: unknown): value is TimetableLock[] =>
+  Array.isArray(value) && value.every(lock => isRecord(lock) &&
+    isNonEmptyId(lock.id) && isNonEmptyId(lock.eventId) &&
+    isNonEmptyId(lock.scheduleItemId) && isNonEmptyId(lock.stageId) &&
+    (lock.sectionId === undefined || isNonEmptyId(lock.sectionId)) &&
+    isValidFixedPosition(lock.position)) &&
+  new Set(value.map(lock => lock.id)).size === value.length
+
 const hasBoundaryId = (value: unknown): boolean => isRecord(value) && isNonEmptyId(value.scheduleItemId)
 
 const hasValidBreakScope = (scope: GenerationBreakScope): boolean =>
@@ -66,8 +76,7 @@ const hasValidBreakReferences = (
     hasBoundaryId(pa.from) && hasBoundaryId(pa.until)) &&
   Array.isArray(dutyAssignments) && dutyAssignments.every(duty => isRecord(duty) &&
     hasBoundaryId(duty.from) && hasBoundaryId(duty.until)) &&
-  Array.isArray(timetableLocks) && timetableLocks.every(lock =>
-    isRecord(lock) && isNonEmptyId(lock.scheduleItemId))
+  hasValidTimetableGenerationLocks(timetableLocks)
 
 /** Check runtime shapes before App's first generation preprocessing step. */
 export const hasValidTimetableGenerationPreprocessingInput = (input: GenerationBreakScope & {

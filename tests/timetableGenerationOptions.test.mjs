@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createScheduleItemsForTimetableGeneration, DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS,
   hasValidTimetableGenerationPreprocessingInput, hasValidTimetableGenerationScheduleItems,
+  hasValidTimetableGenerationLocks,
   validateTimetableGenerationBaseline,
   validateTimetableGenerationBreakRemoval } from '../src/domain/timetableGenerationOptions.ts'
 import { generateTimetablePlan } from '../src/domain/timetableGeneration.ts'
@@ -97,6 +98,47 @@ test('IDが一意な対象日・他日・別EventのScheduleItemは前処理を�
   assert.equal(hasValidTimetableGenerationScheduleItems(input.scheduleItems), true)
   assert.equal(hasValidTimetableGenerationPreprocessingInput({ ...input,
     options: DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS }), true)
+})
+
+for (const [name, edit] of [
+  ['ID欠落', lock => { delete lock.id }],
+  ['ID null', lock => { lock.id = null }],
+  ['ID空白', lock => { lock.id = '   ' }],
+  ['eventId欠落', lock => { delete lock.eventId }],
+  ['eventId null', lock => { lock.eventId = null }],
+  ['stageId欠落', lock => { delete lock.stageId }],
+  ['stageId空白', lock => { lock.stageId = ' ' }],
+  ['scheduleItemId欠落', lock => { delete lock.scheduleItemId }],
+  ['scheduleItemId空白', lock => { lock.scheduleItemId = ' ' }],
+  ['sectionId不正', lock => { lock.sectionId = null }],
+  ['position欠落', lock => { delete lock.position }],
+  ['position不正', lock => { lock.position = { kind: 'index', index: -1 } }],
+]) {
+  test(`Lock ${name}はpreflightで拒否する`, () => {
+    const input = fixture()
+    edit(input.timetableLocks[0])
+    const original = structuredClone(input)
+    assert.equal(hasValidTimetableGenerationLocks(input.timetableLocks), false)
+    assert.equal(hasValidTimetableGenerationPreprocessingInput({ ...input,
+      options: DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS }), false)
+    assert.deepEqual(input, original)
+  })
+}
+
+test('Lock ID重複は拒否し、一意な他日・別Event Lockは許可する', () => {
+  const input = fixture()
+  const otherDay = { ...input.timetableLocks[0], id: 'lock-a2', scheduleItemId: 'p-a2',
+    stageId: 'stage-a2', sectionId: undefined }
+  const foreign = { ...otherDay, id: 'lock-b', eventId: 'event-b',
+    stageId: 'stage-b', scheduleItemId: 'p-b' }
+  input.timetableLocks.push(otherDay, foreign)
+  assert.equal(hasValidTimetableGenerationLocks(input.timetableLocks), true)
+  assert.equal(hasValidTimetableGenerationPreprocessingInput({ ...input,
+    options: DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS }), true)
+  input.timetableLocks.push({ ...foreign, id: otherDay.id })
+  assert.equal(hasValidTimetableGenerationLocks(input.timetableLocks), false)
+  assert.equal(hasValidTimetableGenerationPreprocessingInput({ ...input,
+    options: DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS }), false)
 })
 
 test('生成UI optionは初回両方ONで、同値の新配列を返す', () => {
@@ -280,7 +322,7 @@ test('同じbaselineを生成・materialization・最終検証へ渡し、除外
   assert.equal(candidate.scheduleItems.some(item => item.id === 'inside'), false)
   assert.ok(candidate.scheduleItems.some(item => item.id === 'break-1'))
   assert.ok(candidate.scheduleItems.some(item => item.id === 'plain'))
-  assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true)
+  assert.equal(validateTimetableGenerationCandidate({ ...input, plan: result.plan }, candidate).ok, true)
   assert.ok(original.scheduleItems.some(item => item.id === 'inside'), '適用前の元TTは変更されない')
 })
 
