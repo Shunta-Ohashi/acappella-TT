@@ -7,6 +7,38 @@ import { resolvePaAssignmentInterval } from '../src/domain/paAssignments.ts'
 import { serializePersistedState, parsePersistedState } from '../src/persistence/localPersistence.ts'
 import { createGenerationUiInput, materializationInput } from './fixtures/timetableGenerationUi.mjs'
 
+test('orphan ScheduleItemをmaterializerのsource・baselineと最終validatorのinput・candidateで拒否する', () => {
+  const orphan = { id: 'orphan' }
+  for (const field of ['sourceScheduleItems', 'scheduleItems']) {
+    const input = materializationInput()
+    input[field] = [...input[field], orphan]
+    const original = structuredClone(input)
+    assert.deepEqual(materializeTimetableGenerationPlan(input),
+      { ok: false, code: 'INVALID_PLAN_REFERENCE' })
+    assert.deepEqual(input, original)
+  }
+  const input = materializationInput()
+  const candidate = materializeTimetableGenerationPlan(input)
+  assert.equal(candidate.ok, true)
+  const original = structuredClone({ input, candidate })
+  assert.equal(validateTimetableGenerationCandidate({ ...input,
+    scheduleItems: [...input.scheduleItems, orphan] }, candidate).ok, false)
+  assert.equal(validateTimetableGenerationCandidate(input, { ...candidate,
+    scheduleItems: [...candidate.scheduleItems, orphan] }).ok, false)
+  assert.deepEqual({ input, candidate }, original)
+})
+
+test('正常な他日・別EventのScheduleItemは形状検証で拒否しない', () => {
+  const input = materializationInput()
+  const candidate = materializeTimetableGenerationPlan(input)
+  assert.equal(candidate.ok, true)
+  assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true)
+  for (const id of ['p-a2', 'p-b']) {
+    assert.deepEqual(candidate.scheduleItems.find(item => item.id === id),
+      input.scheduleItems.find(item => item.id === id))
+  }
+})
+
 for (const [name, dutyTypes] of [
   ['collection null', null], ['null entry', [null]], ['empty entry', [{}]],
   ['undefined entry', [undefined]],

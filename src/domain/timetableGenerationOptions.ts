@@ -33,13 +33,30 @@ export const hasValidTimetableGenerationDutyTypes = (value: unknown): value is D
     isNonEmptyId(type.id) && isNonEmptyId(type.eventId)) &&
   new Set(value.map(type => type.id)).size === value.length
 
+/** Validate ScheduleItem structure without imposing target Event or lane ownership. */
+export const hasValidTimetableGenerationScheduleItems = (value: unknown): value is ScheduleItem[] =>
+  Array.isArray(value) && value.every(item => {
+    if (!isRecord(item) || !isNonEmptyId(item.id) || !isNonEmptyId(item.stageId) ||
+      !Number.isSafeInteger(item.order) || (item.order as number) < 0 ||
+      (item.sectionId !== undefined && !isNonEmptyId(item.sectionId))) return false
+    if (item.kind === 'performance') {
+      return isNonEmptyId(item.eventBandId) && item.afterSectionId === undefined
+    }
+    if (item.kind === 'break') {
+      return typeof item.title === 'string' && isValidBreakDurationMinutes(item.durationMinutes) &&
+        (item.afterSectionId === undefined || isNonEmptyId(item.afterSectionId))
+    }
+    return false
+  })
+
 const hasBoundaryId = (value: unknown): boolean => isRecord(value) && isNonEmptyId(value.scheduleItemId)
 
 const hasValidBreakScope = (scope: GenerationBreakScope): boolean =>
   isRecord(scope.event) && isNonEmptyId(scope.event.id) &&
   isRecord(scope.eventDay) && isNonEmptyId(scope.eventDay.id) && isNonEmptyId(scope.eventDay.eventId) &&
-  [scope.eventDays, scope.stages, scope.sections, scope.scheduleItems].every(items =>
-    Array.isArray(items) && items.every(item => isRecord(item) && isNonEmptyId(item.id)))
+  [scope.eventDays, scope.stages, scope.sections].every(items =>
+    Array.isArray(items) && items.every(item => isRecord(item) && isNonEmptyId(item.id))) &&
+  hasValidTimetableGenerationScheduleItems(scope.scheduleItems)
 
 const hasValidBreakReferences = (
   paAssignments: PaAssignment[], dutyAssignments: DutyAssignment[], timetableLocks: TimetableLock[],
@@ -116,9 +133,8 @@ export const validateTimetableGenerationBaseline = ({
   sourceScheduleItems: ScheduleItem[]
   generationScheduleItems: ScheduleItem[]
 }): boolean => {
-  if (!Array.isArray(sourceScheduleItems) || !Array.isArray(generationScheduleItems)) return false
-  if ([...sourceScheduleItems, ...generationScheduleItems].some(item =>
-    item === null || typeof item !== 'object' || typeof item.id !== 'string')) return false
+  if (!hasValidTimetableGenerationScheduleItems(sourceScheduleItems) ||
+    !hasValidTimetableGenerationScheduleItems(generationScheduleItems)) return false
   const sourceById = new Map(sourceScheduleItems.map((item, index) => [item.id, { item, index }]))
   if (sourceById.size !== sourceScheduleItems.length) return false
   const retainedIds = new Set<string>()

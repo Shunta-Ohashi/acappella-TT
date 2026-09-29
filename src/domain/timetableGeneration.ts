@@ -14,7 +14,8 @@ import { evaluateScheduleConstraints, type ScheduleConstraintEvaluation } from '
 import { getDutyAssignmentsForEvent } from './dutyAssignments.ts'
 import { calculateEventDayTimelines } from './timetable.ts'
 import { hasSafeStageTimelineArithmetic } from './timetableGenerationArithmetic.ts'
-import { hasValidTimetableGenerationDutyTypes } from './timetableGenerationOptions.ts'
+import { hasValidTimetableGenerationDutyTypes,
+  hasValidTimetableGenerationScheduleItems } from './timetableGenerationOptions.ts'
 import { evaluateTimetableLocks, isValidFixedPosition } from './timetableLocks.ts'
 import { detectScheduleIssues } from './issues.ts'
 import { isValidStageTimeRange, isSectionWithinStageTimeRange } from './eventStageSettings.ts'
@@ -489,6 +490,24 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     ok: false, failure: { code, eventDayId: eventDay.id, attemptedSchedules, ...references },
   })
   if (!hasValidTimetableGenerationDutyTypes(dutyTypes)) return failure('INVALID_INPUT', 0)
+  const rawScheduleItems: unknown = scheduleItems
+  if (!hasValidTimetableGenerationScheduleItems(rawScheduleItems)) {
+    const malformed: unknown = Array.isArray(rawScheduleItems)
+      ? rawScheduleItems.find((item: unknown) => !hasValidTimetableGenerationScheduleItems([item]))
+      : undefined
+    if (malformed !== null && typeof malformed === 'object' && !Array.isArray(malformed)) {
+      const item = malformed as Record<string, unknown>
+      if (item.kind === 'performance' && typeof item.eventBandId === 'string' &&
+        eventBands.some(band => band.id === item.eventBandId && band.eventId === event.id)) {
+        return failure('INVALID_INPUT', 0, { eventBandId: item.eventBandId })
+      }
+      if (item.kind === 'break' && typeof item.stageId === 'string' &&
+        stages.some(stage => stage.id === item.stageId && stage.eventDayId === eventDay.id)) {
+        return failure('INVALID_INPUT', 0, { stageId: item.stageId })
+      }
+    }
+    return failure('INVALID_INPUT', 0)
+  }
   if (eventDay.eventId !== event.id ||
     !eventDays.some(day => day.id === eventDay.id && day.eventId === event.id) ||
     !isValidTransitionMinutes(event.defaultTransitionMinutes) ||

@@ -60,6 +60,23 @@ const createInput = ({ bandCount = 4, sectionCount = 2, paCount = 2 } = {}) => {
   }
 }
 
+for (const item of [
+  { id: 'orphan' },
+  { id: 'bad-p', kind: 'performance', eventBandId: 'band-00', order: 0 },
+  { id: 'bad-p', kind: 'performance', eventBandId: 'band-00', stageId: 'stage-1' },
+  { id: 'bad-p', kind: 'performance', stageId: 'stage-1', order: 0 },
+  { id: 'bad', kind: 'unknown', stageId: 'stage-1', order: 0 },
+  { id: 'bad-b', kind: 'break', stageId: 'stage-1', order: 0 },
+]) {
+  test(`generator単独はmalformed ScheduleItem ${item.id}/${String(item.kind)}を無視せず拒否する`, () => {
+    const input = createInput()
+    input.scheduleItems.push(item)
+    const original = structuredClone(input)
+    assert.equal(generateTimetablePlan(input).failure?.code, 'INVALID_INPUT')
+    assert.deepEqual(input, original)
+  })
+}
+
 for (const [name, dutyTypes] of [
   ['collection null', null], ['null entry', [null]], ['empty entry', [{}]],
   ['undefined entry', [undefined]],

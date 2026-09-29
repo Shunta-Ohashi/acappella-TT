@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createScheduleItemsForTimetableGeneration, DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS,
-  hasValidTimetableGenerationPreprocessingInput,
+  hasValidTimetableGenerationPreprocessingInput, hasValidTimetableGenerationScheduleItems,
+  validateTimetableGenerationBaseline,
   validateTimetableGenerationBreakRemoval } from '../src/domain/timetableGenerationOptions.ts'
 import { generateTimetablePlan } from '../src/domain/timetableGeneration.ts'
 import { materializeTimetableGenerationPlan, validateTimetableGenerationCandidate } from '../src/domain/timetableGenerationApply.ts'
@@ -25,6 +26,45 @@ const validateBreakRemoval = (input, options) => validateTimetableGenerationBrea
   timetableLocks: input.timetableLocks,
 })
 const withoutInterBreak = { keepIntraSectionBreaks: true, keepInterSectionBreaks: false }
+
+const malformedScheduleItems = [
+  ['orphan', { id: 'orphan' }],
+  ['missing stageId', { id: 'bad-p', kind: 'performance', eventBandId: 'band-1', order: 0 }],
+  ['missing order', { id: 'bad-p', kind: 'performance', eventBandId: 'band-1', stageId: 'stage-a1' }],
+  ['missing eventBandId', { id: 'bad-p', kind: 'performance', stageId: 'stage-a1', order: 0 }],
+  ['unknown kind', { id: 'bad', kind: 'unknown', stageId: 'stage-a1', order: 0 }],
+  ['missing Break fields', { id: 'bad-b', kind: 'break', stageId: 'stage-a1', order: 0 }],
+  ...[undefined, null, '0', NaN, Infinity, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]
+    .map(order => [`order ${String(order)}`, { id: 'bad-p', kind: 'performance',
+      eventBandId: 'band-1', stageId: 'stage-a1', order }]),
+  ...['', '   ', 123].map(sectionId => [`sectionId ${String(sectionId)}`,
+    { id: 'bad-p', kind: 'performance', eventBandId: 'band-1', stageId: 'stage-a1', order: 0, sectionId }]),
+  ...['', '   ', 123].map(afterSectionId => [`afterSectionId ${String(afterSectionId)}`,
+    { id: 'bad-b', kind: 'break', title: '', durationMinutes: 5,
+      stageId: 'stage-a1', order: 0, afterSectionId }]),
+  ['performance afterSectionId', { id: 'bad-p', kind: 'performance', eventBandId: 'band-1',
+    stageId: 'stage-a1', order: 0, afterSectionId: 'section-1' }],
+]
+
+for (const [name, malformed] of malformedScheduleItems) {
+  test(`ScheduleItem ${name}は前処理とbaselineで拒否し、direct filterでは保持する`, () => {
+    const input = fixture()
+    const source = [...input.scheduleItems, malformed]
+    const original = structuredClone(source)
+    assert.equal(hasValidTimetableGenerationScheduleItems(source), false)
+    assert.equal(hasValidTimetableGenerationPreprocessingInput({ ...input,
+      scheduleItems: source, options: withoutInterBreak }), false)
+    assert.equal(createScheduleItemsForTimetableGeneration({ ...input,
+      scheduleItems: source, options: withoutInterBreak }), source)
+    const baseline = { event: input.event, eventDay: input.eventDay, eventDays: input.eventDays,
+      stages: input.stages, sections: input.sections }
+    assert.equal(validateTimetableGenerationBaseline({ ...baseline, sourceScheduleItems: source,
+      generationScheduleItems: source }), false)
+    assert.equal(validateTimetableGenerationBaseline({ ...baseline, sourceScheduleItems: input.scheduleItems,
+      generationScheduleItems: source }), false)
+    assert.deepEqual(source, original)
+  })
+}
 
 test('生成UI optionは初回両方ONで、同値の新配列を返す', () => {
   assert.deepEqual(DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS, { keepIntraSectionBreaks: true, keepInterSectionBreaks: true })

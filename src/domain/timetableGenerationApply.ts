@@ -9,7 +9,8 @@ import { detectScheduleIssues, type ScheduleIssue } from './issues.ts'
 import { getDutyAssignmentsForEvent } from './dutyAssignments.ts'
 import { resolvePaAssignmentInterval } from './paAssignments.ts'
 import { hasSafeStageTimelineArithmetic } from './timetableGenerationArithmetic.ts'
-import { hasSameItemContents, hasValidTimetableGenerationDutyTypes, validateTimetableGenerationBaseline,
+import { hasSameItemContents, hasValidTimetableGenerationDutyTypes,
+  hasValidTimetableGenerationScheduleItems, validateTimetableGenerationBaseline,
   validateTimetableGenerationBreakRemoval } from './timetableGenerationOptions.ts'
 import type { CalculatedScheduleItem } from './timeline'
 
@@ -168,7 +169,9 @@ export const materializeTimetableGenerationPlan = ({
     !isRecord(plan) || plan.eventDayId !== eventDay.id) {
     return fail('PLAN_SCOPE_MISMATCH')
   }
-  if (!hasUniqueIds(sourceScheduleItems) || !hasUniqueIds(scheduleItems) || !hasUniqueIds(paAssignments) ||
+  if (!hasValidTimetableGenerationScheduleItems(sourceScheduleItems) ||
+    !hasValidTimetableGenerationScheduleItems(scheduleItems) ||
+    !hasUniqueIds(sourceScheduleItems) || !hasUniqueIds(scheduleItems) || !hasUniqueIds(paAssignments) ||
     !hasValidTimetableGenerationDutyTypes(dutyTypes) ||
     !hasValidReferenceInputs(paAssignments, dutyAssignments, timetableLocks) ||
     !validateTimetableGenerationBaseline({
@@ -323,6 +326,9 @@ export const validateTimetableGenerationCandidate = (
   if (!hasUniqueIds(input.scheduleItems)) {
     return fail('元のScheduleItem IDが重複しています。')
   }
+  if (!hasValidTimetableGenerationScheduleItems(input.scheduleItems)) {
+    return fail('元のScheduleItemの形式が不正です。')
+  }
   if (!hasUniqueIds(input.paAssignments)) {
     return fail('元のPA Assignment IDが重複しています。')
   }
@@ -335,6 +341,9 @@ export const validateTimetableGenerationCandidate = (
   if (!isRecord(candidate)) return fail('生成結果の形式が不正です。')
   if (!hasUniqueIds(candidate.scheduleItems)) {
     return fail('生成結果のScheduleItem IDが重複しています。')
+  }
+  if (!hasValidTimetableGenerationScheduleItems(candidate.scheduleItems)) {
+    return fail('生成結果のScheduleItemの形式が不正です。')
   }
   if (!hasUniqueIds(candidate.paAssignments)) {
     return fail('生成結果のPA Assignment IDが重複しています。')
