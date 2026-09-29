@@ -85,7 +85,7 @@ export const hasValidTimetableGenerationPreprocessingInput = (input: GenerationB
   dutyAssignments: DutyAssignment[]
   dutyTypes: DutyType[]
   timetableLocks: TimetableLock[]
-}): boolean => hasValidBreakScope(input) && isRecord(input.options) &&
+}): boolean => isRecord(input) && hasValidBreakScope(input) && isRecord(input.options) &&
   typeof input.options.keepIntraSectionBreaks === 'boolean' &&
   typeof input.options.keepInterSectionBreaks === 'boolean' &&
   hasValidTimetableGenerationDutyTypes(input.dutyTypes) &&

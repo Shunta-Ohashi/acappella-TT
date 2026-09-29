@@ -181,12 +181,12 @@ const referencesItem = (
 ): boolean => itemIds.has(assignment.from.scheduleItemId) || itemIds.has(assignment.until.scheduleItemId)
 
 /** Convert a plan without allocating IDs or changing any committed collection. */
-export const materializeTimetableGenerationPlan = ({
-  event, eventDay, eventDays, stages, sections, eventBands, sourceScheduleItems,
-  scheduleItems, paAssignments, dutyTypes, dutyAssignments, timetableLocks,
-  plan, newScheduleItemIds, newPaAssignmentIds,
-}: MaterializationInput): MaterializationResult => {
+export const materializeTimetableGenerationPlan = (input: MaterializationInput): MaterializationResult => {
   const fail = (code: MaterializationFailureCode): MaterializationResult => ({ ok: false, code })
+  if (!isRecord(input)) return fail('PLAN_SCOPE_MISMATCH')
+  const { event, eventDay, eventDays, stages, sections, eventBands, sourceScheduleItems,
+    scheduleItems, paAssignments, dutyTypes, dutyAssignments, timetableLocks,
+    plan, newScheduleItemIds, newPaAssignmentIds } = input
   if (!hasUnambiguousGenerationScope(event, eventDay, eventDays, stages, sections, eventBands) ||
     !isRecord(plan) || plan.eventDayId !== eventDay.id) {
     return fail('PLAN_SCOPE_MISMATCH')
@@ -332,9 +332,10 @@ export const validateTimetableGenerationCandidate = (
   input: CandidateValidationInput,
   candidate: MaterializedTimetable,
 ): GenerationCandidateValidation => {
+  const fail = (reason: string): GenerationCandidateValidation => ({ ok: false, reason })
+  if (!isRecord(input)) return fail('生成元データの形式が不正です。')
   const { event, eventDay, eventDays, stages, sections, eventBands, eventMembers, eventMemberDays,
     timetableLocks, members, dutyTypes, dutyAssignments } = input
-  const fail = (reason: string): GenerationCandidateValidation => ({ ok: false, reason })
   if (!hasUnambiguousGenerationScope(event, eventDay, eventDays, stages, sections, eventBands)) {
     return fail('開催日・Stage・Section・出演バンドの所属を一意に判定できません。')
   }

@@ -1302,6 +1302,26 @@ test('malformed fixedPlacementのStage/Section参照はLock失敗でなくINVALI
   }
 })
 
+test('Event validationPolicyの不正な閾値は例外を投げず探索前に拒否する', () => {
+  for (const validationPolicy of [
+    null, {},
+    { minimumGapBands: -1, minimumRestMinutes: 0 },
+    { minimumGapBands: 0.5, minimumRestMinutes: 0 },
+    { minimumGapBands: NaN, minimumRestMinutes: 0 },
+    { minimumGapBands: 0, minimumRestMinutes: -1 },
+    { minimumGapBands: 0, minimumRestMinutes: Infinity },
+    { minimumGapBands: 0, minimumRestMinutes: Number.MAX_SAFE_INTEGER + 1 },
+  ]) {
+    const input = createInput({ bandCount: 1, sectionCount: 1 })
+    input.event.validationPolicy = validationPolicy
+    const original = structuredClone(input)
+    assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
+      code: 'INVALID_INPUT', eventDayId: input.eventDay.id, attemptedSchedules: 0,
+    } })
+    assert.deepEqual(input, original)
+  }
+})
+
 test('fixedPlacementの不正なposition kind/indexは探索前にINVALID_INPUT', () => {
   for (const position of [
     { kind: 'middle' }, {}, null,

@@ -8,6 +8,15 @@ import { resolvePaAssignmentInterval } from '../src/domain/paAssignments.ts'
 import { serializePersistedState, parsePersistedState } from '../src/persistence/localPersistence.ts'
 import { createGenerationUiInput, materializationInput } from './fixtures/timetableGenerationUi.mjs'
 
+test('実体化と最終検証はtop-level nullを失敗結果として返す', () => {
+  const candidate = materializeTimetableGenerationPlan(materializationInput())
+  assert.equal(candidate.ok, true)
+  assert.deepEqual(materializeTimetableGenerationPlan(null),
+    { ok: false, code: 'PLAN_SCOPE_MISMATCH' })
+  assert.deepEqual(validateTimetableGenerationCandidate(null, candidate),
+    { ok: false, reason: '生成元データの形式が不正です。' })
+})
+
 for (const [name, edit] of [
   ['ID欠落', lock => { delete lock.id }],
   ['ID null', lock => { lock.id = null }],

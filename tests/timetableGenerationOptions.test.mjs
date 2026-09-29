@@ -20,6 +20,10 @@ const fixture = () => {
   return input
 }
 const filtered = (input, options) => createScheduleItemsForTimetableGeneration({ ...input, options })
+
+test('自動生成の事前検証はtop-level nullを安全に拒否する', () => {
+  assert.equal(hasValidTimetableGenerationPreprocessingInput(null), false)
+})
 const validateBreakRemoval = (input, options) => validateTimetableGenerationBreakRemoval({
   event: input.event, eventDay: input.eventDay,
   originalScheduleItems: input.scheduleItems, generationScheduleItems: filtered(input, options),

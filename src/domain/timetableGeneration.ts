@@ -539,6 +539,11 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     ok: false, failure: { code, eventDayId: eventDay.id, attemptedSchedules, ...references },
   })
   if (!hasValidTimetableGenerationCollections(input)) return failure('INVALID_INPUT', 0)
+  if (!isRecord(event.validationPolicy) ||
+    !Number.isSafeInteger(event.validationPolicy.minimumGapBands) ||
+    event.validationPolicy.minimumGapBands < 0 ||
+    !Number.isSafeInteger(event.validationPolicy.minimumRestMinutes) ||
+    event.validationPolicy.minimumRestMinutes < 0) return failure('INVALID_INPUT', 0)
   const rawScheduleItems: unknown = scheduleItems
   if (!hasValidTimetableGenerationScheduleItems(rawScheduleItems)) {
     const malformed: unknown = Array.isArray(rawScheduleItems)
