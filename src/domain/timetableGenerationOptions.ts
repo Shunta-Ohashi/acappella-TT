@@ -48,11 +48,12 @@ export const createScheduleItemsForTimetableGeneration = (input: GenerationBreak
       ? input.options.keepIntraSectionBreaks : input.options.keepInterSectionBreaks
     ))
 
-const hasSameItemContents = (left: ScheduleItem, right: ScheduleItem): boolean => {
+export const hasSameItemContents = (left: ScheduleItem, right: ScheduleItem,
+  ignoredFields: ReadonlySet<string> = new Set()): boolean => {
   const leftFields = left as unknown as Record<string, unknown>
   const rightFields = right as unknown as Record<string, unknown>
-  const keys = Object.keys(leftFields)
-  return keys.length === Object.keys(rightFields).length &&
+  const keys = Object.keys(leftFields).filter(key => !ignoredFields.has(key))
+  return keys.length === Object.keys(rightFields).filter(key => !ignoredFields.has(key)).length &&
     keys.every(key => Object.hasOwn(rightFields, key) && Object.is(leftFields[key], rightFields[key]))
 }
 

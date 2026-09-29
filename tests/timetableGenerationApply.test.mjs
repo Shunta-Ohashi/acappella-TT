@@ -588,13 +588,148 @@ for (const [name, edit, reason] of [
   ['unknown EventBandのPerformanceがtarget Stageにある', candidate => {
     candidate.scheduleItems.push({ id: 'unknown-performance', kind: 'performance',
       eventBandId: 'missing-band', stageId: 'stage-a1', order: 1 })
-  }, '生成結果に対象外の出演バンドが含まれています。'],
+  }, '生成結果で元のScheduleItemが欠落・変更されたか、対象外の項目が追加されています。'],
 ]) {
   test(`最終guardはTimeline計算前に${name}を拒否し、入力を変更しない`, () => {
     const input = materializationInput()
     const candidate = materializeTimetableGenerationPlan(input)
     assert.equal(candidate.ok, true)
     edit(candidate)
+    const originalInput = structuredClone(input)
+    const originalCandidate = structuredClone(candidate)
+    assert.deepEqual(validateTimetableGenerationCandidate(input, candidate), { ok: false, reason })
+    assert.deepEqual(input, originalInput)
+    assert.deepEqual(candidate, originalCandidate)
+  })
+}
+
+const createIsolatedCandidate = input => {
+  const candidate = materializeTimetableGenerationPlan(input)
+  assert.equal(candidate.ok, true, JSON.stringify(candidate))
+  return structuredClone(candidate)
+}
+
+const assertCandidateRejectedWithoutMutation = (input, candidate) => {
+  const originalInput = structuredClone(input)
+  const originalCandidate = structuredClone(candidate)
+  assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, false)
+  assert.deepEqual(input, originalInput)
+  assert.deepEqual(candidate, originalCandidate)
+}
+
+for (const [name, prepare, edit] of [
+  ['他日Performanceの欠落', () => {}, candidate => {
+    candidate.scheduleItems = candidate.scheduleItems.filter(item => item.id !== 'p-a2')
+  }],
+  ['他日Breakの欠落', input => {
+    input.scheduleItems.push({ id: 'break-a2', kind: 'break', title: '翌日の休憩',
+      durationMinutes: 5, stageId: 'stage-a2', order: 1 })
+  }, candidate => { candidate.scheduleItems = candidate.scheduleItems.filter(item => item.id !== 'break-a2') }],
+  ['別Event Performanceの欠落', () => {}, candidate => {
+    candidate.scheduleItems = candidate.scheduleItems.filter(item => item.id !== 'p-b')
+  }],
+  ['別Event Breakの欠落', input => {
+    input.scheduleItems.push({ id: 'break-b', kind: 'break', title: '別Eventの休憩',
+      durationMinutes: 5, stageId: 'stage-b', order: 1 })
+  }, candidate => { candidate.scheduleItems = candidate.scheduleItems.filter(item => item.id !== 'break-b') }],
+  ['他日Performanceの内容変更', () => {}, candidate => {
+    candidate.scheduleItems.find(item => item.id === 'p-a2').stageId = 'stage-b'
+  }],
+  ['target Breakの欠落', () => {}, candidate => {
+    candidate.scheduleItems = candidate.scheduleItems.filter(item => item.id !== 'break-1')
+  }],
+  ['target Breakのduration変更', () => {}, candidate => {
+    candidate.scheduleItems.find(item => item.id === 'break-1').durationMinutes = 20
+  }],
+  ['target Breakのtitle変更', () => {}, candidate => {
+    candidate.scheduleItems.find(item => item.id === 'break-1').title = '別の休憩'
+  }],
+  ['target Breakの他日Stageへの移動', () => {}, candidate => {
+    candidate.scheduleItems.find(item => item.id === 'break-1').stageId = 'stage-a2'
+  }],
+  ['existing target PerformanceのID差し替え', () => {}, candidate => {
+    candidate.scheduleItems.find(item => item.id === 'old-p1').id = 'replacement-p1'
+  }],
+  ['existing target PerformanceのBand差し替え', () => {}, candidate => {
+    candidate.scheduleItems.find(item => item.id === 'old-p1').eventBandId = 'band-2'
+  }],
+  ['他日StageへのBreak追加', () => {}, candidate => {
+    candidate.scheduleItems.push({ id: 'extra-break-a2', kind: 'break', title: '追加休憩',
+      durationMinutes: 5, stageId: 'stage-a2', order: 1 })
+  }],
+  ['別Event Performance追加', () => {}, candidate => {
+    candidate.scheduleItems.push({ id: 'extra-p-b', kind: 'performance', eventBandId: 'band-b',
+      stageId: 'stage-b', order: 8 })
+  }],
+]) {
+  test(`最終guard単独で${name}を拒否し、入力を変更しない`, () => {
+    const input = materializationInput()
+    prepare(input)
+    const candidate = createIsolatedCandidate(input)
+    edit(candidate)
+    assertCandidateRejectedWithoutMutation(input, candidate)
+  })
+}
+
+test('target PerformanceとBreakの配置だけの変更と、未配置Bandの新規Performanceは有効', () => {
+  const input = materializationInput()
+  const candidate = createIsolatedCandidate(input)
+  candidate.scheduleItems.find(item => item.id === 'old-p1').order = 1
+  candidate.scheduleItems.find(item => item.id === 'break-1').order = 1
+  const originalInput = structuredClone(input)
+  const originalCandidate = structuredClone(candidate)
+
+  assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true)
+  assert.ok(candidate.scheduleItems.some(item => item.id === 'new-p2' && item.eventBandId === 'band-2'))
+  assert.deepEqual(input, originalInput)
+  assert.deepEqual(candidate, originalCandidate)
+})
+
+for (const [name, edit] of [
+  ['source ScheduleItem空ID', input => { input.sourceScheduleItems[0].id = '' }],
+  ['source ScheduleItem空白ID', input => { input.sourceScheduleItems[0].id = '   ' }],
+]) {
+  test(`materializerは${name}をthrowせず拒否する`, () => {
+    const input = materializationInput()
+    edit(input)
+    const original = structuredClone(input)
+    assert.deepEqual(materializeTimetableGenerationPlan(input), { ok: false, code: 'INVALID_PLAN_REFERENCE' })
+    assert.deepEqual(input, original)
+  })
+}
+
+for (const [name, edit] of [
+  ['Event ID', input => { input.event.id = '   '; input.eventDay.eventId = '   ' }],
+  ['EventDay ID', input => { input.eventDay.id = '   ' }],
+  ['EventDay eventId', input => { input.eventDay.eventId = '   ' }],
+  ['collection EventDay ID', input => { input.eventDays[1].id = '   ' }],
+  ['Stage ID', input => { input.stages[0].id = '' }],
+  ['Section ID', input => { input.sections[0].id = '   ' }],
+  ['EventBand ID', input => { input.eventBands[0].id = '' }],
+]) {
+  test(`materializerと最終guardは${name}の空白をscope validationで拒否する`, () => {
+    const input = materializationInput()
+    const candidate = createIsolatedCandidate(input)
+    edit(input)
+    const original = structuredClone(input)
+    assert.deepEqual(materializeTimetableGenerationPlan(input), { ok: false, code: 'PLAN_SCOPE_MISMATCH' })
+    assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, false)
+    assert.deepEqual(input, original)
+  })
+}
+
+for (const [name, edit, reason] of [
+  ['input ScheduleItem空白ID', (input) => { input.scheduleItems[0].id = '   ' },
+    '元のScheduleItem IDが重複しています。'],
+  ['candidate ScheduleItem空白ID', (_input, candidate) => { candidate.scheduleItems[0].id = '   ' },
+    '生成結果のScheduleItem IDが重複しています。'],
+  ['candidate PA空ID', (_input, candidate) => { candidate.paAssignments[0].id = '' },
+    '生成結果のPA Assignment IDが重複しています。'],
+]) {
+  test(`最終guardは${name}をthrowせず拒否する`, () => {
+    const input = materializationInput()
+    const candidate = createIsolatedCandidate(input)
+    edit(input, candidate)
     const originalInput = structuredClone(input)
     const originalCandidate = structuredClone(candidate)
     assert.deepEqual(validateTimetableGenerationCandidate(input, candidate), { ok: false, reason })

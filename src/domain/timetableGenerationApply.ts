@@ -9,7 +9,7 @@ import { detectScheduleIssues, type ScheduleIssue } from './issues.ts'
 import { getDutyAssignmentsForEvent } from './dutyAssignments.ts'
 import { resolvePaAssignmentInterval } from './paAssignments.ts'
 import { hasSafeStageTimelineArithmetic } from './timetableGenerationArithmetic.ts'
-import { validateTimetableGenerationBaseline,
+import { hasSameItemContents, validateTimetableGenerationBaseline,
   validateTimetableGenerationBreakRemoval } from './timetableGenerationOptions.ts'
 import type { CalculatedScheduleItem } from './timeline'
 
@@ -44,16 +44,43 @@ interface MaterializationInput {
   newPaAssignmentIds: string[]
 }
 
-const hasUniqueIds = (items: { id: string }[]): boolean =>
-  items.every(item => item !== null && typeof item === 'object' && typeof item.id === 'string') &&
+const isNonEmptyId = (value: unknown): value is string =>
+  typeof value === 'string' && !!value.trim()
+
+const hasUniqueIds = (items: unknown): items is { id: string }[] =>
+  Array.isArray(items) &&
+  items.every(item => item !== null && typeof item === 'object' && !Array.isArray(item) &&
+    isNonEmptyId(item.id)) &&
   new Set(items.map(item => item.id)).size === items.length
 
 const hasUnambiguousGenerationScope = (
   event: Event, eventDay: EventDay, eventDays: EventDay[], stages: Stage[],
   sections: Section[], eventBands: EventBand[],
-): boolean => eventDay.eventId === event.id && hasUniqueIds(eventDays) && hasUniqueIds(stages) &&
+): boolean => isNonEmptyId(event?.id) && isNonEmptyId(eventDay?.id) &&
+  isNonEmptyId(eventDay?.eventId) && eventDay.eventId === event.id &&
+  hasUniqueIds(eventDays) && hasUniqueIds(stages) &&
   hasUniqueIds(sections) && hasUniqueIds(eventBands) &&
   eventDays.filter(day => day.id === eventDay.id && day.eventId === event.id).length === 1
+
+const placementFields = new Set(['stageId', 'sectionId', 'afterSectionId', 'order'])
+
+/** A candidate may replace placement only for target-band Performances and retained target Breaks. */
+const preservesGenerationBaseline = (
+  baseline: ScheduleItem[], candidate: ScheduleItem[], stageIds: Set<string>, bandIds: Set<string>,
+): boolean => {
+  const baselineById = new Map(baseline.map(item => [item.id, item]))
+  const candidateById = new Map(candidate.map(item => [item.id, item]))
+  for (const item of baseline) {
+    const updated = candidateById.get(item.id)
+    if (!updated) return false
+    const mayReplacePlacement = item.kind === 'performance'
+      ? bandIds.has(item.eventBandId) : stageIds.has(item.stageId)
+    if (mayReplacePlacement && item.kind === 'break' && !stageIds.has(updated.stageId)) return false
+    if (!hasSameItemContents(item, updated, mayReplacePlacement ? placementFields : undefined)) return false
+  }
+  return candidate.every(item => baselineById.has(item.id) ||
+    (item.kind === 'performance' && bandIds.has(item.eventBandId)))
+}
 
 const isTargetTimetableLock = (
   lock: TimetableLock, eventId: string, stageIds: Set<string>, sectionIds: Set<string>,
@@ -238,6 +265,9 @@ export const validateTimetableGenerationCandidate = (
   const sectionIds = new Set(targetSections.map(section => section.id))
   const targetBands = eventBands.filter(band => band.eventId === event.id && band.eventDayId === eventDay.id)
   const bandIds = new Set(targetBands.map(band => band.id))
+  if (!preservesGenerationBaseline(input.scheduleItems, candidate.scheduleItems, stageIds, bandIds)) {
+    return fail('生成結果で元のScheduleItemが欠落・変更されたか、対象外の項目が追加されています。')
+  }
   const candidatePerformances = candidate.scheduleItems.filter(item => item.kind === 'performance')
   const targetBandPerformances = candidatePerformances.filter(item => bandIds.has(item.eventBandId))
   if (targetBandPerformances.length !== targetBands.length ||
