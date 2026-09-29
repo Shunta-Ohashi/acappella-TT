@@ -16,14 +16,38 @@ const fixture = () => {
     { id: 'inside', kind: 'break', stageId: 'stage-a1', sectionId: 'section-2', title: '部内', durationMinutes: 5, order: 1 },
     { id: 'plain', kind: 'break', stageId: 'stage-sub', title: '通常', durationMinutes: 5, order: 0 })
   input.dutyTypes.push({ id: 'foreign-type', eventId: 'event-b', name: '他Eventの仕事', order: 0 })
-  input.dutyAssignments.push({ ...input.dutyAssignments[0], id: 'other-day-duty', eventDayId: 'day-a2', stageId: 'stage-a2' },
-    { ...input.dutyAssignments[0], id: 'foreign-duty', dutyTypeId: 'foreign-type' })
+  input.dutyAssignments.push({ ...input.dutyAssignments[0], id: 'other-day-duty', eventDayId: 'day-a2', stageId: 'stage-a2',
+    from: { scheduleItemId: 'p-a2', edge: 'start' }, until: { scheduleItemId: 'p-a2', edge: 'end' } },
+    { ...input.dutyAssignments[0], id: 'foreign-duty', dutyTypeId: 'foreign-type', eventDayId: 'day-b', stageId: 'stage-b',
+      from: { scheduleItemId: 'p-b', edge: 'start' }, until: { scheduleItemId: 'p-b', edge: 'end' } })
   input.timetableLocks.push({ ...input.timetableLocks[0], id: 'stale-item-lock', scheduleItemId: 'stale-p2', stageId: 'stage-a1' },
     { ...input.timetableLocks[0], id: 'broken-target-lock', scheduleItemId: 'missing-item' },
     { ...input.timetableLocks[0], id: 'other-day-lock', scheduleItemId: 'p-a2', stageId: 'stage-a2', sectionId: undefined },
     { ...input.timetableLocks[0], id: 'foreign-lock', eventId: 'event-b',
       scheduleItemId: 'p-b', stageId: 'stage-b', sectionId: undefined })
   return input
+}
+
+test('対象日・対象Stageの担当がknown foreign DutyTypeを参照したらreset全体を拒否する', () => {
+  const input = createGenerationUiInput()
+  input.dutyTypes.push({ id: 'foreign-type', eventId: 'event-b', name: '他Event', order: 0 })
+  input.dutyAssignments.push({ ...input.dutyAssignments[0], id: 'cross-event-duty', dutyTypeId: 'foreign-type' })
+  const original = structuredClone(input)
+  assert.deepEqual(resetEventDayTimetable(input), { ok: false, code: 'INVALID_SCOPE' })
+  assert.deepEqual(input, original)
+})
+
+for (const [name, eventDayId, stageId] of [
+  ['対象日・他日Stage', 'day-a1', 'stage-a2'],
+  ['他日・対象Stage', 'day-a2', 'stage-a1'],
+]) {
+  test(`Dutyの${name}が食い違う場合はresetを拒否し、入力を変更しない`, () => {
+    const input = createGenerationUiInput()
+    input.dutyAssignments.push({ ...input.dutyAssignments[0], id: 'day-stage-mismatch-duty', eventDayId, stageId })
+    const original = structuredClone(input)
+    assert.deepEqual(resetEventDayTimetable(input), { ok: false, code: 'INVALID_SCOPE' })
+    assert.deepEqual(input, original)
+  })
 }
 
 test('全target Stageとstale Stage上のtarget Band Performanceを削除し、Break全種を保持する', () => {
@@ -44,6 +68,16 @@ test('PAはEvent+Day、Dutyは既存ownership helper+Dayで削除し、他日と
   const result = resetEventDayTimetable(input)
   assert.deepEqual(result.paAssignments.map(pa => pa.id), ['pa-a2', 'pa-b', 'foreign-pa-same-day'])
   assert.deepEqual(result.dutyAssignments.map(duty => duty.id), ['other-day-duty', 'foreign-duty'])
+})
+
+test('正常な対象日のDuty担当は複数件とも削除し、他日・他Eventの担当は保持する', () => {
+  const input = fixture()
+  input.dutyAssignments.push({ ...input.dutyAssignments[0], id: 'target-duty-2' })
+  const original = structuredClone(input)
+  const result = resetEventDayTimetable(input)
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.dutyAssignments.map(duty => duty.id), ['other-day-duty', 'foreign-duty'])
+  assert.deepEqual(input, original)
 })
 
 test('target PerformanceのLockとtarget Stageを明示するbroken Lockを削除し、他日/foreign Lockを保持する', () => {

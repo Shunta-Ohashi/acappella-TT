@@ -79,8 +79,17 @@ export const resetEventDayTimetable = (input: TimetableResetInput): TimetableRes
   const stageById = new Map(stages.map(stage => [stage.id, stage]))
   const bandById = new Map(eventBands.map(band => [band.id, band]))
   const itemById = new Map(scheduleItems.map(item => [item.id, item]))
+  const dutyTypeById = new Map(dutyTypes.map(type => [type.id, type]))
   const targetStages = stages.filter(stage => stage.eventDayId === eventDay.id)
   const targetStageIds = new Set(targetStages.map(stage => stage.id))
+  if (dutyAssignments.some(duty => {
+    const stage = stageById.get(duty.stageId)
+    if (stage && stage.eventDayId !== duty.eventDayId &&
+      (duty.eventDayId === eventDay.id || targetStageIds.has(stage.id))) return true
+    const dutyType = dutyTypeById.get(duty.dutyTypeId)
+    return duty.eventDayId === eventDay.id && targetStageIds.has(duty.stageId) &&
+      dutyType !== undefined && dutyType.eventId !== event.id
+  })) return { ok: false, code: 'INVALID_SCOPE' }
   if (scheduleItems.some(item => item.kind === 'performance' && targetStageIds.has(item.stageId) &&
     !bandById.has(item.eventBandId))) return { ok: false, code: 'INVALID_SCOPE' }
   const removedPerformanceIds = new Set(scheduleItems.filter(item => {
