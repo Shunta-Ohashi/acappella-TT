@@ -14,6 +14,7 @@ import { evaluateScheduleConstraints, type ScheduleConstraintEvaluation } from '
 import { getDutyAssignmentsForEvent } from './dutyAssignments.ts'
 import { calculateEventDayTimelines } from './timetable.ts'
 import { hasSafeStageTimelineArithmetic } from './timetableGenerationArithmetic.ts'
+import { hasValidTimetableGenerationDutyTypes } from './timetableGenerationOptions.ts'
 import { evaluateTimetableLocks, isValidFixedPosition } from './timetableLocks.ts'
 import { detectScheduleIssues } from './issues.ts'
 import { isValidStageTimeRange, isSectionWithinStageTimeRange } from './eventStageSettings.ts'
@@ -487,6 +488,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
       'stageId' | 'sectionId' | 'eventBandId'>> = {}): TimetableGenerationResult => ({
     ok: false, failure: { code, eventDayId: eventDay.id, attemptedSchedules, ...references },
   })
+  if (!hasValidTimetableGenerationDutyTypes(dutyTypes)) return failure('INVALID_INPUT', 0)
   if (eventDay.eventId !== event.id ||
     !eventDays.some(day => day.id === eventDay.id && day.eventId === event.id) ||
     !isValidTransitionMinutes(event.defaultTransitionMinutes) ||

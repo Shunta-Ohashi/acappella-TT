@@ -9,7 +9,7 @@ import { detectScheduleIssues, type ScheduleIssue } from './issues.ts'
 import { getDutyAssignmentsForEvent } from './dutyAssignments.ts'
 import { resolvePaAssignmentInterval } from './paAssignments.ts'
 import { hasSafeStageTimelineArithmetic } from './timetableGenerationArithmetic.ts'
-import { hasSameItemContents, validateTimetableGenerationBaseline,
+import { hasSameItemContents, hasValidTimetableGenerationDutyTypes, validateTimetableGenerationBaseline,
   validateTimetableGenerationBreakRemoval } from './timetableGenerationOptions.ts'
 import type { CalculatedScheduleItem } from './timeline'
 
@@ -169,6 +169,7 @@ export const materializeTimetableGenerationPlan = ({
     return fail('PLAN_SCOPE_MISMATCH')
   }
   if (!hasUniqueIds(sourceScheduleItems) || !hasUniqueIds(scheduleItems) || !hasUniqueIds(paAssignments) ||
+    !hasValidTimetableGenerationDutyTypes(dutyTypes) ||
     !hasValidReferenceInputs(paAssignments, dutyAssignments, timetableLocks) ||
     !validateTimetableGenerationBaseline({
     event, eventDay, eventDays, stages, sections, sourceScheduleItems,
@@ -327,6 +328,9 @@ export const validateTimetableGenerationCandidate = (
   }
   if (!hasValidReferenceInputs(input.paAssignments, dutyAssignments, timetableLocks)) {
     return fail('既存の担当またはTT固定参照が不正です。')
+  }
+  if (!hasValidTimetableGenerationDutyTypes(dutyTypes)) {
+    return fail('既存の仕事種別の形式または所属を確認できません。')
   }
   if (!isRecord(candidate)) return fail('生成結果の形式が不正です。')
   if (!hasUniqueIds(candidate.scheduleItems)) {

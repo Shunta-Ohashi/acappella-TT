@@ -7,6 +7,52 @@ import { resolvePaAssignmentInterval } from '../src/domain/paAssignments.ts'
 import { serializePersistedState, parsePersistedState } from '../src/persistence/localPersistence.ts'
 import { createGenerationUiInput, materializationInput } from './fixtures/timetableGenerationUi.mjs'
 
+for (const [name, dutyTypes] of [
+  ['collection null', null], ['null entry', [null]], ['empty entry', [{}]],
+  ['undefined entry', [undefined]],
+  ['empty ID', [{ id: '', eventId: 'event-a' }]],
+  ['blank ID', [{ id: '   ', eventId: 'event-a' }]],
+  ['null ID', [{ id: null, eventId: 'event-a' }]],
+  ['numeric ID', [{ id: 123, eventId: 'event-a' }]],
+  ['empty eventId', [{ id: 'duty-photo', eventId: '' }]],
+  ['blank eventId', [{ id: 'duty-photo', eventId: '   ' }]],
+  ['invalid eventId', [{ id: 'duty-photo', eventId: null }]],
+  ['numeric eventId', [{ id: 'duty-photo', eventId: 123 }]],
+  ['duplicate ID', [{ id: 'duty-photo', eventId: 'event-a' },
+    { id: 'duty-photo', eventId: 'event-a' }]],
+  ['cross-event duplicate ID', [{ id: 'duty-photo', eventId: 'event-a' },
+    { id: 'duty-photo', eventId: 'event-b' }]],
+]) {
+  test(`materializerはDutyType ${name}をthrowせずINVALID_PLAN_REFERENCEにする`, () => {
+    const input = materializationInput()
+    input.dutyTypes = dutyTypes
+    const original = structuredClone(input)
+    assert.deepEqual(materializeTimetableGenerationPlan(input),
+      { ok: false, code: 'INVALID_PLAN_REFERENCE' })
+    assert.deepEqual(input, original)
+  })
+
+  test(`final validatorはDutyType ${name}をthrowせず失敗結果にする`, () => {
+    const input = materializationInput()
+    const candidate = materializeTimetableGenerationPlan(input)
+    assert.equal(candidate.ok, true)
+    input.dutyTypes = dutyTypes
+    const original = structuredClone({ input, candidate })
+    assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, false)
+    assert.deepEqual({ input, candidate }, original)
+  })
+}
+
+test('materializerと最終validatorは一意な別Event DutyTypeを許可する', () => {
+  const input = materializationInput()
+  const baseline = materializeTimetableGenerationPlan(input)
+  assert.equal(baseline.ok, true)
+  input.dutyTypes.push({ id: 'foreign-duty', eventId: 'other-event', name: '撮影', order: 0 })
+  const candidate = materializeTimetableGenerationPlan(input)
+  assert.deepEqual(candidate, baseline)
+  assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true)
+})
+
 for (const [name, mutate] of [
     ['scheduleItems null', input => { input.scheduleItems = null }],
     ['sourceScheduleItems null', input => { input.sourceScheduleItems = null }],

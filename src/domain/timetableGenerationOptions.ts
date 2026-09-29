@@ -1,4 +1,4 @@
-import type { DutyAssignment, Event, EventDay, PaAssignment, ScheduleItem, Section, Stage,
+import type { DutyAssignment, DutyType, Event, EventDay, PaAssignment, ScheduleItem, Section, Stage,
   TimetableLock } from './models'
 import { isValidBreakDurationMinutes, isValidScheduleItemSectionAssignment } from './schedule.ts'
 
@@ -27,6 +27,12 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isNonEmptyId = (value: unknown): value is string =>
   typeof value === 'string' && !!value.trim()
 
+/** Validate only the DutyType fields generation uses for identity and Event ownership. */
+export const hasValidTimetableGenerationDutyTypes = (value: unknown): value is DutyType[] =>
+  Array.isArray(value) && value.every(type => isRecord(type) &&
+    isNonEmptyId(type.id) && isNonEmptyId(type.eventId)) &&
+  new Set(value.map(type => type.id)).size === value.length
+
 const hasBoundaryId = (value: unknown): boolean => isRecord(value) && isNonEmptyId(value.scheduleItemId)
 
 const hasValidBreakScope = (scope: GenerationBreakScope): boolean =>
@@ -51,10 +57,12 @@ export const hasValidTimetableGenerationPreprocessingInput = (input: GenerationB
   options: TimetableGenerationUiOptions
   paAssignments: PaAssignment[]
   dutyAssignments: DutyAssignment[]
+  dutyTypes: DutyType[]
   timetableLocks: TimetableLock[]
 }): boolean => hasValidBreakScope(input) && isRecord(input.options) &&
   typeof input.options.keepIntraSectionBreaks === 'boolean' &&
   typeof input.options.keepInterSectionBreaks === 'boolean' &&
+  hasValidTimetableGenerationDutyTypes(input.dutyTypes) &&
   hasValidBreakReferences(input.paAssignments, input.dutyAssignments, input.timetableLocks)
 
 /** Only well-formed Section-anchored Breaks on the target day can be removed by an option. */

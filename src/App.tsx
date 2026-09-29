@@ -900,7 +900,7 @@ function App() {
     setGenerationFeedback(null)
     if (!hasValidTimetableGenerationPreprocessingInput({ event: selectedEvent,
       eventDay: timetableEventDay, eventDays, stages, sections, scheduleItems, options: generationOptions,
-      paAssignments, dutyAssignments, timetableLocks })) {
+      paAssignments, dutyTypes, dutyAssignments, timetableLocks })) {
       feedback('自動生成に必要なデータの形式または参照を確認できません。データを確認してください。')
       return
     }

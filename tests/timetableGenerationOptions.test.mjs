@@ -237,6 +237,17 @@ test('生成前preflightは正常な参照のみ通し、不正なitem・Boundar
     dutyAssignments: [{ ...input.dutyAssignments[0], from: null }], options }), false)
 })
 
+test('生成前preflightはDutyType不正形を拒否し、別Eventの正常DutyTypeは許可する', () => {
+  const input = fixture()
+  const options = DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS
+  for (const dutyTypes of [null, [null], [{}], [{ id: '', eventId: input.event.id }],
+    [{ id: 'duty-x', eventId: '  ' }]]) {
+    assert.equal(hasValidTimetableGenerationPreprocessingInput({ ...input, dutyTypes, options }), false)
+  }
+  assert.equal(hasValidTimetableGenerationPreprocessingInput({ ...input, options,
+    dutyTypes: [...input.dutyTypes, { id: 'foreign-type', eventId: 'other-event' }] }), true)
+})
+
 for (const [name, mutate] of [
     ['PA from null', input => { input.paAssignments[0].from = null }],
     ['PA until null', input => { input.paAssignments[0].until = null }],

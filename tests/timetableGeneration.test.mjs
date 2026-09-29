@@ -60,6 +60,36 @@ const createInput = ({ bandCount = 4, sectionCount = 2, paCount = 2 } = {}) => {
   }
 }
 
+for (const [name, dutyTypes] of [
+  ['collection null', null], ['null entry', [null]], ['empty entry', [{}]],
+  ['undefined entry', [undefined]],
+  ['empty ID', [{ id: '', eventId: 'event-1' }]],
+  ['blank ID', [{ id: '   ', eventId: 'event-1' }]],
+  ['null ID', [{ id: null, eventId: 'event-1' }]],
+  ['numeric ID', [{ id: 123, eventId: 'event-1' }]],
+  ['empty eventId', [{ id: 'duty-1', eventId: '' }]],
+  ['blank eventId', [{ id: 'duty-1', eventId: '   ' }]],
+  ['invalid eventId', [{ id: 'duty-1', eventId: null }]],
+  ['numeric eventId', [{ id: 'duty-1', eventId: 123 }]],
+  ['duplicate ID', [{ id: 'duty-1', eventId: 'event-1' }, { id: 'duty-1', eventId: 'event-1' }]],
+  ['cross-event duplicate ID', [{ id: 'duty-1', eventId: 'event-1' }, { id: 'duty-1', eventId: 'other' }]],
+]) {
+  test(`generatorはDutyType ${name}をthrowせずINVALID_INPUTにする`, () => {
+    const input = createInput()
+    input.dutyTypes = dutyTypes
+    const original = structuredClone(input)
+    assert.equal(generateTimetablePlan(input).failure?.code, 'INVALID_INPUT')
+    assert.deepEqual(input, original)
+  })
+}
+
+test('generatorは一意な別EventのDutyTypeを保持し、targetの生成結果を変えない', () => {
+  const input = createInput()
+  const baseline = generateTimetablePlan(input)
+  input.dutyTypes.push({ id: 'foreign-duty', eventId: 'other-event', name: '撮影', order: 0 })
+  assert.deepEqual(generateTimetablePlan(input), baseline)
+})
+
 const materializeSchedule = (input, plan) => [
   ...input.scheduleItems.filter(item => !input.stages.some(stage => stage.id === item.stageId)),
   ...plan.placements.map(placement => ({
