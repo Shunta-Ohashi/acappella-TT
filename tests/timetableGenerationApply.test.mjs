@@ -581,10 +581,10 @@ for (const [name, edit, reason] of [
   }, '生成結果に出演バンドの不足・重複、または開催日の不一致があります。'],
   ['別Day Performanceがtarget Stageにある', candidate => {
     candidate.scheduleItems.find(item => item.id === 'p-a2').stageId = 'stage-a1'
-  }, '生成結果に対象外の出演バンドが含まれています。'],
+  }, '生成結果で元のScheduleItemが欠落・変更されたか、対象外の項目が追加されています。'],
   ['別Event Performanceがtarget Stageにある', candidate => {
     candidate.scheduleItems.find(item => item.id === 'p-b').stageId = 'stage-a1'
-  }, '生成結果に対象外の出演バンドが含まれています。'],
+  }, '生成結果で元のScheduleItemが欠落・変更されたか、対象外の項目が追加されています。'],
   ['unknown EventBandのPerformanceがtarget Stageにある', candidate => {
     candidate.scheduleItems.push({ id: 'unknown-performance', kind: 'performance',
       eventBandId: 'missing-band', stageId: 'stage-a1', order: 1 })
@@ -615,6 +615,183 @@ const assertCandidateRejectedWithoutMutation = (input, candidate) => {
   assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, false)
   assert.deepEqual(input, originalInput)
   assert.deepEqual(candidate, originalCandidate)
+}
+
+for (const [name, edit] of [
+  ['別Event PAの開始Boundary', (input, id) => {
+    input.paAssignments.find(pa => pa.id === 'pa-b').from.scheduleItemId = id
+  }],
+  ['他日PAの終了Boundary', (input, id) => {
+    input.paAssignments.find(pa => pa.id === 'pa-a2').until.scheduleItemId = id
+  }],
+  ['Dutyの開始Boundary', (input, id) => { input.dutyAssignments[0].from.scheduleItemId = id }],
+  ['Dutyの終了Boundary', (input, id) => { input.dutyAssignments[0].until.scheduleItemId = id }],
+  ['TT固定の参照', (input, id) => { input.timetableLocks[0].scheduleItemId = id }],
+]) {
+  test(`保持される${name}のdangling IDを新ScheduleItem IDに再利用しない`, () => {
+    const input = materializationInput()
+    const danglingId = `dangling-${name}`
+    edit(input, danglingId)
+    input.newScheduleItemIds = [danglingId]
+    const original = structuredClone(input)
+
+    assert.deepEqual(materializeTimetableGenerationPlan(input), { ok: false, code: 'ID_COLLISION' })
+    assert.deepEqual(input, original)
+  })
+}
+
+for (const [name, edit] of [
+  ['別Event PA', (input, id) => { input.paAssignments.find(pa => pa.id === 'pa-b').from.scheduleItemId = id }],
+  ['他日PA', (input, id) => { input.paAssignments.find(pa => pa.id === 'pa-a2').until.scheduleItemId = id }],
+  ['Duty', (input, id) => { input.dutyAssignments[0].from.scheduleItemId = id }],
+  ['TT固定', (input, id) => { input.timetableLocks[0].scheduleItemId = id }],
+]) {
+  test(`最終guard単独でも${name}のdangling参照への新ScheduleItem ID付け替えを拒否する`, () => {
+    const input = materializationInput()
+    const danglingId = `dangling-direct-${name}`
+    edit(input, danglingId)
+    const candidate = createIsolatedCandidate(input)
+    candidate.scheduleItems.find(item => item.id === 'new-p2').id = danglingId
+    for (const pa of candidate.paAssignments) {
+      if (pa.from.scheduleItemId === 'new-p2') pa.from.scheduleItemId = danglingId
+      if (pa.until.scheduleItemId === 'new-p2') pa.until.scheduleItemId = danglingId
+    }
+    const originalInput = structuredClone(input)
+    const originalCandidate = structuredClone(candidate)
+
+    assert.deepEqual(validateTimetableGenerationCandidate(input, candidate),
+      { ok: false, reason: '生成結果の新規ScheduleItem IDが保持対象の参照と衝突しています。' })
+    assert.deepEqual(input, originalInput)
+    assert.deepEqual(candidate, originalCandidate)
+  })
+}
+
+test('planのexisting-item Boundaryは新規生成ScheduleItem IDへ解決しない', () => {
+  const input = materializationInput()
+  input.plan.paShifts[0].fromBoundary = { kind: 'existing-item', scheduleItemId: 'new-p2', edge: 'start' }
+  const original = structuredClone(input)
+
+  assert.deepEqual(materializeTimetableGenerationPlan(input), { ok: false, code: 'BOUNDARY_UNRESOLVED' })
+  assert.deepEqual(input, original)
+})
+
+for (const [name, edit] of [
+  ['PA開始Boundaryがnull', input => { input.paAssignments[1].from = null }],
+  ['Duty終了Boundaryがundefined', input => { input.dutyAssignments[0].until = undefined }],
+  ['LockのsectionIdが空白', input => { input.timetableLocks[0].sectionId = '   ' }],
+]) {
+  test(`不正な${name}はmaterializer・最終guardともthrowせず拒否する`, () => {
+    const input = materializationInput()
+    const candidate = createIsolatedCandidate(input)
+    edit(input)
+    const original = structuredClone(input)
+    const originalCandidate = structuredClone(candidate)
+
+    assert.deepEqual(materializeTimetableGenerationPlan(input), { ok: false, code: 'INVALID_PLAN_REFERENCE' })
+    assert.deepEqual(validateTimetableGenerationCandidate(input, candidate),
+      { ok: false, reason: '既存の担当またはTT固定参照が不正です。' })
+    assert.deepEqual(input, original)
+    assert.deepEqual(candidate, originalCandidate)
+  })
+}
+
+test('置換されるtarget PAの旧Boundary IDは予約せず、保持PAの参照IDは新PA IDに使える', () => {
+  const input = materializationInput()
+  input.paAssignments.find(pa => pa.id === 'old-pa').from.scheduleItemId = 'old-target-dangling'
+  input.paAssignments.find(pa => pa.id === 'pa-b').from.scheduleItemId = 'retained-dangling'
+  input.newScheduleItemIds = ['old-target-dangling']
+  input.newPaAssignmentIds[0] = 'retained-dangling'
+  const original = structuredClone(input)
+
+  const candidate = materializeTimetableGenerationPlan(input)
+  assert.equal(candidate.ok, true, JSON.stringify(candidate))
+  assert.equal(candidate.scheduleItems.some(item => item.id === 'old-target-dangling'), true)
+  assert.equal(candidate.paAssignments.some(pa => pa.id === 'old-pa'), false)
+  assert.equal(candidate.paAssignments.find(pa => pa.id === 'pa-b').from.scheduleItemId, 'retained-dangling')
+  assert.deepEqual(input, original)
+})
+
+for (const [name, edit] of [
+  ['他日PAの欠落', candidate => {
+    candidate.paAssignments = candidate.paAssignments.filter(pa => pa.id !== 'pa-a2')
+  }],
+  ['別Event PAの欠落', candidate => {
+    candidate.paAssignments = candidate.paAssignments.filter(pa => pa.id !== 'pa-b')
+  }],
+  ['他日PAのmember変更', candidate => {
+    candidate.paAssignments.find(pa => pa.id === 'pa-a2').memberId = 'other-member'
+  }],
+  ['別Event PAのstage変更', candidate => {
+    candidate.paAssignments.find(pa => pa.id === 'pa-b').stageId = 'stage-a2'
+  }],
+  ['他日PAのrole変更', candidate => {
+    candidate.paAssignments.find(pa => pa.id === 'pa-a2').role = 'sub'
+  }],
+  ['別Event PAの開始Boundary変更', candidate => {
+    candidate.paAssignments.find(pa => pa.id === 'pa-b').from.scheduleItemId = 'missing'
+  }],
+  ['他日PAの終了Boundary変更', candidate => {
+    candidate.paAssignments.find(pa => pa.id === 'pa-a2').until.edge = 'start'
+  }],
+  ['別Event PAのeventId変更', candidate => {
+    candidate.paAssignments.find(pa => pa.id === 'pa-b').eventId = 'event-c'
+  }],
+  ['他日PAのeventDayId変更', candidate => {
+    candidate.paAssignments.find(pa => pa.id === 'pa-a2').eventDayId = 'day-b'
+  }],
+  ['余分な別Event PAの追加', candidate => {
+    candidate.paAssignments.push({ ...candidate.paAssignments.find(pa => pa.id === 'pa-b'), id: 'extra-pa-b' })
+  }],
+]) {
+  test(`最終guard単独で${name}を拒否し、入力を変更しない`, () => {
+    const input = materializationInput()
+    const candidate = createIsolatedCandidate(input)
+    edit(candidate)
+    assertCandidateRejectedWithoutMutation(input, candidate)
+  })
+}
+
+test('保持PAは同内容の別object・別Boundaryでも許可し、target PAの置換を維持する', () => {
+  const input = materializationInput()
+  const candidate = materializeTimetableGenerationPlan(input)
+  assert.equal(candidate.ok, true)
+  for (const id of ['pa-a2', 'pa-b']) {
+    const source = input.paAssignments.find(pa => pa.id === id)
+    const retained = candidate.paAssignments.find(pa => pa.id === id)
+    assert.notEqual(retained, source)
+    assert.notEqual(retained.from, source.from)
+    assert.notEqual(retained.until, source.until)
+    assert.deepEqual(retained, source)
+  }
+  assert.equal(candidate.paAssignments.some(pa => pa.id === 'old-pa'), false)
+  assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true)
+})
+
+test('materializerの保持項目を変更しても元のScheduleItem・PA・Boundaryに波及しない', () => {
+  const input = materializationInput()
+  const original = structuredClone(input)
+  const candidate = materializeTimetableGenerationPlan(input)
+  assert.equal(candidate.ok, true)
+  candidate.scheduleItems.find(item => item.id === 'p-a2').order = 99
+  candidate.paAssignments.find(pa => pa.id === 'pa-b').from.scheduleItemId = 'altered'
+  assert.deepEqual(input, original)
+  assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, false)
+})
+
+for (const [name, edit] of [
+  ['空白ID', input => { input.paAssignments[0].id = '   ' }],
+  ['重複ID', input => { input.paAssignments[1].id = input.paAssignments[0].id }],
+]) {
+  test(`最終guardはsource PAの${name}を比較前に拒否する`, () => {
+    const input = materializationInput()
+    const candidate = createIsolatedCandidate(input)
+    edit(input)
+    const original = structuredClone(input)
+
+    assert.deepEqual(validateTimetableGenerationCandidate(input, candidate),
+      { ok: false, reason: '元のPA Assignment IDが重複しています。' })
+    assert.deepEqual(input, original)
+  })
 }
 
 for (const [name, prepare, edit] of [
@@ -771,9 +948,13 @@ test('別Dayの壊れたLock/Duty/PAをtarget Dayの最終guardへ混入させ�
 
 test('Stage-wide first/last固定とSection lane-local Lockを同時に再検証できる', () => {
   const input = materializationInput()
+  input.scheduleItems.push({ id: 'old-p2', kind: 'performance', eventBandId: 'band-2',
+    stageId: 'stage-a1', sectionId: 'section-2', order: 0 })
+  input.plan.placements[1].scheduleItemId = 'old-p2'
+  input.newScheduleItemIds = []
   input.eventBands[0].fixedPlacement = { stageId: 'stage-a1', position: { kind: 'first' } }
   input.eventBands[1].fixedPlacement = { stageId: 'stage-a1', position: { kind: 'last' } }
-  input.timetableLocks.push({ id: 'lock-last', eventId: input.event.id, scheduleItemId: 'new-p2',
+  input.timetableLocks.push({ id: 'lock-last', eventId: input.event.id, scheduleItemId: 'old-p2',
     stageId: 'stage-a1', sectionId: 'section-2', position: { kind: 'first' } })
   const candidate = materializeTimetableGenerationPlan(input)
   assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true)
