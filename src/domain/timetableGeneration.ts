@@ -477,15 +477,55 @@ const hasParseableTimeRangeBoundaries = (range: TimeRange): boolean =>
   [range.from, range.until].every(time => time === undefined ||
     (typeof time === 'string' && isValidLocalTime(time)))
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+
+const isNonEmptyId = (value: unknown): value is string =>
+  typeof value === 'string' && !!value.trim()
+
+const hasValidEntityCollection = (
+  value: unknown, isValidEntry: (entry: Record<string, unknown>) => boolean,
+): boolean => Array.isArray(value) && value.every((entry: unknown) =>
+  isRecord(entry) && isNonEmptyId(entry.id) && isValidEntry(entry)) &&
+  new Set(value.map((entry: { id: string }) => entry.id)).size === value.length
+
+const hasValidDutyBoundary = (value: unknown): boolean =>
+  isRecord(value) && isNonEmptyId(value.scheduleItemId) &&
+  (value.edge === 'start' || value.edge === 'end')
+
+/** Validate collection shape and fields used by generation before any entity lookup. */
+const hasValidTimetableGenerationCollections = (input: TimetableGenerationInput): boolean =>
+  hasValidEntityCollection(input.eventDays, day => isNonEmptyId(day.eventId)) &&
+  hasValidEntityCollection(input.stages, stage =>
+    isNonEmptyId(stage.eventDayId) && Number.isSafeInteger(stage.order)) &&
+  hasValidEntityCollection(input.sections, section =>
+    isNonEmptyId(section.stageId) && Number.isSafeInteger(section.order)) &&
+  hasValidEntityCollection(input.members, member => typeof member.realName === 'string') &&
+  hasValidEntityCollection(input.eventMembers, member =>
+    isNonEmptyId(member.eventId) && isNonEmptyId(member.memberId) &&
+    isRecord(member.paCapabilities) &&
+    typeof member.paCapabilities.main === 'boolean' &&
+    typeof member.paCapabilities.sub === 'boolean') &&
+  hasValidEntityCollection(input.eventMemberDays, day =>
+    isNonEmptyId(day.eventMemberId) && isNonEmptyId(day.eventDayId) &&
+    (day.participationStatus === 'participating' || day.participationStatus === 'absent' ||
+      day.participationStatus === 'undecided')) &&
+  hasValidEntityCollection(input.eventBands, band =>
+    isNonEmptyId(band.eventId) && isNonEmptyId(band.eventDayId) &&
+    Array.isArray(band.memberIds) && band.memberIds.every(isNonEmptyId)) &&
+  hasValidEntityCollection(input.dutyAssignments, duty =>
+    isNonEmptyId(duty.dutyTypeId) && isNonEmptyId(duty.eventDayId) &&
+    isNonEmptyId(duty.stageId) && isNonEmptyId(duty.memberId) &&
+    hasValidDutyBoundary(duty.from) && hasValidDutyBoundary(duty.until)) &&
+  hasValidTimetableGenerationDutyTypes(input.dutyTypes) &&
+  hasValidTimetableGenerationLocks(input.timetableLocks)
+
 export const generateTimetablePlan = (input: TimetableGenerationInput): TimetableGenerationResult => {
   const rawInput: unknown = input
-  const isRecord = (value: unknown): value is Record<string, unknown> =>
-    value !== null && typeof value === 'object' && !Array.isArray(value)
-  const validId = (value: unknown): value is string => typeof value === 'string' && !!value.trim()
   const rawEventDay = isRecord(rawInput) ? rawInput.eventDay : undefined
-  const safeEventDayId = isRecord(rawEventDay) && validId(rawEventDay.id) ? rawEventDay.id : ''
-  if (!isRecord(rawInput) || !isRecord(rawInput.event) || !validId(rawInput.event.id) ||
-    !isRecord(rawEventDay) || !validId(rawEventDay.id) || !validId(rawEventDay.eventId)) {
+  const safeEventDayId = isRecord(rawEventDay) && isNonEmptyId(rawEventDay.id) ? rawEventDay.id : ''
+  if (!isRecord(rawInput) || !isRecord(rawInput.event) || !isNonEmptyId(rawInput.event.id) ||
+    !isRecord(rawEventDay) || !isNonEmptyId(rawEventDay.id) || !isNonEmptyId(rawEventDay.eventId)) {
     return { ok: false, failure: { code: 'INVALID_INPUT', eventDayId: safeEventDayId, attemptedSchedules: 0 } }
   }
   const {
@@ -493,14 +533,12 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     eventMemberDays, eventBands, scheduleItems, timetableLocks, dutyTypes,
     dutyAssignments, activitySpacingPolicy,
   } = input
-  const options = { ...DEFAULT_OPTIONS, ...input.options }
   const failure = (code: TimetableGenerationFailureCode, attemptedSchedules: number,
     references: Partial<Pick<TimetableGenerationFailure,
       'stageId' | 'sectionId' | 'eventBandId'>> = {}): TimetableGenerationResult => ({
     ok: false, failure: { code, eventDayId: eventDay.id, attemptedSchedules, ...references },
   })
-  if (!hasValidTimetableGenerationDutyTypes(dutyTypes) ||
-    !hasValidTimetableGenerationLocks(timetableLocks)) return failure('INVALID_INPUT', 0)
+  if (!hasValidTimetableGenerationCollections(input)) return failure('INVALID_INPUT', 0)
   const rawScheduleItems: unknown = scheduleItems
   if (!hasValidTimetableGenerationScheduleItems(rawScheduleItems)) {
     const malformed: unknown = Array.isArray(rawScheduleItems)
@@ -519,6 +557,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     }
     return failure('INVALID_INPUT', 0)
   }
+  const options = { ...DEFAULT_OPTIONS, ...input.options }
   if (eventDay.eventId !== event.id ||
     !eventDays.some(day => day.id === eventDay.id && day.eventId === event.id) ||
     !isValidTransitionMinutes(event.defaultTransitionMinutes) ||

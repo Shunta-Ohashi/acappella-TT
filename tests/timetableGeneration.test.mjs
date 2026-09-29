@@ -61,6 +61,71 @@ const createInput = ({ bandCount = 4, sectionCount = 2, paCount = 2 } = {}) => {
   }
 }
 
+const assertInvalidRuntimeGenerationInput = (input) => {
+  const original = structuredClone(input)
+  let result
+  assert.doesNotThrow(() => { result = generateTimetablePlan(input) })
+  assert.equal(result.ok, false)
+  assert.equal(result.failure.code, 'INVALID_INPUT')
+  assert.equal(result.failure.attemptedSchedules, 0)
+  assert.deepEqual(input, original)
+}
+
+for (const field of ['eventDays', 'stages', 'sections', 'members', 'eventMembers',
+  'eventMemberDays', 'eventBands', 'scheduleItems', 'timetableLocks', 'dutyTypes', 'dutyAssignments']) {
+  for (const value of [null, [null], [{}]]) {
+    test(`generatorは${field}=${JSON.stringify(value)}を探索前に拒否する`, () => {
+      const input = createGenerationUiInput()
+      input[field] = value
+      assertInvalidRuntimeGenerationInput(input)
+    })
+  }
+  test(`generatorは${field}の重複IDを探索前に拒否する`, () => {
+    const input = createGenerationUiInput()
+    input[field].push({ ...input[field][0] })
+    assertInvalidRuntimeGenerationInput(input)
+  })
+}
+
+for (const [name, edit] of [
+  ['Stage.order', input => { input.stages[0].order = NaN }],
+  ['Section.order', input => { input.sections[0].order = null }],
+  ['Member.realName', input => { input.members[0].realName = null }],
+  ['EventMember.paCapabilities', input => { input.eventMembers[0].paCapabilities = null }],
+  ['EventMember.paCapabilities.main', input => { input.eventMembers[0].paCapabilities.main = null }],
+  ['EventMemberDay.participationStatus', input => { input.eventMemberDays[0].participationStatus = null }],
+  ['EventBand.memberIds', input => { input.eventBands[0].memberIds = null }],
+  ['EventBand.memberIds要素', input => { input.eventBands[0].memberIds = [null] }],
+  ['DutyAssignment.from', input => { input.dutyAssignments[0].from = null }],
+  ['DutyAssignment.until', input => { input.dutyAssignments[0].until = null }],
+  ['DutyAssignment.from.edge', input => { input.dutyAssignments[0].from.edge = null }],
+]) {
+  test(`generatorは${name}の不正形を探索前に拒否する`, () => {
+    const input = createGenerationUiInput()
+    edit(input)
+    assertInvalidRuntimeGenerationInput(input)
+  })
+}
+
+test('ScheduleItem不正のdiagnosticより先にStage・EventBandのcollection不正を拒否する', () => {
+  for (const field of ['stages', 'eventBands']) {
+    const input = createGenerationUiInput()
+    input.scheduleItems.push({ id: 'malformed-performance', kind: 'performance',
+      stageId: 'stage-a1', eventBandId: 'band-1', order: NaN })
+    input[field] = null
+    assertInvalidRuntimeGenerationInput(input)
+  }
+})
+
+test('正常な他日・別Event entityが混在しても生成結果は変わらない', () => {
+  const input = createGenerationUiInput()
+  const original = structuredClone(input)
+  const first = generateTimetablePlan(input)
+  assert.equal(first.ok, true)
+  assert.deepEqual(generateTimetablePlan(input), first)
+  assert.deepEqual(input, original)
+})
+
 for (const [name, makeInput, expectedDayId] of [
   ['input null', () => null, ''],
   ['input undefined', () => undefined, ''],
