@@ -165,10 +165,10 @@ export const materializeTimetableGenerationPlan = ({
 }: MaterializationInput): MaterializationResult => {
   const fail = (code: MaterializationFailureCode): MaterializationResult => ({ ok: false, code })
   if (!hasUnambiguousGenerationScope(event, eventDay, eventDays, stages, sections, eventBands) ||
-    plan.eventDayId !== eventDay.id) {
+    !isRecord(plan) || plan.eventDayId !== eventDay.id) {
     return fail('PLAN_SCOPE_MISMATCH')
   }
-  if (!hasUniqueIds(sourceScheduleItems) || !hasUniqueIds(paAssignments) ||
+  if (!hasUniqueIds(sourceScheduleItems) || !hasUniqueIds(scheduleItems) || !hasUniqueIds(paAssignments) ||
     !hasValidReferenceInputs(paAssignments, dutyAssignments, timetableLocks) ||
     !validateTimetableGenerationBaseline({
     event, eventDay, eventDays, stages, sections, sourceScheduleItems,
@@ -177,6 +177,10 @@ export const materializeTimetableGenerationPlan = ({
     event, eventDay, originalScheduleItems: sourceScheduleItems,
     generationScheduleItems: scheduleItems, paAssignments, dutyAssignments, timetableLocks,
   }).ok) return fail('INVALID_PLAN_REFERENCE')
+  if (!Array.isArray(plan.placements) || !plan.placements.every(isRecord) ||
+    !Array.isArray(plan.breaks) || !plan.breaks.every(isRecord) ||
+    !Array.isArray(plan.paShifts) || !plan.paShifts.every(isRecord)) return fail('INVALID_PLAN_REFERENCE')
+  if (!Array.isArray(newScheduleItemIds) || !Array.isArray(newPaAssignmentIds)) return fail('ID_COUNT_MISMATCH')
   if (newScheduleItemIds.length !== plan.placements.filter(p => p.scheduleItemId === undefined).length ||
     newPaAssignmentIds.length !== plan.paShifts.length) return fail('ID_COUNT_MISMATCH')
   const newIds = [...newScheduleItemIds, ...newPaAssignmentIds]
@@ -272,6 +276,7 @@ export const materializeTimetableGenerationPlan = ({
   ]
   const candidateItemById = new Map(candidateItems.map(item => [item.id, item]))
   const boundary = (value: PlannedScheduleBoundary, stageId: string): ScheduleBoundary | undefined => {
+    if (!isRecord(value)) return undefined
     if (value.kind === 'existing-item' && !itemById.has(value.scheduleItemId)) return undefined
     const id = value.kind === 'existing-item' ? value.scheduleItemId
       : value.kind === 'planned-performance' ? performanceIdByBand.get(value.eventBandId) : undefined
@@ -323,6 +328,7 @@ export const validateTimetableGenerationCandidate = (
   if (!hasValidReferenceInputs(input.paAssignments, dutyAssignments, timetableLocks)) {
     return fail('既存の担当またはTT固定参照が不正です。')
   }
+  if (!isRecord(candidate)) return fail('生成結果の形式が不正です。')
   if (!hasUniqueIds(candidate.scheduleItems)) {
     return fail('生成結果のScheduleItem IDが重複しています。')
   }

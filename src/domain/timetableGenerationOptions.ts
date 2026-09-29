@@ -21,13 +21,51 @@ interface GenerationBreakScope {
   scheduleItems: ScheduleItem[]
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+
+const isNonEmptyId = (value: unknown): value is string =>
+  typeof value === 'string' && !!value.trim()
+
+const hasBoundaryId = (value: unknown): boolean => isRecord(value) && isNonEmptyId(value.scheduleItemId)
+
+const hasValidBreakScope = (scope: GenerationBreakScope): boolean =>
+  isRecord(scope.event) && isNonEmptyId(scope.event.id) &&
+  isRecord(scope.eventDay) && isNonEmptyId(scope.eventDay.id) && isNonEmptyId(scope.eventDay.eventId) &&
+  [scope.eventDays, scope.stages, scope.sections, scope.scheduleItems].every(items =>
+    Array.isArray(items) && items.every(item => isRecord(item) && isNonEmptyId(item.id)))
+
+const hasValidBreakReferences = (
+  paAssignments: PaAssignment[], dutyAssignments: DutyAssignment[], timetableLocks: TimetableLock[],
+): boolean =>
+  Array.isArray(paAssignments) && paAssignments.every(pa => isRecord(pa) &&
+    isNonEmptyId(pa.eventId) && isNonEmptyId(pa.eventDayId) &&
+    hasBoundaryId(pa.from) && hasBoundaryId(pa.until)) &&
+  Array.isArray(dutyAssignments) && dutyAssignments.every(duty => isRecord(duty) &&
+    hasBoundaryId(duty.from) && hasBoundaryId(duty.until)) &&
+  Array.isArray(timetableLocks) && timetableLocks.every(lock =>
+    isRecord(lock) && isNonEmptyId(lock.scheduleItemId))
+
+/** Check runtime shapes before App's first generation preprocessing step. */
+export const hasValidTimetableGenerationPreprocessingInput = (input: GenerationBreakScope & {
+  options: TimetableGenerationUiOptions
+  paAssignments: PaAssignment[]
+  dutyAssignments: DutyAssignment[]
+  timetableLocks: TimetableLock[]
+}): boolean => hasValidBreakScope(input) && isRecord(input.options) &&
+  typeof input.options.keepIntraSectionBreaks === 'boolean' &&
+  typeof input.options.keepInterSectionBreaks === 'boolean' &&
+  hasValidBreakReferences(input.paAssignments, input.dutyAssignments, input.timetableLocks)
+
 /** Only well-formed Section-anchored Breaks on the target day can be removed by an option. */
 const isTimetableGenerationRemovableBreak = (item: ScheduleItem, {
   event, eventDay, eventDays, stages, sections, scheduleItems,
 }: GenerationBreakScope): boolean => {
+  if (!isRecord(item) || item.kind !== 'break' ||
+    !hasValidBreakScope({ event, eventDay, eventDays, stages, sections, scheduleItems })) return false
   const matchingDays = eventDays.filter(day => day.id === eventDay.id)
   if (eventDay.eventId !== event.id || matchingDays.length !== 1 ||
-    matchingDays[0].eventId !== event.id || item.kind !== 'break' ||
+    matchingDays[0].eventId !== event.id ||
     scheduleItems.filter(candidate => candidate.id === item.id).length !== 1) return false
   const matchingStages = stages.filter(stage => stage.id === item.stageId)
   if (matchingStages.length !== 1 || matchingStages[0].eventDayId !== eventDay.id) return false
@@ -42,11 +80,17 @@ const isTimetableGenerationRemovableBreak = (item: ScheduleItem, {
 /** Preprocess only valid target-day Breaks; malformed data must reach core validation. */
 export const createScheduleItemsForTimetableGeneration = (input: GenerationBreakScope & {
   options: TimetableGenerationUiOptions
-}): ScheduleItem[] => input.scheduleItems.filter(item =>
+}): ScheduleItem[] => {
+  // Preserve malformed source data; App's preflight reports the error before this helper is called.
+  if (!hasValidBreakScope(input) || !isRecord(input.options) ||
+    typeof input.options.keepIntraSectionBreaks !== 'boolean' ||
+    typeof input.options.keepInterSectionBreaks !== 'boolean') return input.scheduleItems
+  return input.scheduleItems.filter(item =>
   !isTimetableGenerationRemovableBreak(item, input) ||
     (item.sectionId !== undefined
       ? input.options.keepIntraSectionBreaks : input.options.keepInterSectionBreaks
     ))
+}
 
 export const hasSameItemContents = (left: ScheduleItem, right: ScheduleItem,
   ignoredFields: ReadonlySet<string> = new Set()): boolean => {
@@ -64,6 +108,7 @@ export const validateTimetableGenerationBaseline = ({
   sourceScheduleItems: ScheduleItem[]
   generationScheduleItems: ScheduleItem[]
 }): boolean => {
+  if (!Array.isArray(sourceScheduleItems) || !Array.isArray(generationScheduleItems)) return false
   if ([...sourceScheduleItems, ...generationScheduleItems].some(item =>
     item === null || typeof item !== 'object' || typeof item.id !== 'string')) return false
   const sourceById = new Map(sourceScheduleItems.map((item, index) => [item.id, { item, index }]))
@@ -82,7 +127,8 @@ export const validateTimetableGenerationBaseline = ({
     isTimetableGenerationRemovableBreak(item, scope))
 }
 
-export type BreakRemovalValidation = { ok: true } | { ok: false; code: 'CROSS_SCOPE_BREAK_REFERENCE' }
+export type BreakRemovalValidation = { ok: true } |
+  { ok: false; code: 'CROSS_SCOPE_BREAK_REFERENCE' | 'INVALID_REFERENCE_SHAPE' }
 
 /** Reject option-removed Breaks while any assignment or lock kept after apply still references them. */
 export const validateTimetableGenerationBreakRemoval = ({
@@ -97,6 +143,14 @@ export const validateTimetableGenerationBreakRemoval = ({
   dutyAssignments: DutyAssignment[]
   timetableLocks: TimetableLock[]
 }): BreakRemovalValidation => {
+  if (!isRecord(event) || !isNonEmptyId(event.id) ||
+    !isRecord(eventDay) || !isNonEmptyId(eventDay.id) ||
+    !Array.isArray(originalScheduleItems) || !Array.isArray(generationScheduleItems) ||
+    [...originalScheduleItems, ...generationScheduleItems].some(item =>
+      !isRecord(item) || !isNonEmptyId(item.id)) ||
+    !hasValidBreakReferences(paAssignments, dutyAssignments, timetableLocks)) {
+    return { ok: false, code: 'INVALID_REFERENCE_SHAPE' }
+  }
   const generationIds = new Set(generationScheduleItems.map(item => item.id))
   const removedBreakIds = new Set(originalScheduleItems
     .filter(item => item.kind === 'break' && !generationIds.has(item.id))

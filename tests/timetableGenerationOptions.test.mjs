@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createScheduleItemsForTimetableGeneration, DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS,
+  hasValidTimetableGenerationPreprocessingInput,
   validateTimetableGenerationBreakRemoval } from '../src/domain/timetableGenerationOptions.ts'
 import { generateTimetablePlan } from '../src/domain/timetableGeneration.ts'
 import { materializeTimetableGenerationPlan, validateTimetableGenerationCandidate } from '../src/domain/timetableGenerationApply.ts'
@@ -209,3 +210,77 @@ test('同じbaselineを生成・materialization・最終検証へ渡し、除外
   assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true)
   assert.ok(original.scheduleItems.some(item => item.id === 'inside'), '適用前の元TTは変更されない')
 })
+
+for (const [field, value] of [
+    ['scheduleItems', null], ['scheduleItems', [null]], ['scheduleItems', [undefined]],
+    ['scheduleItems', [{}]], ['eventDays', [null]], ['stages', [null]], ['sections', [null]],
+    ['eventDays', null], ['stages', null], ['sections', null], ['event', null],
+    ['eventDay', null], ['options', null],
+]) {
+  test(`option前処理は${field}=${value === undefined ? 'undefined' : JSON.stringify(value)}でthrowせずScheduleItemを削除しない`, () => {
+    const input = fixture()
+    const scope = { ...input, options: withoutInterBreak, [field]: value }
+    assert.doesNotThrow(() => createScheduleItemsForTimetableGeneration(scope), field)
+    if (field === 'scheduleItems') {
+      assert.deepEqual(createScheduleItemsForTimetableGeneration(scope), value, '不正なitemを削除しない')
+    }
+  })
+}
+
+test('生成前preflightは正常な参照のみ通し、不正なitem・Boundary・optionを拒否する', () => {
+  const input = fixture()
+  const options = withoutInterBreak
+  assert.equal(hasValidTimetableGenerationPreprocessingInput({ ...input, options }), true)
+  assert.equal(hasValidTimetableGenerationPreprocessingInput({ ...input, scheduleItems: [null], options }), false)
+  assert.equal(hasValidTimetableGenerationPreprocessingInput({ ...input, options: null }), false)
+  assert.equal(hasValidTimetableGenerationPreprocessingInput({ ...input,
+    dutyAssignments: [{ ...input.dutyAssignments[0], from: null }], options }), false)
+})
+
+for (const [name, mutate] of [
+    ['PA from null', input => { input.paAssignments[0].from = null }],
+    ['PA until null', input => { input.paAssignments[0].until = null }],
+    ['PA from undefined', input => { input.paAssignments[0].from = undefined }],
+    ['PA until empty', input => { input.paAssignments[0].until = {} }],
+    ['Duty from null', input => { input.dutyAssignments[0].from = null }],
+    ['Duty until undefined', input => { input.dutyAssignments[0].until = undefined }],
+    ['Lock null', input => { input.timetableLocks = [null] }],
+    ['Lock itemId null', input => { input.timetableLocks[0].scheduleItemId = null }],
+    ['original item null', input => { input.scheduleItems = [null] }],
+]) {
+  test(`Break除外判定は${name}をstructured failureにする`, () => {
+    const input = createGenerationUiInput()
+    mutate(input)
+    const original = structuredClone(input)
+    const result = validateTimetableGenerationBreakRemoval({
+      event: input.event, eventDay: input.eventDay,
+      originalScheduleItems: input.scheduleItems,
+      generationScheduleItems: input.scheduleItems,
+      paAssignments: input.paAssignments, dutyAssignments: input.dutyAssignments,
+      timetableLocks: input.timetableLocks,
+    })
+    assert.deepEqual(result, { ok: false, code: 'INVALID_REFERENCE_SHAPE' })
+    assert.deepEqual(input, original)
+  })
+}
+test('Break除外判定はgeneration item nullをstructured failureにする', () => {
+  const input = createGenerationUiInput()
+  assert.deepEqual(validateTimetableGenerationBreakRemoval({
+    event: input.event, eventDay: input.eventDay, originalScheduleItems: input.scheduleItems,
+    generationScheduleItems: [null], paAssignments: input.paAssignments,
+    dutyAssignments: input.dutyAssignments, timetableLocks: input.timetableLocks,
+  }), { ok: false, code: 'INVALID_REFERENCE_SHAPE' })
+})
+
+for (const field of ['originalScheduleItems', 'generationScheduleItems',
+  'paAssignments', 'dutyAssignments', 'timetableLocks']) {
+  test(`Break除外判定は${field}=nullをstructured failureにする`, () => {
+    const input = createGenerationUiInput()
+    const scope = { event: input.event, eventDay: input.eventDay,
+      originalScheduleItems: input.scheduleItems, generationScheduleItems: input.scheduleItems,
+      paAssignments: input.paAssignments, dutyAssignments: input.dutyAssignments,
+      timetableLocks: input.timetableLocks, [field]: null }
+    assert.deepEqual(validateTimetableGenerationBreakRemoval(scope),
+      { ok: false, code: 'INVALID_REFERENCE_SHAPE' })
+  })
+}

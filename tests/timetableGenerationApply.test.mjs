@@ -7,6 +7,54 @@ import { resolvePaAssignmentInterval } from '../src/domain/paAssignments.ts'
 import { serializePersistedState, parsePersistedState } from '../src/persistence/localPersistence.ts'
 import { createGenerationUiInput, materializationInput } from './fixtures/timetableGenerationUi.mjs'
 
+for (const [name, mutate] of [
+    ['scheduleItems null', input => { input.scheduleItems = null }],
+    ['sourceScheduleItems null', input => { input.sourceScheduleItems = null }],
+    ['paAssignments null', input => { input.paAssignments = null }],
+    ['dutyAssignments null', input => { input.dutyAssignments = null }],
+    ['timetableLocks null', input => { input.timetableLocks = null }],
+    ['plan null', input => { input.plan = null }],
+    ['placements null', input => { input.plan.placements = null }],
+    ['breaks null', input => { input.plan.breaks = null }],
+    ['paShifts null', input => { input.plan.paShifts = null }],
+    ['schedule IDs null', input => { input.newScheduleItemIds = null }],
+    ['PA IDs null', input => { input.newPaAssignmentIds = null }],
+    ['placement null', input => { input.plan.placements = [null] }],
+    ['break null', input => { input.plan.breaks = [null] }],
+    ['shift null', input => { input.plan.paShifts = [null] }],
+    ['fromBoundary null', input => { input.plan.paShifts[0].fromBoundary = null }],
+    ['untilBoundary null', input => { input.plan.paShifts[0].untilBoundary = null }],
+    ['placement band missing', input => { delete input.plan.placements[0].eventBandId }],
+    ['placement stage malformed', input => { input.plan.placements[0].stageId = null }],
+    ['break item ID missing', input => { delete input.plan.breaks[0].scheduleItemId }],
+    ['fromBoundary empty', input => { input.plan.paShifts[0].fromBoundary = {} }],
+]) {
+  test(`materializerは${name}を例外でなく失敗結果にする`, () => {
+    const input = materializationInput()
+    mutate(input)
+    const original = structuredClone(input)
+    const result = materializeTimetableGenerationPlan(input)
+    assert.equal(result.ok, false)
+    assert.deepEqual(input, original)
+  })
+}
+
+test('final validatorは不正なsource・candidate PA collectionを例外でなく失敗結果にする', () => {
+  for (const field of ['scheduleItems', 'paAssignments']) {
+    const input = materializationInput()
+    const candidate = materializeTimetableGenerationPlan(input)
+    assert.equal(candidate.ok, true)
+    const malformed = { ...candidate, [field]: null }
+    assert.equal(validateTimetableGenerationCandidate(input, malformed).ok, false)
+  }
+  const input = materializationInput()
+  const candidate = materializeTimetableGenerationPlan(input)
+  assert.equal(candidate.ok, true)
+  input.paAssignments = null
+  assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, false)
+  assert.equal(validateTimetableGenerationCandidate(materializationInput(), null).ok, false)
+})
+
 test('生成coreのplanを正式IDへ変換しTimeline・Lock・Issue・Dutyを再検証する', () => {
   const input = createGenerationUiInput()
   const original = structuredClone(input)
