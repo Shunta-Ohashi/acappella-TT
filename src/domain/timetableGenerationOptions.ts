@@ -1,7 +1,7 @@
 import type { DutyAssignment, DutyType, Event, EventDay, PaAssignment, ScheduleItem, Section, Stage,
   TimetableLock } from './models'
 import { isValidBreakDurationMinutes, isValidScheduleItemSectionAssignment } from './schedule.ts'
-import { isValidFixedPosition } from './timetableLocks.ts'
+import { hasValidTimetableLocks, hasValidTimetableScheduleItems } from './timetableRuntimeValidation.ts'
 
 export interface TimetableGenerationUiOptions {
   keepIntraSectionBreaks: boolean
@@ -35,29 +35,10 @@ export const hasValidTimetableGenerationDutyTypes = (value: unknown): value is D
   new Set(value.map(type => type.id)).size === value.length
 
 /** Validate ScheduleItem structure without imposing target Event or lane ownership. */
-export const hasValidTimetableGenerationScheduleItems = (value: unknown): value is ScheduleItem[] =>
-  Array.isArray(value) && value.every(item => {
-    if (!isRecord(item) || !isNonEmptyId(item.id) || !isNonEmptyId(item.stageId) ||
-      !Number.isSafeInteger(item.order) || (item.order as number) < 0 ||
-      (item.sectionId !== undefined && !isNonEmptyId(item.sectionId))) return false
-    if (item.kind === 'performance') {
-      return isNonEmptyId(item.eventBandId) && item.afterSectionId === undefined
-    }
-    if (item.kind === 'break') {
-      return typeof item.title === 'string' && isValidBreakDurationMinutes(item.durationMinutes) &&
-        (item.afterSectionId === undefined || isNonEmptyId(item.afterSectionId))
-    }
-    return false
-  }) && new Set(value.map(item => item.id)).size === value.length
+export const hasValidTimetableGenerationScheduleItems = hasValidTimetableScheduleItems
 
 /** Validate Lock identity and fields consumed by generation and Lock evaluation. */
-export const hasValidTimetableGenerationLocks = (value: unknown): value is TimetableLock[] =>
-  Array.isArray(value) && value.every(lock => isRecord(lock) &&
-    isNonEmptyId(lock.id) && isNonEmptyId(lock.eventId) &&
-    isNonEmptyId(lock.scheduleItemId) && isNonEmptyId(lock.stageId) &&
-    (lock.sectionId === undefined || isNonEmptyId(lock.sectionId)) &&
-    isValidFixedPosition(lock.position)) &&
-  new Set(value.map(lock => lock.id)).size === value.length
+export const hasValidTimetableGenerationLocks = hasValidTimetableLocks
 
 const hasBoundaryId = (value: unknown): boolean => isRecord(value) && isNonEmptyId(value.scheduleItemId)
 

@@ -18,6 +18,54 @@ test('実体化と最終検証はtop-level nullを失敗結果として返す', 
 })
 
 for (const [name, edit] of [
+  ['ID null', pa => { pa.id = null }],
+  ['Stage ID空白', pa => { pa.stageId = '' }],
+  ['Member ID空白', pa => { pa.memberId = '   ' }],
+  ['role不正', pa => { pa.role = 'invalid' }],
+  ['開始Boundary edge不正', pa => { pa.from.edge = 'invalid' }],
+  ['終了Boundary edge null', pa => { pa.until.edge = null }],
+]) {
+  test(`置換対象のsource PA ${name}をmaterializerと最終guardが拒否する`, () => {
+    const input = materializationInput()
+    const candidate = materializeTimetableGenerationPlan(input)
+    assert.equal(candidate.ok, true)
+    edit(input.paAssignments.find(pa => pa.id === 'old-pa') ?? input.paAssignments[0])
+    const original = structuredClone({ input, candidate })
+    assert.deepEqual(materializeTimetableGenerationPlan(input),
+      { ok: false, code: 'INVALID_PLAN_REFERENCE' })
+    assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, false)
+    assert.deepEqual({ input, candidate }, original)
+  })
+}
+
+test('置換対象のsource PAが他日Stageを指す場合はmaterialization前に拒否する', () => {
+  const input = materializationInput()
+  const candidate = materializeTimetableGenerationPlan(input)
+  assert.equal(candidate.ok, true)
+  input.paAssignments[0].stageId = 'stage-a2'
+  const original = structuredClone(input)
+  assert.deepEqual(materializeTimetableGenerationPlan(input),
+    { ok: false, code: 'INVALID_PLAN_REFERENCE' })
+  assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, false)
+  assert.deepEqual(input, original)
+})
+
+test('重複source PA IDと不正なcandidate PA形状を拒否する', () => {
+  const input = materializationInput()
+  const candidate = materializeTimetableGenerationPlan(input)
+  assert.equal(candidate.ok, true)
+  const invalidCandidate = structuredClone(candidate)
+  invalidCandidate.paAssignments.find(pa => pa.id === 'pa-b').role = 'invalid'
+  assert.equal(validateTimetableGenerationCandidate(input, invalidCandidate).ok, false)
+  input.paAssignments[1].id = input.paAssignments[0].id
+  const original = structuredClone(input)
+  assert.deepEqual(materializeTimetableGenerationPlan(input),
+    { ok: false, code: 'INVALID_PLAN_REFERENCE' })
+  assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, false)
+  assert.deepEqual(input, original)
+})
+
+for (const [name, edit] of [
   ['ID欠落', lock => { delete lock.id }],
   ['ID null', lock => { lock.id = null }],
   ['ID空白', lock => { lock.id = '   ' }],
@@ -958,7 +1006,8 @@ for (const [name, edit] of [
 
     assert.deepEqual(materializeTimetableGenerationPlan(input), { ok: false, code: 'INVALID_PLAN_REFERENCE' })
     assert.deepEqual(validateTimetableGenerationCandidate(input, candidate),
-      { ok: false, reason: '既存の担当またはTT固定参照が不正です。' })
+      { ok: false, reason: name.startsWith('PA')
+        ? '元のPA Assignmentの形式が不正です。' : '既存の担当またはTT固定参照が不正です。' })
     assert.deepEqual(input, original)
     assert.deepEqual(candidate, originalCandidate)
   })

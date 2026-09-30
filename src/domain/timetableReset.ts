@@ -1,6 +1,8 @@
 import type { DutyAssignment, DutyType, Event, EventBand, EventDay, PaAssignment,
   ScheduleItem, Stage, TimetableLock } from './models'
 import { getDutyAssignmentsForEvent } from './dutyAssignments.ts'
+import { hasValidDutyAssignments, hasValidPaAssignments, hasValidTimetableLocks,
+  hasValidTimetableScheduleItems } from './timetableRuntimeValidation.ts'
 
 interface TimetableResetInput {
   event: Pick<Event, 'id'>
@@ -33,9 +35,6 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const hasValidId = (value: unknown): value is { id: string } =>
   isRecord(value) && isNonEmptyId(value.id)
 
-const hasValidBoundary = (value: unknown): value is { scheduleItemId: string } =>
-  isRecord(value) && isNonEmptyId(value.scheduleItemId)
-
 const uniqueIds = (items: unknown): boolean => {
   if (!Array.isArray(items)) return false
   const ids = new Set<string>()
@@ -50,25 +49,20 @@ const hasValidScopeReferences = (input: TimetableResetInput): boolean =>
   input.eventDays.every(day => isNonEmptyId(day.eventId)) &&
   input.stages.every(stage => isNonEmptyId(stage.eventDayId)) &&
   input.eventBands.every(band => isNonEmptyId(band.eventId) && isNonEmptyId(band.eventDayId)) &&
-  input.scheduleItems.every(item => isNonEmptyId(item.stageId) &&
-    (item.kind !== 'performance' || isNonEmptyId(item.eventBandId))) &&
-  input.dutyTypes.every(dutyType => isNonEmptyId(dutyType.eventId)) &&
-  Array.isArray(input.paAssignments) && input.paAssignments.every(pa =>
-    isRecord(pa) && isNonEmptyId(pa.eventId) && isNonEmptyId(pa.eventDayId) &&
-    hasValidBoundary(pa.from) && hasValidBoundary(pa.until)) &&
-  Array.isArray(input.dutyAssignments) && input.dutyAssignments.every(duty =>
-    isRecord(duty) && isNonEmptyId(duty.dutyTypeId) && isNonEmptyId(duty.eventDayId) &&
-    isNonEmptyId(duty.stageId) && hasValidBoundary(duty.from) && hasValidBoundary(duty.until)) &&
-  Array.isArray(input.timetableLocks) && input.timetableLocks.every(lock =>
-    isRecord(lock) && isNonEmptyId(lock.eventId) && isNonEmptyId(lock.scheduleItemId) &&
-    isNonEmptyId(lock.stageId) && (lock.sectionId === undefined || isNonEmptyId(lock.sectionId)))
+  input.dutyTypes.every(dutyType => isNonEmptyId(dutyType.eventId))
 
 /** Explicit, atomic reset; known foreign/other-day ownership outranks stale Stage references. */
 export const resetEventDayTimetable = (input: TimetableResetInput): TimetableResetResult => {
+  if (!isRecord(input)) return { ok: false, code: 'INVALID_SCOPE' }
   const { event, eventDay, eventDays, stages, eventBands, scheduleItems,
     paAssignments, dutyTypes, dutyAssignments, timetableLocks } = input
   if (!hasValidId(event) || !hasValidId(eventDay) || !isNonEmptyId(eventDay.eventId) ||
-    ![eventDays, stages, eventBands, scheduleItems, dutyTypes].every(uniqueIds) ||
+    ![eventDays, stages, eventBands, dutyTypes].every(uniqueIds) ||
+    !hasValidTimetableScheduleItems(scheduleItems) ||
+    scheduleItems.some(item => item.kind === 'break' &&
+      item.sectionId !== undefined && item.afterSectionId !== undefined) ||
+    !hasValidPaAssignments(paAssignments) || !hasValidDutyAssignments(dutyAssignments) ||
+    !hasValidTimetableLocks(timetableLocks) ||
     !hasValidScopeReferences(input) ||
     eventDay.eventId !== event.id ||
     !eventDays.some(day => day.id === eventDay.id && day.eventId === event.id)) {
@@ -82,6 +76,16 @@ export const resetEventDayTimetable = (input: TimetableResetInput): TimetableRes
   const dutyTypeById = new Map(dutyTypes.map(type => [type.id, type]))
   const targetStages = stages.filter(stage => stage.eventDayId === eventDay.id)
   const targetStageIds = new Set(targetStages.map(stage => stage.id))
+  if (paAssignments.some(pa => {
+    if (pa.eventId !== event.id && pa.eventDayId !== eventDay.id &&
+      !targetStageIds.has(pa.stageId)) return false
+    const day = eventDayById.get(pa.eventDayId)
+    const stage = stageById.get(pa.stageId)
+    return (day !== undefined && day.eventId !== pa.eventId) ||
+      (stage !== undefined && stage.eventDayId !== pa.eventDayId) ||
+      (pa.eventId === event.id && pa.eventDayId === eventDay.id &&
+        !targetStageIds.has(pa.stageId))
+  })) return { ok: false, code: 'INVALID_SCOPE' }
   if (dutyAssignments.some(duty => {
     const stage = stageById.get(duty.stageId)
     if (stage && stage.eventDayId !== duty.eventDayId &&

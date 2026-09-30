@@ -28,6 +28,88 @@ const fixture = () => {
   return input
 }
 
+const assertInvalidResetWithoutMutation = (input) => {
+  const original = structuredClone(input)
+  assert.deepEqual(resetEventDayTimetable(input), { ok: false, code: 'INVALID_SCOPE' })
+  assert.deepEqual(input, original)
+}
+
+test('resetはtop-level nullを例外なしで拒否する', () => {
+  assert.deepEqual(resetEventDayTimetable(null), { ok: false, code: 'INVALID_SCOPE' })
+})
+
+for (const [name, edit] of [
+  ['kind欠落', item => { delete item.kind }],
+  ['unknown kind', item => { item.kind = 'unknown' }],
+  ['Performance afterSectionId', item => { item.afterSectionId = 'section-1' }],
+]) {
+  test(`resetは${name}のPerformanceを拒否する`, () => {
+    const input = fixture()
+    edit(input.scheduleItems.find(item => item.kind === 'performance'))
+    assertInvalidResetWithoutMutation(input)
+  })
+}
+
+for (const [name, edit] of [
+  ['title欠落', item => { delete item.title }],
+  ['duration欠落', item => { delete item.durationMinutes }],
+  ['duration小数', item => { item.durationMinutes = 1.5 }],
+  ['order負数', item => { item.order = -1 }],
+  ['sectionId null', item => { item.sectionId = null }],
+  ['afterSectionId空白', item => { item.afterSectionId = '   ' }],
+  ['sectionIdとafterSectionId併記', item => { item.sectionId = 'section-1' }],
+]) {
+  test(`resetは${name}のBreakを拒否する`, () => {
+    const input = fixture()
+    edit(input.scheduleItems.find(item => item.kind === 'break'))
+    assertInvalidResetWithoutMutation(input)
+  })
+}
+
+for (const [name, edit] of [
+  ['target PA + 他日Stage', input => { input.paAssignments[0].stageId = 'stage-a2' }],
+  ['他日PA + target Stage', input => { input.paAssignments[1].stageId = 'stage-a1' }],
+  ['foreign Event + target Day', input => { input.paAssignments[0].eventId = 'event-b' }],
+  ['target Event + foreign Day', input => { input.paAssignments[2].eventId = input.event.id }],
+]) {
+  test(`resetはPA ownership矛盾（${name}）を拒否する`, () => {
+    const input = fixture()
+    edit(input)
+    assertInvalidResetWithoutMutation(input)
+  })
+}
+
+for (const [name, field] of [
+  ['PA', 'paAssignments'], ['Duty', 'dutyAssignments'], ['Lock', 'timetableLocks'],
+]) {
+  test(`resetは${name}の重複IDを拒否する`, () => {
+    const input = fixture()
+    input[field][1].id = input[field][0].id
+    assertInvalidResetWithoutMutation(input)
+  })
+  test(`resetは${name}の空白IDを拒否する`, () => {
+    const input = fixture()
+    input[field][0].id = '   '
+    assertInvalidResetWithoutMutation(input)
+  })
+}
+
+for (const [name, edit] of [
+  ['PA memberId欠落', input => { delete input.paAssignments[0].memberId }],
+  ['PA role不正', input => { input.paAssignments[0].role = 'invalid' }],
+  ['PA Boundary edge不正', input => { input.paAssignments[0].from.edge = 'invalid' }],
+  ['Duty memberId空白', input => { input.dutyAssignments[0].memberId = '' }],
+  ['Duty Boundary edge欠落', input => { delete input.dutyAssignments[0].until.edge }],
+  ['Lock position欠落', input => { delete input.timetableLocks[0].position }],
+  ['Lock position不正', input => { input.timetableLocks[0].position = { kind: 'index', index: -1 } }],
+]) {
+  test(`resetは${name}を拒否する`, () => {
+    const input = fixture()
+    edit(input)
+    assertInvalidResetWithoutMutation(input)
+  })
+}
+
 test('対象日・対象Stageの担当がknown foreign DutyTypeを参照したらreset全体を拒否する', () => {
   const input = createGenerationUiInput()
   input.dutyTypes.push({ id: 'foreign-type', eventId: 'event-b', name: '他Event', order: 0 })
@@ -63,10 +145,9 @@ test('全target Stageとstale Stage上のtarget Band Performanceを削除し、B
 
 test('PAはEvent+Day、Dutyは既存ownership helper+Dayで削除し、他日とforeign Eventを保つ', () => {
   const input = fixture()
-  input.paAssignments.push({ ...input.paAssignments[0], id: 'foreign-pa-same-day', eventId: 'event-b',
-    from: { scheduleItemId: 'p-b', edge: 'start' }, until: { scheduleItemId: 'p-b', edge: 'end' } })
+  input.paAssignments.push({ ...input.paAssignments.find(pa => pa.id === 'pa-b'), id: 'foreign-pa' })
   const result = resetEventDayTimetable(input)
-  assert.deepEqual(result.paAssignments.map(pa => pa.id), ['pa-a2', 'pa-b', 'foreign-pa-same-day'])
+  assert.deepEqual(result.paAssignments.map(pa => pa.id), ['pa-a2', 'pa-b', 'foreign-pa'])
   assert.deepEqual(result.dutyAssignments.map(duty => duty.id), ['other-day-duty', 'foreign-duty'])
 })
 
