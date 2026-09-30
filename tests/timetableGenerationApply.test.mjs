@@ -50,6 +50,57 @@ test('置換対象のsource PAが他日Stageを指す場合はmaterialization前
   assert.deepEqual(input, original)
 })
 
+for (const [name, edit] of [
+  ['foreign Event + target Day + target Stage', input => {
+    Object.assign(input.paAssignments.find(pa => pa.id === 'pa-b'),
+      { eventDayId: 'day-a1', stageId: 'stage-a1' })
+  }],
+  ['target Event + other Day + target Stage', input => {
+    input.paAssignments.find(pa => pa.id === 'pa-a2').stageId = 'stage-a1'
+  }],
+  ['存在しないEventDay', input => {
+    input.paAssignments.find(pa => pa.id === 'pa-b').eventDayId = 'missing-day'
+  }],
+  ['存在しないStage', input => {
+    input.paAssignments.find(pa => pa.id === 'pa-b').stageId = 'missing-stage'
+  }],
+]) {
+  test(`source PA ownership矛盾（${name}）をpartition前に拒否する`, () => {
+    const input = materializationInput()
+    const candidate = materializeTimetableGenerationPlan(input)
+    assert.equal(candidate.ok, true)
+    edit(input)
+    const original = structuredClone({ input, candidate })
+    assert.deepEqual(materializeTimetableGenerationPlan(input),
+      { ok: false, code: 'INVALID_PLAN_REFERENCE' })
+    assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, false)
+    assert.deepEqual({ input, candidate }, original)
+  })
+}
+
+test('candidate側のPA ownership矛盾も最終guardで拒否する', () => {
+  const input = materializationInput()
+  const candidate = materializeTimetableGenerationPlan(input)
+  assert.equal(candidate.ok, true)
+  candidate.paAssignments.find(pa => pa.id === 'pa-b').eventDayId = 'day-a1'
+  candidate.paAssignments.find(pa => pa.id === 'pa-b').stageId = 'stage-a1'
+  const original = structuredClone({ input, candidate })
+  assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, false)
+  assert.deepEqual({ input, candidate }, original)
+})
+
+test('sectionIdとafterSectionIdを併記したBreakは生成の全guardで拒否する', () => {
+  const input = materializationInput()
+  const candidate = materializeTimetableGenerationPlan(input)
+  assert.equal(candidate.ok, true)
+  input.scheduleItems.find(item => item.id === 'break-1').sectionId = 'section-1'
+  const original = structuredClone({ input, candidate })
+  assert.deepEqual(materializeTimetableGenerationPlan(input),
+    { ok: false, code: 'INVALID_PLAN_REFERENCE' })
+  assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, false)
+  assert.deepEqual({ input, candidate }, original)
+})
+
 test('重複source PA IDと不正なcandidate PA形状を拒否する', () => {
   const input = materializationInput()
   const candidate = materializeTimetableGenerationPlan(input)

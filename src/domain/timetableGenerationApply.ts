@@ -11,7 +11,8 @@ import { hasSafeStageTimelineArithmetic } from './timetableGenerationArithmetic.
 import { hasSameItemContents, hasValidTimetableGenerationDutyTypes, hasValidTimetableGenerationLocks,
   hasValidTimetableGenerationScheduleItems, validateTimetableGenerationBaseline,
   validateTimetableGenerationBreakRemoval } from './timetableGenerationOptions.ts'
-import { hasValidDutyAssignments, hasValidPaAssignments } from './timetableRuntimeValidation.ts'
+import { hasConsistentPaOwnership, hasValidDutyAssignments,
+  hasValidPaAssignments } from './timetableRuntimeValidation.ts'
 import type { CalculatedScheduleItem } from './timeline'
 
 export interface MaterializedTimetable {
@@ -188,6 +189,7 @@ export const materializeTimetableGenerationPlan = (input: MaterializationInput):
     !hasUniqueIds(sourceScheduleItems) || !hasUniqueIds(scheduleItems) || !hasUniqueIds(paAssignments) ||
     !hasValidTimetableGenerationDutyTypes(dutyTypes) ||
     !hasValidReferenceInputs(paAssignments, dutyAssignments, timetableLocks) ||
+    !hasConsistentPaOwnership(paAssignments, eventDays, stages) ||
     !validateTimetableGenerationBaseline({
     event, eventDay, eventDays, stages, sections, sourceScheduleItems,
     generationScheduleItems: scheduleItems,
@@ -200,8 +202,6 @@ export const materializeTimetableGenerationPlan = (input: MaterializationInput):
     !Array.isArray(plan.paShifts) || !plan.paShifts.every(isRecord)) return fail('INVALID_PLAN_REFERENCE')
   const targetStages = stages.filter(stage => stage.eventDayId === eventDay.id)
   const targetStageIds = new Set(targetStages.map(stage => stage.id))
-  if (paAssignments.some(pa => !isRetainedPaAssignment(pa, event.id, eventDay.id) &&
-    !targetStageIds.has(pa.stageId))) return fail('INVALID_PLAN_REFERENCE')
   if (!Array.isArray(newScheduleItemIds) || !Array.isArray(newPaAssignmentIds)) return fail('ID_COUNT_MISMATCH')
   if (newScheduleItemIds.length !== plan.placements.filter(p => p.scheduleItemId === undefined).length ||
     newPaAssignmentIds.length !== plan.paShifts.length) return fail('ID_COUNT_MISMATCH')
@@ -364,6 +364,10 @@ export const validateTimetableGenerationCandidate = (
   if (!hasValidPaAssignments(candidate.paAssignments)) {
     return fail('生成結果のPA Assignmentの形式が不正です。')
   }
+  if (!hasConsistentPaOwnership(input.paAssignments, eventDays, stages) ||
+    !hasConsistentPaOwnership(candidate.paAssignments, eventDays, stages)) {
+    return fail('PA AssignmentのEvent・開催日・Stage所属が一致しません。')
+  }
   const scheduleItemIds = new Set(candidate.scheduleItems.map(item => item.id))
   if (candidate.paAssignments.some(pa => scheduleItemIds.has(pa.id))) {
     return fail('生成結果のScheduleItemとPA AssignmentのIDが重複しています。')
@@ -377,8 +381,6 @@ export const validateTimetableGenerationCandidate = (
   }
   const targetStages = stages.filter(stage => stage.eventDayId === eventDay.id)
   const stageIds = new Set(targetStages.map(stage => stage.id))
-  if (input.paAssignments.some(pa => !isRetainedPaAssignment(pa, event.id, eventDay.id) &&
-    !stageIds.has(pa.stageId))) return fail('元のPA Assignmentの開催日とStageが一致しません。')
   const targetSections = sections.filter(section => stageIds.has(section.stageId))
   const sectionIds = new Set(targetSections.map(section => section.id))
   const targetBands = eventBands.filter(band => band.eventId === event.id && band.eventDayId === eventDay.id)

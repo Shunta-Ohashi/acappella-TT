@@ -78,9 +78,12 @@ test('WARNING/INFOは最終guardをblockingせずpreviewへ残す', () => {
 
 test('PA previewへ別Eventの同じDay IDに属するPAを混入させない', () => {
   const input = materializationInput()
-  input.paAssignments.push({ ...input.paAssignments[2], id: 'foreign-same-day', eventDayId: 'day-a1' })
   const candidate = materializeTimetableGenerationPlan(input)
   const validation = validateTimetableGenerationCandidate(input, candidate)
-  const preview = createTimetableGenerationPreview({ ...input, ...candidate, ...validation })
+  assert.equal(candidate.ok, true)
+  assert.equal(validation.ok, true)
+  const foreignSameDay = { ...input.paAssignments[2], id: 'foreign-same-day', eventDayId: 'day-a1' }
+  const preview = createTimetableGenerationPreview({ ...input, ...candidate, ...validation,
+    paAssignments: [...candidate.paAssignments, foreignSameDay] })
   assert.deepEqual(preview.paRows.map(row => row.id), input.newPaAssignmentIds)
 })

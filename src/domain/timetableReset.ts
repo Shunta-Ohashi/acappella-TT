@@ -1,7 +1,7 @@
 import type { DutyAssignment, DutyType, Event, EventBand, EventDay, PaAssignment,
   ScheduleItem, Stage, TimetableLock } from './models'
 import { getDutyAssignmentsForEvent } from './dutyAssignments.ts'
-import { hasValidDutyAssignments, hasValidPaAssignments, hasValidTimetableLocks,
+import { hasConsistentPaOwnership, hasValidDutyAssignments, hasValidPaAssignments, hasValidTimetableLocks,
   hasValidTimetableScheduleItems } from './timetableRuntimeValidation.ts'
 
 interface TimetableResetInput {
@@ -59,8 +59,6 @@ export const resetEventDayTimetable = (input: TimetableResetInput): TimetableRes
   if (!hasValidId(event) || !hasValidId(eventDay) || !isNonEmptyId(eventDay.eventId) ||
     ![eventDays, stages, eventBands, dutyTypes].every(uniqueIds) ||
     !hasValidTimetableScheduleItems(scheduleItems) ||
-    scheduleItems.some(item => item.kind === 'break' &&
-      item.sectionId !== undefined && item.afterSectionId !== undefined) ||
     !hasValidPaAssignments(paAssignments) || !hasValidDutyAssignments(dutyAssignments) ||
     !hasValidTimetableLocks(timetableLocks) ||
     !hasValidScopeReferences(input) ||
@@ -70,22 +68,17 @@ export const resetEventDayTimetable = (input: TimetableResetInput): TimetableRes
     return { ok: false, code: 'INVALID_SCOPE' }
   }
   const eventDayById = new Map(eventDays.map(day => [day.id, day]))
+  if (stages.some(stage => !eventDayById.has(stage.eventDayId)) ||
+    eventBands.some(band => eventDayById.get(band.eventDayId)?.eventId !== band.eventId) ||
+    !hasConsistentPaOwnership(paAssignments, eventDays, stages)) {
+    return { ok: false, code: 'INVALID_SCOPE' }
+  }
   const stageById = new Map(stages.map(stage => [stage.id, stage]))
   const bandById = new Map(eventBands.map(band => [band.id, band]))
   const itemById = new Map(scheduleItems.map(item => [item.id, item]))
   const dutyTypeById = new Map(dutyTypes.map(type => [type.id, type]))
   const targetStages = stages.filter(stage => stage.eventDayId === eventDay.id)
   const targetStageIds = new Set(targetStages.map(stage => stage.id))
-  if (paAssignments.some(pa => {
-    if (pa.eventId !== event.id && pa.eventDayId !== eventDay.id &&
-      !targetStageIds.has(pa.stageId)) return false
-    const day = eventDayById.get(pa.eventDayId)
-    const stage = stageById.get(pa.stageId)
-    return (day !== undefined && day.eventId !== pa.eventId) ||
-      (stage !== undefined && stage.eventDayId !== pa.eventDayId) ||
-      (pa.eventId === event.id && pa.eventDayId === eventDay.id &&
-        !targetStageIds.has(pa.stageId))
-  })) return { ok: false, code: 'INVALID_SCOPE' }
   if (dutyAssignments.some(duty => {
     const stage = stageById.get(duty.stageId)
     if (stage && stage.eventDayId !== duty.eventDayId &&

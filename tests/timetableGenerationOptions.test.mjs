@@ -24,6 +24,25 @@ const filtered = (input, options) => createScheduleItemsForTimetableGeneration({
 test('自動生成の事前検証はtop-level nullを安全に拒否する', () => {
   assert.equal(hasValidTimetableGenerationPreprocessingInput(null), false)
 })
+
+test('ScheduleItem runtime validatorは3種類のBreak配置を許可し、両section field併記を拒否する', () => {
+  const base = { id: 'break', kind: 'break', title: '休憩', durationMinutes: 5,
+    stageId: 'stage-a1', order: 0 }
+  for (const placement of [
+    { sectionId: 'section-1' }, { afterSectionId: 'section-1' }, {},
+  ]) assert.equal(hasValidTimetableGenerationScheduleItems([{ ...base, ...placement }]), true)
+  assert.equal(hasValidTimetableGenerationScheduleItems([{
+    ...base, sectionId: 'section-1', afterSectionId: 'section-1',
+  }]), false)
+})
+
+test('生成preflightはsectionIdとafterSectionIdを併記したBreakを拒否する', () => {
+  const input = fixture()
+  input.scheduleItems.find(item => item.id === 'break-1').sectionId = 'section-1'
+  assert.equal(hasValidTimetableGenerationPreprocessingInput({
+    ...input, options: DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS,
+  }), false)
+})
 const validateBreakRemoval = (input, options) => validateTimetableGenerationBreakRemoval({
   event: input.event, eventDay: input.eventDay,
   originalScheduleItems: input.scheduleItems, generationScheduleItems: filtered(input, options),

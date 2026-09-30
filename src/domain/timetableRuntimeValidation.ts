@@ -1,4 +1,4 @@
-import type { DutyAssignment, PaAssignment, ScheduleItem, TimetableLock } from './models'
+import type { DutyAssignment, EventDay, PaAssignment, ScheduleItem, Stage, TimetableLock } from './models'
 import { isValidBreakDurationMinutes } from './schedule.ts'
 import { isValidFixedPosition } from './timetableLocks.ts'
 
@@ -25,7 +25,8 @@ export const hasValidTimetableScheduleItems = (value: unknown): value is Schedul
     }
     if (item.kind === 'break') {
       return typeof item.title === 'string' && isValidBreakDurationMinutes(item.durationMinutes) &&
-        (item.afterSectionId === undefined || isNonEmptyId(item.afterSectionId))
+        (item.afterSectionId === undefined || isNonEmptyId(item.afterSectionId)) &&
+        !(item.sectionId !== undefined && item.afterSectionId !== undefined)
     }
     return false
   })
@@ -36,6 +37,19 @@ export const hasValidPaAssignments = (value: unknown): value is PaAssignment[] =
     isNonEmptyId(pa.stageId) && isNonEmptyId(pa.memberId) &&
     (pa.role === 'main' || pa.role === 'sub') &&
     hasValidBoundary(pa.from) && hasValidBoundary(pa.until))
+
+/** Validate Event -> EventDay -> Stage ownership before partitioning target and retained PA. */
+export const hasConsistentPaOwnership = (
+  paAssignments: PaAssignment[], eventDays: EventDay[], stages: Stage[],
+): boolean => {
+  const eventDayById = new Map(eventDays.map(day => [day.id, day]))
+  const stageById = new Map(stages.map(stage => [stage.id, stage]))
+  return paAssignments.every(pa => {
+    const eventDay = eventDayById.get(pa.eventDayId)
+    const stage = stageById.get(pa.stageId)
+    return eventDay?.eventId === pa.eventId && stage?.eventDayId === pa.eventDayId
+  })
+}
 
 export const hasValidDutyAssignments = (value: unknown): value is DutyAssignment[] =>
   hasUniqueIds(value) && value.every(duty =>

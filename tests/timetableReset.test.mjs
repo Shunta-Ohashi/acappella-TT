@@ -39,6 +39,38 @@ test('resetはtop-level nullを例外なしで拒否する', () => {
 })
 
 for (const [name, edit] of [
+  ['target EventBand + foreign EventDay', input => {
+    input.eventBands.find(band => band.id === 'band-1').eventDayId = 'day-b'
+  }],
+  ['foreign EventBand + target EventDay', input => {
+    input.eventBands.find(band => band.id === 'band-b').eventDayId = 'day-a1'
+  }],
+  ['存在しないEventDay', input => {
+    input.eventBands.find(band => band.id === 'band-a2').eventDayId = 'missing-day'
+  }],
+]) {
+  test(`resetはEventBand ownership矛盾（${name}）を拒否する`, () => {
+    const input = fixture()
+    edit(input)
+    assertInvalidResetWithoutMutation(input)
+  })
+}
+
+test('resetは存在しないEventDayを指すStageを拒否する', () => {
+  const input = fixture()
+  input.stages.find(stage => stage.id === 'stage-b').eventDayId = 'missing-day'
+  assertInvalidResetWithoutMutation(input)
+})
+
+test('正常な対象日・同一Event他日・別EventのEventBand ownershipは受け入れる', () => {
+  const input = fixture()
+  const originalBands = structuredClone(input.eventBands)
+  const result = resetEventDayTimetable(input)
+  assert.equal(result.ok, true)
+  assert.deepEqual(input.eventBands, originalBands)
+})
+
+for (const [name, edit] of [
   ['kind欠落', item => { delete item.kind }],
   ['unknown kind', item => { item.kind = 'unknown' }],
   ['Performance afterSectionId', item => { item.afterSectionId = 'section-1' }],
