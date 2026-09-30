@@ -1,5 +1,5 @@
-import { Draggable, Droppable } from '@hello-pangea/dnd'
-import { Fragment, type CSSProperties, type FormEvent } from 'react'
+import { Draggable, Droppable, type DraggableProvided } from '@hello-pangea/dnd'
+import { Fragment, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import type {
   DutyType,
   EventBand,
@@ -34,7 +34,8 @@ import type {
   UnresolvedPaAssignment,
   UnresolvedDutyAssignment,
 } from '../ui/timetableWorkspaceRows'
-import { createTimetableGridColumns } from '../ui/timetableGridColumns'
+import { createTimetableGridColumns, type TimetableGridColumn } from '../ui/timetableGridColumns'
+import { getInterSectionBreakPresentation } from '../ui/interSectionBreakPresentation'
 import {
   getInterSectionDroppableId,
   getSectionDroppableId,
@@ -352,6 +353,100 @@ const TimetableRow = ({
   )
 }
 
+const InterSectionBreakRow = ({
+  row,
+  index,
+  previousSection,
+  nextSection,
+  columns,
+  dutyTypes,
+  addBreakForm,
+  onRemoveScheduleItem,
+  timetableLock,
+}: {
+  row?: TimetableWorkspaceRow
+  index: number
+  previousSection: Section
+  nextSection: Section
+  columns: TimetableGridColumn[]
+  dutyTypes: DutyType[]
+  addBreakForm?: ReactNode
+  onRemoveScheduleItem: (scheduleItemId: ScheduleItemId) => void
+  timetableLock?: TimetableLock
+}) => {
+  const item = row?.scheduleItem.kind === 'break' ? row.scheduleItem : undefined
+  const presentation = getInterSectionBreakPresentation(previousSection, nextSection, columns, item)
+  const labels = row ? issueLabels(row) : []
+  // Preserve real coverage when present, without rendering empty PA/Duty cells.
+  const coverageLabels = row ? [
+    ...(['main', 'sub'] as const).flatMap(role => row.paCoverage[role].length > 0
+      ? [`${role === 'main' ? 'Main' : 'Sub'} PA: ${row.paCoverage[role].map(coverage => coverage.memberName).join(' / ')}`]
+      : []),
+    ...dutyTypes.flatMap(type => (row.dutyCoverage[type.id]?.length ?? 0) > 0
+      ? [`${type.name}: ${row.dutyCoverage[type.id].map(coverage => coverage.memberName).join(' / ')}`]
+      : []),
+  ] : []
+  const renderRow = (provided?: DraggableProvided) => (
+    <div
+      ref={provided?.innerRef}
+      {...provided?.draggableProps}
+      role="row"
+      className={[
+        'timetable-grid__row', 'timetable-grid__row--break', 'timetable-grid__inter-section-row',
+        row && row.issueCounts.ERROR > 0 ? 'timetable-grid__row--error' : '',
+        row && row.issueCounts.ERROR === 0 && row.issueCounts.WARNING > 0
+          ? 'timetable-grid__row--warning' : '',
+      ].filter(Boolean).join(' ')}
+      style={provided?.draggableProps.style}
+    >
+      <div className="timetable-grid__time" role="rowheader">
+        {row ? <>
+          <strong>{formatMinuteAsLocalTime(row.calculatedItem.plannedStartMinute)}</strong>
+          <span>〜{formatMinuteAsLocalTime(row.calculatedItem.plannedEndMinute)}</span>
+        </> : <span aria-label="部間休憩の時刻未設定">—</span>}
+      </div>
+      <div className="timetable-grid__inter-section-cell" role="cell" aria-colspan={presentation.contentColumnSpan}>
+        <div className="timetable-grid__inter-section-content">
+          <div className="timetable-grid__inter-section-summary">
+            {provided && <span
+              {...provided.dragHandleProps}
+              className="timetable-grid__drag-handle"
+              aria-label={timetableLock
+                ? `${presentation.sectionLabel}の休憩「${presentation.title}」はTT固定中です`
+                : `${presentation.sectionLabel}の休憩「${presentation.title}」を並べ替える`}
+            >{timetableLock ? '🔒' : '⠿'}</span>}
+            <strong><span aria-hidden="true">☕ </span>部間休憩</strong>
+            <span>{presentation.sectionLabel}</span>
+            {presentation.title && <span className="timetable-grid__inter-section-title">{presentation.title}</span>}
+            <span>{presentation.durationLabel}</span>
+            {labels.map(label => <span
+              key={label}
+              className={`timetable-grid__issue timetable-grid__issue--${label.split(' ')[0].toLowerCase()}`}
+            >{label}</span>)}
+            {item && <button
+              type="button"
+              className="timetable-grid__remove"
+              aria-label={presentation.removeAccessibleName}
+              disabled={timetableLock !== undefined}
+              title={timetableLock ? '先にTT固定を解除してください。' : undefined}
+              onClick={() => onRemoveScheduleItem(item.id)}
+            >削除</button>}
+          </div>
+          {addBreakForm && <div className="timetable-grid__inter-section-actions">{addBreakForm}</div>}
+        </div>
+        {coverageLabels.length > 0 && <div className="timetable-grid__inter-section-coverage">
+          {coverageLabels.map((label, index) => <span key={`${index}-${label}`}>{label}</span>)}
+        </div>}
+      </div>
+    </div>
+  )
+  return item ? (
+    <Draggable draggableId={item.id} index={index} isDragDisabled={timetableLock !== undefined}>
+      {renderRow}
+    </Draggable>
+  ) : renderRow()
+}
+
 export function TimetableGrid({
   stage,
   sections,
@@ -452,6 +547,7 @@ export function TimetableGrid({
     laneRows: TimetableWorkspaceRow[],
     droppableId: string,
     emptyMessage: string,
+    interSection?: { previousSection: Section; nextSection: Section },
   ) => (
     <Droppable droppableId={droppableId}>
       {(provided) => (
@@ -461,7 +557,21 @@ export function TimetableGrid({
           className="timetable-grid__body"
           role="rowgroup"
         >
-          {laneRows.map((row, index) => (
+          {laneRows.map((row, index) => interSection ? (
+            <InterSectionBreakRow
+              key={row.scheduleItem.id}
+              row={row}
+              index={index}
+              {...interSection}
+              columns={timetableGridColumns}
+              dutyTypes={dutyTypes}
+              addBreakForm={index === 0
+                ? renderInterSectionBreakForm(interSection.previousSection, interSection.nextSection)
+                : undefined}
+              onRemoveScheduleItem={onRemoveScheduleItem}
+              timetableLock={timetableLockByScheduleItemId.get(row.scheduleItem.id)}
+            />
+          ) : (
             <TimetableRow
               key={row.scheduleItem.id}
               row={row}
@@ -473,11 +583,20 @@ export function TimetableGrid({
               onUnlockTimetableLock={onUnlockTimetableLock}
             />
           ))}
-          {laneRows.length === 0 && (
+          {laneRows.length === 0 && (interSection ? (
+            <InterSectionBreakRow
+              index={0}
+              {...interSection}
+              columns={timetableGridColumns}
+              dutyTypes={dutyTypes}
+              addBreakForm={renderInterSectionBreakForm(interSection.previousSection, interSection.nextSection)}
+              onRemoveScheduleItem={onRemoveScheduleItem}
+            />
+          ) : (
             <div className="timetable-grid__empty" role="row">
               <span role="cell">{emptyMessage}</span>
             </div>
-          )}
+          ))}
           {provided.placeholder}
         </div>
       )}
@@ -580,7 +699,7 @@ export function TimetableGrid({
         </div>
       )}
 
-      <div className="timetable-grid" role="table" aria-label={`${stage.name}のタイムテーブル`}>
+      <div className="timetable-grid" role="table" aria-colcount={timetableGridColumns.length} aria-label={`${stage.name}のタイムテーブル`}>
         <div className="timetable-grid__header" role="row">
           {timetableGridColumns.map((column) => (
             <span key={column.id} role="columnheader" title={column.label}>
@@ -625,17 +744,11 @@ export function TimetableGrid({
               </section>
               {nextSection && (
                 <section className="timetable-grid__inter-section-breaks">
-                  <header className="timetable-grid__inter-section-heading">
-                    <div>
-                      <strong>部間休憩</strong>
-                      <span>{section.name} と {nextSection.name} の間</span>
-                    </div>
-                    {renderInterSectionBreakForm(section, nextSection)}
-                  </header>
                   {renderLane(
                     interSectionRows,
                     getInterSectionDroppableId(section.id),
                     '部間休憩はありません。',
+                    { previousSection: section, nextSection },
                   )}
                 </section>
               )}

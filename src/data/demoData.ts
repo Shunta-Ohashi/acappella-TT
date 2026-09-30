@@ -14,6 +14,7 @@ import type {
   Stage,
   TimetableLock,
 } from '../domain/models'
+import { createGenerationDemoData } from './generationDemoData.ts'
 
 export interface DemoData {
   events: Event[]
@@ -657,7 +658,7 @@ const dutyAssignments: DutyAssignment[] = [
   },
 ]
 
-export const createDemoData = (): DemoData => ({
+const createOriginalDemoData = (): DemoData => ({
   events: events.map((event) => ({
     ...event,
     performanceSlotMinutes: [...event.performanceSlotMinutes],
@@ -725,3 +726,26 @@ export const createDemoData = (): DemoData => ({
   initialEventDayId: 'event-day-demo-main-01',
   initialStageId: 'stage-demo-main-day1',
 })
+
+export const createDemoData = (): DemoData => {
+  const generationDemo = createGenerationDemoData()
+  const original = createOriginalDemoData()
+  // Append rather than replace: existing demos and their stable IDs remain available.
+  return {
+    ...original,
+    events: [...original.events, ...generationDemo.events],
+    eventDays: [...original.eventDays, ...generationDemo.eventDays],
+    stages: [...original.stages, ...generationDemo.stages],
+    sections: [...original.sections, ...generationDemo.sections],
+    members: [...original.members, ...generationDemo.members],
+    bands: [...original.bands, ...generationDemo.bands],
+    eventMembers: [...original.eventMembers, ...generationDemo.eventMembers],
+    eventMemberDays: [...original.eventMemberDays, ...generationDemo.eventMemberDays],
+    eventBands: [...original.eventBands, ...generationDemo.eventBands],
+    scheduleItems: [...original.scheduleItems, ...generationDemo.scheduleItems],
+    paAssignments: [...original.paAssignments, ...generationDemo.paAssignments],
+    dutyTypes: [...original.dutyTypes, ...generationDemo.dutyTypes],
+    dutyAssignments: [...original.dutyAssignments, ...generationDemo.dutyAssignments],
+    timetableLocks: [...original.timetableLocks, ...generationDemo.timetableLocks],
+  }
+}

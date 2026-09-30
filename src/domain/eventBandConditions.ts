@@ -193,9 +193,6 @@ const getFixedPlacementValidationError = ({
   }
 
   const stageSections = sections.filter((section) => section.stageId === stage.id)
-  if (stageSections.length > 0 && !placement.sectionId) {
-    return 'SectionがあるStageでは固定するSectionを選択してください。'
-  }
   if (
     placement.sectionId &&
     !stageSections.some((section) => section.id === placement.sectionId)

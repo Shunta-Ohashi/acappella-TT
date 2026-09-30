@@ -39,8 +39,10 @@ import {
 } from '../domain/dutyAssignments'
 import { getMemberDisplayName } from '../ui/eventBandPresentation'
 import { DutyAssignmentEditorDialog } from './DutyAssignmentEditorDialog'
+import { hasDutyDraftChanges } from '../ui/operationsDraftChanges'
 
 export interface DutySettingsHandle {
+  hasUnsavedChanges: () => boolean
   prepareDraft: (
     paAssignmentsOverride?: PaAssignment[],
   ) => DutySettingsUpdateResult
@@ -115,6 +117,7 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
     const [draft, setDraft] = useState(() =>
       createDutySettingsDraft(event, stages, dutyTypes, dutyAssignments),
     )
+    const [savedDraft, setSavedDraft] = useState(() => draft)
     const [assignmentEditor, setAssignmentEditor] =
       useState<AssignmentEditorState>()
     const [typeEditor, setTypeEditor] = useState<TypeEditorState>()
@@ -123,7 +126,10 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
     const [errors, setErrors] = useState<DutySettingsValidationErrors>(
       emptyErrors,
     )
-    const [isDirty, setIsDirty] = useState(false)
+    const isDirty = hasDutyDraftChanges(draft, savedDraft) || Boolean(newTypeName.trim()) ||
+      (typeEditor !== undefined && typeEditor.name.trim() !==
+        draft.dutyTypes.find(type => type.draftId === typeEditor.draftId)?.name.trim()) ||
+      assignmentEditor !== undefined
     const [saveMessage, setSaveMessage] = useState('')
     const memberById = new Map(members.map((member) => [member.id, member]))
     const scheduleItemById = new Map(
@@ -159,7 +165,6 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
     )
 
     const markChanged = () => {
-      setIsDirty(true)
       setSaveMessage('')
       setErrors(emptyErrors())
       setTypeActionError('')
@@ -230,18 +235,21 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
       result: Extract<DutySettingsUpdateResult, { ok: true }>,
     ) => {
       onCommit(result)
-      setDraft(createDutySettingsDraft(
+      const saved = createDutySettingsDraft(
         event,
         stages,
         result.dutyTypes,
         result.dutyAssignments,
-      ))
+      )
+      setDraft(saved)
+      setSavedDraft(saved)
       setErrors(emptyErrors())
-      setIsDirty(false)
       setSaveMessage('✓ 保存しました')
     }
 
-    useImperativeHandle(ref, () => ({ prepareDraft, commitPrepared }))
+    useImperativeHandle(ref, () => ({ prepareDraft, commitPrepared,
+      hasUnsavedChanges: () => isDirty,
+    }))
 
     const handleSubmit = (submitEvent: FormEvent<HTMLFormElement>) => {
       submitEvent.preventDefault()

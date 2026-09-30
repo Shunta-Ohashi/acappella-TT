@@ -319,7 +319,7 @@ export function EventBandConditionDialog({
                 <option value="">
                   {selectedStage && availableSections.length === 0
                     ? 'Sectionなし'
-                    : '未指定'}
+                    : selectedStage ? 'Stage内で自動配置' : '未指定'}
                 </option>
                 {availableSections.map((section) => (
                   <option key={section.id} value={section.id}>{section.name}</option>
