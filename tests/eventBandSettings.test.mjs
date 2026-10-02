@@ -93,6 +93,7 @@ const update = ({
   eventBands = [],
   eventMemberDays = defaultEventMemberDays,
   scheduleItems = [],
+  timetableOrderConstraints = [],
   newEventBandIds = [],
 }) => createEventBandSettingsUpdate({
   event: configuredEvent,
@@ -103,6 +104,7 @@ const update = ({
   eventMembers,
   eventMemberDays,
   scheduleItems,
+  timetableOrderConstraints,
   draft,
   newEventBandIds,
 })
@@ -367,8 +369,8 @@ test('未配置EventBandだけ削除でき、配置済み削除は保存処理�
     kind: 'performance',
     eventBandId: existing.id,
   }]
-  assert.equal(canDeleteEventBand(existing.id, []), true)
-  assert.equal(canDeleteEventBand(existing.id, scheduleItems), false)
+  assert.equal(canDeleteEventBand(existing.id, [], []), true)
+  assert.equal(canDeleteEventBand(existing.id, scheduleItems, []), false)
   assert.equal(update({ draft: { items: [] }, eventBands: [existing] }).ok, true)
 
   const blocked = update({
@@ -378,6 +380,24 @@ test('未配置EventBandだけ削除でき、配置済み削除は保存処理�
   })
   assert.equal(blocked.ok, false)
   if (!blocked.ok) assert.match(blocked.errors.form, /配置/)
+})
+
+test('出演順制約から参照中のEventBandはUI判定と保存処理の両方で削除できない', () => {
+  const existing = createExistingEventBand()
+  const constraints = [{ eventBandIds: [existing.id, 'event-band-2'] }]
+  assert.equal(canDeleteEventBand(existing.id, [], constraints), false)
+  assert.equal(canDeleteEventBand('unreferenced', [], constraints), true)
+
+  const result = update({
+    draft: { items: [] },
+    eventBands: [existing],
+    timetableOrderConstraints: [{
+      id: 'order-1', eventId: event.id, eventDayId: 'day-1',
+      stageId: 'stage-1', eventBandIds: [existing.id, 'event-band-2'],
+    }],
+  })
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.match(result.errors.form ?? '', /出演順制約/)
 })
 
 test('選択Eventだけdraft化し、保存しても別EventのEventBandを維持する', () => {

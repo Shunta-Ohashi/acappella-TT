@@ -12,6 +12,7 @@ import type {
   MemberId,
   ScheduleItem,
   TimeRange,
+  TimetableOrderConstraint,
 } from './models'
 import {
   formatMinuteAsLocalTime,
@@ -264,7 +265,10 @@ export const isEventBandScheduled = (
 export const canDeleteEventBand = (
   eventBandId: EventBandId,
   scheduleItems: ScheduleItem[],
-): boolean => !isEventBandScheduled(eventBandId, scheduleItems)
+  timetableOrderConstraints: Pick<TimetableOrderConstraint, 'eventBandIds'>[],
+): boolean => !isEventBandScheduled(eventBandId, scheduleItems) &&
+  !timetableOrderConstraints.some((constraint) =>
+    constraint.eventBandIds.includes(eventBandId))
 
 export type EventBandDayChangeBlockReason =
   | 'scheduled'
@@ -507,6 +511,7 @@ export const createEventBandSettingsUpdate = ({
   eventMembers,
   eventMemberDays,
   scheduleItems,
+  timetableOrderConstraints,
   draft,
   newEventBandIds,
 }: {
@@ -518,6 +523,7 @@ export const createEventBandSettingsUpdate = ({
   eventMembers: EventMember[]
   eventMemberDays: EventMemberDay[]
   scheduleItems: ScheduleItem[]
+  timetableOrderConstraints: TimetableOrderConstraint[]
   draft: EventBandSettingsDraft
   newEventBandIds: EventBandId[]
 }): EventBandSettingsUpdateResult => {
@@ -543,9 +549,13 @@ export const createEventBandSettingsUpdate = ({
   for (const eventBand of currentEventBands) {
     if (
       !retainedIds.has(eventBand.id) &&
-      isEventBandScheduled(eventBand.id, scheduleItems)
+      !canDeleteEventBand(
+        eventBand.id,
+        scheduleItems,
+        timetableOrderConstraints,
+      )
     ) {
-      errors.form = `「${eventBand.name}」はタイムテーブルに配置されているため削除できません。先にStep 6でPoolへ戻してください。`
+      errors.form = `「${eventBand.name}」はタイムテーブルに配置されているか、出演順制約から参照されているため削除できません。関連する設定を先に解除してください。`
       break
     }
   }

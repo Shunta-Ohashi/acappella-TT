@@ -8,6 +8,7 @@ import type {
   LocalDate,
   PaAssignment,
   Stage,
+  TimetableOrderConstraint,
 } from './models'
 import {
   validateNewEventDraft,
@@ -37,6 +38,7 @@ export interface EventDayReferences {
   eventBands: Pick<EventBand, 'eventDayId'>[]
   paAssignments: Pick<PaAssignment, 'eventDayId'>[]
   dutyAssignments: Pick<DutyAssignment, 'eventDayId'>[]
+  timetableOrderConstraints: Pick<TimetableOrderConstraint, 'eventDayId'>[]
 }
 
 interface CreateEventBasicInfoUpdateInput extends EventDayReferences {
@@ -89,6 +91,7 @@ export const canDeleteEventDay = (
     eventBands,
     paAssignments,
     dutyAssignments,
+    timetableOrderConstraints,
   }: EventDayReferences,
 ): boolean =>
   !stages.some((stage) => stage.eventDayId === eventDayId) &&
@@ -96,7 +99,9 @@ export const canDeleteEventDay = (
     eventMemberDay.eventDayId === eventDayId) &&
   !eventBands.some((eventBand) => eventBand.eventDayId === eventDayId) &&
   !paAssignments.some((assignment) => assignment.eventDayId === eventDayId) &&
-  !dutyAssignments.some((assignment) => assignment.eventDayId === eventDayId)
+  !dutyAssignments.some((assignment) => assignment.eventDayId === eventDayId) &&
+  !timetableOrderConstraints.some((constraint) =>
+    constraint.eventDayId === eventDayId)
 
 export const createEventBasicInfoUpdate = ({
   event,
@@ -108,6 +113,7 @@ export const createEventBasicInfoUpdate = ({
   eventBands,
   paAssignments,
   dutyAssignments,
+  timetableOrderConstraints,
 }: CreateEventBasicInfoUpdateInput): EventBasicInfoUpdateResult => {
   const errors = validateEventBasicInfoDraft(draft)
   if (errors.name || errors.dates) return { ok: false, errors }
@@ -130,6 +136,7 @@ export const createEventBasicInfoUpdate = ({
       eventBands,
       paAssignments,
       dutyAssignments,
+      timetableOrderConstraints,
     }),
   )
 

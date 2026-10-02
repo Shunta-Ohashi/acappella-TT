@@ -29,14 +29,15 @@ const emptyState = () => ({
   dutyTypes: [],
   dutyAssignments: [],
   timetableLocks: [],
+  timetableOrderConstraints: [],
 })
 
-test('14 collectionのバックアップは既存version付きsnapshotと同じ内容でround-tripする', () => {
+test('15 collectionのバックアップは既存version付きsnapshotと同じ内容でround-tripする', () => {
   const demo = createDemoData()
   const json = createBackupJson(demo)
   const restored = parseBackupJson(json)
 
-  assert.ok(json.includes('\n  "version": 2,'))
+  assert.ok(json.includes('\n  "version": 3,'))
   assert.deepEqual(restored, createPersistedAppState(demo))
   assert.equal(restored.version, CURRENT_STORAGE_VERSION)
   assert.deepEqual(restored.scheduleItems.map((item) => item.id), demo.scheduleItems.map((item) => item.id))
@@ -44,6 +45,10 @@ test('14 collectionのバックアップは既存version付きsnapshotと同じ�
   assert.deepEqual(restored.paAssignments, demo.paAssignments)
   assert.deepEqual(restored.dutyAssignments, demo.dutyAssignments)
   assert.deepEqual(restored.timetableLocks, demo.timetableLocks)
+  assert.deepEqual(
+    restored.timetableOrderConstraints,
+    demo.timetableOrderConstraints,
+  )
   assert.deepEqual(Object.keys(restored).sort(), ['version', ...Object.keys(emptyState())].sort())
   assert.equal('selectedEventId' in restored, false)
 })
@@ -68,7 +73,30 @@ test('TimetableLockをバックアップでround-tripし、旧backupでは空配
   assert.deepEqual(parseBackupJson(JSON.stringify(legacy))?.timetableLocks, [])
 })
 
-test('V1バックアップをV2へ移行し、V2出力ではPA可否をEventMemberへ置く', () => {
+test('TimetableOrderConstraintをbackupでround-tripしV2では空配列へ移行する', () => {
+  const state = {
+    ...emptyState(),
+    timetableOrderConstraints: [{
+      id: 'order-1', eventId: 'event-1', eventDayId: 'day-1',
+      stageId: 'stage-1', sectionId: 'section-1',
+      eventBandIds: ['band-a', 'band-b'],
+    }],
+  }
+  assert.deepEqual(
+    parseBackupJson(createBackupJson(state))?.timetableOrderConstraints,
+    state.timetableOrderConstraints,
+  )
+
+  const current = createPersistedAppState(emptyState())
+  const { timetableOrderConstraints: _omitted, ...legacy } = current
+  legacy.version = 2
+  assert.deepEqual(
+    parseBackupJson(JSON.stringify(legacy))?.timetableOrderConstraints,
+    [],
+  )
+})
+
+test('V1バックアップをV3へ移行し、V3出力ではPA可否をEventMemberへ置く', () => {
   const legacy = {
     ...createPersistedAppState(emptyState()),
     version: 1,
@@ -78,12 +106,13 @@ test('V1バックアップをV2へ移行し、V2出力ではPA可否をEventMemb
   }
   const restored = parseBackupJson(JSON.stringify(legacy))
   assert.ok(restored)
-  assert.equal(restored.version, 2)
+  assert.equal(restored.version, 3)
+  assert.deepEqual(restored.timetableOrderConstraints, [])
   assert.deepEqual(restored.eventMembers[0].paCapabilities, { main: true, sub: false })
   assert.equal('paCapabilities' in restored.members[0], false)
 
   const exported = JSON.parse(createBackupJson(restored))
-  assert.equal(exported.version, 2)
+  assert.equal(exported.version, 3)
   assert.equal('paCapabilities' in exported.members[0], false)
   assert.deepEqual(exported.eventMembers[0].paCapabilities, { main: true, sub: false })
 })
@@ -110,7 +139,7 @@ test('不正JSON、未知version、必須collection不足、malformed elementを
   const valid = createPersistedAppState(emptyState())
 
   assert.equal(parseBackupJson('{broken'), undefined)
-  assert.equal(parseBackupJson(JSON.stringify({ ...valid, version: 3 })), undefined)
+  assert.equal(parseBackupJson(JSON.stringify({ ...valid, version: 4 })), undefined)
   assert.equal(parseBackupJson(JSON.stringify({ version: 1 })), undefined)
   assert.equal(parseBackupJson(JSON.stringify({ ...valid, events: [null] })), undefined)
 })
@@ -159,7 +188,7 @@ test('有効なバックアップを保存するとlocalStorageも同じ全snaps
   assert.deepEqual([...values.keys()], [STORAGE_KEY])
 })
 
-test('空の14 collectionも有効でdemoDataに置換されない', () => {
+test('空の15 collectionも有効でdemoDataに置換されない', () => {
   const empty = emptyState()
   assert.deepEqual(parseBackupJson(createBackupJson(empty)), createPersistedAppState(empty))
 })

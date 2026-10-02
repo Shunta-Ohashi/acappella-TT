@@ -102,6 +102,7 @@ const noReferences = {
   paAssignments: [],
   dutyAssignments: [],
   timetableLocks: [],
+  timetableOrderConstraints: [],
 }
 
 test('Stage開始時刻は自動終了または固定終了より前の場合だけ変更可能にする', () => {
@@ -376,6 +377,7 @@ test('ScheduleItem、Section、固定配置、TT固定、PA担当、一般業務
     paAssignments: [],
     dutyAssignments: [],
     timetableLocks: [],
+    timetableOrderConstraints: [],
   }), false)
   assert.equal(canDeleteStage(existingStage.id, {
     sections: [{ stageId: existingStage.id }],
@@ -384,6 +386,7 @@ test('ScheduleItem、Section、固定配置、TT固定、PA担当、一般業務
     paAssignments: [],
     dutyAssignments: [],
     timetableLocks: [],
+    timetableOrderConstraints: [],
   }), false)
   assert.equal(canDeleteStage(existingStage.id, {
     sections: [],
@@ -392,6 +395,7 @@ test('ScheduleItem、Section、固定配置、TT固定、PA担当、一般業務
     paAssignments: [],
     dutyAssignments: [],
     timetableLocks: [],
+    timetableOrderConstraints: [],
   }), false)
   assert.equal(canDeleteStage(existingStage.id, {
     sections: [],
@@ -400,6 +404,7 @@ test('ScheduleItem、Section、固定配置、TT固定、PA担当、一般業務
     paAssignments: [],
     dutyAssignments: [],
     timetableLocks: [],
+    timetableOrderConstraints: [],
   }), true)
   assert.equal(canDeleteStage(existingStage.id, {
     sections: [],
@@ -408,6 +413,7 @@ test('ScheduleItem、Section、固定配置、TT固定、PA担当、一般業務
     paAssignments: [{ stageId: existingStage.id }],
     dutyAssignments: [],
     timetableLocks: [],
+    timetableOrderConstraints: [],
   }), false)
   assert.equal(canDeleteStage(existingStage.id, {
     ...noReferences,
@@ -457,6 +463,7 @@ test('未参照Stageは削除でき、参照中Stageは保存処理でも削除�
     paAssignments: [],
     dutyAssignments: [],
     timetableLocks: [],
+    timetableOrderConstraints: [],
   })
   assert.equal(blocked.ok, false)
   if (!blocked.ok) assert.match(blocked.errors.form ?? '', /削除できません/)
@@ -532,6 +539,27 @@ test('TT固定から参照中のStageは保存処理でも削除をブロック�
 
   assert.equal(result.ok, false)
   if (!result.ok) assert.match(result.errors.form ?? '', /TT固定/)
+})
+
+test('出演順制約から参照中のStageはUI判定と保存処理の両方で削除できない', () => {
+  const references = {
+    ...noReferences,
+    timetableOrderConstraints: [{ stageId: existingStage.id }],
+  }
+  assert.equal(canDeleteStage(existingStage.id, references), false)
+  assert.equal(canDeleteStage('another-stage', references), true)
+
+  const result = createEventStageSettingsUpdate({
+    event,
+    eventDays,
+    stages: [existingStage],
+    draft: settingsDraft({ stages: [] }),
+    newStageIds: [],
+    newSectionIds: [],
+    ...references,
+  })
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.match(result.errors.form ?? '', /出演順制約/)
 })
 
 test('Section draftへ既存Sectionと自動・固定時刻を反映する', () => {
@@ -723,17 +751,20 @@ test('既存Section IDを維持し、新規IDだけを使ってStageごとにord
 test('Section内・Section間ScheduleItem、固定配置、TT固定から参照されるSectionだけ削除不可にする', () => {
   const noSectionReferences = {
     scheduleItems: [], eventBands: [], timetableLocks: [],
+    timetableOrderConstraints: [],
   }
   assert.equal(canDeleteSection(existingSection.id, noSectionReferences), true)
   assert.equal(canDeleteSection(existingSection.id, {
     scheduleItems: [{ kind: 'performance', sectionId: existingSection.id }],
     eventBands: [],
     timetableLocks: [],
+    timetableOrderConstraints: [],
   }), false)
   assert.equal(canDeleteSection(existingSection.id, {
     scheduleItems: [{ kind: 'break', afterSectionId: existingSection.id }],
     eventBands: [],
     timetableLocks: [],
+    timetableOrderConstraints: [],
   }), false)
   assert.equal(canDeleteSection(existingSection.id, {
     scheduleItems: [{
@@ -742,6 +773,7 @@ test('Section内・Section間ScheduleItem、固定配置、TT固定から参照�
     }],
     eventBands: [],
     timetableLocks: [],
+    timetableOrderConstraints: [],
   }), true)
   assert.equal(canDeleteSection(existingSection.id, {
     scheduleItems: [],
@@ -752,6 +784,7 @@ test('Section内・Section間ScheduleItem、固定配置、TT固定から参照�
       },
     }],
     timetableLocks: [],
+    timetableOrderConstraints: [],
   }), false)
   assert.equal(canDeleteSection(existingSection.id, {
     scheduleItems: [{ kind: 'performance', sectionId: 'another-section' }],
@@ -762,16 +795,19 @@ test('Section内・Section間ScheduleItem、固定配置、TT固定から参照�
       },
     }],
     timetableLocks: [],
+    timetableOrderConstraints: [],
   }), true)
   assert.equal(canDeleteSection(existingSection.id, {
     scheduleItems: [],
     eventBands: [],
     timetableLocks: [{ sectionId: existingSection.id }],
+    timetableOrderConstraints: [],
   }), false)
   assert.equal(canDeleteSection(existingSection.id, {
     scheduleItems: [],
     eventBands: [],
     timetableLocks: [{ sectionId: 'another-section' }],
+    timetableOrderConstraints: [],
   }), true)
 })
 
@@ -829,6 +865,7 @@ test('未参照の最後のSectionは保存処理で削除できる', () => {
     paAssignments: [],
     dutyAssignments: [],
     timetableLocks: [],
+    timetableOrderConstraints: [],
   })
 
   assert.equal(result.ok, true)
@@ -859,6 +896,45 @@ test('TT固定から参照中のSectionは保存処理でも削除をブロッ�
 
   assert.equal(result.ok, false)
   if (!result.ok) assert.match(result.errors.form ?? '', /TT固定/)
+})
+
+test('出演順制約から参照中のSectionはUI判定と保存処理の両方で削除できない', () => {
+  const references = {
+    scheduleItems: [],
+    eventBands: [],
+    timetableLocks: [],
+    timetableOrderConstraints: [{ sectionId: existingSection.id }],
+  }
+  assert.equal(canDeleteSection(existingSection.id, references), false)
+  assert.equal(canDeleteSection('another-section', references), true)
+
+  const result = createEventStageSettingsUpdate({
+    scheduleItems: [],
+    eventBands: [],
+    paAssignments: [],
+    dutyAssignments: [],
+    timetableLocks: [],
+    event,
+    eventDays,
+    stages: [existingStage],
+    sections: [existingSection],
+    draft: settingsDraft({
+      stages: [validStageDraft({
+        stageId: existingStage.id,
+        endMode: 'fixed',
+        plannedEndTime: existingStage.plannedEndTime,
+      })],
+    }),
+    newStageIds: [],
+    newSectionIds: [],
+    timetableOrderConstraints: [{
+      id: 'order-1', eventId: event.id, eventDayId: 'day-1',
+      stageId: existingStage.id, sectionId: existingSection.id,
+      eventBandIds: ['band-a', 'band-b'],
+    }],
+  })
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.match(result.errors.form ?? '', /出演順制約/)
 })
 
 test('最初のSectionはScheduleItemがないStageにだけ追加できる', () => {

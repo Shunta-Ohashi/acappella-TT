@@ -13,6 +13,7 @@ import type {
   Section,
   Stage,
   TimetableLock,
+  TimetableOrderConstraint,
 } from '../domain/models'
 import { createGenerationDemoData } from './generationDemoData.ts'
 
@@ -31,6 +32,7 @@ export interface DemoData {
   dutyTypes: DutyType[]
   dutyAssignments: DutyAssignment[]
   timetableLocks: TimetableLock[]
+  timetableOrderConstraints: TimetableOrderConstraint[]
   initialEventId: string
   initialEventDayId: string
   initialStageId: string
@@ -722,6 +724,7 @@ const createOriginalDemoData = (): DemoData => ({
     until: { ...assignment.until },
   })),
   timetableLocks: [],
+  timetableOrderConstraints: [],
   initialEventId: 'event-demo-main',
   initialEventDayId: 'event-day-demo-main-01',
   initialStageId: 'stage-demo-main-day1',
@@ -747,5 +750,9 @@ export const createDemoData = (): DemoData => {
     dutyTypes: [...original.dutyTypes, ...generationDemo.dutyTypes],
     dutyAssignments: [...original.dutyAssignments, ...generationDemo.dutyAssignments],
     timetableLocks: [...original.timetableLocks, ...generationDemo.timetableLocks],
+    timetableOrderConstraints: [
+      ...original.timetableOrderConstraints,
+      ...generationDemo.timetableOrderConstraints,
+    ],
   }
 }

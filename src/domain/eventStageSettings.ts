@@ -12,6 +12,7 @@ import type {
   Stage,
   StageId,
   TimetableLock,
+  TimetableOrderConstraint,
 } from './models'
 import {
   isValidLocalTime,
@@ -83,6 +84,7 @@ export interface StageReferences {
   paAssignments: Pick<PaAssignment, 'stageId'>[]
   dutyAssignments: Pick<DutyAssignment, 'stageId'>[]
   timetableLocks: Pick<TimetableLock, 'stageId'>[]
+  timetableOrderConstraints: Pick<TimetableOrderConstraint, 'stageId'>[]
 }
 
 export interface SectionReferences {
@@ -96,6 +98,7 @@ export interface SectionReferences {
   >
   eventBands: Pick<EventBand, 'fixedPlacement'>[]
   timetableLocks: Pick<TimetableLock, 'sectionId'>[]
+  timetableOrderConstraints: Pick<TimetableOrderConstraint, 'sectionId'>[]
 }
 
 interface CreateEventStageSettingsUpdateInput {
@@ -111,6 +114,7 @@ interface CreateEventStageSettingsUpdateInput {
   paAssignments: PaAssignment[]
   dutyAssignments: DutyAssignment[]
   timetableLocks: TimetableLock[]
+  timetableOrderConstraints: TimetableOrderConstraint[]
 }
 
 export type EventStageSettingsUpdateResult =
@@ -500,10 +504,10 @@ export const getEventStageSettingsErrorEventDayIds = (
 }
 
 export const STAGE_DELETE_BLOCKED_MESSAGE =
-  'このStageにはSection、タイムテーブル、固定配置、TT固定、PA担当、または一般業務担当の設定があるため削除できません。関連する設定を先に解除してください。'
+  'このStageにはSection、タイムテーブル、固定配置、TT固定、出演順制約、PA担当、または一般業務担当の設定があるため削除できません。関連する設定を先に解除してください。'
 
 export const SECTION_DELETE_BLOCKED_MESSAGE =
-  'このSectionにはタイムテーブル、固定配置、またはTT固定の設定があるため削除できません。関連する設定を先に解除してください。'
+  'このSectionにはタイムテーブル、固定配置、TT固定、または出演順制約の設定があるため削除できません。関連する設定を先に解除してください。'
 
 export const FIRST_SECTION_ADD_BLOCKED_MESSAGE =
   'このStageにはすでにタイムテーブルが設定されています。Sectionを追加するには、先にタイムテーブルの配置を削除してください。'
@@ -517,6 +521,7 @@ export const canDeleteStage = (
     paAssignments,
     dutyAssignments,
     timetableLocks,
+    timetableOrderConstraints,
   }: StageReferences,
 ): boolean =>
   !sections.some((section) => section.stageId === stageId) &&
@@ -526,11 +531,17 @@ export const canDeleteStage = (
   ) &&
   !paAssignments.some((assignment) => assignment.stageId === stageId) &&
   !dutyAssignments.some((assignment) => assignment.stageId === stageId) &&
-  !timetableLocks.some((lock) => lock.stageId === stageId)
+  !timetableLocks.some((lock) => lock.stageId === stageId) &&
+  !timetableOrderConstraints.some((constraint) => constraint.stageId === stageId)
 
 export const canDeleteSection = (
   sectionId: SectionId,
-  { scheduleItems, eventBands, timetableLocks }: SectionReferences,
+  {
+    scheduleItems,
+    eventBands,
+    timetableLocks,
+    timetableOrderConstraints,
+  }: SectionReferences,
 ): boolean =>
   !scheduleItems.some((scheduleItem) =>
     scheduleItem.sectionId === sectionId ||
@@ -540,7 +551,9 @@ export const canDeleteSection = (
   !eventBands.some((eventBand) =>
     eventBand.fixedPlacement?.sectionId === sectionId,
   ) &&
-  !timetableLocks.some((lock) => lock.sectionId === sectionId)
+  !timetableLocks.some((lock) => lock.sectionId === sectionId) &&
+  !timetableOrderConstraints.some((constraint) =>
+    constraint.sectionId === sectionId)
 
 export const canAddFirstSection = (
   stageId: StageId,
@@ -563,6 +576,7 @@ export const createEventStageSettingsUpdate = ({
   paAssignments,
   dutyAssignments,
   timetableLocks,
+  timetableOrderConstraints,
 }: CreateEventStageSettingsUpdateInput): EventStageSettingsUpdateResult => {
   const errors = validateEventStageSettingsDraft(draft)
   if (hasEventStageSettingsErrors(errors)) return { ok: false, errors }
@@ -600,6 +614,7 @@ export const createEventStageSettingsUpdate = ({
       paAssignments,
       dutyAssignments,
       timetableLocks,
+      timetableOrderConstraints,
     }),
   )
 
@@ -666,7 +681,12 @@ export const createEventStageSettingsUpdate = ({
   )
   const blockedSectionDeletion = currentSections.find((section) =>
     !retainedSectionIds.has(section.id) &&
-    !canDeleteSection(section.id, { scheduleItems, eventBands, timetableLocks }),
+    !canDeleteSection(section.id, {
+      scheduleItems,
+      eventBands,
+      timetableLocks,
+      timetableOrderConstraints,
+    }),
   )
 
   if (blockedSectionDeletion) {

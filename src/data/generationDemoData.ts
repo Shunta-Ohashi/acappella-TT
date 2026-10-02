@@ -113,5 +113,6 @@ export const createGenerationDemoData = (): Omit<DemoData,
     timetableLocks: [{ id: 'lock-demo-generation-opening', eventId,
       scheduleItemId: scheduleItems[0].id, stageId: main1, sectionId: sections[0].id,
       position: { kind: 'first' } }],
+    timetableOrderConstraints: [],
   }
 }

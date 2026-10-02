@@ -23,6 +23,7 @@ import type {
   StageId,
   TimetableLock,
   TimetableLockId,
+  TimetableOrderConstraint,
 } from './domain/models'
 import {
   createBreakScheduleItemForLane,
@@ -176,7 +177,7 @@ import { createDemoData } from './data/demoData'
 import {
   loadPersistedStateOrFallback,
   savePersistedState,
-  type PersistedAppStateV2,
+  type PersistedAppStateV3,
   type PersistedDomainState,
 } from './persistence/localPersistence'
 import {
@@ -322,6 +323,9 @@ function App() {
   const [timetableLocks, setTimetableLocks] = useState<TimetableLock[]>(
     initialAppState.timetableLocks,
   )
+  const [timetableOrderConstraints, setTimetableOrderConstraints] = useState<
+    TimetableOrderConstraint[]
+  >(initialAppState.timetableOrderConstraints)
   const [timetableLockFeedback, setTimetableLockFeedback] = useState<
     TimetableLockFeedback | null
   >(null)
@@ -372,6 +376,7 @@ function App() {
     dutyTypes,
     dutyAssignments,
     timetableLocks,
+    timetableOrderConstraints,
   }), [
     members,
     bands,
@@ -387,12 +392,13 @@ function App() {
     dutyTypes,
     dutyAssignments,
     timetableLocks,
+    timetableOrderConstraints,
   ])
   useEffect(() => {
     savePersistedState(domainState)
   }, [domainState])
 
-  const applyPersistedSnapshot = (snapshot: PersistedAppStateV2) => {
+  const applyPersistedSnapshot = (snapshot: PersistedAppStateV3) => {
     setGenerationOptionsScope(null)
     setResetConfirmation(null)
     setGenerationPreview(null)
@@ -411,6 +417,7 @@ function App() {
     setDutyTypes(snapshot.dutyTypes)
     setDutyAssignments(snapshot.dutyAssignments)
     setTimetableLocks(snapshot.timetableLocks)
+    setTimetableOrderConstraints(snapshot.timetableOrderConstraints)
     setTimetableLockFeedback(clearTimetableLockFeedback())
     setSelectedEventId('')
     setSelectedTimetableEventDayId(undefined)
@@ -661,6 +668,7 @@ function App() {
       eventBands,
       paAssignments,
       dutyAssignments,
+      timetableOrderConstraints,
     })
 
     if (!result.ok) return result
@@ -747,6 +755,7 @@ function App() {
       eventMembers,
       eventMemberDays,
       scheduleItems,
+      timetableOrderConstraints,
       draft,
       newEventBandIds: draft.items
         .filter((item) => !item.eventBandId)
@@ -1103,6 +1112,7 @@ function App() {
       paAssignments,
       dutyAssignments,
       timetableLocks,
+      timetableOrderConstraints,
     })
 
     if (!result.ok) return result
@@ -1573,6 +1583,7 @@ function App() {
                   eventBands,
                   paAssignments,
                   dutyAssignments,
+                  timetableOrderConstraints,
                 },
               )}
               onSave={handleSaveEventBasicInfo}
@@ -1597,11 +1608,13 @@ function App() {
                 paAssignments,
                 dutyAssignments,
                 timetableLocks,
+                timetableOrderConstraints,
               })}
               canDeleteSection={(sectionId) => canDeleteSection(sectionId, {
                 scheduleItems,
                 eventBands,
                 timetableLocks,
+                timetableOrderConstraints,
               })}
               onSave={handleSaveEventStageSettings}
               onSaveAndNext={() => setActiveStep(3)}
@@ -1630,6 +1643,7 @@ function App() {
               eventMemberDays={selectedEventMemberDays}
               eventBands={selectedEventBands}
               scheduleItems={scheduleItems}
+              timetableOrderConstraints={timetableOrderConstraints}
               createDraftId={() => createId('event-band-draft')}
               onSave={handleSaveEventBandSettings}
               onSaveAndNext={() => setActiveStep(5)}

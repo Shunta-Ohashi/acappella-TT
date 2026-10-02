@@ -12,6 +12,7 @@ export type PaAssignmentId = string
 export type DutyTypeId = string
 export type DutyAssignmentId = string
 export type TimetableLockId = string
+export type TimetableOrderConstraintId = string
 
 // Values are stored as ISO-like strings and validated at the input boundary.
 export type LocalDate = string // YYYY-MM-DD
@@ -169,6 +170,15 @@ export interface TimetableLock {
   stageId: StageId
   sectionId?: SectionId
   position: FixedPosition
+}
+
+export interface TimetableOrderConstraint {
+  id: TimetableOrderConstraintId
+  eventId: EventId
+  eventDayId: EventDayId
+  stageId: StageId
+  sectionId?: SectionId
+  eventBandIds: EventBandId[]
 }
 
 export interface PaAssignment {

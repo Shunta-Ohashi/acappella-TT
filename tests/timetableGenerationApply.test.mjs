@@ -779,6 +779,7 @@ test('正式な生成candidateは既存Persistence schemaで復元できDuty/Loc
     eventMembers: input.eventMembers, eventMemberDays: input.eventMemberDays,
     scheduleItems: candidate.scheduleItems, paAssignments: candidate.paAssignments,
     timetableLocks: input.timetableLocks, dutyTypes: input.dutyTypes, dutyAssignments: input.dutyAssignments,
+    timetableOrderConstraints: [],
   }
   const restored = parsePersistedState(serializePersistedState(domain))
   assert.ok(restored)

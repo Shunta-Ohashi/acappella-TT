@@ -14,8 +14,10 @@ import type {
   Section,
   Stage,
   TimetableLock,
+  TimetableOrderConstraint,
 } from '../domain/models'
 import { isSectionWithinStageTimeRange } from '../domain/eventStageSettings.ts'
+import { isTimetableOrderConstraint } from '../domain/timetableOrderConstraints.ts'
 import {
   isBand,
   isDutyAssignment,
@@ -37,7 +39,7 @@ import {
   isTimetableLock,
 } from './persistenceValidation.ts'
 
-export const CURRENT_STORAGE_VERSION = 2 as const
+export const CURRENT_STORAGE_VERSION = 3 as const
 export const STORAGE_KEY = 'acappella-tt:app-state'
 
 export interface PersistedDomainState {
@@ -55,14 +57,22 @@ export interface PersistedDomainState {
   dutyTypes: DutyType[]
   dutyAssignments: DutyAssignment[]
   timetableLocks: TimetableLock[]
+  timetableOrderConstraints: TimetableOrderConstraint[]
 }
 
-export interface PersistedAppStateV2 extends PersistedDomainState {
+export interface PersistedAppStateV3 extends PersistedDomainState {
   version: typeof CURRENT_STORAGE_VERSION
 }
 
+interface PersistedAppStateV2 extends Omit<
+  PersistedDomainState, 'timetableOrderConstraints'
+> {
+  version: 2
+}
+
 interface PersistedAppStateV1 extends Omit<
-  PersistedDomainState, 'members' | 'eventMembers' | 'timetableLocks'
+  PersistedDomainState,
+  'members' | 'eventMembers' | 'timetableLocks' | 'timetableOrderConstraints'
 > {
   version: 1
   members: Array<Member & { paCapabilities?: PaCapabilities }>
@@ -136,11 +146,24 @@ const hasValidSharedCollections = (
   isPersistedCollection(value.dutyTypes, isDutyType) &&
   isPersistedCollection(value.dutyAssignments, isDutyAssignment)
 
-export const isPersistedAppStateV2 = (
+export const isPersistedAppStateV3 = (
   value: unknown,
 ): boolean =>
   isRecord(value) &&
   value.version === CURRENT_STORAGE_VERSION &&
+  isPersistedCollection(value.members, isMember) &&
+  isPersistedCollection(value.eventMembers, isEventMember) &&
+  hasValidSharedCollections(value) &&
+  isPersistedCollection(value.timetableLocks, isTimetableLock) &&
+  isPersistedCollection(
+    value.timetableOrderConstraints,
+    isTimetableOrderConstraint,
+  ) &&
+  hasValidSnapshotRelationships(value as unknown as PersistedDomainState)
+
+const isPersistedAppStateV2 = (value: unknown): boolean =>
+  isRecord(value) &&
+  value.version === 2 &&
   isPersistedCollection(value.members, isMember) &&
   isPersistedCollection(value.eventMembers, isEventMember) &&
   hasValidSharedCollections(value) &&
@@ -157,7 +180,7 @@ const isPersistedAppStateV1 = (value: unknown): boolean =>
     isPersistedCollection(value.timetableLocks, isTimetableLock)) &&
   hasValidSnapshotRelationships(value as unknown as PersistedDomainState)
 
-const migrateV1ToV2 = (legacy: PersistedAppStateV1): PersistedAppStateV2 => {
+const migrateV1ToV3 = (legacy: PersistedAppStateV1): PersistedAppStateV3 => {
   const capabilitiesByMemberId = new Map(legacy.members.map((member) => [
     member.id,
     member.paCapabilities,
@@ -178,12 +201,19 @@ const migrateV1ToV2 = (legacy: PersistedAppStateV1): PersistedAppStateV2 => {
       },
     })),
     timetableLocks: legacy.timetableLocks ?? [],
+    timetableOrderConstraints: [],
   }
 }
 
+const migrateV2ToV3 = (legacy: PersistedAppStateV2): PersistedAppStateV3 => ({
+  ...legacy,
+  version: CURRENT_STORAGE_VERSION,
+  timetableOrderConstraints: [],
+})
+
 export const createPersistedAppState = (
   state: PersistedDomainState,
-): PersistedAppStateV2 => ({
+): PersistedAppStateV3 => ({
   version: CURRENT_STORAGE_VERSION,
   members: state.members,
   bands: state.bands,
@@ -198,7 +228,8 @@ export const createPersistedAppState = (
   paAssignments: state.paAssignments,
   dutyTypes: state.dutyTypes,
   dutyAssignments: state.dutyAssignments,
-  timetableLocks: state.timetableLocks ?? [],
+  timetableLocks: state.timetableLocks,
+  timetableOrderConstraints: state.timetableOrderConstraints,
 })
 
 export const serializePersistedState = (
@@ -207,12 +238,15 @@ export const serializePersistedState = (
 
 export const parsePersistedState = (
   serialized: string,
-): PersistedAppStateV2 | undefined => {
+): PersistedAppStateV3 | undefined => {
   try {
     const parsed: unknown = JSON.parse(serialized)
-    if (isPersistedAppStateV2(parsed)) return parsed as PersistedAppStateV2
+    if (isPersistedAppStateV3(parsed)) return parsed as PersistedAppStateV3
+    if (isPersistedAppStateV2(parsed)) {
+      return migrateV2ToV3(parsed as PersistedAppStateV2)
+    }
     if (isPersistedAppStateV1(parsed)) {
-      return migrateV1ToV2(parsed as PersistedAppStateV1)
+      return migrateV1ToV3(parsed as PersistedAppStateV1)
     }
     return undefined
   } catch {
@@ -231,7 +265,7 @@ const getBrowserStorage = (): StorageLike | undefined => {
 
 export const loadPersistedState = (
   storage: StorageLike | undefined = getBrowserStorage(),
-): PersistedAppStateV2 | undefined => {
+): PersistedAppStateV3 | undefined => {
   if (!storage) return undefined
 
   try {
@@ -251,7 +285,7 @@ export const loadPersistedState = (
 export const loadPersistedStateOrFallback = (
   createFallback: () => PersistedDomainState,
   storage: StorageLike | undefined = getBrowserStorage(),
-): PersistedAppStateV2 =>
+): PersistedAppStateV3 =>
   loadPersistedState(storage) ?? createPersistedAppState(createFallback())
 
 export const savePersistedState = (
