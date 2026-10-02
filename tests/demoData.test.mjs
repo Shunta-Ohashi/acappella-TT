@@ -11,6 +11,7 @@ import { materializeTimetableGenerationPlan, validateTimetableGenerationCandidat
 import { CURRENT_STORAGE_VERSION, serializePersistedState, parsePersistedState } from '../src/persistence/localPersistence.ts'
 import { createBackupJson, parseBackupJson } from '../src/persistence/dataBackup.ts'
 import { evaluateTimetableLocks } from '../src/domain/timetableLocks.ts'
+import { evaluateTimetableOrderConstraints } from '../src/domain/timetableOrderConstraints.ts'
 import { createTimetableWorkspaceRows } from '../src/ui/timetableWorkspaceRows.ts'
 
 test('demoDataは想定件数と全EventDayのdomain invariantを満たす', () => {
@@ -29,6 +30,7 @@ test('demoDataは想定件数と全EventDayのdomain invariantを満たす', () 
     dutyTypes: data.dutyTypes.length,
     dutyAssignments: data.dutyAssignments.length,
     timetableLocks: data.timetableLocks.length,
+    timetableOrderConstraints: data.timetableOrderConstraints.length,
   }, {
     events: 3,
     eventDays: 5,
@@ -42,6 +44,7 @@ test('demoDataは想定件数と全EventDayのdomain invariantを満たす', () 
     dutyTypes: 4,
     dutyAssignments: 5,
     timetableLocks: 1,
+    timetableOrderConstraints: 0,
   })
 
   for (const eventDay of data.eventDays) {
@@ -100,6 +103,10 @@ test('demoDataは想定件数と全EventDayのdomain invariantを満たす', () 
       `${eventDay.id}の初期IssueにERRORがあります`,
     )
     assert.deepEqual(evaluateTimetableLocks({ ...data, eventId: event.id }).violations, [])
+    assert.deepEqual(evaluateTimetableOrderConstraints({
+      ...data,
+      eventId: event.id,
+    }).violations, [])
   }
 })
 

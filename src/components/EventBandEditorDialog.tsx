@@ -11,6 +11,7 @@ import type {
   MemberId,
   ScheduleItem,
   TimeRange,
+  TimetableOrderConstraint,
 } from '../domain/models'
 import {
   canChangeEventBandDay,
@@ -34,6 +35,7 @@ interface EventBandEditorDialogProps {
   eventMembers: EventMember[]
   eventMemberDays: EventMemberDay[]
   scheduleItems: ScheduleItem[]
+  timetableOrderConstraints: TimetableOrderConstraint[]
   initialEventDayId: EventDayId
   item?: EventBandSettingsItemDraft
   existingEventBand?: EventBand
@@ -122,6 +124,7 @@ export function EventBandEditorDialog({
   eventMembers,
   eventMemberDays,
   scheduleItems,
+  timetableOrderConstraints,
   initialEventDayId,
   item,
   existingEventBand,
@@ -166,11 +169,19 @@ export function EventBandEditorDialog({
   )
   const isEditing = Boolean(item)
   const eventDayChangeBlockReason = existingEventBand
-    ? getEventBandDayChangeBlockReason(existingEventBand, scheduleItems)
+    ? getEventBandDayChangeBlockReason(
+      existingEventBand,
+      scheduleItems,
+      timetableOrderConstraints,
+    )
     : undefined
   const mayChangeEventDay = !item?.eventBandId || (
     existingEventBand !== undefined &&
-    canChangeEventBandDay(existingEventBand, scheduleItems)
+    canChangeEventBandDay(
+      existingEventBand,
+      scheduleItems,
+      timetableOrderConstraints,
+    )
   )
   const durationMinutes = Number(draft?.durationMinutes)
   const canShowFeasibility = Boolean(
@@ -486,9 +497,11 @@ export function EventBandEditorDialog({
                   </select>
                   {!mayChangeEventDay && (
                     <p className="event-band-form__help">
-                      {eventDayChangeBlockReason === 'fixed-placement'
-                        ? '固定配置が設定されているため出演日を変更できません。先にStep 5の出演条件で固定配置を解除してください。'
-                        : 'タイムテーブルに配置済みのため出演日を変更できません。先にStep 6でPoolへ戻してください。'}
+                      {eventDayChangeBlockReason === 'scheduled'
+                        ? 'タイムテーブルに配置済みのため出演日を変更できません。先にStep 6でPoolへ戻してください。'
+                        : eventDayChangeBlockReason === 'fixed-placement'
+                          ? '固定配置が設定されているため出演日を変更できません。先にStep 5の出演条件で固定配置を解除してください。'
+                          : '出演順制約から参照されているため出演日を変更できません。先に出演順制約を解除してください。'}
                     </p>
                   )}
                   {errors.eventDayId && <p className="form-error" role="alert">{errors.eventDayId}</p>}

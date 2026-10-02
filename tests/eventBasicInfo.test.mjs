@@ -40,6 +40,7 @@ const noReferences = {
   eventBands: [],
   paAssignments: [],
   dutyAssignments: [],
+  timetableOrderConstraints: [],
 }
 
 test('基本情報更新で既存EventDay IDを維持し、新規日と日付順のorderを反映する', () => {
@@ -198,6 +199,30 @@ test('一般業務担当から参照中のEventDayを保存処理でも削除で
     dutyAssignments: [{ eventDayId: 'day-b' }],
   })
 
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.match(result.errors.form ?? '', /削除できません/)
+})
+
+test('出演順制約から参照中のEventDayはUI判定と保存処理の両方で削除できない', () => {
+  const references = {
+    ...noReferences,
+    timetableOrderConstraints: [{ eventDayId: 'day-b' }],
+  }
+  assert.equal(canDeleteEventDay('day-b', references), false)
+  assert.equal(canDeleteEventDay('day-a', references), true)
+
+  const result = createEventBasicInfoUpdate({
+    event,
+    eventDays,
+    draft: {
+      name: event.name,
+      eventDays: [{ eventDayId: 'day-a', date: '2027-11-08' }],
+      description: '',
+      notes: '',
+    },
+    newEventDayIds: [],
+    ...references,
+  })
   assert.equal(result.ok, false)
   if (!result.ok) assert.match(result.errors.form ?? '', /削除できません/)
 })

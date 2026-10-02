@@ -9,6 +9,7 @@ import type {
   EventMemberDay,
   Member,
   ScheduleItem,
+  TimetableOrderConstraint,
 } from '../domain/models'
 import {
   canDeleteEventBand,
@@ -32,6 +33,7 @@ interface EventBandSettingsProps {
   eventMemberDays: EventMemberDay[]
   eventBands: EventBand[]
   scheduleItems: ScheduleItem[]
+  timetableOrderConstraints: TimetableOrderConstraint[]
   createDraftId: () => string
   onSave: (draft: EventBandSettingsDraft) => EventBandSettingsUpdateResult
   onSaveAndNext: () => void
@@ -58,6 +60,7 @@ export function EventBandSettings({
   eventMemberDays,
   eventBands,
   scheduleItems,
+  timetableOrderConstraints,
   createDraftId,
   onSave,
   onSaveAndNext,
@@ -114,13 +117,17 @@ export function EventBandSettings({
   }
 
   const handleDelete = (item: EventBandSettingsItemDraft) => {
-    if (item.eventBandId && !canDeleteEventBand(item.eventBandId, scheduleItems)) {
+    if (item.eventBandId && !canDeleteEventBand(
+      item.eventBandId,
+      scheduleItems,
+      timetableOrderConstraints,
+    )) {
       setErrors((previous) => ({
         ...previous,
         items: {
           ...previous.items,
           [item.draftId]: {
-            form: 'タイムテーブルに配置されているため削除できません。先にStep 6でPoolへ戻してください。',
+            form: 'タイムテーブルまたは出演順制約から参照されているため削除できません。関連する設定を先に解除してください。',
           },
         },
       }))
@@ -313,6 +320,7 @@ export function EventBandSettings({
           eventMembers={eventMembers}
           eventMemberDays={eventMemberDays}
           scheduleItems={scheduleItems}
+          timetableOrderConstraints={timetableOrderConstraints}
           initialEventDayId={editor.mode === 'edit'
             ? editorItem?.eventDayId ?? orderedEventDays[0].id
             : editor.eventDayId}

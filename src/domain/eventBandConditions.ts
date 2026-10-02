@@ -12,6 +12,7 @@ import type {
   Section,
   Stage,
   TimeRange,
+  TimetableOrderConstraint,
 } from './models'
 import {
   getEventBandDayFeasibility,
@@ -25,6 +26,7 @@ import {
   type EditableTimeRange,
 } from './eventMemberDayDetails.ts'
 import { isValidLocalTime, parseLocalTimeToMinute } from './timeline.ts'
+import { doesFixedPlacementConflictWithOrderConstraint } from './timetableOrderConstraints.ts'
 
 export type FixedPositionMode = 'none' | FixedPosition['kind']
 
@@ -146,6 +148,14 @@ const createFixedPlacement = (
       ? { plannedStartTime: draft.plannedStartTime.trim() }
       : {}),
   }
+}
+
+const fixedPlacementLocationsAreEqual = (
+  left: FixedPlacement | undefined,
+  right: FixedPlacement | undefined,
+): boolean => {
+  if (!left || !right) return left === right
+  return left.stageId === right.stageId && left.sectionId === right.sectionId
 }
 
 export const createEventBandConditionsDraft = (
@@ -465,6 +475,7 @@ export const createEventBandConditionsUpdate = ({
   members,
   eventMembers,
   eventMemberDays,
+  timetableOrderConstraints,
   draft,
 }: {
   event: Event
@@ -475,6 +486,7 @@ export const createEventBandConditionsUpdate = ({
   members: Member[]
   eventMembers: EventMember[]
   eventMemberDays: EventMemberDay[]
+  timetableOrderConstraints: TimetableOrderConstraint[]
   draft: EventBandConditionsDraft
 }): EventBandConditionsUpdateResult => {
   const errors = validateEventBandConditionsDraft({
@@ -512,6 +524,37 @@ export const createEventBandConditionsUpdate = ({
 
     return updated
   })
+
+  const existingById = new Map(eventBands.map((eventBand) => [
+    eventBand.id,
+    eventBand,
+  ]))
+  for (const candidate of updatedEventBands) {
+    const existing = existingById.get(candidate.id)
+    if (
+      !existing ||
+      fixedPlacementLocationsAreEqual(
+        existing.fixedPlacement,
+        candidate.fixedPlacement,
+      )
+    ) continue
+
+    const conflicts = timetableOrderConstraints.some((constraint) =>
+      constraint.eventId === event.id &&
+      constraint.eventBandIds.includes(candidate.id) &&
+      doesFixedPlacementConflictWithOrderConstraint(
+        candidate.fixedPlacement,
+        constraint,
+      ),
+    )
+    if (conflicts) {
+      errors.items[candidate.id] = {
+        ...errors.items[candidate.id],
+        fixedPlacement: '出演順制約で固定されているStage / Sectionと競合しています。',
+      }
+    }
+  }
+  if (hasEventBandConditionsErrors(errors)) return { ok: false, errors }
 
   return { ok: true, eventBands: updatedEventBands }
 }

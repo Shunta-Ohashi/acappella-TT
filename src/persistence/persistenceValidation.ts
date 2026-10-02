@@ -48,7 +48,8 @@ const isOptional = <T>(
 const isArrayOf = <T>(
   value: unknown,
   validator: (candidate: unknown) => candidate is T,
-): value is T[] => Array.isArray(value) && value.every(validator)
+): value is T[] => Array.isArray(value) &&
+  Array.from(value).every(validator)
 const isStringArray = (value: unknown): value is string[] =>
   isArrayOf(value, isString)
 const isPositiveIntegerArray = (value: unknown): value is number[] =>

@@ -12,7 +12,7 @@ import {
   STORAGE_KEY,
   clearPersistedState,
   createPersistedAppState,
-  isPersistedAppStateV2,
+  isPersistedAppStateV3,
   loadPersistedState,
   loadPersistedStateOrFallback,
   parsePersistedState,
@@ -51,6 +51,7 @@ const createEmptyState = () => ({
   dutyTypes: [],
   dutyAssignments: [],
   timetableLocks: [],
+  timetableOrderConstraints: [],
 })
 
 const createLegacyState = () => ({
@@ -112,6 +113,105 @@ test('TimetableLockをIDと配置条件を変えずにround-tripする', () => {
   assert.deepEqual(restored.timetableLocks, state.timetableLocks)
 })
 
+test('TimetableOrderConstraintをV3 snapshotでround-tripする', () => {
+  const demo = createDemoData()
+  const state = {
+    ...demo,
+    timetableOrderConstraints: [{
+      id: 'order-1',
+      eventId: demo.events[0].id,
+      eventDayId: demo.eventDays[0].id,
+      stageId: demo.stages[0].id,
+      eventBandIds: [demo.eventBands[0].id, demo.eventBands[1].id],
+    }],
+  }
+  const restored = parsePersistedState(serializePersistedState(state))
+  assert.ok(restored)
+  assert.deepEqual(
+    restored.timetableOrderConstraints,
+    state.timetableOrderConstraints,
+  )
+})
+
+test('V2 snapshotは出演順制約の空配列を補ってV3へ移行する', () => {
+  const current = createPersistedAppState(createEmptyState())
+  const { timetableOrderConstraints: _omitted, ...legacy } = current
+  legacy.version = 2
+  const restored = parsePersistedState(JSON.stringify(legacy))
+  assert.ok(restored)
+  assert.equal(restored.version, 3)
+  assert.deepEqual(restored.timetableOrderConstraints, [])
+})
+
+test('V3では出演順制約collectionを必須としmalformed要素を拒否する', () => {
+  const current = createPersistedAppState(createEmptyState())
+  const { timetableOrderConstraints: _omitted, ...missing } = current
+  assert.equal(parsePersistedState(JSON.stringify(missing)), undefined)
+  assert.equal(parsePersistedState(JSON.stringify({
+    ...current,
+    timetableOrderConstraints: [{
+      id: 'bad', eventId: 'event', eventDayId: 'day', stageId: 'stage',
+      eventBandIds: ['only-one'],
+    }],
+  })), undefined)
+})
+
+test('V3共通配列validatorはtop-levelとnestedのsparse arrayを拒否する', () => {
+  const current = createPersistedAppState(createEmptyState())
+  const validConstraint = {
+    id: 'order-1', eventId: 'event-1', eventDayId: 'day-1',
+    stageId: 'stage-1', eventBandIds: ['band-a', 'band-b'],
+  }
+  const sparseConstraints = new Array(2)
+  sparseConstraints[1] = validConstraint
+  const sparseMembers = new Array(2)
+  sparseMembers[1] = {
+    id: 'member-1', realName: '佐藤', active: true,
+  }
+  const sparsePerformanceSlots = new Array(3)
+  sparsePerformanceSlots[0] = 5
+  sparsePerformanceSlots[2] = 10
+  const eventWithSparseSlots = {
+    id: 'event-1', name: '学園祭', timeZone: 'Asia/Tokyo',
+    defaultTransitionMinutes: 2,
+    validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 10 },
+    performanceSlotMinutes: sparsePerformanceSlots,
+  }
+
+  assert.equal(isPersistedAppStateV3(current), true)
+  assert.equal(isPersistedAppStateV3({
+    ...current,
+    timetableOrderConstraints: sparseConstraints,
+  }), false)
+  assert.equal(isPersistedAppStateV3({
+    ...current,
+    members: sparseMembers,
+  }), false)
+  assert.equal(isPersistedAppStateV3({
+    ...current,
+    events: [eventWithSparseSlots],
+  }), false)
+  assert.equal(parsePersistedState(JSON.stringify({
+    ...current,
+    timetableOrderConstraints: sparseConstraints,
+  })), undefined)
+})
+
+test('出演順制約の参照切れやcycleはsemantic評価へ委ねsnapshotでは保持する', () => {
+  const state = {
+    ...createEmptyState(),
+    timetableOrderConstraints: [
+      { id: 'order-a', eventId: 'missing-event', eventDayId: 'missing-day',
+        stageId: 'missing-stage', eventBandIds: ['band-a', 'band-b'] },
+      { id: 'order-b', eventId: 'missing-event', eventDayId: 'missing-day',
+        stageId: 'missing-stage', eventBandIds: ['band-b', 'band-a'] },
+    ],
+  }
+  const restored = parsePersistedState(serializePersistedState(state))
+  assert.ok(restored)
+  assert.deepEqual(restored.timetableOrderConstraints, state.timetableOrderConstraints)
+})
+
 test('timetableLocksがない旧snapshotは空配列として復元する', () => {
   const current = createPersistedAppState(createEmptyState())
   const { timetableLocks: _omitted, ...legacy } = current
@@ -147,19 +247,20 @@ test('malformed TimetableLockはsnapshotを拒否し、参照切れLockは保持
   assert.deepEqual(restored.timetableLocks, [brokenReferenceLock])
 })
 
-test('version 2を受理し未知versionを拒否する', () => {
+test('version 3を受理し未知versionを拒否する', () => {
   const valid = createPersistedAppState(createEmptyState())
 
-  assert.equal(isPersistedAppStateV2(valid), true)
-  assert.equal(parsePersistedState(JSON.stringify(valid))?.version, 2)
-  assert.equal(parsePersistedState(JSON.stringify({ ...valid, version: 3 })), undefined)
+  assert.equal(isPersistedAppStateV3(valid), true)
+  assert.equal(parsePersistedState(JSON.stringify(valid))?.version, 3)
+  assert.equal(parsePersistedState(JSON.stringify({ ...valid, version: 4 })), undefined)
 })
 
 test('V1の共通PA可否を各EventMemberへ移し、未設定と参照切れはfalseにする', () => {
   const legacy = createLegacyState()
   const restored = parsePersistedState(JSON.stringify(legacy))
   assert.ok(restored)
-  assert.equal(restored.version, 2)
+  assert.equal(restored.version, 3)
+  assert.deepEqual(restored.timetableOrderConstraints, [])
   assert.deepEqual(restored.eventMembers.map(({ id, paCapabilities }) =>
     [id, paCapabilities]), [
     ['event-member-a', { main: true, sub: false }],
@@ -375,7 +476,7 @@ test('localStorageへの保存失敗を外へ投げずstate更新を継続でき
   }
 })
 
-test('全14 collectionの代表要素がstructural validatorを通る', () => {
+test('全15 collectionの代表要素がstructural validatorを通る', () => {
   const demo = createDemoData()
   const empty = createEmptyState()
   const collections = {
@@ -385,6 +486,12 @@ test('全14 collectionの代表要素がstructural validatorを通る', () => {
       scheduleItemId: demo.scheduleItems[0].id,
       stageId: demo.scheduleItems[0].stageId,
       position: { kind: 'first' },
+    }],
+    timetableOrderConstraints: [{
+      id: 'order-1', eventId: demo.events[0].id,
+      eventDayId: demo.eventDays[0].id,
+      stageId: demo.stages[0].id,
+      eventBandIds: [demo.eventBands[0].id, demo.eventBands[1].id],
     }],
   }
 
