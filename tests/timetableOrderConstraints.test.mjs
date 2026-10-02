@@ -133,6 +133,40 @@ test('constraint ID・内部Band ID・runtime shapeをfail closedで検証する
   assert.equal(isTimetableOrderConstraint(constraint({ eventBandIds: ['band-a'] })), false)
 })
 
+test('sparseなeventBandIdsを例外なくINVALID_CONSTRAINTとして拒否する', () => {
+  const leadingHole = []
+  leadingHole.length = 2
+  leadingHole[1] = 'band-a'
+  const holesOnly = new Array(2)
+  const middleHole = ['band-a', 'band-b', 'band-c']
+  delete middleHole[1]
+  const denseUndefined = ['band-a', undefined, 'band-b']
+
+  assert.equal(isTimetableOrderConstraint(constraint({
+    eventBandIds: ['band-a', 'band-b'],
+  })), true)
+
+  for (const eventBandIds of [
+    leadingHole,
+    holesOnly,
+    middleHole,
+    denseUndefined,
+  ]) {
+    const input = [constraint({ eventBandIds })]
+    const before = structuredClone(input)
+    let first
+    assert.doesNotThrow(() => {
+      first = evaluate(input)
+    })
+    const second = evaluate(input)
+    assert.equal(isTimetableOrderConstraint(input[0]), false)
+    assert.equal(first.valid, false)
+    assert.deepEqual(codes(first), ['INVALID_CONSTRAINT'])
+    assert.deepEqual(first, second)
+    assert.deepEqual(input, before)
+  }
+})
+
 test('FixedPlacementのStage・明示Section競合を拒否しStage-onlyは許可する', () => {
   const withBand = (fixedPlacement) => eventBands.map((band) =>
     band.id === 'band-a' ? { ...band, fixedPlacement } : band)

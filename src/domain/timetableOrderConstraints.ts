@@ -66,7 +66,7 @@ const hasTimetableOrderConstraintShape = (
   isNonEmptyString(value.stageId) &&
   (value.sectionId === undefined || isNonEmptyString(value.sectionId)) &&
   Array.isArray(value.eventBandIds) &&
-  value.eventBandIds.every(isNonEmptyString)
+  Array.from(value.eventBandIds).every(isNonEmptyString)
 
 /** Runtime guard for a self-contained constraint; ownership is evaluated separately. */
 export const isTimetableOrderConstraint = (
