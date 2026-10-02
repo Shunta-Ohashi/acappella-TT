@@ -48,6 +48,7 @@ const stages = [
 
 const sections = [
   { id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 },
+  { id: 'section-2', stageId: 'stage-1', name: '2部', order: 1 },
   { id: 'section-day-2', stageId: 'stage-day-2', name: '翌日1部', order: 0 },
 ]
 
@@ -138,6 +139,7 @@ const update = ({
   item = createItem(),
   eventBands = [createEventBand()],
   eventMemberDays = participatingDays,
+  timetableOrderConstraints = [],
 } = {}) => createEventBandConditionsUpdate({
   event,
   eventDays,
@@ -147,6 +149,7 @@ const update = ({
   members,
   eventMembers,
   eventMemberDays,
+  timetableOrderConstraints,
   draft: { items: [item] },
 })
 
@@ -595,6 +598,70 @@ test('固定配置を解除するとundefinedになり、既存index固定は編
   if (removed.ok) assert.equal(removed.eventBands[0].fixedPlacement, undefined)
 })
 
+test('出演順制約と競合する固定配置編集だけを拒否する', () => {
+  const constraint = {
+    id: 'order-1',
+    eventId: event.id,
+    eventDayId: 'day-1',
+    stageId: 'stage-1',
+    sectionId: 'section-1',
+    eventBandIds: ['event-band-1', 'event-band-2'],
+  }
+  const placements = [
+    [{ stageId: '', sectionId: '', positionMode: 'none', plannedStartTime: '' }, true],
+    [{ stageId: 'stage-1', sectionId: '', positionMode: 'none', plannedStartTime: '' }, true],
+    [{ stageId: 'stage-1', sectionId: 'section-1', positionMode: 'none', plannedStartTime: '' }, true],
+    [{ stageId: 'stage-1', sectionId: 'section-2', positionMode: 'none', plannedStartTime: '' }, false],
+    [{ stageId: 'stage-2', sectionId: '', positionMode: 'none', plannedStartTime: '' }, false],
+  ]
+
+  for (const [fixedPlacement, expectedOk] of placements) {
+    const result = update({
+      item: createItem({ fixedPlacement }),
+      timetableOrderConstraints: [constraint],
+    })
+    assert.equal(result.ok, expectedOk)
+    if (!result.ok) {
+      assert.match(result.errors.items['event-band-1'].fixedPlacement, /出演順制約/)
+    }
+  }
+
+  const conflicting = createEventBand({ fixedPlacement: { stageId: 'stage-2' } })
+  const removed = update({
+    item: createItem(),
+    eventBands: [conflicting],
+    timetableOrderConstraints: [constraint],
+  })
+  assert.equal(removed.ok, true)
+  if (removed.ok) assert.equal(removed.eventBands[0].fixedPlacement, undefined)
+
+  const unchangedConflictItem = createEventBandConditionsDraft(
+    event,
+    [conflicting],
+  ).items[0]
+  unchangedConflictItem.preferredTimeRange = { from: '14:00', until: '' }
+  unchangedConflictItem.fixedPlacement.plannedStartTime = '14:30'
+  const unrelatedFieldEdit = update({
+    item: unchangedConflictItem,
+    eventBands: [conflicting],
+    timetableOrderConstraints: [constraint],
+  })
+  assert.equal(unrelatedFieldEdit.ok, true)
+
+  const unrelated = update({
+    item: createItem({
+      fixedPlacement: {
+        stageId: 'stage-2', sectionId: '', positionMode: 'none', plannedStartTime: '',
+      },
+    }),
+    timetableOrderConstraints: [{
+      ...constraint,
+      eventBandIds: ['event-band-2', 'event-band-3'],
+    }],
+  })
+  assert.equal(unrelated.ok, true)
+})
+
 test('条件保存ではEventBandの出演情報を維持し、複数Bandを別々に更新する', () => {
   const first = createEventBand({ bandId: 'band-master-1' })
   const second = createEventBand({
@@ -615,6 +682,7 @@ test('条件保存ではEventBandの出演情報を維持し、複数Bandを別�
     members,
     eventMembers,
     eventMemberDays: participatingDays,
+    timetableOrderConstraints: [],
     draft,
   })
 

@@ -510,7 +510,7 @@ export const SECTION_DELETE_BLOCKED_MESSAGE =
   'このSectionにはタイムテーブル、固定配置、TT固定、または出演順制約の設定があるため削除できません。関連する設定を先に解除してください。'
 
 export const FIRST_SECTION_ADD_BLOCKED_MESSAGE =
-  'このStageにはすでにタイムテーブルが設定されています。Sectionを追加するには、先にタイムテーブルの配置を削除してください。'
+  'このStageにはタイムテーブルまたは出演順制約が設定されています。Sectionを追加するには、先に関連する設定を解除してください。'
 
 export const canDeleteStage = (
   stageId: StageId,
@@ -559,9 +559,14 @@ export const canAddFirstSection = (
   stageId: StageId,
   sections: Pick<Section, 'stageId'>[],
   scheduleItems: Pick<ScheduleItem, 'stageId'>[],
+  timetableOrderConstraints: Pick<TimetableOrderConstraint, 'stageId'>[],
 ): boolean =>
   sections.some((section) => section.stageId === stageId) ||
-  !scheduleItems.some((scheduleItem) => scheduleItem.stageId === stageId)
+  (
+    !scheduleItems.some((scheduleItem) => scheduleItem.stageId === stageId) &&
+    !timetableOrderConstraints.some((constraint) =>
+      constraint.stageId === stageId)
+  )
 
 export const createEventStageSettingsUpdate = ({
   event,
@@ -658,7 +663,12 @@ export const createEventStageSettingsUpdate = ({
     if (
       existingSectionCount === 0 &&
       stageSectionDrafts.length > 0 &&
-      !canAddFirstSection(stageDraft.stageId, currentSections, scheduleItems)
+      !canAddFirstSection(
+        stageDraft.stageId,
+        currentSections,
+        scheduleItems,
+        timetableOrderConstraints,
+      )
     ) {
       return {
         ok: false,

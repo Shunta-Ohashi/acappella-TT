@@ -9,6 +9,7 @@ import {
   createEventOnlyBandDraft,
   createFixedBandDraft,
   getEventBandDayFeasibility,
+  getEventBandDayChangeBlockReason,
   getEventBandSourceLabel,
   hasEventBandSettingsErrors,
   validateEventBandSettingsDraft,
@@ -318,8 +319,8 @@ test('未配置なら出演日を変更でき、配置済みならUI判定と保
     kind: 'performance',
     eventBandId: existing.id,
   }]
-  assert.equal(canChangeEventBandDay(existing, []), true)
-  assert.equal(canChangeEventBandDay(existing, scheduleItems), false)
+  assert.equal(canChangeEventBandDay(existing, [], []), true)
+  assert.equal(canChangeEventBandDay(existing, scheduleItems, []), false)
 
   const draft = createEventBandSettingsDraft(event, [existing])
   draft.items[0].eventDayId = 'day-2'
@@ -334,7 +335,7 @@ test('未配置なら出演日を変更でき、配置済みならUI判定と保
 
 test('fixedPlacementがある既存EventBandは出演日変更を拒否し、同日の編集では設定を維持する', () => {
   const existing = createExistingEventBand()
-  assert.equal(canChangeEventBandDay(existing, []), false)
+  assert.equal(canChangeEventBandDay(existing, [], []), false)
 
   const movedDraft = createEventBandSettingsDraft(event, [existing])
   movedDraft.items[0].eventDayId = 'day-2'
@@ -358,6 +359,61 @@ test('fixedPlacementがある既存EventBandは出演日変更を拒否し、同
   if (!edited.ok) return
   assert.deepEqual(edited.eventBands[0].fixedPlacement, existing.fixedPlacement)
   assert.equal(edited.eventBands[0].eventDayId, existing.eventDayId)
+})
+
+test('出演順制約から参照中のEventBandはUI判定と保存処理で出演日変更を拒否する', () => {
+  const existing = createExistingEventBand({ fixedPlacement: undefined })
+  const constraint = {
+    id: 'order-1', eventId: event.id, eventDayId: 'day-1',
+    stageId: 'stage-1', eventBandIds: [existing.id, 'event-band-2'],
+  }
+  assert.equal(
+    getEventBandDayChangeBlockReason(existing, [], [constraint]),
+    'order-constraint',
+  )
+  assert.equal(canChangeEventBandDay(existing, [], [constraint]), false)
+  assert.equal(canChangeEventBandDay(existing, [], [{
+    ...constraint,
+    eventBandIds: ['event-band-2', 'event-band-3'],
+  }]), true)
+
+  const movedDraft = createEventBandSettingsDraft(event, [existing])
+  movedDraft.items[0].eventDayId = 'day-2'
+  const moved = update({
+    draft: movedDraft,
+    eventBands: [existing],
+    timetableOrderConstraints: [constraint],
+  })
+  assert.equal(moved.ok, false)
+  if (!moved.ok) {
+    assert.match(moved.errors.items[movedDraft.items[0].draftId].eventDayId, /出演順制約/)
+  }
+
+  const editedDraft = createEventBandSettingsDraft(event, [existing])
+  editedDraft.items[0].name = '同日の編集'
+  const edited = update({
+    draft: editedDraft,
+    eventBands: [existing],
+    timetableOrderConstraints: [constraint],
+  })
+  assert.equal(edited.ok, true)
+
+  const scheduled = [{
+    id: 'schedule-1', stageId: 'stage-1', order: 0,
+    kind: 'performance', eventBandId: existing.id,
+  }]
+  assert.equal(
+    getEventBandDayChangeBlockReason(existing, scheduled, [constraint]),
+    'scheduled',
+  )
+  assert.equal(
+    getEventBandDayChangeBlockReason(
+      { ...existing, fixedPlacement: { stageId: 'stage-1' } },
+      [],
+      [constraint],
+    ),
+    'fixed-placement',
+  )
 })
 
 test('未配置EventBandだけ削除でき、配置済み削除は保存処理でも拒否する', () => {

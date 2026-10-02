@@ -320,6 +320,7 @@ export function EventBandSettings({
           eventMembers={eventMembers}
           eventMemberDays={eventMemberDays}
           scheduleItems={scheduleItems}
+          timetableOrderConstraints={timetableOrderConstraints}
           initialEventDayId={editor.mode === 'edit'
             ? editorItem?.eventDayId ?? orderedEventDays[0].id
             : editor.eventDayId}

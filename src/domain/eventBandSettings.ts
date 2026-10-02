@@ -273,22 +273,29 @@ export const canDeleteEventBand = (
 export type EventBandDayChangeBlockReason =
   | 'scheduled'
   | 'fixed-placement'
+  | 'order-constraint'
 
 export const getEventBandDayChangeBlockReason = (
   eventBand: Pick<EventBand, 'id' | 'fixedPlacement'>,
   scheduleItems: ScheduleItem[],
+  timetableOrderConstraints: Pick<TimetableOrderConstraint, 'eventBandIds'>[],
 ): EventBandDayChangeBlockReason | undefined => {
   if (isEventBandScheduled(eventBand.id, scheduleItems)) return 'scheduled'
   if (eventBand.fixedPlacement) return 'fixed-placement'
+  if (timetableOrderConstraints.some((constraint) =>
+    constraint.eventBandIds.includes(eventBand.id)
+  )) return 'order-constraint'
   return undefined
 }
 
 export const canChangeEventBandDay = (
   eventBand: Pick<EventBand, 'id' | 'fixedPlacement'>,
   scheduleItems: ScheduleItem[],
+  timetableOrderConstraints: Pick<TimetableOrderConstraint, 'eventBandIds'>[],
 ): boolean => getEventBandDayChangeBlockReason(
   eventBand,
   scheduleItems,
+  timetableOrderConstraints,
 ) === undefined
 
 export const getEventBandSourceLabel = (
@@ -577,14 +584,20 @@ export const createEventBandSettingsUpdate = ({
       }
     }
     const dayChangeBlockReason = existing.eventDayId !== item.eventDayId
-      ? getEventBandDayChangeBlockReason(existing, scheduleItems)
+      ? getEventBandDayChangeBlockReason(
+        existing,
+        scheduleItems,
+        timetableOrderConstraints,
+      )
       : undefined
     if (dayChangeBlockReason) {
       errors.items[item.draftId] = {
         ...errors.items[item.draftId],
         eventDayId: dayChangeBlockReason === 'scheduled'
           ? 'タイムテーブルに配置済みのため出演日を変更できません。先にStep 6でPoolへ戻してください。'
-          : '固定配置が設定されているため出演日を変更できません。先にStep 5の出演条件で固定配置を解除してください。',
+          : dayChangeBlockReason === 'fixed-placement'
+            ? '固定配置が設定されているため出演日を変更できません。先にStep 5の出演条件で固定配置を解除してください。'
+            : '出演順制約から参照されているため出演日を変更できません。先に出演順制約を解除してください。',
       }
     }
   }

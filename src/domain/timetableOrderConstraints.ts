@@ -2,6 +2,7 @@ import type {
   EventBand,
   EventBandId,
   EventDay,
+  FixedPlacement,
   Section,
   Stage,
   TimetableOrderConstraint,
@@ -74,6 +75,17 @@ export const isTimetableOrderConstraint = (
   hasTimetableOrderConstraintShape(value) &&
   value.eventBandIds.length >= 2 &&
   new Set(value.eventBandIds).size === value.eventBandIds.length
+
+export const doesFixedPlacementConflictWithOrderConstraint = (
+  fixedPlacement: Pick<FixedPlacement, 'stageId' | 'sectionId'> | undefined,
+  constraint: Pick<TimetableOrderConstraint, 'stageId' | 'sectionId'>,
+): boolean => Boolean(
+  fixedPlacement && (
+    fixedPlacement.stageId !== constraint.stageId ||
+    (fixedPlacement.sectionId !== undefined &&
+      fixedPlacement.sectionId !== constraint.sectionId)
+  ),
+)
 
 const uniqueSorted = <T extends string>(values: T[]): T[] =>
   [...new Set(values)].sort((left, right) => left.localeCompare(right))
@@ -314,10 +326,9 @@ export const evaluateTimetableOrderConstraints = ({
       if (band.eventDayId !== constraint.eventDayId) {
         add('EVENT_BAND_DAY_MISMATCH', '出演バンドが出演順制約の開催日に属していません。', [band.id])
       }
-      const fixed = band.fixedPlacement
-      if (fixed && (
-        fixed.stageId !== constraint.stageId ||
-        (fixed.sectionId !== undefined && fixed.sectionId !== constraint.sectionId)
+      if (doesFixedPlacementConflictWithOrderConstraint(
+        band.fixedPlacement,
+        constraint,
       )) {
         add('FIXED_PLACEMENT_CONFLICT', '出演バンドの固定配置と出演順制約のlaneが一致しません。', [band.id])
       }

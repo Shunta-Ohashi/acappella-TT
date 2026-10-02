@@ -789,6 +789,7 @@ function App() {
       members,
       eventMembers,
       eventMemberDays,
+      timetableOrderConstraints,
       draft,
     })
     if (!result.ok) return result
@@ -1600,6 +1601,7 @@ function App() {
                 stageId,
                 sections,
                 scheduleItems,
+                timetableOrderConstraints,
               )}
               canDeleteStage={(stageId) => canDeleteStage(stageId, {
                 sections,
