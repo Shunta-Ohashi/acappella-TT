@@ -91,7 +91,6 @@ const laneKey = (constraint: TimetableOrderConstraint): string =>
 
 interface ValidConstraint {
   constraint: TimetableOrderConstraint
-  eventBands: EventBand[]
 }
 
 interface GraphEdge {
@@ -269,7 +268,7 @@ export const evaluateTimetableOrderConstraints = ({
 
     if ((constraintIdCounts.get(constraint.id) ?? 0) > 1) valid = false
     if (constraint.eventBandIds.length < 2) {
-      add('INVALID_CONSTRAINT', '出演順制約には2組以上の出演バンドが必要です.')
+      add('INVALID_CONSTRAINT', '出演順制約には2組以上の出演バンドが必要です。')
     }
     if (new Set(constraint.eventBandIds).size !== constraint.eventBandIds.length) {
       add('DUPLICATE_EVENT_BAND', '同じ出演バンドを1つの出演順制約へ重複して指定できません。',
@@ -303,14 +302,12 @@ export const evaluateTimetableOrderConstraints = ({
       }
     }
 
-    const resolvedBands: EventBand[] = []
     for (const bandId of uniqueSorted(constraint.eventBandIds)) {
       const band = bandById.get(bandId)
       if (!band) {
         add('EVENT_BAND_NOT_FOUND', '出演順制約の出演バンドが見つかりません。', [bandId])
         continue
       }
-      resolvedBands.push(band)
       if (band.eventId !== constraint.eventId) {
         add('EVENT_BAND_EVENT_MISMATCH', '出演バンドが出演順制約のイベントに属していません。', [band.id])
       }
@@ -325,7 +322,7 @@ export const evaluateTimetableOrderConstraints = ({
         add('FIXED_PLACEMENT_CONFLICT', '出演バンドの固定配置と出演順制約のlaneが一致しません。', [band.id])
       }
     }
-    if (valid) validConstraints.push({ constraint, eventBands: resolvedBands })
+    if (valid) validConstraints.push({ constraint })
   }
 
   const laneByBand = new Map<EventBandId, { lane: string; constraintIds: string[] }>()
