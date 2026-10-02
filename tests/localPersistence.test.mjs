@@ -156,6 +156,47 @@ test('V3では出演順制約collectionを必須としmalformed要素を拒否�
   })), undefined)
 })
 
+test('V3共通配列validatorはtop-levelとnestedのsparse arrayを拒否する', () => {
+  const current = createPersistedAppState(createEmptyState())
+  const validConstraint = {
+    id: 'order-1', eventId: 'event-1', eventDayId: 'day-1',
+    stageId: 'stage-1', eventBandIds: ['band-a', 'band-b'],
+  }
+  const sparseConstraints = new Array(2)
+  sparseConstraints[1] = validConstraint
+  const sparseMembers = new Array(2)
+  sparseMembers[1] = {
+    id: 'member-1', realName: '佐藤', active: true,
+  }
+  const sparsePerformanceSlots = new Array(3)
+  sparsePerformanceSlots[0] = 5
+  sparsePerformanceSlots[2] = 10
+  const eventWithSparseSlots = {
+    id: 'event-1', name: '学園祭', timeZone: 'Asia/Tokyo',
+    defaultTransitionMinutes: 2,
+    validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 10 },
+    performanceSlotMinutes: sparsePerformanceSlots,
+  }
+
+  assert.equal(isPersistedAppStateV3(current), true)
+  assert.equal(isPersistedAppStateV3({
+    ...current,
+    timetableOrderConstraints: sparseConstraints,
+  }), false)
+  assert.equal(isPersistedAppStateV3({
+    ...current,
+    members: sparseMembers,
+  }), false)
+  assert.equal(isPersistedAppStateV3({
+    ...current,
+    events: [eventWithSparseSlots],
+  }), false)
+  assert.equal(parsePersistedState(JSON.stringify({
+    ...current,
+    timetableOrderConstraints: sparseConstraints,
+  })), undefined)
+})
+
 test('出演順制約の参照切れやcycleはsemantic評価へ委ねsnapshotでは保持する', () => {
   const state = {
     ...createEmptyState(),
