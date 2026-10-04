@@ -5,6 +5,7 @@ import {
   evaluateTimetableOrderConstraints,
   evaluateScheduledTimetableOrderConstraints,
   isTimetableOrderConstraint,
+  mergeTimetableOrderConstraintBlocks,
 } from '../src/domain/timetableOrderConstraints.ts'
 
 const eventDays = [
@@ -34,6 +35,8 @@ const eventBands = [
     memberIds: ['member-b'], durationMinutes: 10 },
   { id: 'band-c', eventId: 'event-1', eventDayId: 'day-1', name: 'C',
     memberIds: ['member-c'], durationMinutes: 10 },
+  { id: 'band-d', eventId: 'event-1', eventDayId: 'day-1', name: 'D',
+    memberIds: ['member-d'], durationMinutes: 10 },
   { id: 'band-day-2', eventId: 'event-1', eventDayId: 'day-2', name: 'D2',
     memberIds: ['member-d'], durationMinutes: 10 },
   { id: 'foreign-band', eventId: 'event-2', eventDayId: 'foreign-day', name: 'F',
@@ -55,16 +58,26 @@ const evaluate = (timetableOrderConstraints, overrides = {}) =>
 
 const codes = (result) => result.violations.map((violation) => violation.code)
 
-test('3組以上の非隣接partial orderと同一laneの冗長edgeを許可する', () => {
-  const result = evaluate([
-    constraint(),
-    constraint({ id: 'order-2', eventBandIds: ['band-a', 'band-b'] }),
-  ])
-  assert.equal(result.valid, true)
-  assert.deepEqual(result.violations, [])
+test('一致する出演順fragmentを最大の連続Performance blockへ統合する', () => {
+  for (const [constraints, expected] of [
+    [[constraint({ id: 'ab', eventBandIds: ['band-a', 'band-b'] }),
+      constraint({ id: 'bc', eventBandIds: ['band-b', 'band-c'] })],
+    ['band-a', 'band-b', 'band-c']],
+    [[constraint(), constraint({ id: 'cb', eventBandIds: ['band-c', 'band-b'] })],
+      ['band-a', 'band-c', 'band-b']],
+    [[constraint(), constraint({ id: 'ac', eventBandIds: ['band-a', 'band-c'] })],
+      ['band-a', 'band-c', 'band-b']],
+    [[constraint({ id: 'abc', eventBandIds: ['band-a', 'band-b', 'band-c'] }),
+      constraint({ id: 'bcd', eventBandIds: ['band-b', 'band-c', 'band-d'] })],
+    ['band-a', 'band-b', 'band-c', 'band-d']],
+  ]) {
+    assert.equal(evaluate(constraints).valid, true)
+    assert.deepEqual(mergeTimetableOrderConstraintBlocks(constraints).blocks[0].eventBandIds,
+      expected)
+  }
 })
 
-test('複数制約をgraphとして統合し、cycleを決定的に検出する', () => {
+test('複数fragmentのcycleを決定的に検出する', () => {
   const input = [
     constraint({ id: 'order-b', eventBandIds: ['band-b', 'band-c'] }),
     constraint({ id: 'order-a', eventBandIds: ['band-a', 'band-b'] }),
@@ -82,11 +95,19 @@ test('複数制約をgraphとして統合し、cycleを決定的に検出する'
   })
 })
 
-test('同じBandの同一lane重複を許可し、異なるlaneは拒否する', () => {
+test('同じlaneのcompatible overlapを許可し、分岐と異なるlaneを拒否する', () => {
   assert.equal(evaluate([
     constraint({ id: 'same-a', eventBandIds: ['band-a', 'band-b'] }),
-    constraint({ id: 'same-b', eventBandIds: ['band-a', 'band-c'] }),
+    constraint({ id: 'same-b', eventBandIds: ['band-b', 'band-c'] }),
   ]).valid, true)
+  for (const constraints of [
+    [constraint({ id: 'a', eventBandIds: ['band-a', 'band-b'] }),
+      constraint({ id: 'b', eventBandIds: ['band-a', 'band-c'] })],
+    [constraint({ id: 'a' }),
+      constraint({ id: 'b', eventBandIds: ['band-a', 'band-b'] })],
+    [constraint({ id: 'a', eventBandIds: ['band-a', 'band-b'] }),
+      constraint({ id: 'b', eventBandIds: ['band-c', 'band-b'] })],
+  ]) assert.ok(codes(evaluate(constraints)).includes('ORDER_BLOCK_CONFLICT'))
 
   const result = evaluate([
     constraint({ id: 'base', eventBandIds: ['band-a', 'band-b'] }),
@@ -168,26 +189,61 @@ test('sparseなeventBandIdsを例外なくINVALID_CONSTRAINTとして拒否す�
   }
 })
 
-test('Schedule上の出演順制約は非隣接を許可し、Breakを順位へ数えない', () => {
-  const constraints = [constraint({ eventBandIds: ['band-a', 'band-b'] })]
-  const scheduleItems = [
-    { id: 'a', kind: 'performance', eventBandId: 'band-a', stageId: 'stage-1', sectionId: 'section-1', order: 0 },
-    { id: 'break', kind: 'break', title: '休憩', durationMinutes: 5, stageId: 'stage-1', sectionId: 'section-1', order: 1 },
-    { id: 'x', kind: 'performance', eventBandId: 'band-x', stageId: 'stage-1', sectionId: 'section-1', order: 2 },
-    { id: 'b', kind: 'performance', eventBandId: 'band-b', stageId: 'stage-1', sectionId: 'section-1', order: 3 },
-  ]
-  assert.equal(evaluateScheduledTimetableOrderConstraints({
-    timetableOrderConstraints: constraints, scheduleItems,
+test('Schedule上では指定Band列を連続Performance blockとして要求する', () => {
+  const constraints = [constraint()]
+  const performance = (eventBandId, order) => ({ id: `${eventBandId}-${order}`, kind: 'performance',
+    eventBandId, stageId: 'stage-1', sectionId: 'section-1', order })
+  for (const ids of [
+    ['band-a', 'band-c', 'band-b'],
+    ['band-x', 'band-a', 'band-c', 'band-b', 'band-y'],
+    ['band-x', 'band-y', 'band-a', 'band-c', 'band-b'],
+    ['band-a', 'band-c', 'band-b', 'band-x', 'band-y'],
+  ]) assert.equal(evaluateScheduledTimetableOrderConstraints({
+    timetableOrderConstraints: constraints,
+    scheduleItems: ids.map(performance),
   }).valid, true)
+
+  for (const ids of [
+    ['band-a', 'band-x', 'band-c', 'band-b'],
+    ['band-a', 'band-c', 'band-x', 'band-b'],
+    ['band-x', 'band-a', 'band-c', 'band-y', 'band-b'],
+    ['band-a', 'band-x', 'band-c', 'band-y', 'band-b'],
+  ]) assert.equal(evaluateScheduledTimetableOrderConstraints({
+    timetableOrderConstraints: constraints,
+    scheduleItems: ids.map(performance),
+  }).violations.some(violation => violation.code === 'BLOCK_MISMATCH'), true)
 })
 
-test('Schedule上の順序反転・lane不一致・欠落・重複を個別に検出する', () => {
+test('Breakをblock adjacencyへ数えず、他Performanceの挿入は検出する', () => {
+  const constraints = [constraint()]
+  const item = (id, eventBandId, order, sectionId = 'section-1') => ({
+    id, kind: 'performance', eventBandId, stageId: 'stage-1', sectionId, order,
+  })
+  const withBreaks = [
+    item('a', 'band-a', 0),
+    { id: 'break-a', kind: 'break', title: '休憩', durationMinutes: 5,
+      stageId: 'stage-1', sectionId: 'section-1', order: 1 },
+    item('c', 'band-c', 2),
+    { id: 'break-c', kind: 'break', title: '休憩', durationMinutes: 5,
+      stageId: 'stage-1', sectionId: 'section-1', order: 3 },
+    item('b', 'band-b', 4),
+  ]
+  assert.equal(evaluateScheduledTimetableOrderConstraints({
+    timetableOrderConstraints: constraints, scheduleItems: withBreaks,
+  }).valid, true)
+  assert.equal(evaluateScheduledTimetableOrderConstraints({
+    timetableOrderConstraints: constraints,
+    scheduleItems: [...withBreaks, item('x', 'band-x', 1.5)],
+  }).valid, false)
+})
+
+test('Schedule上の反転・lane不一致・欠落・重複を個別に検出する', () => {
   const constraints = [constraint({ eventBandIds: ['band-a', 'band-b'] })]
   const item = (id, eventBandId, order, sectionId = 'section-1') => ({
     id, kind: 'performance', eventBandId, stageId: 'stage-1', sectionId, order,
   })
   const cases = [
-    [[item('b', 'band-b', 0), item('a', 'band-a', 1)], 'ORDER_MISMATCH'],
+    [[item('b', 'band-b', 0), item('a', 'band-a', 1)], 'BLOCK_MISMATCH'],
     [[item('a', 'band-a', 0), item('b', 'band-b', 0, 'section-2')], 'LANE_MISMATCH'],
     [[item('a', 'band-a', 0)], 'MISSING_EVENT_BAND'],
     [[item('a1', 'band-a', 0), item('a2', 'band-a', 1), item('b', 'band-b', 2)], 'DUPLICATE_EVENT_BAND'],

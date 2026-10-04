@@ -29,6 +29,7 @@ export type TimetableOrderConstraintViolationCode =
   | 'DUPLICATE_EVENT_BAND'
   | 'EVENT_BAND_LANE_CONFLICT'
   | 'FIXED_PLACEMENT_CONFLICT'
+  | 'ORDER_BLOCK_CONFLICT'
   | 'ORDER_CYCLE'
 
 export interface TimetableOrderConstraintViolation {
@@ -47,7 +48,7 @@ export type ScheduledTimetableOrderConstraintViolationCode =
   | 'MISSING_EVENT_BAND'
   | 'DUPLICATE_EVENT_BAND'
   | 'LANE_MISMATCH'
-  | 'ORDER_MISMATCH'
+  | 'BLOCK_MISMATCH'
 
 export interface ScheduledTimetableOrderConstraintViolation {
   code: ScheduledTimetableOrderConstraintViolationCode
@@ -149,90 +150,127 @@ interface ValidConstraint {
   constraint: TimetableOrderConstraint
 }
 
-interface GraphEdge {
-  to: EventBandId
-  constraintId: TimetableOrderConstraintId
+export interface MergedTimetableOrderConstraintBlock {
+  eventDayId: string
+  stageId: string
+  sectionId?: string
+  eventBandIds: EventBandId[]
 }
 
-const getCycleViolations = (
-  constraints: ValidConstraint[],
-): TimetableOrderConstraintViolation[] => {
-  const nodes = uniqueSorted(constraints.flatMap(({ constraint }) =>
-    constraint.eventBandIds))
-  const edgesByFrom = new Map<EventBandId, GraphEdge[]>()
-  for (const { constraint } of constraints) {
-    for (let index = 0; index < constraint.eventBandIds.length - 1; index += 1) {
-      const from = constraint.eventBandIds[index]
-      const edge = {
-        to: constraint.eventBandIds[index + 1],
-        constraintId: constraint.id,
+interface BlockLink {
+  bandId: EventBandId
+  constraintIds: Set<TimetableOrderConstraintId>
+}
+
+const analyzeConstraintBlocks = (
+  constraints: TimetableOrderConstraint[],
+): {
+  blocks: MergedTimetableOrderConstraintBlock[]
+  violations: TimetableOrderConstraintViolation[]
+} => {
+  const blocks: MergedTimetableOrderConstraintBlock[] = []
+  const violations: TimetableOrderConstraintViolation[] = []
+  const byLane = new Map<string, TimetableOrderConstraint[]>()
+  for (const constraint of constraints) {
+    const key = laneKey(constraint)
+    byLane.set(key, [...(byLane.get(key) ?? []), constraint])
+  }
+
+  for (const laneConstraints of [...byLane.values()].sort((left, right) =>
+    laneKey(left[0]).localeCompare(laneKey(right[0])))) {
+    const successor = new Map<EventBandId, BlockLink>()
+    const predecessor = new Map<EventBandId, BlockLink>()
+    const nodes = new Set<EventBandId>()
+    for (const constraint of laneConstraints) {
+      constraint.eventBandIds.forEach(id => nodes.add(id))
+      for (let index = 0; index < constraint.eventBandIds.length - 1; index += 1) {
+        const from = constraint.eventBandIds[index]
+        const to = constraint.eventBandIds[index + 1]
+        const existingSuccessor = successor.get(from)
+        const existingPredecessor = predecessor.get(to)
+        if (existingSuccessor && existingSuccessor.bandId !== to) {
+          violations.push({
+            code: 'ORDER_BLOCK_CONFLICT',
+            constraintIds: uniqueSorted([...existingSuccessor.constraintIds, constraint.id]),
+            eventBandIds: uniqueSorted([from, existingSuccessor.bandId, to]),
+            message: '同じ出演バンドの直後に異なるバンドを指定できません。',
+          })
+        }
+        if (existingPredecessor && existingPredecessor.bandId !== from) {
+          violations.push({
+            code: 'ORDER_BLOCK_CONFLICT',
+            constraintIds: uniqueSorted([...existingPredecessor.constraintIds, constraint.id]),
+            eventBandIds: uniqueSorted([existingPredecessor.bandId, from, to]),
+            message: '同じ出演バンドの直前に異なるバンドを指定できません。',
+          })
+        }
+        if (!existingSuccessor || existingSuccessor.bandId === to) {
+          const constraintIds = existingSuccessor?.constraintIds ?? new Set()
+          constraintIds.add(constraint.id)
+          successor.set(from, { bandId: to, constraintIds })
+        }
+        if (!existingPredecessor || existingPredecessor.bandId === from) {
+          const constraintIds = existingPredecessor?.constraintIds ?? new Set()
+          constraintIds.add(constraint.id)
+          predecessor.set(to, { bandId: from, constraintIds })
+        }
       }
-      edgesByFrom.set(from, [...(edgesByFrom.get(from) ?? []), edge])
     }
-  }
-  for (const edges of edgesByFrom.values()) {
-    edges.sort((left, right) =>
-      left.to.localeCompare(right.to) ||
-      left.constraintId.localeCompare(right.constraintId))
-  }
 
-  let nextIndex = 0
-  const indexByNode = new Map<EventBandId, number>()
-  const lowLinkByNode = new Map<EventBandId, number>()
-  const stack: EventBandId[] = []
-  const onStack = new Set<EventBandId>()
-  const components: EventBandId[][] = []
-
-  const visit = (node: EventBandId) => {
-    indexByNode.set(node, nextIndex)
-    lowLinkByNode.set(node, nextIndex)
-    nextIndex += 1
-    stack.push(node)
-    onStack.add(node)
-
-    for (const edge of edgesByFrom.get(node) ?? []) {
-      if (!indexByNode.has(edge.to)) {
-        visit(edge.to)
-        lowLinkByNode.set(node, Math.min(
-          lowLinkByNode.get(node)!,
-          lowLinkByNode.get(edge.to)!,
-        ))
-      } else if (onStack.has(edge.to)) {
-        lowLinkByNode.set(node, Math.min(
-          lowLinkByNode.get(node)!,
-          indexByNode.get(edge.to)!,
-        ))
+    const cycleKeys = new Set<string>()
+    for (const start of uniqueSorted([...nodes])) {
+      const path: EventBandId[] = []
+      const indexByBand = new Map<EventBandId, number>()
+      let current: EventBandId | undefined = start
+      while (current !== undefined && !indexByBand.has(current)) {
+        indexByBand.set(current, path.length)
+        path.push(current)
+        current = successor.get(current)?.bandId
       }
-    }
-
-    if (lowLinkByNode.get(node) !== indexByNode.get(node)) return
-    const component: EventBandId[] = []
-    let current: EventBandId
-    do {
-      current = stack.pop()!
-      onStack.delete(current)
-      component.push(current)
-    } while (current !== node)
-    if (component.length > 1) components.push(component.sort())
-  }
-
-  for (const node of nodes) if (!indexByNode.has(node)) visit(node)
-
-  return components
-    .sort((left, right) => left.join('\u0000').localeCompare(right.join('\u0000')))
-    .map((eventBandIds) => {
-      const members = new Set(eventBandIds)
-      const constraintIds = uniqueSorted(eventBandIds.flatMap((from) =>
-        (edgesByFrom.get(from) ?? [])
-          .filter((edge) => members.has(edge.to))
-          .map((edge) => edge.constraintId)))
-      return {
-        code: 'ORDER_CYCLE' as const,
-        constraintIds,
-        eventBandIds,
+      if (current === undefined || !indexByBand.has(current)) continue
+      const cycle = path.slice(indexByBand.get(current)).sort()
+      const key = cycle.join('\u0000')
+      if (cycleKeys.has(key)) continue
+      cycleKeys.add(key)
+      const cycleSet = new Set(cycle)
+      violations.push({
+        code: 'ORDER_CYCLE',
+        constraintIds: uniqueSorted(cycle.flatMap(from => {
+          const link = successor.get(from)
+          return link && cycleSet.has(link.bandId) ? [...link.constraintIds] : []
+        })),
+        eventBandIds: cycle,
         message: '出演順制約が循環しています。',
+      })
+    }
+
+    if (violations.some(violation => violation.constraintIds.some(id =>
+      laneConstraints.some(constraint => constraint.id === id)))) continue
+    const first = laneConstraints[0]
+    for (const start of uniqueSorted([...nodes].filter(id => !predecessor.has(id)))) {
+      const eventBandIds: EventBandId[] = []
+      let current: EventBandId | undefined = start
+      while (current !== undefined) {
+        eventBandIds.push(current)
+        current = successor.get(current)?.bandId
       }
-    })
+      blocks.push({
+        eventDayId: first.eventDayId,
+        stageId: first.stageId,
+        ...(first.sectionId !== undefined ? { sectionId: first.sectionId } : {}),
+        eventBandIds,
+      })
+    }
+  }
+  return { blocks, violations: sortViolations(violations) }
+}
+
+/** Merge compatible ordered fragments into maximal contiguous Performance blocks. */
+export const mergeTimetableOrderConstraintBlocks = (
+  constraints: TimetableOrderConstraint[],
+): { valid: boolean; blocks: MergedTimetableOrderConstraintBlock[] } => {
+  const result = analyzeConstraintBlocks(constraints)
+  return { valid: result.violations.length === 0, blocks: result.blocks }
 }
 
 export const evaluateTimetableOrderConstraints = ({
@@ -403,15 +441,16 @@ export const evaluateTimetableOrderConstraints = ({
     }
   }
 
-  violations.push(...getCycleViolations(validConstraints.filter(({ constraint }) =>
-    !laneConflictConstraintIds.has(constraint.id))))
+  violations.push(...analyzeConstraintBlocks(validConstraints
+    .filter(({ constraint }) => !laneConflictConstraintIds.has(constraint.id))
+    .map(({ constraint }) => constraint)).violations)
   const sorted = sortViolations(violations)
   return { valid: sorted.length === 0, violations: sorted }
 }
 
 /**
  * Validate the concrete Performance placements for already-semantic-checked
- * order constraints. Breaks are intentionally excluded from relative order.
+ * order constraints. Breaks are intentionally excluded from Performance adjacency.
  */
 export const evaluateScheduledTimetableOrderConstraints = ({
   timetableOrderConstraints,
@@ -467,18 +506,18 @@ export const evaluateScheduledTimetableOrderConstraints = ({
       continue
     }
     const positions = lanePositions.get(`${constraint.stageId}\u0000${constraint.sectionId ?? ''}`)
-    const outOfOrder: EventBandId[] = []
+    const nonContiguous: EventBandId[] = []
     for (let index = 1; index < constraint.eventBandIds.length; index += 1) {
       const previous = constraint.eventBandIds[index - 1]
       const current = constraint.eventBandIds[index]
-      if ((positions?.get(previous) ?? Number.POSITIVE_INFINITY) >=
-        (positions?.get(current) ?? Number.NEGATIVE_INFINITY)) {
-        outOfOrder.push(previous, current)
+      if ((positions?.get(current) ?? Number.NEGATIVE_INFINITY) !==
+        (positions?.get(previous) ?? Number.POSITIVE_INFINITY) + 1) {
+        nonContiguous.push(previous, current)
       }
     }
-    if (outOfOrder.length) violations.push({
-      code: 'ORDER_MISMATCH', constraintId: constraint.id,
-      eventBandIds: uniqueSorted(outOfOrder),
+    if (nonContiguous.length) violations.push({
+      code: 'BLOCK_MISMATCH', constraintId: constraint.id,
+      eventBandIds: uniqueSorted(nonContiguous),
     })
   }
   violations.sort((left, right) => left.code.localeCompare(right.code) ||
