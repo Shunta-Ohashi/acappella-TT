@@ -6,6 +6,7 @@ import { materializationInput } from './fixtures/timetableGenerationUi.mjs'
 
 for (const [code, wording] of [
   ['INVALID_INPUT', /設定に不整合/], ['INVALID_LOCK_CONSTRAINTS', /固定.*競合/],
+  ['INVALID_ORDER_CONSTRAINTS', /出演順制約.*競合/],
   ['BROKEN_DUTY_ASSIGNMENT', /当日運営.*壊れた参照/], ['NO_MAIN_PA_CANDIDATE', /Main PA/],
   ['NO_SUB_PA_CANDIDATE', /Sub PA/], ['NO_FEASIBLE_PA_PLAN', /PA配置/],
   ['NO_FEASIBLE_SCHEDULE', /タイムテーブル/], ['SEARCH_LIMIT_REACHED', /探索上限/],

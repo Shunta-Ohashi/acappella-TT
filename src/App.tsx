@@ -929,7 +929,7 @@ function App() {
     }
     const input = { event: selectedEvent, eventDay: timetableEventDay, eventDays, stages, sections,
       members, eventMembers, eventMemberDays, eventBands, scheduleItems: generationScheduleItems,
-      timetableLocks, dutyTypes, dutyAssignments }
+      timetableLocks, timetableOrderConstraints, dutyTypes, dutyAssignments }
     const result = generateTimetablePlan(input)
     if (!result.ok) {
       feedback(presentTimetableGenerationFailure(result.failure, { stages, sections, eventBands }))

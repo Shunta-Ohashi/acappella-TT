@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   evaluateTimetableOrderConstraints,
+  evaluateScheduledTimetableOrderConstraints,
   isTimetableOrderConstraint,
 } from '../src/domain/timetableOrderConstraints.ts'
 
@@ -164,6 +165,39 @@ test('sparseなeventBandIdsを例外なくINVALID_CONSTRAINTとして拒否す�
     assert.deepEqual(codes(first), ['INVALID_CONSTRAINT'])
     assert.deepEqual(first, second)
     assert.deepEqual(input, before)
+  }
+})
+
+test('Schedule上の出演順制約は非隣接を許可し、Breakを順位へ数えない', () => {
+  const constraints = [constraint({ eventBandIds: ['band-a', 'band-b'] })]
+  const scheduleItems = [
+    { id: 'a', kind: 'performance', eventBandId: 'band-a', stageId: 'stage-1', sectionId: 'section-1', order: 0 },
+    { id: 'break', kind: 'break', title: '休憩', durationMinutes: 5, stageId: 'stage-1', sectionId: 'section-1', order: 1 },
+    { id: 'x', kind: 'performance', eventBandId: 'band-x', stageId: 'stage-1', sectionId: 'section-1', order: 2 },
+    { id: 'b', kind: 'performance', eventBandId: 'band-b', stageId: 'stage-1', sectionId: 'section-1', order: 3 },
+  ]
+  assert.equal(evaluateScheduledTimetableOrderConstraints({
+    timetableOrderConstraints: constraints, scheduleItems,
+  }).valid, true)
+})
+
+test('Schedule上の順序反転・lane不一致・欠落・重複を個別に検出する', () => {
+  const constraints = [constraint({ eventBandIds: ['band-a', 'band-b'] })]
+  const item = (id, eventBandId, order, sectionId = 'section-1') => ({
+    id, kind: 'performance', eventBandId, stageId: 'stage-1', sectionId, order,
+  })
+  const cases = [
+    [[item('b', 'band-b', 0), item('a', 'band-a', 1)], 'ORDER_MISMATCH'],
+    [[item('a', 'band-a', 0), item('b', 'band-b', 0, 'section-2')], 'LANE_MISMATCH'],
+    [[item('a', 'band-a', 0)], 'MISSING_EVENT_BAND'],
+    [[item('a1', 'band-a', 0), item('a2', 'band-a', 1), item('b', 'band-b', 2)], 'DUPLICATE_EVENT_BAND'],
+  ]
+  for (const [scheduleItems, code] of cases) {
+    const result = evaluateScheduledTimetableOrderConstraints({
+      timetableOrderConstraints: constraints, scheduleItems,
+    })
+    assert.equal(result.valid, false)
+    assert.ok(result.violations.some(violation => violation.code === code))
   }
 })
 

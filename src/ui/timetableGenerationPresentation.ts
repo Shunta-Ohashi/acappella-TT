@@ -12,6 +12,7 @@ import { countIssuesBySeverity } from './issuePresentation.ts'
 const failureMessages: Record<TimetableGenerationFailureCode, string> = {
   INVALID_INPUT: '自動生成に必要な設定に不整合があります。Step 1〜6の設定や休憩配置を確認してください。',
   INVALID_LOCK_CONSTRAINTS: 'TT固定または必須配置条件が競合しています。',
+  INVALID_ORDER_CONSTRAINTS: '出演順制約が競合しているため自動生成できません。出演順制約や固定配置を確認してください。',
   BROKEN_DUTY_ASSIGNMENT: '当日運営の担当範囲に壊れた参照があります。',
   NO_MAIN_PA_CANDIDATE: 'Main PAを担当できるメンバーが見つかりません。',
   NO_SUB_PA_CANDIDATE: 'Sub PAを担当できるメンバーが見つかりません。',

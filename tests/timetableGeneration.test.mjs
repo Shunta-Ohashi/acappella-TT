@@ -57,7 +57,8 @@ const createInput = ({ bandCount = 4, sectionCount = 2, paCount = 2 } = {}) => {
   return {
     event, eventDay, eventDays: [eventDay], stages, sections,
     members, eventMembers, eventMemberDays, eventBands,
-    scheduleItems: [], timetableLocks: [], dutyTypes: [], dutyAssignments: [],
+    scheduleItems: [], timetableLocks: [], timetableOrderConstraints: [],
+    dutyTypes: [], dutyAssignments: [],
   }
 }
 

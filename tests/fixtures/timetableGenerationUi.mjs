@@ -48,7 +48,8 @@ export const createGenerationUiInput = () => {
     stageId: 'stage-a1', memberId: 'duty', from: { scheduleItemId: 'break-1', edge: 'start' },
     until: { scheduleItemId: 'break-1', edge: 'end' } }]
   return { event, eventDay, eventDays, stages, sections, members, eventMembers, eventMemberDays,
-    eventBands, scheduleItems, paAssignments, timetableLocks, dutyTypes, dutyAssignments }
+    eventBands, scheduleItems, paAssignments, timetableLocks, timetableOrderConstraints: [],
+    dutyTypes, dutyAssignments }
 }
 
 export const createGenerationUiPlan = () => ({

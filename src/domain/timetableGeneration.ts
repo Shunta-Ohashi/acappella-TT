@@ -1,7 +1,7 @@
 import type {
   DutyAssignment, DutyType, Event, EventBand, EventDay, EventMember,
   EventMemberDay, Member, PaAssignment, ScheduleItem, Section, SectionId,
-  Stage, StageId, TimeRange, TimetableLock,
+  Stage, StageId, TimeRange, TimetableLock, TimetableOrderConstraint,
 } from './models'
 import {
   buildDutyActivities, buildPaActivities, buildPerformanceActivities,
@@ -17,6 +17,12 @@ import { hasSafeStageTimelineArithmetic } from './timetableGenerationArithmetic.
 import { hasValidTimetableGenerationDutyTypes, hasValidTimetableGenerationLocks,
   hasValidTimetableGenerationScheduleItems } from './timetableGenerationOptions.ts'
 import { evaluateTimetableLocks, isValidFixedPosition } from './timetableLocks.ts'
+import {
+  evaluateScheduledTimetableOrderConstraints,
+  evaluateTimetableOrderConstraints,
+  getTargetTimetableOrderConstraints,
+  hasValidTimetableOrderConstraintCollection,
+} from './timetableOrderConstraints.ts'
 import { detectScheduleIssues } from './issues.ts'
 import { isValidStageTimeRange, isSectionWithinStageTimeRange } from './eventStageSettings.ts'
 import {
@@ -45,6 +51,7 @@ export interface TimetableGenerationInput {
   eventBands: EventBand[]
   scheduleItems: ScheduleItem[]
   timetableLocks: TimetableLock[]
+  timetableOrderConstraints: TimetableOrderConstraint[]
   dutyTypes: DutyType[]
   dutyAssignments: DutyAssignment[]
   activitySpacingPolicy?: ActivitySpacingPolicy
@@ -98,7 +105,8 @@ export interface TimetableGenerationPlan {
 }
 
 export type TimetableGenerationFailureCode =
-  | 'INVALID_INPUT' | 'INVALID_LOCK_CONSTRAINTS' | 'BROKEN_DUTY_ASSIGNMENT'
+  | 'INVALID_INPUT' | 'INVALID_LOCK_CONSTRAINTS' | 'INVALID_ORDER_CONSTRAINTS'
+  | 'BROKEN_DUTY_ASSIGNMENT'
   | 'NO_MAIN_PA_CANDIDATE' | 'NO_SUB_PA_CANDIDATE'
   | 'NO_FEASIBLE_PA_PLAN' | 'NO_FEASIBLE_SCHEDULE' | 'SEARCH_LIMIT_REACHED'
 
@@ -132,6 +140,8 @@ interface ScheduleProposal {
   key: string
 }
 
+type OrderEdgesByLane = Map<string, Map<string, Set<string>>>
+
 const laneKey = (stageId: StageId, sectionId?: SectionId): string =>
   `${stageId}\u0000${sectionId ?? ''}`
 
@@ -155,6 +165,100 @@ const getInternalIds = (
     ids.set(band.id, id)
   }
   return ids
+}
+
+const buildOrderEdgesByLane = (
+  constraints: TimetableOrderConstraint[],
+): OrderEdgesByLane => {
+  const result: OrderEdgesByLane = new Map()
+  for (const constraint of constraints) {
+    const key = laneKey(constraint.stageId, constraint.sectionId)
+    const edges = result.get(key) ?? new Map<string, Set<string>>()
+    for (let index = 0; index < constraint.eventBandIds.length - 1; index += 1) {
+      const from = constraint.eventBandIds[index]
+      const successors = edges.get(from) ?? new Set<string>()
+      successors.add(constraint.eventBandIds[index + 1])
+      edges.set(from, successors)
+    }
+    result.set(key, edges)
+  }
+  return result
+}
+
+const applyLanePartialOrder = (
+  indexes: number[],
+  slots: (EventBand | undefined)[],
+  reserved: Set<number>,
+  edges: Map<string, Set<string>> | undefined,
+): boolean => {
+  if (!edges?.size) return true
+  const bands = indexes.map(index => slots[index]).filter((band): band is EventBand => band !== undefined)
+  if (bands.length !== indexes.length) return false
+  const bandById = new Map(bands.map(band => [band.id, band]))
+  const rank = new Map(bands.map((band, index) => [band.id, index]))
+  const successors = new Map<string, Set<string>>()
+  const predecessors = new Map<string, Set<string>>()
+  const indegree = new Map(bands.map(band => [band.id, 0]))
+  for (const [from, targets] of edges) {
+    if (!bandById.has(from)) return false
+    for (const to of targets) {
+      if (!bandById.has(to)) return false
+      const outgoing = successors.get(from) ?? new Set<string>()
+      if (outgoing.has(to)) continue
+      outgoing.add(to)
+      successors.set(from, outgoing)
+      const incoming = predecessors.get(to) ?? new Set<string>()
+      incoming.add(from)
+      predecessors.set(to, incoming)
+      indegree.set(to, (indegree.get(to) ?? 0) + 1)
+    }
+  }
+  const fixedPositionByBand = new Map<string, number>()
+  indexes.forEach((globalIndex, localIndex) => {
+    const band = slots[globalIndex]
+    if (band && reserved.has(globalIndex)) fixedPositionByBand.set(band.id, localIndex)
+  })
+  const deadline = new Map<string, number>()
+  const addAncestorDeadlines = (bandId: string, latestPosition: number, visiting: Set<string>): boolean => {
+    if (visiting.has(bandId)) return false
+    const fixedPosition = fixedPositionByBand.get(bandId)
+    if (fixedPosition !== undefined && fixedPosition > latestPosition) return false
+    deadline.set(bandId, Math.min(deadline.get(bandId) ?? Number.POSITIVE_INFINITY, latestPosition))
+    const nextVisiting = new Set(visiting).add(bandId)
+    for (const predecessor of predecessors.get(bandId) ?? []) {
+      if (!addAncestorDeadlines(predecessor, latestPosition - 1, nextVisiting)) return false
+    }
+    return true
+  }
+  for (const [bandId, position] of fixedPositionByBand) {
+    if (!addAncestorDeadlines(bandId, position, new Set())) return false
+  }
+
+  const placed = new Set<string>()
+  const ordered: EventBand[] = []
+  for (let position = 0; position < indexes.length; position += 1) {
+    const reservedBand = reserved.has(indexes[position]) ? slots[indexes[position]] : undefined
+    let next: EventBand | undefined
+    if (reservedBand) {
+      if ((indegree.get(reservedBand.id) ?? 0) !== 0 || placed.has(reservedBand.id)) return false
+      next = reservedBand
+    } else {
+      next = bands.filter(band => !placed.has(band.id) && !fixedPositionByBand.has(band.id) &&
+        (indegree.get(band.id) ?? 0) === 0)
+        .sort((left, right) => (deadline.get(left.id) ?? Number.POSITIVE_INFINITY) -
+          (deadline.get(right.id) ?? Number.POSITIVE_INFINITY) ||
+          (rank.get(left.id) ?? 0) - (rank.get(right.id) ?? 0) || left.id.localeCompare(right.id))[0]
+      if (!next || (deadline.get(next.id) ?? Number.POSITIVE_INFINITY) < position) return false
+    }
+    ordered.push(next)
+    placed.add(next.id)
+    for (const successor of successors.get(next.id) ?? []) {
+      indegree.set(successor, (indegree.get(successor) ?? 0) - 1)
+    }
+  }
+  if (placed.size !== bands.length) return false
+  indexes.forEach((globalIndex, localIndex) => { slots[globalIndex] = ordered[localIndex] })
+  return true
 }
 
 const createLanes = (
@@ -184,6 +288,7 @@ const orderStageBands = (
   assigned: Map<string, EventBand[]>,
   allowedLaneKeysByBand: Map<string, Set<string>>,
   locksByBand: Map<string, TimetableLock>,
+  orderEdgesByLane: OrderEdgesByLane,
   variant: number,
 ): Map<string, EventBand[]> | undefined => {
   const ordered = new Map<string, EventBand[]>()
@@ -261,6 +366,10 @@ const orderStageBands = (
       if (!place(band, new Set())) return undefined
     }
     for (const lane of stageLanes) {
+      if (!applyLanePartialOrder(indexesByLane.get(lane.key) ?? [], slots, reserved,
+        orderEdgesByLane.get(lane.key))) return undefined
+    }
+    for (const lane of stageLanes) {
       ordered.set(lane.key, (indexesByLane.get(lane.key) ?? [])
         .map(index => slots[index]).filter((band): band is EventBand => band !== undefined))
     }
@@ -271,6 +380,7 @@ const orderStageBands = (
 const buildProposal = ({
   variant, bands, lanes, originalItems, targetStageIds, existingByBand,
   allowedLaneKeysByBand, locksByBand, internalIds,
+  orderEdgesByLane,
 }: {
   variant: number
   bands: EventBand[]
@@ -280,6 +390,7 @@ const buildProposal = ({
   existingByBand: Map<string, Extract<ScheduleItem, { kind: 'performance' }>>
   allowedLaneKeysByBand: Map<string, Set<string>>
   locksByBand: Map<string, TimetableLock>
+  orderEdgesByLane: OrderEdgesByLane
   internalIds: Map<string, string>
 }): ScheduleProposal | undefined => {
   const laneByKey = new Map(lanes.map(lane => [lane.key, lane]))
@@ -325,7 +436,9 @@ const buildProposal = ({
     assigned.get(chosen.key)?.push(band)
     load.set(chosen.key, (load.get(chosen.key) ?? 0n) + BigInt(band.durationMinutes))
   }
-  const orderedByLane = orderStageBands(lanes, assigned, allowedLaneKeysByBand, locksByBand, variant)
+  const orderedByLane = orderStageBands(
+    lanes, assigned, allowedLaneKeysByBand, locksByBand, orderEdgesByLane, variant,
+  )
   if (!orderedByLane) return undefined
 
   const items: ScheduleItem[] = originalItems.filter(item =>
@@ -531,7 +644,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
   const {
     event, eventDay, eventDays, stages, sections, members, eventMembers,
     eventMemberDays, eventBands, scheduleItems, timetableLocks, dutyTypes,
-    dutyAssignments, activitySpacingPolicy,
+    dutyAssignments, timetableOrderConstraints, activitySpacingPolicy,
   } = input
   const failure = (code: TimetableGenerationFailureCode, attemptedSchedules: number,
     references: Partial<Pick<TimetableGenerationFailure,
@@ -539,6 +652,9 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     ok: false, failure: { code, eventDayId: eventDay.id, attemptedSchedules, ...references },
   })
   if (!hasValidTimetableGenerationCollections(input)) return failure('INVALID_INPUT', 0)
+  if (!hasValidTimetableOrderConstraintCollection(timetableOrderConstraints)) {
+    return failure('INVALID_ORDER_CONSTRAINTS', 0)
+  }
   if (!isRecord(event.validationPolicy) ||
     !Number.isSafeInteger(event.validationPolicy.minimumGapBands) ||
     event.validationPolicy.minimumGapBands < 0 ||
@@ -597,6 +713,22 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
   const targetBands = eventBands.filter(band =>
     band.eventId === event.id && band.eventDayId === eventDay.id,
   ).sort((left, right) => left.id.localeCompare(right.id))
+  const targetBandIds = new Set(targetBands.map(band => band.id))
+  const targetOrderConstraints = getTargetTimetableOrderConstraints({
+    timetableOrderConstraints,
+    eventDayId: eventDay.id,
+    stageIds: targetStageIds,
+    eventBandIds: targetBandIds,
+  })
+  const orderConstraintEvaluation = evaluateTimetableOrderConstraints({
+    eventId: event.id,
+    timetableOrderConstraints: targetOrderConstraints,
+    eventDays,
+    stages,
+    sections,
+    eventBands,
+  })
+  if (!orderConstraintEvaluation.valid) return failure('INVALID_ORDER_CONSTRAINTS', 0)
   if (targetStages.some(stage => !isValidStageTimeRange(stage.plannedStartTime, stage.plannedEndTime) ||
     (stage.transitionMinutes !== undefined && !isValidTransitionMinutes(stage.transitionMinutes))) ||
     targetSections.some(section => {
@@ -647,7 +779,6 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
         ...(item.afterSectionId !== undefined ? { afterSectionId: item.afterSectionId } : {}),
       })) return failure('INVALID_INPUT', 0, { stageId: item.stageId })
   }
-  const targetBandIds = new Set(targetBands.map(band => band.id))
   const existingByBand = new Map<string, Extract<ScheduleItem, { kind: 'performance' }>>()
   for (const item of eventScheduleItems) {
     if (item.kind !== 'performance') continue
@@ -704,6 +835,18 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     if (lockKey) allowedLaneKeysByBand.set(band.id, new Set([lockKey]))
     else if (fixed) allowedLaneKeysByBand.set(band.id, allowed)
   }
+  for (const constraint of targetOrderConstraints) {
+    const requiredLaneKey = laneKey(constraint.stageId, constraint.sectionId)
+    if (!laneByKey.has(requiredLaneKey)) return failure('INVALID_ORDER_CONSTRAINTS', 0)
+    for (const eventBandId of constraint.eventBandIds) {
+      const current = allowedLaneKeysByBand.get(eventBandId) ?? new Set(lanes.map(lane => lane.key))
+      if (!current.has(requiredLaneKey)) {
+        return failure('INVALID_ORDER_CONSTRAINTS', 0, { eventBandId })
+      }
+      allowedLaneKeysByBand.set(eventBandId, new Set([requiredLaneKey]))
+    }
+  }
+  const orderEdgesByLane = buildOrderEdgesByLane(targetOrderConstraints)
   // Lock positions are lane-local. Stage-wide fixed positions are enforced by
   // proposal construction and the unchanged constraint/Issue evaluators.
   const lockEvaluationBands = targetBands.map(band => {
@@ -766,6 +909,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     const proposal = buildProposal({
       variant, bands: targetBands, lanes, originalItems: eventScheduleItems,
       targetStageIds, existingByBand, allowedLaneKeysByBand, locksByBand, internalIds,
+      orderEdgesByLane,
     })
     if (!proposal) {
       setLastFailure('NO_FEASIBLE_SCHEDULE')
@@ -783,6 +927,13 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     seen.add(proposal.key)
     attemptedSchedules += 1
     const targetProposalItems = proposal.items.filter(item => targetStageIds.has(item.stageId))
+    if (!evaluateScheduledTimetableOrderConstraints({
+      timetableOrderConstraints: targetOrderConstraints,
+      scheduleItems: targetProposalItems,
+    }).valid) {
+      setLastFailure('NO_FEASIBLE_SCHEDULE')
+      continue
+    }
     if (targetStages.some(stage => !hasSafeStageTimelineArithmetic({
       event, stage, sections: targetSections, scheduleItems: targetProposalItems,
       eventBands: targetBands,

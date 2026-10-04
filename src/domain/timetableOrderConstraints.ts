@@ -3,11 +3,13 @@ import type {
   EventBandId,
   EventDay,
   FixedPlacement,
+  ScheduleItem,
   Section,
   Stage,
   TimetableOrderConstraint,
   TimetableOrderConstraintId,
 } from './models'
+import { compareScheduleItemOrder } from './schedule.ts'
 
 export type TimetableOrderConstraintViolationCode =
   | 'INVALID_CONSTRAINT'
@@ -39,6 +41,23 @@ export interface TimetableOrderConstraintViolation {
 export interface TimetableOrderConstraintEvaluation {
   valid: boolean
   violations: TimetableOrderConstraintViolation[]
+}
+
+export type ScheduledTimetableOrderConstraintViolationCode =
+  | 'MISSING_EVENT_BAND'
+  | 'DUPLICATE_EVENT_BAND'
+  | 'LANE_MISMATCH'
+  | 'ORDER_MISMATCH'
+
+export interface ScheduledTimetableOrderConstraintViolation {
+  code: ScheduledTimetableOrderConstraintViolationCode
+  constraintId: TimetableOrderConstraintId
+  eventBandIds: EventBandId[]
+}
+
+export interface ScheduledTimetableOrderConstraintEvaluation {
+  valid: boolean
+  violations: ScheduledTimetableOrderConstraintViolation[]
 }
 
 export interface EvaluateTimetableOrderConstraintsInput {
@@ -75,6 +94,31 @@ export const isTimetableOrderConstraint = (
   hasTimetableOrderConstraintShape(value) &&
   value.eventBandIds.length >= 2 &&
   new Set(value.eventBandIds).size === value.eventBandIds.length
+
+export const hasValidTimetableOrderConstraintCollection = (
+  value: unknown,
+): value is TimetableOrderConstraint[] =>
+  Array.isArray(value) && Array.from(value).every(isTimetableOrderConstraint)
+
+/** Include constraints that touch the generated day, lane, or any target band. */
+export const getTargetTimetableOrderConstraints = ({
+  timetableOrderConstraints,
+  eventDayId,
+  stageIds,
+  eventBandIds,
+}: {
+  timetableOrderConstraints: TimetableOrderConstraint[]
+  eventDayId: string
+  stageIds: ReadonlySet<string>
+  eventBandIds: ReadonlySet<string>
+}): TimetableOrderConstraint[] => {
+  const directlyTargetedIds = new Set(timetableOrderConstraints
+    .filter(constraint => constraint.eventDayId === eventDayId ||
+      stageIds.has(constraint.stageId) ||
+      constraint.eventBandIds.some(eventBandId => eventBandIds.has(eventBandId)))
+    .map(constraint => constraint.id))
+  return timetableOrderConstraints.filter(constraint => directlyTargetedIds.has(constraint.id))
+}
 
 export const doesFixedPlacementConflictWithOrderConstraint = (
   fixedPlacement: Pick<FixedPlacement, 'stageId' | 'sectionId'> | undefined,
@@ -363,4 +407,82 @@ export const evaluateTimetableOrderConstraints = ({
     !laneConflictConstraintIds.has(constraint.id))))
   const sorted = sortViolations(violations)
   return { valid: sorted.length === 0, violations: sorted }
+}
+
+/**
+ * Validate the concrete Performance placements for already-semantic-checked
+ * order constraints. Breaks are intentionally excluded from relative order.
+ */
+export const evaluateScheduledTimetableOrderConstraints = ({
+  timetableOrderConstraints,
+  scheduleItems,
+}: {
+  timetableOrderConstraints: TimetableOrderConstraint[]
+  scheduleItems: ScheduleItem[]
+}): ScheduledTimetableOrderConstraintEvaluation => {
+  const performances = scheduleItems.filter((item): item is Extract<ScheduleItem, { kind: 'performance' }> =>
+    item.kind === 'performance')
+  const performancesByBand = new Map<EventBandId, typeof performances>()
+  for (const item of performances) {
+    performancesByBand.set(item.eventBandId, [
+      ...(performancesByBand.get(item.eventBandId) ?? []), item,
+    ])
+  }
+  const lanePositions = new Map<string, Map<EventBandId, number>>()
+  for (const item of performances) {
+    const key = `${item.stageId}\u0000${item.sectionId ?? ''}`
+    if (lanePositions.has(key)) continue
+    const positions = new Map<EventBandId, number>()
+    performances.filter(candidate => candidate.stageId === item.stageId &&
+      candidate.sectionId === item.sectionId)
+      .sort(compareScheduleItemOrder)
+      .forEach((candidate, index) => positions.set(candidate.eventBandId, index))
+    lanePositions.set(key, positions)
+  }
+
+  const violations: ScheduledTimetableOrderConstraintViolation[] = []
+  const orderedConstraints = [...timetableOrderConstraints]
+    .sort((left, right) => left.id.localeCompare(right.id))
+  for (const constraint of orderedConstraints) {
+    const constraintItems = constraint.eventBandIds.map(eventBandId =>
+      performancesByBand.get(eventBandId) ?? [])
+    const missing = constraint.eventBandIds.filter((_, index) => constraintItems[index].length === 0)
+    if (missing.length) violations.push({
+      code: 'MISSING_EVENT_BAND', constraintId: constraint.id, eventBandIds: missing,
+    })
+    const duplicate = constraint.eventBandIds.filter((_, index) => constraintItems[index].length > 1)
+    if (duplicate.length) violations.push({
+      code: 'DUPLICATE_EVENT_BAND', constraintId: constraint.id, eventBandIds: duplicate,
+    })
+    if (missing.length || duplicate.length) continue
+
+    const wrongLane = constraint.eventBandIds.filter((_, index) => {
+      const item = constraintItems[index][0]
+      return item.stageId !== constraint.stageId || item.sectionId !== constraint.sectionId
+    })
+    if (wrongLane.length) {
+      violations.push({
+        code: 'LANE_MISMATCH', constraintId: constraint.id, eventBandIds: wrongLane,
+      })
+      continue
+    }
+    const positions = lanePositions.get(`${constraint.stageId}\u0000${constraint.sectionId ?? ''}`)
+    const outOfOrder: EventBandId[] = []
+    for (let index = 1; index < constraint.eventBandIds.length; index += 1) {
+      const previous = constraint.eventBandIds[index - 1]
+      const current = constraint.eventBandIds[index]
+      if ((positions?.get(previous) ?? Number.POSITIVE_INFINITY) >=
+        (positions?.get(current) ?? Number.NEGATIVE_INFINITY)) {
+        outOfOrder.push(previous, current)
+      }
+    }
+    if (outOfOrder.length) violations.push({
+      code: 'ORDER_MISMATCH', constraintId: constraint.id,
+      eventBandIds: uniqueSorted(outOfOrder),
+    })
+  }
+  violations.sort((left, right) => left.code.localeCompare(right.code) ||
+    left.constraintId.localeCompare(right.constraintId) ||
+    left.eventBandIds.join('\u0000').localeCompare(right.eventBandIds.join('\u0000')))
+  return { valid: violations.length === 0, violations }
 }
