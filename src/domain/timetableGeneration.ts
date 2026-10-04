@@ -934,8 +934,17 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
   let lastFailure: TimetableGenerationFailureCode = 'NO_FEASIBLE_SCHEDULE'
   let lastFailureReferences: Partial<Pick<TimetableGenerationFailure,
     'stageId' | 'sectionId' | 'eventBandId'>> = {}
+  const getFailurePriority = (code: TimetableGenerationFailureCode): number => {
+    if (code === 'BROKEN_DUTY_ASSIGNMENT') return 2
+    if (code === 'NO_MAIN_PA_CANDIDATE' || code === 'NO_SUB_PA_CANDIDATE' ||
+      code === 'NO_FEASIBLE_PA_PLAN') return 1
+    return 0
+  }
   const setLastFailure = (code: TimetableGenerationFailureCode,
     references: typeof lastFailureReferences = {}) => {
+    // Keep the first deterministic failure within a priority tier, together
+    // with its references; later generic rejections must not erase it.
+    if (getFailurePriority(code) <= getFailurePriority(lastFailure)) return
     lastFailure = code
     lastFailureReferences = references
   }
@@ -1051,13 +1060,17 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
       beamWidth: options.paBeamWidth, maxExpandedStates: options.maxPaExpandedStates,
     })
     if (!paResult.ok) {
-      setLastFailure(paResult.code, paResult.scope ? {
+      const references = paResult.scope ? {
         stageId: paResult.scope.stageId,
         ...(paResult.scope.sectionId ? { sectionId: paResult.scope.sectionId } : {}),
-      } : {})
-      if (paResult.code === 'SEARCH_LIMIT_REACHED' && !paSearchLimitReached) {
-        paSearchLimitReached = true
-        paSearchLimitReferences = lastFailureReferences
+      } : {}
+      if (paResult.code === 'SEARCH_LIMIT_REACHED') {
+        if (!paSearchLimitReached) {
+          paSearchLimitReached = true
+          paSearchLimitReferences = references
+        }
+      } else {
+        setLastFailure(paResult.code, references)
       }
       continue
     }
@@ -1146,6 +1159,8 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
   return failure(
     paSearchLimitReached || scheduleSearchLimitReached
       ? 'SEARCH_LIMIT_REACHED' : lastFailure,
-    attemptedSchedules, paSearchLimitReached ? paSearchLimitReferences : lastFailureReferences,
+    attemptedSchedules,
+    paSearchLimitReached ? paSearchLimitReferences
+      : scheduleSearchLimitReached ? {} : lastFailureReferences,
   )
 }
