@@ -1,6 +1,7 @@
 import type { DutyAssignment, DutyType, Event, EventBand, EventDay, PaAssignment,
   ScheduleItem, Stage, TimetableLock } from './models'
 import { getDutyAssignmentsForEvent } from './dutyAssignments.ts'
+import { getReferencedScheduleItemIds } from './scheduleBoundaries.ts'
 import { hasConsistentPaOwnership, hasValidDutyAssignments, hasValidPaAssignments, hasValidTimetableLocks,
   hasValidTimetableScheduleItems } from './timetableRuntimeValidation.ts'
 
@@ -98,7 +99,8 @@ export const resetEventDayTimetable = (input: TimetableResetInput): TimetableRes
   const targetDuties = new Set(getDutyAssignmentsForEvent({ event, stages: eventStages, dutyTypes, dutyAssignments })
     .filter(duty => duty.eventDayId === eventDay.id))
   const referencesRemovedPerformance = ({ from, until }: Pick<PaAssignment, 'from' | 'until'>): boolean =>
-    removedPerformanceIds.has(from.scheduleItemId) || removedPerformanceIds.has(until.scheduleItemId)
+    getReferencedScheduleItemIds([from, until])
+      .some((id) => removedPerformanceIds.has(id))
   // A Lock's own Stage must belong to the reset day before its referenced Performance may be removed.
   if (timetableLocks.some(lock => removedPerformanceIds.has(lock.scheduleItemId) &&
     (lock.eventId !== event.id || !targetStageIds.has(lock.stageId))) ||

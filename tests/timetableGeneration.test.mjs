@@ -72,6 +72,27 @@ const assertInvalidRuntimeGenerationInput = (input) => {
   assert.deepEqual(input, original)
 }
 
+test('generatorはtop-level・nestedのsparse arrayを探索前に拒否する', () => {
+  const sparse = (value) => {
+    const result = new Array(2)
+    result[1] = value
+    return result
+  }
+  const cases = [
+    input => { input.eventDays = sparse(input.eventDays[0]) },
+    input => { input.eventBands[0].memberIds = sparse(input.eventBands[0].memberIds[0]) },
+    input => {
+      input.eventMemberDays[0].availabilityWindows = sparse({ from: '10:00', until: '11:00' })
+    },
+    input => { input.dutyAssignments = sparse(input.dutyAssignments[0]) },
+  ]
+  for (const edit of cases) {
+    const input = createGenerationUiInput()
+    edit(input)
+    assertInvalidRuntimeGenerationInput(input)
+  }
+})
+
 for (const field of ['eventDays', 'stages', 'sections', 'members', 'eventMembers',
   'eventMemberDays', 'eventBands', 'scheduleItems', 'timetableLocks', 'dutyTypes', 'dutyAssignments']) {
   for (const value of [null, [null], [{}]]) {
@@ -268,6 +289,7 @@ const materializeSchedule = (input, plan) => [
 
 const materializePa = (input, plan) => {
   const boundary = value => ({
+    kind: 'schedule-item',
     scheduleItemId: value.kind === 'existing-item'
       ? value.scheduleItemId
       : plan.placements.find(item => item.eventBandId === value.eventBandId)
@@ -849,8 +871,8 @@ test('別日の正常・壊れたTT固定とDutyは対象日の生成可否へ�
   lock.scheduleItemId = 'missing-item'
   input.dutyAssignments.push({ id: 'day-2-duty', dutyTypeId: 'missing-type',
     eventDayId: 'day-2', stageId: 'stage-day-2', memberId: 'main-0',
-    from: { scheduleItemId: 'missing-item', edge: 'start' },
-    until: { scheduleItemId: 'missing-item', edge: 'end' } })
+    from: { kind: "schedule-item", scheduleItemId: 'missing-item', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'missing-item', edge: 'end' } })
   const original = structuredClone(input)
   assert.deepEqual(generateTimetablePlan(input), baseline)
   assert.deepEqual(input, original)
@@ -1377,8 +1399,8 @@ test('壊れたDuty Boundaryは推測せず失敗し、既存Dutyを変更しな
   input.dutyAssignments = [{
     id: 'duty-1', dutyTypeId: 'photo', eventDayId: input.eventDay.id,
     stageId: 'stage-1', memberId: 'main-0',
-    from: { scheduleItemId: 'missing', edge: 'start' },
-    until: { scheduleItemId: 'missing', edge: 'end' },
+    from: { kind: "schedule-item", scheduleItemId: 'missing', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'missing', edge: 'end' },
   }]
   const original = structuredClone(input.dutyAssignments)
   const result = generateTimetablePlan(input)
@@ -1397,8 +1419,8 @@ for (const brokenBoundary of [false, true]) {
     input.dutyTypes.push({ id: 'foreign-photo', eventId: 'foreign-event', name: '撮影', order: 0 })
     input.dutyAssignments.push({ id: 'foreign-duty', dutyTypeId: 'foreign-photo',
       eventDayId: input.eventDay.id, stageId: 'stage-1', memberId: 'performer-0',
-      from: { scheduleItemId: brokenBoundary ? 'missing' : 'existing-performance', edge: 'start' },
-      until: { scheduleItemId: brokenBoundary ? 'missing' : 'existing-performance', edge: 'end' },
+      from: { kind: "schedule-item", scheduleItemId: brokenBoundary ? 'missing' : 'existing-performance', edge: 'start' },
+      until: { kind: "schedule-item", scheduleItemId: brokenBoundary ? 'missing' : 'existing-performance', edge: 'end' },
     })
     // If included, the normal boundary would overlap its assignee's performance;
     // the broken one would fail preflight. Neither belongs to this Event.
@@ -1416,8 +1438,8 @@ test('missing DutyTypeを持つtarget Day/Stageの担当は除外せずBROKEN_DU
     eventBandId: 'band-00', stageId: 'stage-1', sectionId: 'section-0', order: 0 })
   input.dutyAssignments.push({ id: 'broken-duty', dutyTypeId: 'missing-duty-type',
     eventDayId: input.eventDay.id, stageId: 'stage-1', memberId: 'main-0',
-    from: { scheduleItemId: 'existing-performance', edge: 'start' },
-    until: { scheduleItemId: 'existing-performance', edge: 'end' },
+    from: { kind: "schedule-item", scheduleItemId: 'existing-performance', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'existing-performance', edge: 'end' },
   })
   const original = structuredClone(input)
   const result = generateTimetablePlan(input)
@@ -1439,8 +1461,8 @@ for (const stageId of ['foreign-stage', 'missing-stage']) {
     verifyGeneratedSchedule(input, baseline)
     input.dutyAssignments.push({ id: 'unknown-duty', dutyTypeId: 'missing-duty-type',
       eventDayId: input.eventDay.id, stageId, memberId: 'performer-0',
-      from: { scheduleItemId: 'missing', edge: 'start' },
-      until: { scheduleItemId: 'missing', edge: 'end' },
+      from: { kind: "schedule-item", scheduleItemId: 'missing', edge: 'start' },
+      until: { kind: "schedule-item", scheduleItemId: 'missing', edge: 'end' },
     })
     const original = structuredClone(input)
     const result = generateTimetablePlan(input)
@@ -1457,8 +1479,8 @@ test('target Event所有DutyはStageが不正でもscopeから捨てずpreflight
   input.dutyTypes.push({ id: 'photo', eventId: input.event.id, name: '撮影', order: 0 })
   input.dutyAssignments.push({ id: 'invalid-stage-duty', dutyTypeId: 'photo',
     eventDayId: input.eventDay.id, stageId: 'foreign-stage', memberId: 'main-0',
-    from: { scheduleItemId: 'existing-performance', edge: 'start' },
-    until: { scheduleItemId: 'existing-performance', edge: 'end' },
+    from: { kind: "schedule-item", scheduleItemId: 'existing-performance', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'existing-performance', edge: 'end' },
   })
   const original = structuredClone(input)
   const result = generateTimetablePlan(input)
@@ -1818,8 +1840,8 @@ test('DutyとPAの衝突を避け、担当可能な別Memberを選ぶ', () => {
   input.dutyAssignments = [{
     id: 'duty-1', dutyTypeId: 'photo', eventDayId: input.eventDay.id,
     stageId: 'stage-1', memberId: 'main-0',
-    from: { scheduleItemId: 'break-1', edge: 'start' },
-    until: { scheduleItemId: 'break-1', edge: 'end' },
+    from: { kind: "schedule-item", scheduleItemId: 'break-1', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'break-1', edge: 'end' },
   }]
   const original = structuredClone(input)
   const result = generateTimetablePlan(input)
@@ -1828,6 +1850,34 @@ test('DutyとPAの衝突を避け、担当可能な別Memberを選ぶ', () => {
   verifyGeneratedSchedule(input, result)
   assert.deepEqual(generateTimetablePlan(input), result)
   assert.deepEqual(input, original)
+})
+
+test('Section・time境界の既存Dutyを解決して生成候補を評価する', () => {
+  for (const boundaryKind of ['section', 'time']) {
+    const input = createInput({ bandCount: 1, sectionCount: 1 })
+    input.sections[0].plannedStartTime = '10:00'
+    input.sections[0].plannedEndTime = '10:10'
+    input.dutyTypes = [{ id: 'photo', eventId: input.event.id, name: '撮影', order: 0 }]
+    input.dutyAssignments = [{
+      id: `duty-${boundaryKind}`,
+      dutyTypeId: 'photo',
+      eventDayId: input.eventDay.id,
+      stageId: input.stages[0].id,
+      memberId: 'main-0',
+      from: boundaryKind === 'section'
+        ? { kind: 'section', sectionId: input.sections[0].id, edge: 'start' }
+        : { kind: 'time', time: '10:00' },
+      until: boundaryKind === 'section'
+        ? { kind: 'section', sectionId: input.sections[0].id, edge: 'end' }
+        : { kind: 'time', time: '10:10' },
+    }]
+    const original = structuredClone(input)
+
+    const result = generateTimetablePlan(input)
+
+    assert.equal(result.ok, true, `${boundaryKind}: ${JSON.stringify(result)}`)
+    assert.deepEqual(input, original)
+  }
 })
 
 test('既存Dutyと出演の衝突を避け、参照BoundaryとBreakを保つ', () => {
@@ -1844,8 +1894,8 @@ test('既存Dutyと出演の衝突を避け、参照BoundaryとBreakを保つ', 
   input.dutyAssignments = [{
     id: 'duty-1', dutyTypeId: 'photo', eventDayId: input.eventDay.id,
     stageId: 'stage-1', memberId: 'performer-1',
-    from: { scheduleItemId: 'existing-a', edge: 'start' },
-    until: { scheduleItemId: 'existing-a', edge: 'end' },
+    from: { kind: "schedule-item", scheduleItemId: 'existing-a', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'existing-a', edge: 'end' },
   }]
   const original = structuredClone(input.dutyAssignments)
   const result = generateTimetablePlan(input)
@@ -1955,8 +2005,8 @@ const createDutyFailureInput = ({ dutyFirst = false } = {}) => {
   input.dutyTypes = [{ id: 'photo', eventId: input.event.id, name: '撮影', order: 0 }]
   input.dutyAssignments = [{ id: 'duty-1', dutyTypeId: 'photo', eventDayId: input.eventDay.id,
     stageId: 'stage-1', memberId: 'performer-1',
-    from: { scheduleItemId: 'existing-0', edge: 'start' },
-    until: { scheduleItemId: 'existing-0', edge: 'end' },
+    from: { kind: "schedule-item", scheduleItemId: 'existing-0', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'existing-0', edge: 'end' },
   }]
   input.eventMemberDays.find(day => day.eventMemberId === 'event-member-main-0')
     .availabilityWindows = [{ until: '10:30' }]

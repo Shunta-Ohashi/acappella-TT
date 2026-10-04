@@ -17,6 +17,31 @@ test('実体化と最終検証はtop-level nullを失敗結果として返す', 
     { ok: false, reason: '生成元データの形式が不正です。' })
 })
 
+test('実体化と最終検証はsource collectionとplanのsparse arrayを拒否する', () => {
+  const sparse = (value) => {
+    const result = new Array(2)
+    result[1] = value
+    return result
+  }
+
+  const sparseDutyInput = materializationInput()
+  sparseDutyInput.dutyAssignments = sparse(sparseDutyInput.dutyAssignments[0])
+  const dutyOriginal = structuredClone(sparseDutyInput)
+  assert.deepEqual(materializeTimetableGenerationPlan(sparseDutyInput),
+    { ok: false, code: 'INVALID_PLAN_REFERENCE' })
+  assert.deepEqual(sparseDutyInput, dutyOriginal)
+
+  const sparsePlanInput = materializationInput()
+  sparsePlanInput.plan = {
+    ...sparsePlanInput.plan,
+    placements: sparse(sparsePlanInput.plan.placements[0]),
+  }
+  const planOriginal = structuredClone(sparsePlanInput)
+  assert.deepEqual(materializeTimetableGenerationPlan(sparsePlanInput),
+    { ok: false, code: 'INVALID_PLAN_REFERENCE' })
+  assert.deepEqual(sparsePlanInput, planOriginal)
+})
+
 for (const [name, edit] of [
   ['ID null', pa => { pa.id = null }],
   ['Stage ID空白', pa => { pa.stageId = '' }],
@@ -166,8 +191,8 @@ test('final validatorはplanにない有効なtarget PAを拒否する', () => {
   assert.equal(baseline.ok, true)
   const extra = { id: 'extra-target-pa', eventId: input.event.id, eventDayId: input.eventDay.id,
     stageId: 'stage-a1', memberId: 'main', role: 'main',
-    from: { scheduleItemId: 'break-1', edge: 'start' },
-    until: { scheduleItemId: 'break-1', edge: 'end' } }
+    from: { kind: "schedule-item", scheduleItemId: 'break-1', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'break-1', edge: 'end' } }
   assert.equal(resolvePaAssignmentInterval(extra, baseline.calculatedItems).ok, true)
   const issues = detectScheduleIssues({
     event: input.event, members: input.members, eventMembers: input.eventMembers,
@@ -204,8 +229,8 @@ for (const [name, changes] of [
   ['memberId', { memberId: 'sub' }],
   ['role', { role: 'sub' }],
   ['stageId', { stageId: 'stage-sub' }],
-  ['from Boundary', { from: { scheduleItemId: 'break-1', edge: 'start' } }],
-  ['until Boundary', { until: { scheduleItemId: 'break-1', edge: 'end' } }],
+  ['from Boundary', { from: { kind: "schedule-item", scheduleItemId: 'break-1', edge: 'start' } }],
+  ['until Boundary', { until: { kind: "schedule-item", scheduleItemId: 'break-1', edge: 'end' } }],
 ]) {
   test(`final validatorはplanと異なるtarget PA ${name}を拒否する`, () => {
     const input = materializationInput()
@@ -409,9 +434,9 @@ test('既存Performance ID・新規IDとBreak内容を維持し、他Event/Day�
   assert.equal(result.scheduleItems.find(item => item.eventBandId === 'band-1').id, 'old-p1')
   assert.equal(result.scheduleItems.find(item => item.eventBandId === 'band-2').id, 'new-p2')
   assert.deepEqual(result.scheduleItems.find(item => item.id === 'break-1'), input.scheduleItems.find(item => item.id === 'break-1'))
-  assert.deepEqual(result.paAssignments.find(pa => pa.id === 'new-pa-0').from, { scheduleItemId: 'old-p1', edge: 'start' })
-  assert.deepEqual(result.paAssignments.find(pa => pa.id === 'new-pa-0').until, { scheduleItemId: 'old-p1', edge: 'end' })
-  assert.deepEqual(result.paAssignments.find(pa => pa.id === 'new-pa-2').from, { scheduleItemId: 'new-p2', edge: 'start' })
+  assert.deepEqual(result.paAssignments.find(pa => pa.id === 'new-pa-0').from, { kind: 'schedule-item', scheduleItemId: 'old-p1', edge: 'start' })
+  assert.deepEqual(result.paAssignments.find(pa => pa.id === 'new-pa-0').until, { kind: 'schedule-item', scheduleItemId: 'old-p1', edge: 'end' })
+  assert.deepEqual(result.paAssignments.find(pa => pa.id === 'new-pa-2').from, { kind: 'schedule-item', scheduleItemId: 'new-p2', edge: 'start' })
   assert.equal('sectionId' in result.paAssignments.find(pa => pa.id === 'new-pa-2'), false)
 })
 
@@ -504,7 +529,7 @@ test('target Performanceが古いStageに残っていても同一IDを再利用�
   assert.equal(result.scheduleItems.find(item => item.id === 'old-p1').stageId, 'stage-a1')
 })
 
-const boundary = itemId => ({ scheduleItemId: itemId, edge: 'start' })
+const boundary = itemId => ({ kind: 'schedule-item', scheduleItemId: itemId, edge: 'start' })
 const addPaReference = (input, itemId, eventId, eventDayId, stageId) => {
   input.paAssignments.push({ ...input.paAssignments[0], id: `pa-ref-${eventDayId}`,
     eventId, eventDayId, stageId, from: boundary(itemId) })
@@ -548,7 +573,9 @@ test('target Dutyとtarget Lockは再配置後のcandidateに対して最終検�
   const input = materializationInput()
   input.scheduleItems[0].stageId = 'stage-a2'
   addDutyReference(input, 'old-p1', 'day-a1', 'stage-a1')
-  input.dutyAssignments.at(-1).until = { scheduleItemId: 'old-p1', edge: 'end' }
+  input.dutyAssignments.at(-1).until = {
+    kind: 'schedule-item', scheduleItemId: 'old-p1', edge: 'end',
+  }
   const candidate = assertMaterialization(input, true)
   assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true)
 })
@@ -760,7 +787,7 @@ test('既存Break Boundaryも正式IDで解決し、PAへ計算時刻snapshotを
   const validation = validateTimetableGenerationCandidate(input, result)
   assert.equal(validation.ok, true)
   const assignment = result.paAssignments.find(pa => pa.id === 'new-pa-0')
-  assert.deepEqual(assignment.until, { scheduleItemId: 'break-1', edge: 'end' })
+  assert.deepEqual(assignment.until, { kind: 'schedule-item', scheduleItemId: 'break-1', edge: 'end' })
   assert.deepEqual(resolvePaAssignmentInterval(assignment, validation.calculatedItems), {
     ok: true, interval: { fromMinute: 600, untilMinute: 625 },
   })
@@ -1137,6 +1164,47 @@ test('保持PAは同内容の別object・別Boundaryでも許可し、target PA�
   assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true)
 })
 
+test('scope外のSection/time PA Boundaryを保持し生成candidate検証を妨げない', () => {
+  const input = materializationInput()
+  const otherDay = input.paAssignments.find(pa => pa.id === 'pa-a2')
+  otherDay.from = { kind: 'section', sectionId: 'section-1', edge: 'start' }
+  otherDay.until = {
+    kind: 'section', sectionId: 'section-1', edge: 'end', offsetMinutes: 5,
+  }
+  const foreign = input.paAssignments.find(pa => pa.id === 'pa-b')
+  foreign.from = { kind: 'time', time: '10:00' }
+  foreign.until = { kind: 'time', time: '10:30' }
+  const original = structuredClone(input)
+
+  const candidate = materializeTimetableGenerationPlan(input)
+  assert.equal(candidate.ok, true, JSON.stringify(candidate))
+  assert.deepEqual(candidate.paAssignments.find(pa => pa.id === 'pa-a2'), otherDay)
+  assert.deepEqual(candidate.paAssignments.find(pa => pa.id === 'pa-b'), foreign)
+  assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true)
+  assert.deepEqual(input, original)
+})
+
+test('対象日のSection/time Duty Boundaryを保持して最終candidateを検証する', () => {
+  for (const boundaryKind of ['section', 'time']) {
+    const input = materializationInput()
+    const duty = input.dutyAssignments[0]
+    duty.from = boundaryKind === 'section'
+      ? { kind: 'section', sectionId: 'section-1', edge: 'start' }
+      : { kind: 'time', time: '10:00' }
+    duty.until = boundaryKind === 'section'
+      ? { kind: 'section', sectionId: 'section-1', edge: 'end' }
+      : { kind: 'time', time: '10:10' }
+    const original = structuredClone(input)
+
+    const candidate = materializeTimetableGenerationPlan(input)
+
+    assert.equal(candidate.ok, true, `${boundaryKind}: ${JSON.stringify(candidate)}`)
+    assert.deepEqual(input.dutyAssignments, original.dutyAssignments)
+    assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true)
+    assert.deepEqual(input, original)
+  }
+})
+
 test('materializerの保持項目を変更しても元のScheduleItem・PA・Boundaryに波及しない', () => {
   const input = materializationInput()
   const original = structuredClone(input)
@@ -1310,8 +1378,8 @@ test('別Dayの壊れたLock/Duty/PAをtarget Dayの最終guardへ混入させ�
   const input = materializationInput()
   input.timetableLocks.push({ ...input.timetableLocks[0], id: 'other-lock', stageId: 'stage-a2', scheduleItemId: 'p-a2', sectionId: undefined })
   input.dutyAssignments.push({ ...input.dutyAssignments[0], id: 'other-duty', eventDayId: 'day-a2',
-    stageId: 'stage-a2', from: { scheduleItemId: 'missing', edge: 'start' },
-    until: { scheduleItemId: 'p-a2', edge: 'end' } })
+    stageId: 'stage-a2', from: { kind: "schedule-item", scheduleItemId: 'missing', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'p-a2', edge: 'end' } })
   const candidate = materializeTimetableGenerationPlan(input)
   assert.equal(validateTimetableGenerationCandidate(input, candidate).ok, true)
 })

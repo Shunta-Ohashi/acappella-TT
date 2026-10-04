@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   canDeleteDutyType,
+  createDutyAssignmentDraftItem,
   createDutySettingsDraft,
   createDutySettingsUpdate,
   getDutyAssignmentScopeStatus,
@@ -24,8 +25,8 @@ test('Section間BreakのScheduleBoundaryを一般業務の実時間へ解決す�
     eventDayId: 'day-1',
     stageId: 'stage-a',
     memberId: 'member-1',
-    from: { scheduleItemId: 'between-break', edge: 'start' },
-    until: { scheduleItemId: 'between-break', edge: 'end' },
+    from: { kind: "schedule-item", scheduleItemId: 'between-break', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'between-break', edge: 'end' },
   }, [{
     scheduleItemId: 'between-break',
     eventDayId: 'day-1',
@@ -129,8 +130,8 @@ const createItem = (overrides = {}) => ({
   eventDayId: 'day-1',
   stageId: 'stage-a',
   memberId: 'member-2',
-  from: { scheduleItemId: 'performance-1', edge: 'start' },
-  until: { scheduleItemId: 'performance-1', edge: 'end' },
+  from: { kind: "schedule-item", scheduleItemId: 'performance-1', edge: 'start' },
+  until: { kind: "schedule-item", scheduleItemId: 'performance-1', edge: 'end' },
   ...overrides,
 })
 const assignment = (id, overrides = {}) => ({
@@ -139,8 +140,8 @@ const assignment = (id, overrides = {}) => ({
   eventDayId: 'day-1',
   stageId: 'stage-a',
   memberId: 'member-2',
-  from: { scheduleItemId: 'performance-1', edge: 'start' },
-  until: { scheduleItemId: 'performance-1', edge: 'end' },
+  from: { kind: "schedule-item", scheduleItemId: 'performance-1', edge: 'start' },
+  until: { kind: "schedule-item", scheduleItemId: 'performance-1', edge: 'end' },
   ...overrides,
 })
 const paAssignment = (overrides = {}) => ({
@@ -150,8 +151,8 @@ const paAssignment = (overrides = {}) => ({
   stageId: 'stage-a',
   memberId: 'member-2',
   role: 'main',
-  from: { scheduleItemId: 'performance-1', edge: 'start' },
-  until: { scheduleItemId: 'performance-1', edge: 'end' },
+  from: { kind: "schedule-item", scheduleItemId: 'performance-1', edge: 'start' },
+  until: { kind: "schedule-item", scheduleItemId: 'performance-1', edge: 'end' },
   ...overrides,
 })
 
@@ -161,6 +162,7 @@ const validateItem = (item, overrides = {}) => validateDutyAssignmentDraftItem({
   event,
   eventDays,
   stages,
+  sections: [],
   members,
   eventMembers,
   eventMemberDays: createMemberDays(),
@@ -385,16 +387,16 @@ test('一般業務担当のEventDayとStage参照をscope別に検証する', ()
 test('参照切れscopeを有効な開催日・Stage・Boundaryへ修復して保存できる', () => {
   const broken = assignment('repair-scope', {
     stageId: 'missing-stage',
-    from: { scheduleItemId: 'missing-item', edge: 'start' },
-    until: { scheduleItemId: 'missing-item', edge: 'end' },
+    from: { kind: "schedule-item", scheduleItemId: 'missing-item', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'missing-item', edge: 'end' },
   })
   const draft = createDutySettingsDraft(event, stages, dutyTypes, [broken])
   draft.assignments[0] = {
     ...draft.assignments[0],
     eventDayId: eventDays[0].id,
     stageId: stages[0].id,
-    from: { scheduleItemId: 'performance-1', edge: 'start' },
-    until: { scheduleItemId: 'performance-1', edge: 'end' },
+    from: { kind: "schedule-item", scheduleItemId: 'performance-1', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'performance-1', edge: 'end' },
   }
 
   const result = createDutySettingsUpdate({
@@ -660,8 +662,8 @@ test('DutyType参照切れ担当はdraftから削除したときだけ削除す�
 
 test('PerformanceとBreakを含むBoundaryから区間を解決しTimeline変更へ追従する', () => {
   const range = createItem({
-    from: { scheduleItemId: 'performance-1', edge: 'start' },
-    until: { scheduleItemId: 'break-1', edge: 'end' },
+    from: { kind: "schedule-item", scheduleItemId: 'performance-1', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'break-1', edge: 'end' },
   })
   assert.deepEqual(resolveDutyAssignmentInterval(range, calculatedItems), {
     ok: true,
@@ -679,13 +681,100 @@ test('PerformanceとBreakを含むBoundaryから区間を解決しTimeline変更
   })
 })
 
+test('一般業務はSection全体・一部・直接時刻を共通intervalへ解決する', () => {
+  const section = {
+    id: 'section-duty', stageId: 'stage-a', name: '1部', order: 0,
+    plannedStartTime: '10:00', plannedEndTime: '11:00',
+  }
+  const resolutionContext = { stages, sections: [section] }
+  assert.deepEqual(resolveDutyAssignmentInterval(createItem({
+    from: { kind: 'section', sectionId: section.id, edge: 'start' },
+    until: { kind: 'section', sectionId: section.id, edge: 'end' },
+  }), calculatedItems, resolutionContext), {
+    ok: true, interval: { fromMinute: 600, untilMinute: 660 },
+  })
+  assert.deepEqual(resolveDutyAssignmentInterval(createItem({
+    from: { kind: 'section', sectionId: section.id, edge: 'start', offsetMinutes: 10 },
+    until: { kind: 'section', sectionId: section.id, edge: 'end', offsetMinutes: 5 },
+  }), calculatedItems, resolutionContext), {
+    ok: true, interval: { fromMinute: 610, untilMinute: 655 },
+  })
+  assert.deepEqual(resolveDutyAssignmentInterval(createItem({
+    from: { kind: 'time', time: '10:15' },
+    until: { kind: 'time', time: '10:45' },
+  }), calculatedItems, resolutionContext), {
+    ok: true, interval: { fromMinute: 615, untilMinute: 645 },
+  })
+})
+
+test('一般業務新規draftはitem、空TTのSection、Sectionなし空TTの時刻へfallbackする', () => {
+  const anchoredSection = {
+    id: 'section-duty', stageId: 'stage-a', name: '1部', order: 0,
+    plannedStartTime: '10:00', plannedEndTime: '11:00',
+  }
+  const create = (configuredItems, configuredSections) => createDutyAssignmentDraftItem({
+    draftId: 'new-duty', dutyTypeDraftId: 'type-photo', stage: stages[0],
+    sections: configuredSections, calculatedItems: configuredItems,
+  })
+  assert.equal(create(calculatedItems, [anchoredSection]).from.kind, 'schedule-item')
+  assert.equal(create([], [anchoredSection]).from.kind, 'section')
+  assert.equal(create([], []).from.kind, 'time')
+})
+
+test('一般業務のSection/time境界でもavailability・出演・PA・Duty重複を維持する', () => {
+  const section = {
+    id: 'section-duty', stageId: 'stage-a', name: '1部', order: 0,
+    plannedStartTime: '10:00', plannedEndTime: '11:00',
+  }
+  const direct = createItem({
+    from: { kind: 'time', time: '10:05' },
+    until: { kind: 'time', time: '10:20' },
+  })
+  const outside = validateItem(direct, {
+    sections: [section],
+    eventMemberDays: createMemberDays({
+      'member-2': { availabilityWindows: [{ from: '10:00', until: '10:10' }] },
+    }),
+  })
+  assert.ok(outside.availability)
+  assert.ok(validateItem({ ...direct, memberId: 'member-1' }, {
+    sections: [section],
+  }).conflict)
+  assert.ok(validateItem(direct, {
+    sections: [section],
+    paAssignments: [paAssignment({
+      from: { kind: 'section', sectionId: section.id, edge: 'start' },
+      until: { kind: 'section', sectionId: section.id, edge: 'end' },
+    })],
+  }).conflict)
+
+  const overlap = validateDutySettingsDraft({
+    draft: { dutyTypes: typeDrafts, assignments: [
+      createItem({
+        draftId: 'section-range',
+        from: { kind: 'section', sectionId: section.id, edge: 'start' },
+        until: { kind: 'section', sectionId: section.id, edge: 'end' },
+      }),
+      createItem({
+        draftId: 'time-range',
+        from: { kind: 'time', time: '10:30' },
+        until: { kind: 'time', time: '11:30' },
+      }),
+    ] },
+    event, eventDays, stages, sections: [section], members, eventMembers,
+    eventMemberDays: createMemberDays(), eventBands, paAssignments: [], calculatedItems,
+  })
+  assert.ok(overlap.assignments['section-range'].conflict)
+  assert.ok(overlap.assignments['time-range'].conflict)
+})
+
 test('参照切れ・同時刻Boundaryを拒否し、接するhalf-open区間は重複しない', () => {
   assert.equal(resolveDutyAssignmentInterval(createItem({
-    from: { scheduleItemId: 'missing', edge: 'start' },
+    from: { kind: "schedule-item", scheduleItemId: 'missing', edge: 'start' },
   }), calculatedItems).ok, false)
   assert.equal(resolveDutyAssignmentInterval(createItem({
-    from: { scheduleItemId: 'performance-1', edge: 'end' },
-    until: { scheduleItemId: 'break-1', edge: 'start' },
+    from: { kind: "schedule-item", scheduleItemId: 'performance-1', edge: 'end' },
+    until: { kind: "schedule-item", scheduleItemId: 'break-1', edge: 'start' },
   }), calculatedItems).ok, true)
   assert.equal(intervalsOverlap(
     { fromMinute: 600, untilMinute: 610 },
@@ -746,8 +835,8 @@ test('Duty validationは保存予定の最新PA一覧を使って競合を判定
     },
   ]
   const movedPa = paAssignment({
-    from: { scheduleItemId: 'performance-later', edge: 'start' },
-    until: { scheduleItemId: 'performance-later', edge: 'end' },
+    from: { kind: "schedule-item", scheduleItemId: 'performance-later', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'performance-later', edge: 'end' },
   })
 
   assert.match(validateItem(dutyItem, {
@@ -851,7 +940,7 @@ test('Issue detectorが参加状態・availability・仕事参照・broken bound
   const structuralIssues = detect({
     assignments: [assignment('duty-broken', {
       dutyTypeId: 'missing-type',
-      from: { scheduleItemId: 'missing', edge: 'start' },
+      from: { kind: "schedule-item", scheduleItemId: 'missing', edge: 'start' },
     })],
   })
 

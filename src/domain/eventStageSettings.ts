@@ -14,10 +14,17 @@ import type {
   TimetableLock,
   TimetableOrderConstraint,
 } from './models'
+import { getReferencedSectionIds } from './scheduleBoundaries.ts'
 import {
   isValidLocalTime,
   parseLocalTimeToMinute,
 } from './timeline.ts'
+import {
+  isSectionWithinStageTimeRange,
+  isValidStageTimeRange,
+} from './stageTimeRanges.ts'
+
+export { isSectionWithinStageTimeRange, isValidStageTimeRange } from './stageTimeRanges.ts'
 
 export type StageEndMode = 'automatic' | 'fixed'
 export type StageTransitionMode = 'event-default' | 'stage-specific'
@@ -99,6 +106,8 @@ export interface SectionReferences {
   eventBands: Pick<EventBand, 'fixedPlacement'>[]
   timetableLocks: Pick<TimetableLock, 'sectionId'>[]
   timetableOrderConstraints: Pick<TimetableOrderConstraint, 'sectionId'>[]
+  paAssignments: Pick<PaAssignment, 'from' | 'until'>[]
+  dutyAssignments: Pick<DutyAssignment, 'from' | 'until'>[]
 }
 
 interface CreateEventStageSettingsUpdateInput {
@@ -184,48 +193,6 @@ const hasStageErrors = (errors: StageSettingsValidationErrors): boolean =>
 
 const hasSectionErrors = (errors: SectionSettingsValidationErrors): boolean =>
   Object.values(errors).some(Boolean)
-
-export const isValidStageTimeRange = (
-  plannedStartTime: LocalTime,
-  plannedEndTime?: LocalTime,
-): boolean => {
-  if (!isValidLocalTime(plannedStartTime)) return false
-  if (plannedEndTime === undefined) return true
-  if (!isValidLocalTime(plannedEndTime)) return false
-
-  return parseLocalTimeToMinute(plannedStartTime) <
-    parseLocalTimeToMinute(plannedEndTime)
-}
-
-export const isSectionWithinStageTimeRange = (
-  stage: Pick<Stage, 'plannedStartTime' | 'plannedEndTime'>,
-  section: Pick<Section, 'plannedStartTime' | 'plannedEndTime'>,
-): boolean => {
-  if (!isValidStageTimeRange(stage.plannedStartTime, stage.plannedEndTime)) return false
-  if (section.plannedStartTime !== undefined &&
-    !isValidLocalTime(section.plannedStartTime)) return false
-  if (section.plannedEndTime !== undefined &&
-    !isValidLocalTime(section.plannedEndTime)) return false
-  if (section.plannedStartTime !== undefined &&
-    section.plannedEndTime !== undefined &&
-    !isValidStageTimeRange(section.plannedStartTime, section.plannedEndTime)) return false
-
-  const stageStart = parseLocalTimeToMinute(stage.plannedStartTime)
-  const stageEnd = stage.plannedEndTime === undefined
-    ? undefined
-    : parseLocalTimeToMinute(stage.plannedEndTime)
-  const sectionStart = section.plannedStartTime === undefined
-    ? undefined
-    : parseLocalTimeToMinute(section.plannedStartTime)
-  const sectionEnd = section.plannedEndTime === undefined
-    ? undefined
-    : parseLocalTimeToMinute(section.plannedEndTime)
-
-  return (sectionStart === undefined ||
-    (sectionStart >= stageStart && (stageEnd === undefined || sectionStart < stageEnd))) &&
-    (sectionEnd === undefined ||
-      (sectionEnd > stageStart && (stageEnd === undefined || sectionEnd <= stageEnd)))
-}
 
 export const canSetStageStartTime = (
   stage: Pick<Stage, 'id' | 'plannedEndTime'>,
@@ -507,7 +474,7 @@ export const STAGE_DELETE_BLOCKED_MESSAGE =
   'このStageにはSection、タイムテーブル、固定配置、TT固定、出演順制約、PA担当、または一般業務担当の設定があるため削除できません。関連する設定を先に解除してください。'
 
 export const SECTION_DELETE_BLOCKED_MESSAGE =
-  'このSectionにはタイムテーブル、固定配置、TT固定、または出演順制約の設定があるため削除できません。関連する設定を先に解除してください。'
+  'このSectionにはタイムテーブル、固定配置、TT固定、出演順制約、PA担当、または一般業務担当の設定があるため削除できません。関連する設定を先に解除してください。'
 
 export const FIRST_SECTION_ADD_BLOCKED_MESSAGE =
   'このStageにはタイムテーブルまたは出演順制約が設定されています。Sectionを追加するには、先に関連する設定を解除してください。'
@@ -541,6 +508,8 @@ export const canDeleteSection = (
     eventBands,
     timetableLocks,
     timetableOrderConstraints,
+    paAssignments,
+    dutyAssignments,
   }: SectionReferences,
 ): boolean =>
   !scheduleItems.some((scheduleItem) =>
@@ -553,7 +522,11 @@ export const canDeleteSection = (
   ) &&
   !timetableLocks.some((lock) => lock.sectionId === sectionId) &&
   !timetableOrderConstraints.some((constraint) =>
-    constraint.sectionId === sectionId)
+    constraint.sectionId === sectionId) &&
+  !paAssignments.some((assignment) =>
+    getReferencedSectionIds([assignment.from, assignment.until]).includes(sectionId)) &&
+  !dutyAssignments.some((assignment) =>
+    getReferencedSectionIds([assignment.from, assignment.until]).includes(sectionId))
 
 export const canAddFirstSection = (
   stageId: StageId,
@@ -696,6 +669,8 @@ export const createEventStageSettingsUpdate = ({
       eventBands,
       timetableLocks,
       timetableOrderConstraints,
+      paAssignments,
+      dutyAssignments,
     }),
   )
 

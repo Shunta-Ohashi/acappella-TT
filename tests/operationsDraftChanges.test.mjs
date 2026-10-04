@@ -95,3 +95,82 @@ test('dirty比較は参照切れDutyのsemantic referenceを保持し入力を�
   assert.equal(hasDutyDraftChanges(original, duty), false)
   assert.deepEqual(duty, original)
 })
+
+const assertBoundaryDirtyForPaAndDuty = ({ savedFrom, savedUntil, currentFrom,
+  currentUntil, expected }) => {
+  const saved = drafts()
+  const current = structuredClone(saved)
+  saved.pa.items[0].from = savedFrom
+  saved.pa.items[0].until = savedUntil
+  current.pa.items[0].from = currentFrom
+  current.pa.items[0].until = currentUntil
+  saved.duty.assignments[0].from = structuredClone(savedFrom)
+  saved.duty.assignments[0].until = structuredClone(savedUntil)
+  current.duty.assignments[0].from = structuredClone(currentFrom)
+  current.duty.assignments[0].until = structuredClone(currentUntil)
+  assert.equal(hasPaDraftChanges(current.pa, saved.pa), expected)
+  assert.equal(hasDutyDraftChanges(current.duty, saved.duty), expected)
+}
+
+test('PA/Duty dirty比較はBoundary property順と無関係なfieldを無視する', () => {
+  for (const [savedBoundary, reorderedBoundary] of [
+    [
+      { kind: 'schedule-item', scheduleItemId: 'item-1', edge: 'start' },
+      { edge: 'start', scheduleItemId: 'item-1', kind: 'schedule-item', ignored: true },
+    ],
+    [
+      { kind: 'section', sectionId: 'section-2', edge: 'start', offsetMinutes: 0 },
+      { offsetMinutes: 0, edge: 'start', sectionId: 'section-2', kind: 'section', ignored: true },
+    ],
+    [
+      { kind: 'time', time: '13:00' },
+      { time: '13:00', kind: 'time', ignored: true },
+    ],
+  ]) {
+    assertBoundaryDirtyForPaAndDuty({
+      savedFrom: savedBoundary,
+      savedUntil: savedBoundary,
+      currentFrom: reorderedBoundary,
+      currentUntil: reorderedBoundary,
+      expected: false,
+    })
+  }
+})
+
+test('PA/Duty dirty比較はBoundaryの意味変更とundefined offset / 0を区別する', () => {
+  const schedule = { kind: 'schedule-item', scheduleItemId: 'item-1', edge: 'start' }
+  const section = { kind: 'section', sectionId: 'section-1', edge: 'start' }
+  const time = { kind: 'time', time: '13:00' }
+  const cases = [
+    [{ ...schedule, scheduleItemId: 'item-2' }, schedule],
+    [{ ...schedule, edge: 'end' }, schedule],
+    [{ ...section, sectionId: 'section-2' }, section],
+    [{ ...section, offsetMinutes: 5 }, section],
+    [{ ...section, offsetMinutes: 0 }, section],
+    [{ ...time, time: '13:01' }, time],
+  ]
+  for (const [changed, original] of cases) {
+    assertBoundaryDirtyForPaAndDuty({
+      savedFrom: original, savedUntil: original,
+      currentFrom: changed, currentUntil: original,
+      expected: true,
+    })
+    assertBoundaryDirtyForPaAndDuty({
+      savedFrom: original, savedUntil: original,
+      currentFrom: original, currentUntil: changed,
+      expected: true,
+    })
+  }
+})
+
+test('Duty Assignmentの配列順だけが違う場合もdirtyにしない', () => {
+  const { duty } = drafts()
+  duty.assignments.push({
+    ...structuredClone(duty.assignments[0]),
+    draftId: 'second-duty-draft',
+    dutyAssignmentId: 'second-duty',
+  })
+  const reordered = structuredClone(duty)
+  reordered.assignments.reverse()
+  assert.equal(hasDutyDraftChanges(reordered, duty), false)
+})

@@ -16,6 +16,7 @@ import type {
   Member,
   PaAssignment,
   ScheduleItem,
+  Section,
   Stage,
   StageId,
 } from '../domain/models'
@@ -40,6 +41,7 @@ import {
 import { getMemberDisplayName } from '../ui/eventBandPresentation'
 import { DutyAssignmentEditorDialog } from './DutyAssignmentEditorDialog'
 import { hasDutyDraftChanges } from '../ui/operationsDraftChanges'
+import { describeScheduleBoundary } from '../domain/scheduleBoundaries.ts'
 
 export interface DutySettingsHandle {
   hasUnsavedChanges: () => boolean
@@ -55,6 +57,7 @@ interface DutySettingsProps {
   event: Event
   eventDays: EventDay[]
   stages: Stage[]
+  sections: Section[]
   members: Member[]
   eventMembers: EventMember[]
   eventMemberDays: EventMemberDay[]
@@ -97,6 +100,7 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
     event,
     eventDays,
     stages,
+    sections,
     members,
     eventMembers,
     eventMemberDays,
@@ -171,19 +175,24 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
     }
 
     const getBoundaryLabel = (item: DutyAssignmentDraftItem) => {
-      const describe = (boundary: DutyAssignmentDraftItem['from']) => {
-        const scheduleItem = scheduleItemById.get(boundary.scheduleItemId)
-        if (!scheduleItem) return '参照先なし'
-        const name = scheduleItem.kind === 'break'
+      const describe = (boundary: DutyAssignmentDraftItem['from']) =>
+        describeScheduleBoundary(boundary, {
+          scheduleItemLabel: (id) => {
+            const scheduleItem = scheduleItemById.get(id)
+            if (!scheduleItem) return undefined
+            return scheduleItem.kind === 'break'
           ? scheduleItem.title
           : eventBandById.get(scheduleItem.eventBandId)?.name ?? '不明なバンド'
-        return `${name} ${boundary.edge === 'start' ? '開始' : '終了'}`
-      }
+          },
+          sectionLabel: (id) => sections.find((section) => section.id === id)?.name,
+        })
       return `${describe(item.from)} → ${describe(item.until)}`
     }
 
     const getTimeLabel = (item: DutyAssignmentDraftItem) => {
-      const resolution = resolveDutyAssignmentInterval(item, calculatedItems)
+      const resolution = resolveDutyAssignmentInterval(
+        item, calculatedItems, { stages, sections },
+      )
       return resolution.ok
         ? `${formatMinuteAsLocalTime(resolution.interval.fromMinute)}〜${formatMinuteAsLocalTime(resolution.interval.untilMinute)}`
         : '参照エラー'
@@ -213,6 +222,7 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
         event,
         eventDays,
         stages,
+        sections,
         members,
         eventMembers,
         eventMemberDays,
@@ -295,8 +305,8 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
       const item = createDutyAssignmentDraftItem({
         draftId: createDraftId(),
         dutyTypeDraftId: draft.dutyTypes[0].draftId,
-        eventDayId: selectedStage.eventDayId,
-        stageId: selectedStage.id,
+        stage: selectedStage,
+        sections,
         calculatedItems,
       })
       if (item) setAssignmentEditor({ item, isNew: true })
@@ -458,8 +468,7 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
                 aria-label={`${selectedStage?.name ?? '選択中のStage'}に一般業務担当を追加`}
                 disabled={
                   !selectedStage ||
-                  draft.dutyTypes.length === 0 ||
-                  calculatedItems.every((item) => item.stageId !== selectedStage.id)
+                  draft.dutyTypes.length === 0
                 }
                 onClick={openNewAssignment}
               >＋ 担当を追加</button>
@@ -611,6 +620,7 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
             event={event}
             eventDays={eventDays}
             stages={stages}
+            sections={sections}
             members={members}
             eventMembers={eventMembers}
             eventMemberDays={eventMemberDays}

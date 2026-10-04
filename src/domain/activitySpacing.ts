@@ -9,6 +9,7 @@ import type {
 } from './models'
 import { resolveDutyAssignmentInterval } from './dutyAssignments.ts'
 import { resolvePaAssignmentInterval } from './paAssignments.ts'
+import type { ScheduleBoundaryResolutionContext } from './scheduleBoundaries.ts'
 import type { CalculatedScheduleItem } from './timeline'
 
 export type MemberActivityKind = 'performance' | 'pa' | 'duty'
@@ -337,11 +338,12 @@ export const buildPerformanceActivities = (
 export const buildPaActivities = (
   assignments: readonly PaAssignment[],
   calculatedItems: CalculatedScheduleItem[],
+  context?: ScheduleBoundaryResolutionContext,
 ): BuildMemberActivitiesResult => {
   const activities: MemberActivity[] = []
   const unresolved: UnresolvedActivitySource[] = []
   for (const assignment of assignments) {
-    const result = resolvePaAssignmentInterval(assignment, calculatedItems)
+    const result = resolvePaAssignmentInterval(assignment, calculatedItems, context)
     if (!result.ok) {
       unresolved.push({ id: assignment.id, reason: result.reason })
       continue
@@ -361,11 +363,12 @@ export const buildPaActivities = (
 export const buildDutyActivities = (
   assignments: readonly DutyAssignment[],
   calculatedItems: CalculatedScheduleItem[],
+  context?: ScheduleBoundaryResolutionContext,
 ): BuildMemberActivitiesResult => {
   const activities: MemberActivity[] = []
   const unresolved: UnresolvedActivitySource[] = []
   for (const assignment of assignments) {
-    const result = resolveDutyAssignmentInterval(assignment, calculatedItems)
+    const result = resolveDutyAssignmentInterval(assignment, calculatedItems, context)
     if (!result.ok) {
       unresolved.push({ id: assignment.id, reason: result.reason })
       continue

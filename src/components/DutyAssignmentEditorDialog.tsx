@@ -8,6 +8,7 @@ import type {
   Member,
   PaAssignment,
   ScheduleItem,
+  Section,
   Stage,
 } from '../domain/models'
 import type { CalculatedScheduleItem } from '../domain/timeline'
@@ -21,11 +22,13 @@ import {
   type DutyAssignmentItemErrors,
   type DutyTypeDraftItem,
 } from '../domain/dutyAssignments'
+import { AssignmentRangeFields } from './AssignmentRangeFields.tsx'
 
 interface DutyAssignmentEditorDialogProps {
   event: Event
   eventDays: EventDay[]
   stages: Stage[]
+  sections: Section[]
   members: Member[]
   eventMembers: EventMember[]
   eventMemberDays: EventMemberDay[]
@@ -44,6 +47,7 @@ export function DutyAssignmentEditorDialog({
   event,
   eventDays,
   stages,
+  sections,
   members,
   eventMembers,
   eventMemberDays,
@@ -118,27 +122,6 @@ export function DutyAssignmentEditorDialog({
       label: `${getItemLabel(calculatedItem)} 終了（${formatMinuteAsLocalTime(calculatedItem.plannedEndMinute)}）`,
     },
   ])
-  const boundaryOptionValues = new Set(
-    boundaryOptions.map((option) => option.value),
-  )
-  const fromBoundaryValue = `${draft.from.scheduleItemId}|${draft.from.edge}`
-  const untilBoundaryValue = `${draft.until.scheduleItemId}|${draft.until.edge}`
-  const hasValidFromBoundary = boundaryOptionValues.has(fromBoundaryValue)
-  const hasValidUntilBoundary = boundaryOptionValues.has(untilBoundaryValue)
-
-  const updateBoundary = (field: 'from' | 'until', value: string) => {
-    if (!value) return
-    const separatorIndex = value.lastIndexOf('|')
-    setDraft((previous) => ({
-      ...previous,
-      [field]: {
-        scheduleItemId: value.slice(0, separatorIndex),
-        edge: value.slice(separatorIndex + 1) as 'start' | 'end',
-      },
-    }))
-    setErrors({})
-  }
-
   const handleSubmit = (submitEvent: FormEvent<HTMLFormElement>) => {
     submitEvent.preventDefault()
     const validationErrors = validateDutyAssignmentDraftItem({
@@ -147,6 +130,7 @@ export function DutyAssignmentEditorDialog({
       event,
       eventDays,
       stages,
+      sections,
       members,
       eventMembers,
       eventMemberDays,
@@ -232,43 +216,20 @@ export function DutyAssignmentEditorDialog({
             </select>
           </label>
 
-          <label htmlFor="duty-assignment-from">
-            担当開始
-            <select
-              id="duty-assignment-from"
-              value={hasValidFromBoundary ? fromBoundaryValue : ''}
-              aria-invalid={errors.interval ? 'true' : undefined}
-              onChange={(event) => updateBoundary('from', event.target.value)}
-            >
-              {!hasValidFromBoundary && (
-                <option value="" disabled>
-                  修復先Stageの開始位置を選択してください
-                </option>
-              )}
-              {boundaryOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-
-          <label htmlFor="duty-assignment-until">
-            担当終了
-            <select
-              id="duty-assignment-until"
-              value={hasValidUntilBoundary ? untilBoundaryValue : ''}
-              aria-invalid={errors.interval ? 'true' : undefined}
-              onChange={(event) => updateBoundary('until', event.target.value)}
-            >
-              {!hasValidUntilBoundary && (
-                <option value="" disabled>
-                  修復先Stageの終了位置を選択してください
-                </option>
-              )}
-              {boundaryOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
+          <AssignmentRangeFields
+            idPrefix="duty-assignment"
+            stage={stage}
+            sections={sections}
+            calculatedItems={stageCalculatedItems}
+            boundaryOptions={boundaryOptions}
+            from={draft.from}
+            until={draft.until}
+            invalid={Boolean(errors.interval)}
+            onChange={(range) => {
+              setDraft((previous) => ({ ...previous, ...range }))
+              setErrors({})
+            }}
+          />
         </div>
 
         {participationWarning && (

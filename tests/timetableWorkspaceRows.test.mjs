@@ -99,6 +99,15 @@ const calculatedItems = [
   },
 ]
 
+const stages = [{
+  id: 'stage-1', eventDayId: 'day-1', name: 'Main', order: 0,
+  plannedStartTime: '10:00', plannedEndTime: '18:00',
+}]
+const sections = [{
+  id: 'section-1', stageId: 'stage-1', name: '第1部', order: 0,
+  plannedStartTime: '10:00', plannedEndTime: '10:29',
+}]
+
 const createRows = (overrides = {}) => createTimetableWorkspaceRows({
   eventDayId: 'day-1',
   stageId: 'stage-1',
@@ -110,6 +119,8 @@ const createRows = (overrides = {}) => createTimetableWorkspaceRows({
   dutyTypes: [],
   dutyAssignments: [],
   issues: [],
+  stages,
+  sections,
   ...overrides,
 })
 
@@ -128,8 +139,8 @@ const assignment = ({
   stageId: 'stage-1',
   memberId,
   role,
-  from: { scheduleItemId: fromId, edge: fromEdge },
-  until: { scheduleItemId: untilId, edge: untilEdge },
+  from: { kind: "schedule-item", scheduleItemId: fromId, edge: fromEdge },
+  until: { kind: "schedule-item", scheduleItemId: untilId, edge: untilEdge },
 })
 
 const dutyTypes = [
@@ -151,8 +162,8 @@ const dutyAssignment = ({
   eventDayId: 'day-1',
   stageId: 'stage-1',
   memberId,
-  from: { scheduleItemId: fromId, edge: fromEdge },
-  until: { scheduleItemId: untilId, edge: untilEdge },
+  from: { kind: "schedule-item", scheduleItemId: fromId, edge: fromEdge },
+  until: { kind: "schedule-item", scheduleItemId: untilId, edge: untilEdge },
 })
 
 test('Timeline順にPerformance・Breakのrowを作り、出演枠へ転換時間を混ぜない', () => {
@@ -339,6 +350,38 @@ test('通常のPA区間はrowへ表示し、transitionだけの有効区間はGr
     fromMinute: 610,
     untilMinute: 612,
   }])
+})
+
+test('Section/time境界のPA・Dutyもresolved intervalに基づいてGridへcoverageする', () => {
+  const result = createRows({
+    dutyTypes,
+    paAssignments: [{
+      ...assignment({
+        id: 'section-pa', role: 'main', fromId: 'performance-1', untilId: 'break-1',
+      }),
+      from: { kind: 'section', sectionId: 'section-1', edge: 'start' },
+      until: { kind: 'section', sectionId: 'section-1', edge: 'end' },
+    }],
+    dutyAssignments: [{
+      ...dutyAssignment({
+        id: 'time-duty', fromId: 'performance-1', untilId: 'break-1',
+      }),
+      from: { kind: 'time', time: '10:12' },
+      until: { kind: 'time', time: '10:20' },
+    }],
+  })
+
+  assert.deepEqual(
+    result.rows.map((row) => row.paCoverage.main.map((coverage) => coverage.assignmentId)),
+    [['section-pa'], ['section-pa'], ['section-pa']],
+  )
+  assert.deepEqual(
+    result.rows.map((row) =>
+      row.dutyCoverage['duty-photo'].map((coverage) => coverage.assignmentId)),
+    [[], ['time-duty'], ['time-duty']],
+  )
+  assert.deepEqual(result.unresolvedPaAssignments, [])
+  assert.deepEqual(result.unresolvedDutyAssignments, [])
 })
 
 test('Assignment終了と次row開始が同時刻ならhalf-open区間として次rowをcoverしない', () => {

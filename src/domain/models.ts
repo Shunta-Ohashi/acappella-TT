@@ -31,10 +31,22 @@ export interface PaCapabilities {
 
 export type PaRole = 'main' | 'sub'
 
-export interface ScheduleBoundary {
-  scheduleItemId: ScheduleItemId
-  edge: 'start' | 'end'
-}
+export type ScheduleBoundary =
+  | {
+      kind: 'schedule-item'
+      scheduleItemId: ScheduleItemId
+      edge: 'start' | 'end'
+    }
+  | {
+      kind: 'section'
+      sectionId: SectionId
+      edge: 'start' | 'end'
+      offsetMinutes?: number
+    }
+  | {
+      kind: 'time'
+      time: LocalTime
+    }
 
 export type FixedPosition =
   | { kind: 'first' }
