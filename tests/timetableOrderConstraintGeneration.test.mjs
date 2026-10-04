@@ -46,6 +46,30 @@ const blockInput = ({ unrelated = 0 } = {}) => {
   return input
 }
 
+const setBandAvailabilityFrom = (input, bandIds, from) => {
+  const memberIds = new Set(input.eventBands
+    .filter(band => bandIds.includes(band.id))
+    .flatMap(band => band.memberIds))
+  const eventMemberIds = new Set(input.eventMembers
+    .filter(member => memberIds.has(member.memberId))
+    .map(member => member.id))
+  input.eventMemberDays.filter(day => eventMemberIds.has(day.eventMemberId))
+    .forEach(day => { day.availabilityWindows = [{ from }] })
+}
+
+const blockPlacementInput = ({ unrelated = 0, availableFrom } = {}) => {
+  const input = unconstrainedInput()
+  input.sections.find(section => section.id === 'section-2').plannedStartTime = '12:00'
+  for (let index = 0; index < unrelated; index += 1) {
+    addTargetBand(input, `band-free-${index + 1}`, {
+      stageId: 'stage-a1', sectionId: 'section-1',
+    })
+  }
+  input.timetableOrderConstraints = [orderConstraint()]
+  if (availableFrom) setBandAvailabilityFrom(input, ['band-1', 'band-2'], availableFrom)
+  return input
+}
+
 const laneOrder = (plan, stageId = 'stage-a1', sectionId = 'section-1') =>
   plan.placements.filter(item => item.stageId === stageId && item.sectionId === sectionId)
     .sort((left, right) => left.order - right.order)
@@ -65,6 +89,102 @@ test('generatorは出演順を連続Performance blockとして配置し、同じ
   assertContiguous(laneOrder(result.plan), ['band-1', 'band-3', 'band-2'])
   assert.deepEqual(generateTimetablePlan(input), result)
   assert.deepEqual(input, original)
+})
+
+test('block start 0がfeasibleなら先頭の合法配置で成功する', () => {
+  const input = blockPlacementInput({ unrelated: 2 })
+  const result = generateTimetablePlan(input)
+  assert.equal(result.ok, true)
+  assert.equal(laneOrder(result.plan).indexOf('band-1'), 0)
+})
+
+test('先頭配置がrejectされてもstart 1の合法配置を評価して成功する', () => {
+  const input = blockPlacementInput({ unrelated: 1, availableFrom: '10:10' })
+  const result = generateTimetablePlan(input)
+  assert.equal(result.ok, true)
+  assert.equal(laneOrder(result.plan).indexOf('band-1'), 1)
+})
+
+test('start 0と1がrejectされてもstart 2の合法配置を評価して成功する', () => {
+  const input = blockPlacementInput({ unrelated: 2, availableFrom: '10:20' })
+  const original = structuredClone(input)
+  const result = generateTimetablePlan(input)
+  assert.equal(result.ok, true)
+  assert.equal(laneOrder(result.plan).indexOf('band-1'), 2)
+  assert.deepEqual(generateTimetablePlan(input), result)
+  assert.deepEqual(input, original)
+})
+
+test('最後尾のblock配置だけがfeasibleでも探索して成功する', () => {
+  const input = blockPlacementInput({ unrelated: 3, availableFrom: '10:30' })
+  const result = generateTimetablePlan(input)
+  assert.equal(result.ok, true)
+  assert.equal(laneOrder(result.plan).indexOf('band-1'), 3)
+})
+
+test('複数blockの最初の配置組み合わせがrejectされても別の組み合わせで成功する', () => {
+  const input = unconstrainedInput()
+  input.sections.find(section => section.id === 'section-2').plannedStartTime = '12:00'
+  addTargetBand(input, 'band-3')
+  addTargetBand(input, 'band-4')
+  input.timetableOrderConstraints = [
+    orderConstraint({ id: 'order-a', eventBandIds: ['band-1', 'band-2'] }),
+    orderConstraint({ id: 'order-b', eventBandIds: ['band-3', 'band-4'] }),
+  ]
+  setBandAvailabilityFrom(input, ['band-1', 'band-2'], '10:20')
+  const result = generateTimetablePlan(input)
+  assert.equal(result.ok, true)
+  assert.deepEqual(laneOrder(result.plan), ['band-3', 'band-4', 'band-1', 'band-2'])
+})
+
+test('variantのrotationとreverseに現れない複数block配置も探索する', () => {
+  const input = unconstrainedInput()
+  input.sections.find(section => section.id === 'section-2').plannedStartTime = '12:00'
+  for (let index = 3; index <= 8; index += 1) addTargetBand(input, `band-${index}`)
+  input.timetableOrderConstraints = [
+    orderConstraint({ id: 'block-a', eventBandIds: ['band-1', 'band-2'] }),
+    orderConstraint({ id: 'block-b', eventBandIds: ['band-3', 'band-4'] }),
+    orderConstraint({ id: 'block-c', eventBandIds: ['band-5', 'band-6'] }),
+    orderConstraint({ id: 'block-d', eventBandIds: ['band-7', 'band-8'] }),
+  ]
+  for (const [bandIds, range] of [
+    [['band-3', 'band-4'], { from: '10:00', until: '10:20' }],
+    [['band-7', 'band-8'], { from: '10:20', until: '10:40' }],
+    [['band-1', 'band-2'], { from: '10:40', until: '11:00' }],
+    [['band-5', 'band-6'], { from: '11:00', until: '11:20' }],
+  ]) input.eventBands.filter(band => bandIds.includes(band.id))
+    .forEach(band => { band.availableTimeRange = range })
+
+  const result = generateTimetablePlan(input)
+  assert.equal(result.ok, true)
+  assert.deepEqual(laneOrder(result.plan), [
+    'band-3', 'band-4', 'band-7', 'band-8',
+    'band-1', 'band-2', 'band-5', 'band-6',
+  ])
+})
+
+test('duplicate block proposalはattemptedSchedulesへ重複計上しない', () => {
+  const input = blockPlacementInput({ availableFrom: '11:00' })
+  const result = generateTimetablePlan(input)
+  assert.equal(result.ok, false)
+  assert.equal(result.failure.code, 'NO_FEASIBLE_SCHEDULE')
+  assert.equal(result.failure.attemptedSchedules, 1)
+})
+
+test('candidate上限後に未評価unique block配置が残る場合だけSEARCH_LIMIT_REACHEDにする', () => {
+  const limited = blockPlacementInput({ unrelated: 2, availableFrom: '10:20' })
+  limited.options = { maxScheduleCandidates: 1 }
+  const limitedResult = generateTimetablePlan(limited)
+  assert.equal(limitedResult.ok, false)
+  assert.equal(limitedResult.failure.code, 'SEARCH_LIMIT_REACHED')
+  assert.equal(limitedResult.failure.attemptedSchedules, 1)
+
+  const exhaustive = blockPlacementInput({ unrelated: 2, availableFrom: '11:00' })
+  exhaustive.options = { maxScheduleCandidates: 24 }
+  const exhaustiveResult = generateTimetablePlan(exhaustive)
+  assert.equal(exhaustiveResult.ok, false)
+  assert.notEqual(exhaustiveResult.failure.code, 'SEARCH_LIMIT_REACHED')
+  assert.ok(exhaustiveResult.failure.attemptedSchedules > 1)
 })
 
 test('compatibleな複数fragmentを1つの連続blockへ統合する', () => {

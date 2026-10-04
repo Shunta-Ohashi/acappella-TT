@@ -181,15 +181,18 @@ const buildOrderBlocksByLane = (
   return result
 }
 
-const applyLaneOrderBlocks = (
+const applyLaneOrderBlocks = function* (
   indexes: number[],
   slots: (EventBand | undefined)[],
   reserved: Set<number>,
   blocks: string[][] | undefined,
-): boolean => {
-  if (!blocks?.length) return true
+): Generator<EventBand[]> {
   const bands = indexes.map(index => slots[index]).filter((band): band is EventBand => band !== undefined)
-  if (bands.length !== indexes.length) return false
+  if (bands.length !== indexes.length) return
+  if (!blocks?.length) {
+    yield bands
+    return
+  }
   const bandById = new Map(bands.map(band => [band.id, band]))
   const rank = new Map(bands.map((band, index) => [band.id, index]))
   const fixedPositionByBand = new Map<string, number>()
@@ -200,7 +203,7 @@ const applyLaneOrderBlocks = (
   const blockBandIds = new Set<string>()
   for (const block of blocks) {
     for (const bandId of block) {
-      if (!bandById.has(bandId) || blockBandIds.has(bandId)) return false
+      if (!bandById.has(bandId) || blockBandIds.has(bandId)) return
       blockBandIds.add(bandId)
     }
   }
@@ -223,7 +226,7 @@ const applyLaneOrderBlocks = (
   for (const [bandId, position] of fixedPositionByBand) {
     if (blockBandIds.has(bandId)) continue
     const band = bandById.get(bandId)
-    if (!band || ordered[position] !== undefined) return false
+    if (!band || ordered[position] !== undefined) return
     ordered[position] = band
   }
   const freeBlocks: string[][] = []
@@ -236,13 +239,27 @@ const applyLaneOrderBlocks = (
       freeBlocks.push(block)
       continue
     }
-    if (new Set(starts).size !== 1 || !placeBlock(block, starts[0])) return false
+    if (new Set(starts).size !== 1 || !placeBlock(block, starts[0])) return
   }
   freeBlocks.sort((left, right) => right.length - left.length ||
     Math.min(...left.map(id => rank.get(id) ?? 0)) - Math.min(...right.map(id => rank.get(id) ?? 0)) ||
     left.join('\u0000').localeCompare(right.join('\u0000')))
-  const placeFreeBlocks = (blockIndex: number): boolean => {
-    if (blockIndex === freeBlocks.length) return true
+  const freeBands = bands.filter(band => !blockBandIds.has(band.id) &&
+    !fixedPositionByBand.has(band.id)).sort((left, right) =>
+    (rank.get(left.id) ?? 0) - (rank.get(right.id) ?? 0) || left.id.localeCompare(right.id))
+  const placeFreeBlocks = function* (blockIndex: number): Generator<EventBand[]> {
+    if (blockIndex === freeBlocks.length) {
+      const completed = [...ordered]
+      let freeIndex = 0
+      for (let position = 0; position < completed.length; position += 1) {
+        if (completed[position] !== undefined) continue
+        completed[position] = freeBands[freeIndex++]
+      }
+      if (freeIndex === freeBands.length && completed.every(band => band !== undefined)) {
+        yield completed as EventBand[]
+      }
+      return
+    }
     const block = freeBlocks[blockIndex]
     const preferredStart = Math.min(...block.map(id => rank.get(id) ?? 0))
     const starts = Array.from({ length: ordered.length - block.length + 1 }, (_, index) => index)
@@ -250,24 +267,11 @@ const applyLaneOrderBlocks = (
         left - right)
     for (const start of starts) {
       if (!placeBlock(block, start)) continue
-      if (placeFreeBlocks(blockIndex + 1)) return true
+      yield* placeFreeBlocks(blockIndex + 1)
       for (let offset = 0; offset < block.length; offset += 1) ordered[start + offset] = undefined
     }
-    return false
   }
-  if (!placeFreeBlocks(0)) return false
-
-  const freeBands = bands.filter(band => !blockBandIds.has(band.id) &&
-    !fixedPositionByBand.has(band.id)).sort((left, right) =>
-    (rank.get(left.id) ?? 0) - (rank.get(right.id) ?? 0) || left.id.localeCompare(right.id))
-  let freeIndex = 0
-  for (let position = 0; position < ordered.length; position += 1) {
-    if (ordered[position] !== undefined) continue
-    ordered[position] = freeBands[freeIndex++]
-  }
-  if (freeIndex !== freeBands.length || ordered.some(band => band === undefined)) return false
-  indexes.forEach((globalIndex, localIndex) => { slots[globalIndex] = ordered[localIndex] })
-  return true
+  yield* placeFreeBlocks(0)
 }
 
 const createLanes = (
@@ -292,15 +296,20 @@ const createLanes = (
   })
 })
 
-const orderStageBands = (
+const orderStageBands = function* (
   lanes: GenerationLane[],
   assigned: Map<string, EventBand[]>,
   allowedLaneKeysByBand: Map<string, Set<string>>,
   locksByBand: Map<string, TimetableLock>,
   orderBlocksByLane: OrderBlocksByLane,
   variant: number,
-): Map<string, EventBand[]> | undefined => {
-  const ordered = new Map<string, EventBand[]>()
+): Generator<Map<string, EventBand[]>> {
+  const laneContexts: Array<{
+    lane: GenerationLane
+    indexes: number[]
+    slots: (EventBand | undefined)[]
+    reserved: Set<number>
+  }> = []
   for (const stageId of new Set(lanes.map(lane => lane.stage.id))) {
     const stageLanes = lanes.filter(lane => lane.stage.id === stageId)
     const preferredLaneByBand = new Map<string, string>()
@@ -338,14 +347,14 @@ const orderStageBands = (
         : undefined
       if ((fixed?.position && fixedIndex === undefined) || (lock && lockedIndex === undefined) ||
         (fixedIndex !== undefined && lockedIndex !== undefined && fixedIndex !== lockedIndex)) {
-        return undefined
+        return
       }
       const index = lockedIndex ?? fixedIndex
       if (index === undefined) continue
       const lane = slotLanes[index]
       if (!lane || reserved.has(index) ||
         (allowedLaneKeysByBand.has(band.id) && !allowedLaneKeysByBand.get(band.id)?.has(lane.key))) {
-        return undefined
+        return
       }
       slots[index] = band
       reserved.add(index)
@@ -372,21 +381,42 @@ const orderStageBands = (
     }
     const remaining = stageBands.filter(band => !slots.includes(band))
     for (const band of remaining) {
-      if (!place(band, new Set())) return undefined
+      if (!place(band, new Set())) return
     }
     for (const lane of stageLanes) {
-      if (!applyLaneOrderBlocks(indexesByLane.get(lane.key) ?? [], slots, reserved,
-        orderBlocksByLane.get(lane.key))) return undefined
-    }
-    for (const lane of stageLanes) {
-      ordered.set(lane.key, (indexesByLane.get(lane.key) ?? [])
-        .map(index => slots[index]).filter((band): band is EventBand => band !== undefined))
+      laneContexts.push({
+        lane,
+        indexes: indexesByLane.get(lane.key) ?? [],
+        slots,
+        reserved,
+      })
     }
   }
-  return ordered
+
+  const visitLane = function* (
+    laneIndex: number,
+    ordered: Map<string, EventBand[]>,
+  ): Generator<Map<string, EventBand[]>> {
+    if (laneIndex === laneContexts.length) {
+      yield ordered
+      return
+    }
+    const context = laneContexts[laneIndex]
+    for (const laneBands of applyLaneOrderBlocks(
+      context.indexes,
+      context.slots,
+      context.reserved,
+      orderBlocksByLane.get(context.lane.key),
+    )) {
+      const next = new Map(ordered)
+      next.set(context.lane.key, laneBands)
+      yield* visitLane(laneIndex + 1, next)
+    }
+  }
+  yield* visitLane(0, new Map())
 }
 
-const buildProposal = ({
+const buildProposals = function* ({
   variant, bands, lanes, originalItems, targetStageIds, existingByBand,
   allowedLaneKeysByBand, locksByBand, internalIds,
   orderBlocksByLane,
@@ -401,7 +431,7 @@ const buildProposal = ({
   locksByBand: Map<string, TimetableLock>
   orderBlocksByLane: OrderBlocksByLane
   internalIds: Map<string, string>
-}): ScheduleProposal | undefined => {
+}): Generator<ScheduleProposal> {
   const laneByKey = new Map(lanes.map(lane => [lane.key, lane]))
   const assigned = new Map(lanes.map(lane => [lane.key, [] as EventBand[]]))
   const load = new Map(lanes.map(lane => [lane.key, lane.estimatedMinutes]))
@@ -423,7 +453,7 @@ const buildProposal = ({
   if (variant % 2) rotated.reverse()
   for (const band of forced) {
     const key = allowedLaneKeysByBand.get(band.id)?.values().next().value
-    if (!key || !laneByKey.has(key)) return undefined
+    if (!key || !laneByKey.has(key)) return
     assigned.get(key)?.push(band)
     load.set(key, (load.get(key) ?? 0n) + BigInt(band.durationMinutes))
   }
@@ -441,81 +471,80 @@ const buildProposal = ({
           ((lanes.indexOf(right) + variant) % lanes.length)
     })
     const chosen = choices[0]
-    if (!chosen) return undefined
+    if (!chosen) return
     assigned.get(chosen.key)?.push(band)
     load.set(chosen.key, (load.get(chosen.key) ?? 0n) + BigInt(band.durationMinutes))
   }
-  const orderedByLane = orderStageBands(
+  for (const orderedByLane of orderStageBands(
     lanes, assigned, allowedLaneKeysByBand, locksByBand, orderBlocksByLane, variant,
-  )
-  if (!orderedByLane) return undefined
+  )) {
+    const items: ScheduleItem[] = originalItems.filter(item =>
+      !targetStageIds.has(item.stageId) &&
+      !(item.kind === 'performance' && existingByBand.has(item.eventBandId)))
+    const placements: PlannedBandPlacement[] = []
+    const breakPlacements: PlannedBreakPlacement[] = []
+    const keyParts: string[] = []
+    for (const lane of lanes) {
+      const orderedBands = orderedByLane.get(lane.key) ?? []
+      keyParts.push(`${lane.key}:${orderedBands.map(band => band.id).join(',')}`)
 
-  const items: ScheduleItem[] = originalItems.filter(item =>
-    !targetStageIds.has(item.stageId) &&
-    !(item.kind === 'performance' && existingByBand.has(item.eventBandId)))
-  const placements: PlannedBandPlacement[] = []
-  const breakPlacements: PlannedBreakPlacement[] = []
-  const keyParts: string[] = []
-  for (const lane of lanes) {
-    const orderedBands = orderedByLane.get(lane.key) ?? []
-    keyParts.push(`${lane.key}:${orderedBands.map(band => band.id).join(',')}`)
-
-    const oldLaneItems = originalItems.filter(item => item.stageId === lane.stage.id &&
-      item.sectionId === lane.section?.id).sort(compareScheduleItemOrder)
-    const breaksByBeforeCount = new Map<number, typeof lane.breaks>()
-    let priorPerformances = 0
-    for (const oldItem of oldLaneItems) {
-      if (oldItem.kind === 'performance') {
-        priorPerformances += 1
-      } else if (oldItem.kind === 'break') {
-        const before = Math.min(priorPerformances, orderedBands.length)
-        const group = breaksByBeforeCount.get(before) ?? []
-        group.push(oldItem)
-        breaksByBeforeCount.set(before, group)
+      const oldLaneItems = originalItems.filter(item => item.stageId === lane.stage.id &&
+        item.sectionId === lane.section?.id).sort(compareScheduleItemOrder)
+      const breaksByBeforeCount = new Map<number, typeof lane.breaks>()
+      let priorPerformances = 0
+      for (const oldItem of oldLaneItems) {
+        if (oldItem.kind === 'performance') {
+          priorPerformances += 1
+        } else if (oldItem.kind === 'break') {
+          const before = Math.min(priorPerformances, orderedBands.length)
+          const group = breaksByBeforeCount.get(before) ?? []
+          group.push(oldItem)
+          breaksByBeforeCount.set(before, group)
+        }
       }
-    }
-    let order = 0
-    for (let position = 0; position <= orderedBands.length; position += 1) {
-      for (const breakItem of breaksByBeforeCount.get(position) ?? []) {
-        items.push({ ...breakItem, order })
-        breakPlacements.push({
-          scheduleItemId: breakItem.id, stageId: breakItem.stageId,
-          ...(breakItem.sectionId !== undefined ? { sectionId: breakItem.sectionId } : {}), order,
+      let order = 0
+      for (let position = 0; position <= orderedBands.length; position += 1) {
+        for (const breakItem of breaksByBeforeCount.get(position) ?? []) {
+          items.push({ ...breakItem, order })
+          breakPlacements.push({
+            scheduleItemId: breakItem.id, stageId: breakItem.stageId,
+            ...(breakItem.sectionId !== undefined ? { sectionId: breakItem.sectionId } : {}), order,
+          })
+          order += 1
+        }
+        const band = orderedBands[position]
+        if (!band) continue
+        const existing = existingByBand.get(band.id)
+        const id = existing?.id ?? internalIds.get(band.id)
+        if (!id) return
+        items.push({
+          id, kind: 'performance', eventBandId: band.id,
+          stageId: lane.stage.id,
+          ...(lane.section ? { sectionId: lane.section.id } : {}), order,
+        })
+        placements.push({
+          eventBandId: band.id, stageId: lane.stage.id,
+          ...(lane.section ? { sectionId: lane.section.id } : {}),
+          order, position,
+          ...(existing ? { scheduleItemId: existing.id } : {}),
         })
         order += 1
       }
-      const band = orderedBands[position]
-      if (!band) continue
-      const existing = existingByBand.get(band.id)
-      const id = existing?.id ?? internalIds.get(band.id)
-      if (!id) return undefined
-      items.push({
-        id, kind: 'performance', eventBandId: band.id,
-        stageId: lane.stage.id,
-        ...(lane.section ? { sectionId: lane.section.id } : {}), order,
-      })
-      placements.push({
-        eventBandId: band.id, stageId: lane.stage.id,
-        ...(lane.section ? { sectionId: lane.section.id } : {}),
-        order, position,
-        ...(existing ? { scheduleItemId: existing.id } : {}),
-      })
-      order += 1
     }
-  }
-  // Section-between Breaks have their own immutable placement lane.
-  for (const item of originalItems) {
-    if (item.kind !== 'break' || !targetStageIds.has(item.stageId) ||
-      item.afterSectionId === undefined) continue
-    items.push(item)
-    breakPlacements.push({
-      scheduleItemId: item.id, stageId: item.stageId,
-      afterSectionId: item.afterSectionId, order: item.order,
-    })
-  }
-  return {
-    items, placements, breaks: breakPlacements,
-    internalItemIdByBand: internalIds, key: keyParts.join('|'),
+    // Section-between Breaks have their own immutable placement lane.
+    for (const item of originalItems) {
+      if (item.kind !== 'break' || !targetStageIds.has(item.stageId) ||
+        item.afterSectionId === undefined) continue
+      items.push(item)
+      breakPlacements.push({
+        scheduleItemId: item.id, stageId: item.stageId,
+        afterSectionId: item.afterSectionId, order: item.order,
+      })
+    }
+    yield {
+      items, placements, breaks: breakPlacements,
+      internalItemIdByBand: internalIds, key: keyParts.join('|'),
+    }
   }
 }
 
@@ -915,28 +944,27 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
   const variants = Math.max(1, targetBands.length * 2, lanes.length * 2)
   let scheduleSearchLimitReached = false
   const seen = new Set<string>()
+  scheduleSearch:
   for (let variant = 0; variant < variants; variant += 1) {
-    const proposal = buildProposal({
+    let producedProposal = false
+    for (const proposal of buildProposals({
       variant, bands: targetBands, lanes, originalItems: eventScheduleItems,
       targetStageIds, existingByBand, allowedLaneKeysByBand, locksByBand, internalIds,
       orderBlocksByLane,
-    })
-    if (!proposal) {
-      setLastFailure('NO_FEASIBLE_SCHEDULE')
-      continue
-    }
-    // Duplicate variants are not newly evaluated candidates; retain the last
-    // actual rejection rather than overwriting its diagnostics.
-    if (seen.has(proposal.key)) continue
-    // Scan past duplicate/unbuildable variants even at the cap. Only an
-    // unevaluated unique proposal makes the Schedule search incomplete.
-    if (attemptedSchedules >= options.maxScheduleCandidates) {
-      scheduleSearchLimitReached = true
-      break
-    }
-    seen.add(proposal.key)
-    attemptedSchedules += 1
-    const targetProposalItems = proposal.items.filter(item => targetStageIds.has(item.stageId))
+    })) {
+      producedProposal = true
+      // Duplicate variants and block placements are not newly evaluated candidates;
+      // retain the last actual rejection rather than overwriting its diagnostics.
+      if (seen.has(proposal.key)) continue
+      // Scan past duplicate/unbuildable proposals even at the cap. Only an
+      // unevaluated unique proposal makes the Schedule search incomplete.
+      if (attemptedSchedules >= options.maxScheduleCandidates) {
+        scheduleSearchLimitReached = true
+        break scheduleSearch
+      }
+      seen.add(proposal.key)
+      attemptedSchedules += 1
+      const targetProposalItems = proposal.items.filter(item => targetStageIds.has(item.stageId))
     if (!evaluateScheduledTimetableOrderConstraints({
       timetableOrderConstraints: targetOrderConstraints,
       scheduleItems: targetProposalItems,
@@ -1099,7 +1127,9 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
         bestExactScore = score
       }
     }
-    if (bestExactScore && isPerfectScore(bestExactScore)) break
+      if (bestExactScore && isPerfectScore(bestExactScore)) break scheduleSearch
+    }
+    if (!producedProposal) setLastFailure('NO_FEASIBLE_SCHEDULE')
   }
   if (best) return { ok: true, plan: {
     ...best,
