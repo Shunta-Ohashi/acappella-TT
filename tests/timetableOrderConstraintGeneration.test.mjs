@@ -312,6 +312,81 @@ test('別日の不正制約は隔離し、targetに触れるownership矛盾はfa
   assert.equal(result.failure.attemptedSchedules, 0)
 })
 
+test('同じconstraint IDの無関係な別日制約をtarget generationへ混入させない', () => {
+  const baseline = unconstrainedInput()
+  baseline.timetableOrderConstraints = [orderConstraint({ id: 'shared-id' })]
+  const expected = generateTimetablePlan(baseline)
+  assert.equal(expected.ok, true)
+
+  const input = structuredClone(baseline)
+  input.eventBands.push({ id: 'band-a3', eventId: 'event-a', eventDayId: 'day-a2',
+    name: '翌日2', memberIds: [], durationMinutes: 10 })
+  input.timetableOrderConstraints.push(orderConstraint({
+    id: 'shared-id', eventDayId: 'day-a2', stageId: 'stage-a2', sectionId: undefined,
+    eventBandIds: ['band-a2', 'band-a3'],
+  }))
+  const original = structuredClone(input)
+  const result = generateTimetablePlan(input)
+  assert.deepEqual(result, expected)
+  assert.deepEqual(generateTimetablePlan(input), result)
+  assert.deepEqual(input, original)
+})
+
+test('同じIDの別日constraintがcycle・duplicateでもtargetへ直接触れなければ隔離する', () => {
+  const baseline = unconstrainedInput()
+  baseline.timetableOrderConstraints = [orderConstraint({ id: 'shared-id' })]
+  const expected = generateTimetablePlan(baseline)
+  assert.equal(expected.ok, true)
+
+  const input = structuredClone(baseline)
+  input.eventBands.push({ id: 'band-a3', eventId: 'event-a', eventDayId: 'day-a2',
+    name: '翌日2', memberIds: [], durationMinutes: 10 })
+  input.timetableOrderConstraints.push(
+    orderConstraint({ id: 'shared-id', eventDayId: 'day-a2', stageId: 'stage-a2',
+      sectionId: undefined, eventBandIds: ['band-a2', 'band-a3'] }),
+    orderConstraint({ id: 'shared-id', eventDayId: 'day-a2', stageId: 'stage-a2',
+      sectionId: undefined, eventBandIds: ['band-a3', 'band-a2'] }),
+  )
+  const original = structuredClone(input)
+  assert.deepEqual(generateTimetablePlan(input), expected)
+  assert.deepEqual(input, original)
+})
+
+test('target scope内の同じconstraint IDは引き続きINVALID_ORDER_CONSTRAINTSにする', () => {
+  const input = unconstrainedInput()
+  input.timetableOrderConstraints = [
+    orderConstraint({ id: 'shared-id' }),
+    orderConstraint({ id: 'shared-id', eventBandIds: ['band-2', 'band-1'] }),
+  ]
+  const original = structuredClone(input)
+  assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
+    code: 'INVALID_ORDER_CONSTRAINTS', eventDayId: input.eventDay.id, attemptedSchedules: 0,
+  } })
+  assert.deepEqual(input, original)
+})
+
+test('target Day・Stage・Bandへ触れるforeign ownership制約は引き続きfail closedする', () => {
+  const cases = [
+    orderConstraint({ id: 'touch-day', eventId: 'event-b', stageId: 'stage-b',
+      sectionId: undefined, eventBandIds: ['band-b', 'band-b2'] }),
+    orderConstraint({ id: 'touch-stage', eventId: 'event-b', eventDayId: 'day-b',
+      stageId: 'stage-a1', sectionId: undefined, eventBandIds: ['band-b', 'band-b2'] }),
+    orderConstraint({ id: 'touch-band', eventId: 'event-b', eventDayId: 'day-b',
+      stageId: 'stage-b', sectionId: undefined, eventBandIds: ['band-b', 'band-1'] }),
+  ]
+  for (const timetableOrderConstraint of cases) {
+    const input = unconstrainedInput()
+    input.eventBands.push({ id: 'band-b2', eventId: 'event-b', eventDayId: 'day-b',
+      name: '別Event 2', memberIds: [], durationMinutes: 10 })
+    input.timetableOrderConstraints = [timetableOrderConstraint]
+    const original = structuredClone(input)
+    assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
+      code: 'INVALID_ORDER_CONSTRAINTS', eventDayId: input.eventDay.id, attemptedSchedules: 0,
+    } })
+    assert.deepEqual(input, original)
+  }
+})
+
 test('target日のcycle・block競合・重複ID・lane競合は専用failureになる', () => {
   const cases = [
     [

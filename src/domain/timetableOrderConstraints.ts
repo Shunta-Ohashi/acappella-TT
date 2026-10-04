@@ -113,12 +113,10 @@ export const getTargetTimetableOrderConstraints = ({
   stageIds: ReadonlySet<string>
   eventBandIds: ReadonlySet<string>
 }): TimetableOrderConstraint[] => {
-  const directlyTargetedIds = new Set(timetableOrderConstraints
-    .filter(constraint => constraint.eventDayId === eventDayId ||
-      stageIds.has(constraint.stageId) ||
-      constraint.eventBandIds.some(eventBandId => eventBandIds.has(eventBandId)))
-    .map(constraint => constraint.id))
-  return timetableOrderConstraints.filter(constraint => directlyTargetedIds.has(constraint.id))
+  return timetableOrderConstraints.filter(constraint =>
+    constraint.eventDayId === eventDayId ||
+    stageIds.has(constraint.stageId) ||
+    constraint.eventBandIds.some(eventBandId => eventBandIds.has(eventBandId)))
 }
 
 export const doesFixedPlacementConflictWithOrderConstraint = (

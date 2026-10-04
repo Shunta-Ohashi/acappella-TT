@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   evaluateTimetableOrderConstraints,
   evaluateScheduledTimetableOrderConstraints,
+  getTargetTimetableOrderConstraints,
   isTimetableOrderConstraint,
   mergeTimetableOrderConstraintBlocks,
 } from '../src/domain/timetableOrderConstraints.ts'
@@ -57,6 +58,53 @@ const evaluate = (timetableOrderConstraints, overrides = {}) =>
   })
 
 const codes = (result) => result.violations.map((violation) => violation.code)
+
+test('target出演順制約をDay・Stage・Bandへの直接参照だけで抽出する', () => {
+  const target = constraint({ id: 'shared-id' })
+  const dayTouchingMismatch = constraint({
+    id: 'target-day', eventId: 'event-2', stageId: 'foreign-stage',
+    sectionId: undefined, eventBandIds: ['foreign-band', 'foreign-band-2'],
+  })
+  const stageTouchingMismatch = constraint({
+    id: 'target-stage', eventId: 'event-2', eventDayId: 'foreign-day',
+    sectionId: undefined, eventBandIds: ['foreign-band', 'foreign-band-2'],
+  })
+  const bandTouchingMismatch = constraint({
+    id: 'target-band', eventId: 'event-2', eventDayId: 'foreign-day',
+    stageId: 'foreign-stage', sectionId: undefined,
+    eventBandIds: ['foreign-band', 'band-a'],
+  })
+  const unrelatedWithSameId = constraint({
+    id: target.id, eventDayId: 'day-2', stageId: 'stage-day-2',
+    sectionId: 'section-day-2', eventBandIds: ['band-day-2', 'other-day-band'],
+  })
+  const input = [target, dayTouchingMismatch, stageTouchingMismatch,
+    bandTouchingMismatch, unrelatedWithSameId]
+  const original = structuredClone(input)
+
+  const result = getTargetTimetableOrderConstraints({
+    timetableOrderConstraints: input,
+    eventDayId: 'day-1',
+    stageIds: new Set(['stage-1', 'stage-plain']),
+    eventBandIds: new Set(['band-a', 'band-b', 'band-c', 'band-d']),
+  })
+
+  assert.deepEqual(result, [target, dayTouchingMismatch, stageTouchingMismatch,
+    bandTouchingMismatch])
+  assert.deepEqual(input, original)
+})
+
+test('同じIDを持つtarget制約は両方抽出しduplicateとして評価する', () => {
+  const input = [constraint(), constraint({ eventBandIds: ['band-b', 'band-c'] })]
+  const target = getTargetTimetableOrderConstraints({
+    timetableOrderConstraints: input,
+    eventDayId: 'day-1',
+    stageIds: new Set(['stage-1', 'stage-plain']),
+    eventBandIds: new Set(['band-a', 'band-b', 'band-c', 'band-d']),
+  })
+  assert.deepEqual(target, input)
+  assert.ok(codes(evaluate(target)).includes('DUPLICATE_CONSTRAINT_ID'))
+})
 
 test('一致する出演順fragmentを最大の連続Performance blockへ統合する', () => {
   for (const [constraints, expected] of [
