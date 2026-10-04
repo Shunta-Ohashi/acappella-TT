@@ -4,6 +4,8 @@ export type DeleteConfirmationTarget =
   | 'section'
   | 'event-member'
   | 'event-band'
+  | 'common-member'
+  | 'common-band'
 
 export interface DeleteConfirmationCopy {
   title: string
@@ -51,6 +53,18 @@ export const getDeleteConfirmationCopy = (
       return {
         title: '出演バンドを削除しますか？',
         description: `「${label}」をこのイベントの出演バンドから削除します。保存すると変更が反映されます。`,
+        ...labels,
+      }
+    case 'common-member':
+      return {
+        title: 'メンバーを削除しますか？',
+        description: `「${label}」を共通データから削除します。この操作は元に戻せません。`,
+        ...labels,
+      }
+    case 'common-band':
+      return {
+        title: '固定バンドを削除しますか？',
+        description: `「${label}」を共通データから削除します。この操作は元に戻せません。`,
         ...labels,
       }
   }

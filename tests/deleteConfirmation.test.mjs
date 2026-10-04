@@ -31,8 +31,30 @@ test('参加メンバーと出演バンドの削除確認に対象名を示す',
   assert.match(bandCopy.description, /出演バンドから削除/)
 })
 
+test('共通メンバーと固定バンドの確認は即時削除と取消不可を示す', () => {
+  const memberCopy = getDeleteConfirmationCopy('common-member', '山田 太郎')
+  const bandCopy = getDeleteConfirmationCopy('common-band', 'Choir')
+
+  assert.equal(memberCopy.title, 'メンバーを削除しますか？')
+  assert.match(memberCopy.description, /山田 太郎/)
+  assert.match(memberCopy.description, /この操作は元に戻せません/)
+  assert.doesNotMatch(memberCopy.description, /保存すると/)
+  assert.equal(bandCopy.title, '固定バンドを削除しますか？')
+  assert.match(bandCopy.description, /Choir/)
+  assert.match(bandCopy.description, /この操作は元に戻せません/)
+  assert.doesNotMatch(bandCopy.description, /保存すると/)
+})
+
 test('削除確認の操作ラベルを全対象で共通化する', () => {
-  const targets = ['event-day', 'stage', 'section', 'event-member', 'event-band']
+  const targets = [
+    'event-day',
+    'stage',
+    'section',
+    'event-member',
+    'event-band',
+    'common-member',
+    'common-band',
+  ]
 
   for (const target of targets) {
     const copy = getDeleteConfirmationCopy(target, '対象')

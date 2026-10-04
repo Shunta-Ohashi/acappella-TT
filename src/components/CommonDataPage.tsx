@@ -4,6 +4,12 @@ import type {
   CommonBandDraft,
   CommonBandUpdateResult,
 } from '../domain/commonBands'
+import type {
+  CommonBandDeletionCheck,
+  CommonBandDeletionResult,
+  CommonMemberDeletionCheck,
+  CommonMemberDeletionResult,
+} from '../domain/commonDataDeletion'
 import {
   filterCommonMembers,
   getBandsForMember,
@@ -11,6 +17,8 @@ import {
   type CommonMemberStatusFilter,
   type CommonMemberUpdateResult,
 } from '../domain/commonMembers'
+import { getDeleteConfirmationCopy } from '../ui/deleteConfirmation'
+import { DeleteConfirmationDialog } from './DeleteConfirmationDialog'
 import { MemberEditorDialog } from './MemberEditorDialog'
 import { CommonBandList } from './CommonBandList'
 
@@ -25,6 +33,10 @@ interface CommonDataPageProps {
     bandId: BandId | undefined,
     draft: CommonBandDraft,
   ) => CommonBandUpdateResult
+  checkMemberDeletion: (memberId: MemberId) => CommonMemberDeletionCheck
+  onDeleteMember: (memberId: MemberId) => CommonMemberDeletionResult
+  checkBandDeletion: (bandId: BandId) => CommonBandDeletionCheck
+  onDeleteBand: (bandId: BandId) => CommonBandDeletionResult
 }
 
 type CommonDataSection = 'members' | 'bands'
@@ -33,11 +45,26 @@ type MemberEditorState =
   | { mode: 'edit'; memberId: MemberId }
   | undefined
 
+interface PendingMemberDeletion {
+  memberId: MemberId
+  label: string
+}
+
+const getMemberDeletionError = (
+  result: Exclude<CommonMemberDeletionCheck, { ok: true }>,
+): string => result.reason === 'MEMBER_NOT_FOUND'
+  ? '削除するメンバーが見つかりません。'
+  : 'このメンバーは固定バンドまたはイベントで使用されているため削除できません。サークルを離れたメンバーの場合は「非在籍」に変更してください。'
+
 export function CommonDataPage({
   members,
   bands,
   onSaveMember,
   onSaveBand,
+  checkMemberDeletion,
+  onDeleteMember,
+  checkBandDeletion,
+  onDeleteBand,
 }: CommonDataPageProps) {
   const [activeSection, setActiveSection] =
     useState<CommonDataSection>('members')
@@ -45,6 +72,8 @@ export function CommonDataPage({
   const [statusFilter, setStatusFilter] =
     useState<CommonMemberStatusFilter>('active')
   const [memberEditor, setMemberEditor] = useState<MemberEditorState>()
+  const [pendingDeletion, setPendingDeletion] = useState<PendingMemberDeletion>()
+  const [deletionError, setDeletionError] = useState('')
   const displayedMembers = filterCommonMembers(
     members,
     searchText,
@@ -58,6 +87,30 @@ export function CommonDataPage({
     const result = onSaveMember(editingMember?.id, draft)
     if (result.ok) setMemberEditor(undefined)
     return result
+  }
+
+  const requestMemberDeletion = (member: Member) => {
+    const check = checkMemberDeletion(member.id)
+    if (!check.ok) {
+      setDeletionError(getMemberDeletionError(check))
+      return
+    }
+
+    setDeletionError('')
+    setPendingDeletion({ memberId: member.id, label: member.realName })
+  }
+
+  const confirmMemberDeletion = () => {
+    if (!pendingDeletion) return
+
+    const result = onDeleteMember(pendingDeletion.memberId)
+    setPendingDeletion(undefined)
+    if (!result.ok) {
+      setDeletionError(getMemberDeletionError(result))
+      return
+    }
+
+    setDeletionError('')
   }
 
   return (
@@ -134,6 +187,12 @@ export function CommonDataPage({
             </div>
           </div>
 
+          {deletionError && (
+            <p className="common-data-deletion-error" role="alert">
+              {deletionError}
+            </p>
+          )}
+
           <div className="common-member-list__table-card">
             <div className="common-member-list__table-scroll">
               <table className="common-member-list__table">
@@ -170,17 +229,27 @@ export function CommonDataPage({
                           )}
                         </td>
                         <td>
-                          <button
-                            type="button"
-                            className="common-member-list__edit"
-                            aria-label={`${member.realName}を編集`}
-                            onClick={() => setMemberEditor({
-                              mode: 'edit',
-                              memberId: member.id,
-                            })}
-                          >
-                            編集
-                          </button>
+                          <div className="common-data-list__actions">
+                            <button
+                              type="button"
+                              className="common-member-list__edit"
+                              aria-label={`${member.realName}を編集`}
+                              onClick={() => setMemberEditor({
+                                mode: 'edit',
+                                memberId: member.id,
+                              })}
+                            >
+                              編集
+                            </button>
+                            <button
+                              type="button"
+                              className="common-member-list__delete"
+                              aria-label={`${member.realName}を削除`}
+                              onClick={() => requestMemberDeletion(member)}
+                            >
+                              削除
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     )
@@ -207,6 +276,8 @@ export function CommonDataPage({
           bands={bands}
           members={members}
           onSaveBand={onSaveBand}
+          checkBandDeletion={checkBandDeletion}
+          onDeleteBand={onDeleteBand}
         />
       )}
 
@@ -220,6 +291,19 @@ export function CommonDataPage({
           onSave={handleSaveMember}
         />
       )}
+      {pendingDeletion && (() => {
+        const copy = getDeleteConfirmationCopy(
+          'common-member',
+          pendingDeletion.label,
+        )
+        return (
+          <DeleteConfirmationDialog
+            {...copy}
+            onCancel={() => setPendingDeletion(undefined)}
+            onConfirm={confirmMemberDeletion}
+          />
+        )
+      })()}
     </main>
   )
 }
