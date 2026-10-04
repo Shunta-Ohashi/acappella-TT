@@ -296,9 +296,6 @@ const resolveBoundaryMinute = ({
   const oppositeEdge = boundary.edge === 'start'
     ? sectionEdges.untilMinute
     : sectionEdges.fromMinute
-  if (offsetMinutes > 0 && oppositeEdge === undefined) {
-    return { ok: false, reason: 'Section時間を解決できないため差分を適用できません。' }
-  }
   const minute = boundary.edge === 'start'
     ? effectiveEdge + offsetMinutes
     : effectiveEdge - offsetMinutes
@@ -308,6 +305,13 @@ const resolveBoundaryMinute = ({
     )
   ) {
     return { ok: false, reason: 'Sectionからの差分がSection時間を超えています。' }
+  }
+  if (!isMinuteRangeWithinStageTimeRange(
+    stage,
+    boundary.edge === 'start' ? minute : undefined,
+    boundary.edge === 'end' ? minute : undefined,
+  )) {
+    return { ok: false, reason: 'Sectionからの差分はStage時間内にしてください。' }
   }
   return { ok: true, minute }
 }

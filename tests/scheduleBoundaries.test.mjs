@@ -103,6 +103,61 @@ test('空Sectionは対応するanchorがあるedgeだけ解決し、両anchorな
     { kind: 'section', sectionId: startOnly.id, edge: 'end' }, [],
     { stages: [stage], sections: [startOnly] },
   ).ok, false)
+
+  assert.deepEqual(resolve(
+    { kind: 'section', sectionId: startOnly.id, edge: 'start', offsetMinutes: 5 },
+    { kind: 'time', time: '14:00' }, [],
+    { stages: [stage], sections: [startOnly] },
+  ), { ok: true, interval: { fromMinute: 785, untilMinute: 840 } })
+
+  const endOnly = { ...both, id: 'end-only', plannedStartTime: undefined }
+  assert.deepEqual(resolve(
+    { kind: 'time', time: '13:00' },
+    { kind: 'section', sectionId: endOnly.id, edge: 'end', offsetMinutes: 5 }, [],
+    { stages: [stage], sections: [endOnly] },
+  ), { ok: true, interval: { fromMinute: 780, untilMinute: 835 } })
+  assert.equal(resolve(
+    { kind: 'section', sectionId: endOnly.id, edge: 'start' },
+    { kind: 'time', time: '14:30' }, [],
+    { stages: [stage], sections: [endOnly] },
+  ).ok, false)
+})
+
+test('空Section offsetは対応anchorだけで解決しStage外へは出さない', () => {
+  const lateStart = {
+    id: 'late-start', stageId: stage.id, name: '遅い開始', order: 0,
+    plannedStartTime: '17:50',
+  }
+  assert.equal(resolve(
+    { kind: 'section', sectionId: lateStart.id, edge: 'start', offsetMinutes: 20 },
+    { kind: 'time', time: '18:00' }, [],
+    { stages: [stage], sections: [lateStart] },
+  ).ok, false)
+
+  const earlyEnd = {
+    id: 'early-end', stageId: stage.id, name: '早い終了', order: 0,
+    plannedEndTime: '10:10',
+  }
+  assert.equal(resolve(
+    { kind: 'time', time: '10:00' },
+    { kind: 'section', sectionId: earlyEnd.id, edge: 'end', offsetMinutes: 20 }, [],
+    { stages: [stage], sections: [earlyEnd] },
+  ).ok, false)
+
+  const bounded = {
+    id: 'bounded', stageId: stage.id, name: '両側', order: 0,
+    plannedStartTime: '13:00', plannedEndTime: '14:00',
+  }
+  assert.equal(resolve(
+    { kind: 'section', sectionId: bounded.id, edge: 'start', offsetMinutes: 61 },
+    { kind: 'time', time: '17:00' }, [],
+    { stages: [stage], sections: [bounded] },
+  ).ok, false)
+  assert.equal(resolve(
+    { kind: 'time', time: '11:00' },
+    { kind: 'section', sectionId: bounded.id, edge: 'end', offsetMinutes: 61 }, [],
+    { stages: [stage], sections: [bounded] },
+  ).ok, false)
 })
 
 test('Section offsetはstartへ加算、endから減算し、Section外を拒否する', () => {
@@ -303,6 +358,42 @@ test('Section全体と一部をoffset fieldの有無で安定して区別する'
     { ...partial.from, offsetMinutes: 15 },
     { ...partial.until, offsetMinutes: 10 },
   ), 'section-partial')
+})
+
+test('time mode defaultは同日minuteだけをLocalTimeへ変換し翌日へwrapしない', () => {
+  const createItemEndingAt = (plannedEndMinute) => ({
+    ...items[0],
+    stageId: 'late-stage',
+    plannedStartMinute: plannedEndMinute - 10,
+    plannedEndMinute,
+  })
+  const normalStage = {
+    ...stage, id: 'normal-stage', plannedStartTime: '10:00', plannedEndTime: undefined,
+  }
+  assert.deepEqual(createDefaultAssignmentRange({
+    mode: 'time', stage: normalStage, sections: [],
+    calculatedItems: [{ ...createItemEndingAt(1110), stageId: normalStage.id }],
+  }), {
+    from: { kind: 'time', time: '10:00' },
+    until: { kind: 'time', time: '18:30' },
+  })
+
+  const lateStage = {
+    ...stage, id: 'late-stage', plannedStartTime: '23:00', plannedEndTime: undefined,
+  }
+  assert.deepEqual(createDefaultAssignmentRange({
+    mode: 'time', stage: lateStage, sections: [],
+    calculatedItems: [createItemEndingAt(1430)],
+  }), {
+    from: { kind: 'time', time: '23:00' },
+    until: { kind: 'time', time: '23:50' },
+  })
+  for (const plannedEndMinute of [1440, 1450]) {
+    assert.equal(createDefaultAssignmentRange({
+      mode: 'time', stage: lateStage, sections: [],
+      calculatedItems: [createItemEndingAt(plannedEndMinute)],
+    }), undefined)
+  }
 })
 
 test('Section全体と一部の切替は現在のSection IDを維持しoffsetだけを正規化する', () => {

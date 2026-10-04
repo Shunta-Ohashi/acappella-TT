@@ -11,6 +11,13 @@ import {
   isTimeBoundary,
 } from './scheduleBoundaries.ts'
 
+const MINUTES_PER_DAY = 24 * 60
+
+const formatSameDayMinuteAsLocalTime = (minute: number): string | undefined =>
+  Number.isSafeInteger(minute) && minute >= 0 && minute < MINUTES_PER_DAY
+    ? formatMinuteAsLocalTime(minute)
+    : undefined
+
 export type AssignmentRangeMode =
   | 'schedule-item'
   | 'section-whole'
@@ -69,14 +76,14 @@ export const createDefaultAssignmentRange = ({
     }
   }
   if (mode === 'time') {
+    const fallbackUntilTime = lastItem
+      ? formatSameDayMinuteAsLocalTime(lastItem.plannedEndMinute)
+      : stage.plannedStartTime
+    const untilTime = stage.plannedEndTime ?? fallbackUntilTime
+    if (untilTime === undefined) return undefined
     return {
       from: { kind: 'time', time: stage.plannedStartTime },
-      until: {
-        kind: 'time',
-        time: stage.plannedEndTime ?? (lastItem
-          ? formatMinuteAsLocalTime(lastItem.plannedEndMinute)
-          : stage.plannedStartTime),
-      },
+      until: { kind: 'time', time: untilTime },
     }
   }
   const section = sections
