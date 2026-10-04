@@ -26,7 +26,9 @@ import {
   type EventMemberSettingsValidationErrors,
 } from '../domain/eventMemberSettings'
 import { getEventMemberDayConditionSummary } from '../domain/eventMemberDayDetails'
+import { getDeleteConfirmationCopy } from '../ui/deleteConfirmation'
 import { AddEventMembersDialog } from './AddEventMembersDialog'
+import { DeleteConfirmationDialog } from './DeleteConfirmationDialog'
 import { EventMemberDayDetailsDialog } from './EventMemberDayDetailsDialog'
 
 interface EventMemberSettingsProps {
@@ -58,6 +60,12 @@ const emptyErrors = (): EventMemberSettingsValidationErrors => ({
 interface MemberDetailsEditorState {
   memberDraftId: string
   initialEventDayId: EventDayId
+}
+
+interface PendingMemberDeletion {
+  memberId: MemberId
+  draftId: string
+  label: string
 }
 
 const formatEventDay = (eventDay: EventDay): string => {
@@ -100,6 +108,7 @@ export function EventMemberSettings({
     emptyErrors,
   )
   const [saveMessage, setSaveMessage] = useState('')
+  const [pendingDeletion, setPendingDeletion] = useState<PendingMemberDeletion>()
   const memberById = new Map(members.map((member) => [member.id, member]))
   const orderedEventDays = eventDays
     .filter((eventDay) => eventDay.eventId === event.id)
@@ -261,7 +270,11 @@ export function EventMemberSettings({
     setSaveMessage('')
   }
 
-  const handleRemoveMember = (memberId: MemberId, draftId: string) => {
+  const handleRemoveMember = (
+    memberId: MemberId,
+    draftId: string,
+    label: string,
+  ) => {
     if (!canDeleteEventMember(memberId, event.id, eventBands)) {
       setErrors((previous) => ({
         ...previous,
@@ -271,13 +284,20 @@ export function EventMemberSettings({
       return
     }
 
+    setPendingDeletion({ memberId, draftId, label })
+  }
+
+  const confirmRemoveMember = () => {
+    if (!pendingDeletion) return
+
     setDraft((previous) => ({
       members: previous.members.filter(
-        (memberDraft) => memberDraft.draftId !== draftId,
+        (memberDraft) => memberDraft.draftId !== pendingDeletion.draftId,
       ),
     }))
     setErrors(emptyErrors())
     setSaveMessage('')
+    setPendingDeletion(undefined)
   }
 
   const handleApplyMemberDayDetails = (
@@ -508,6 +528,7 @@ export function EventMemberSettings({
                             onClick={() => handleRemoveMember(
                               memberDraft.memberId,
                               memberDraft.draftId,
+                              memberName,
                             )}
                           >
                             削除
@@ -612,6 +633,19 @@ export function EventMemberSettings({
           )}
         />
       )}
+      {pendingDeletion && (() => {
+        const copy = getDeleteConfirmationCopy(
+          'event-member',
+          pendingDeletion.label,
+        )
+        return (
+          <DeleteConfirmationDialog
+            {...copy}
+            onCancel={() => setPendingDeletion(undefined)}
+            onConfirm={confirmRemoveMember}
+          />
+        )
+      })()}
     </section>
   )
 }

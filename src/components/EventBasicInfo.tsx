@@ -7,6 +7,8 @@ import {
   type EventBasicInfoUpdateResult,
   type EventBasicInfoValidationErrors,
 } from '../domain/eventBasicInfo'
+import { getDeleteConfirmationCopy } from '../ui/deleteConfirmation'
+import { DeleteConfirmationDialog } from './DeleteConfirmationDialog'
 
 interface EventBasicInfoProps {
   event: Event
@@ -53,6 +55,7 @@ export function EventBasicInfo({
   const [nextDateInputKey, setNextDateInputKey] = useState(0)
   const [errors, setErrors] = useState<EventBasicInfoValidationErrors>({})
   const [saveMessage, setSaveMessage] = useState('')
+  const [pendingDeletion, setPendingDeletion] = useState<Pick<DateInput, 'key' | 'value'>>()
 
   const clearFeedback = () => {
     setSaveMessage('')
@@ -100,8 +103,14 @@ export function EventBasicInfo({
       return
     }
 
+    setPendingDeletion({ key: dateInput.key, value: dateInput.value })
+  }
+
+  const confirmRemoveDate = () => {
+    if (!pendingDeletion) return
+
     setDateInputs((previous) => previous.filter(
-      (candidate) => candidate.key !== dateInput.key,
+      (candidate) => candidate.key !== pendingDeletion.key,
     ))
     setErrors((previous) => ({
       ...previous,
@@ -109,6 +118,7 @@ export function EventBasicInfo({
       form: undefined,
     }))
     setSaveMessage('')
+    setPendingDeletion(undefined)
   }
 
   const save = (moveToNext: boolean) => {
@@ -296,6 +306,19 @@ export function EventBasicInfo({
           </div>
         </footer>
       </form>
+      {pendingDeletion && (() => {
+        const copy = getDeleteConfirmationCopy(
+          'event-day',
+          pendingDeletion.value || '未入力の開催日',
+        )
+        return (
+          <DeleteConfirmationDialog
+            {...copy}
+            onCancel={() => setPendingDeletion(undefined)}
+            onConfirm={confirmRemoveDate}
+          />
+        )
+      })()}
     </section>
   )
 }
