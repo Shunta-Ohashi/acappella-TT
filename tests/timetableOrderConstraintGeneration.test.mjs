@@ -352,6 +352,50 @@ test('同じIDの別日constraintがcycle・duplicateでもtargetへ直接触れ
   assert.deepEqual(input, original)
 })
 
+test('無関係な別日のruntime不正constraintをtarget generationから隔離する', () => {
+  const baseline = unconstrainedInput()
+  baseline.timetableOrderConstraints = [orderConstraint({ id: 'target-order' })]
+  const expected = generateTimetablePlan(baseline)
+  assert.equal(expected.ok, true)
+
+  for (const unrelated of [
+    orderConstraint({ id: 'length-one', eventDayId: 'day-a2', stageId: 'stage-a2',
+      sectionId: undefined, eventBandIds: ['band-a2'] }),
+    orderConstraint({ id: 'duplicate-band', eventDayId: 'day-a2', stageId: 'stage-a2',
+      sectionId: undefined, eventBandIds: ['band-a2', 'band-a2'] }),
+    orderConstraint({ id: '   ', eventDayId: 'day-a2', stageId: 'stage-a2',
+      sectionId: undefined, eventBandIds: ['band-a2', 'other-day-band'] }),
+  ]) {
+    const input = structuredClone(baseline)
+    input.timetableOrderConstraints.push(unrelated)
+    const original = structuredClone(input)
+    const result = generateTimetablePlan(input)
+    assert.deepEqual(result, expected)
+    assert.deepEqual(generateTimetablePlan(input), result)
+    assert.deepEqual(input, original)
+  }
+})
+
+test('target Day・Stage・Bandへ触れるruntime不正constraintを探索前に拒否する', () => {
+  const cases = [
+    orderConstraint({ id: 'touch-day', stageId: 'stage-a2', sectionId: undefined,
+      eventBandIds: ['band-a2'] }),
+    orderConstraint({ id: 'touch-stage', eventDayId: 'day-a2', stageId: 'stage-a1',
+      sectionId: undefined, eventBandIds: ['band-a2'] }),
+    orderConstraint({ id: 'touch-band', eventDayId: 'day-a2', stageId: 'stage-a2',
+      sectionId: undefined, eventBandIds: ['band-1'] }),
+  ]
+  for (const timetableOrderConstraint of cases) {
+    const input = unconstrainedInput()
+    input.timetableOrderConstraints = [timetableOrderConstraint]
+    const original = structuredClone(input)
+    assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
+      code: 'INVALID_ORDER_CONSTRAINTS', eventDayId: input.eventDay.id, attemptedSchedules: 0,
+    } })
+    assert.deepEqual(input, original)
+  }
+})
+
 test('target scope内の同じconstraint IDは引き続きINVALID_ORDER_CONSTRAINTSにする', () => {
   const input = unconstrainedInput()
   input.timetableOrderConstraints = [
@@ -430,6 +474,70 @@ test('malformed出演順collectionはthrowせず専用failureで探索前に拒�
     assert.equal(result.ok, false)
     assert.equal(result.failure.code, 'INVALID_ORDER_CONSTRAINTS')
     assert.equal(result.failure.attemptedSchedules, 0)
+  }
+})
+
+test('最終guardも無関係な別日のruntime不正constraintだけを隔離する', () => {
+  const input = blockInput({ unrelated: 1 })
+  const generated = generateTimetablePlan(input)
+  assert.equal(generated.ok, true)
+  const materializationInput = {
+    ...input,
+    sourceScheduleItems: input.scheduleItems,
+    paAssignments: input.paAssignments,
+    plan: generated.plan,
+    newScheduleItemIds: generated.plan.placements.filter(item => item.scheduleItemId === undefined)
+      .map((_, index) => `new-performance-${index}`),
+    newPaAssignmentIds: generated.plan.paShifts.map((_, index) => `new-pa-${index}`),
+  }
+  const candidate = materializeTimetableGenerationPlan(materializationInput)
+  assert.equal(candidate.ok, true)
+
+  for (const unrelated of [
+    orderConstraint({ id: 'length-one', eventDayId: 'day-a2', stageId: 'stage-a2',
+      sectionId: undefined, eventBandIds: ['band-a2'] }),
+    orderConstraint({ id: 'duplicate-band', eventDayId: 'day-a2', stageId: 'stage-a2',
+      sectionId: undefined, eventBandIds: ['band-a2', 'band-a2'] }),
+    orderConstraint({ id: '', eventDayId: 'day-a2', stageId: 'stage-a2',
+      sectionId: undefined, eventBandIds: ['band-a2', 'other-day-band'] }),
+  ]) {
+    const validationInput = structuredClone(materializationInput)
+    validationInput.timetableOrderConstraints.push(unrelated)
+    const original = structuredClone({ validationInput, candidate })
+    assert.equal(validateTimetableGenerationCandidate(validationInput, candidate).ok, true)
+    assert.deepEqual({ validationInput, candidate }, original)
+  }
+})
+
+test('最終guardはtarget Day・Stage・Bandへ触れるruntime不正constraintを拒否する', () => {
+  const input = blockInput({ unrelated: 1 })
+  const generated = generateTimetablePlan(input)
+  assert.equal(generated.ok, true)
+  const materializationInput = {
+    ...input,
+    sourceScheduleItems: input.scheduleItems,
+    paAssignments: input.paAssignments,
+    plan: generated.plan,
+    newScheduleItemIds: generated.plan.placements.filter(item => item.scheduleItemId === undefined)
+      .map((_, index) => `new-performance-${index}`),
+    newPaAssignmentIds: generated.plan.paShifts.map((_, index) => `new-pa-${index}`),
+  }
+  const candidate = materializeTimetableGenerationPlan(materializationInput)
+  assert.equal(candidate.ok, true)
+
+  for (const targetMalformed of [
+    orderConstraint({ id: 'touch-day', stageId: 'stage-a2', sectionId: undefined,
+      eventBandIds: ['band-a2'] }),
+    orderConstraint({ id: 'touch-stage', eventDayId: 'day-a2', stageId: 'stage-a1',
+      sectionId: undefined, eventBandIds: ['band-a2'] }),
+    orderConstraint({ id: 'touch-band', eventDayId: 'day-a2', stageId: 'stage-a2',
+      sectionId: undefined, eventBandIds: ['band-1'] }),
+  ]) {
+    const validationInput = structuredClone(materializationInput)
+    validationInput.timetableOrderConstraints = [targetMalformed]
+    const original = structuredClone({ validationInput, candidate })
+    assert.equal(validateTimetableGenerationCandidate(validationInput, candidate).ok, false)
+    assert.deepEqual({ validationInput, candidate }, original)
   }
 })
 

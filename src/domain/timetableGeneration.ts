@@ -20,9 +20,8 @@ import { evaluateTimetableLocks, isValidFixedPosition } from './timetableLocks.t
 import {
   evaluateScheduledTimetableOrderConstraints,
   evaluateTimetableOrderConstraints,
-  getTargetTimetableOrderConstraints,
-  hasValidTimetableOrderConstraintCollection,
   mergeTimetableOrderConstraintBlocks,
+  scopeTimetableOrderConstraintsForTarget,
 } from './timetableOrderConstraints.ts'
 import { detectScheduleIssues } from './issues.ts'
 import { isValidStageTimeRange, isSectionWithinStageTimeRange } from './eventStageSettings.ts'
@@ -690,9 +689,6 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     ok: false, failure: { code, eventDayId: eventDay.id, attemptedSchedules, ...references },
   })
   if (!hasValidTimetableGenerationCollections(input)) return failure('INVALID_INPUT', 0)
-  if (!hasValidTimetableOrderConstraintCollection(timetableOrderConstraints)) {
-    return failure('INVALID_ORDER_CONSTRAINTS', 0)
-  }
   if (!isRecord(event.validationPolicy) ||
     !Number.isSafeInteger(event.validationPolicy.minimumGapBands) ||
     event.validationPolicy.minimumGapBands < 0 ||
@@ -752,12 +748,14 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     band.eventId === event.id && band.eventDayId === eventDay.id,
   ).sort((left, right) => left.id.localeCompare(right.id))
   const targetBandIds = new Set(targetBands.map(band => band.id))
-  const targetOrderConstraints = getTargetTimetableOrderConstraints({
+  const scopedOrderConstraints = scopeTimetableOrderConstraintsForTarget({
     timetableOrderConstraints,
     eventDayId: eventDay.id,
     stageIds: targetStageIds,
     eventBandIds: targetBandIds,
   })
+  if (!scopedOrderConstraints.ok) return failure('INVALID_ORDER_CONSTRAINTS', 0)
+  const targetOrderConstraints = scopedOrderConstraints.constraints
   const orderConstraintEvaluation = evaluateTimetableOrderConstraints({
     eventId: event.id,
     timetableOrderConstraints: targetOrderConstraints,

@@ -16,8 +16,7 @@ import { hasConsistentPaOwnership, hasValidDutyAssignments,
 import {
   evaluateScheduledTimetableOrderConstraints,
   evaluateTimetableOrderConstraints,
-  getTargetTimetableOrderConstraints,
-  hasValidTimetableOrderConstraintCollection,
+  scopeTimetableOrderConstraintsForTarget,
 } from './timetableOrderConstraints.ts'
 import type { CalculatedScheduleItem } from './timeline'
 
@@ -358,9 +357,6 @@ export const validateTimetableGenerationCandidate = (
   if (!hasValidTimetableGenerationDutyTypes(dutyTypes)) {
     return fail('既存の仕事種別の形式または所属を確認できません。')
   }
-  if (!hasValidTimetableOrderConstraintCollection(timetableOrderConstraints)) {
-    return fail('出演順制約の形式が不正です。')
-  }
   if (!isRecord(candidate)) return fail('生成結果の形式が不正です。')
   if (!hasUniqueIds(candidate.scheduleItems)) {
     return fail('生成結果のScheduleItem IDが重複しています。')
@@ -395,12 +391,14 @@ export const validateTimetableGenerationCandidate = (
   const sectionIds = new Set(targetSections.map(section => section.id))
   const targetBands = eventBands.filter(band => band.eventId === event.id && band.eventDayId === eventDay.id)
   const bandIds = new Set(targetBands.map(band => band.id))
-  const targetOrderConstraints = getTargetTimetableOrderConstraints({
+  const scopedOrderConstraints = scopeTimetableOrderConstraintsForTarget({
     timetableOrderConstraints,
     eventDayId: eventDay.id,
     stageIds,
     eventBandIds: bandIds,
   })
+  if (!scopedOrderConstraints.ok) return fail('出演順制約の形式が不正です。')
+  const targetOrderConstraints = scopedOrderConstraints.constraints
   if (!evaluateTimetableOrderConstraints({
     eventId: event.id,
     timetableOrderConstraints: targetOrderConstraints,

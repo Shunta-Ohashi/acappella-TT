@@ -7,6 +7,7 @@ import {
   getTargetTimetableOrderConstraints,
   isTimetableOrderConstraint,
   mergeTimetableOrderConstraintBlocks,
+  scopeTimetableOrderConstraintsForTarget,
 } from '../src/domain/timetableOrderConstraints.ts'
 
 const eventDays = [
@@ -104,6 +105,47 @@ test('同じIDを持つtarget制約は両方抽出しduplicateとして評価す
   })
   assert.deepEqual(target, input)
   assert.ok(codes(evaluate(target)).includes('DUPLICATE_CONSTRAINT_ID'))
+})
+
+test('runtime constraintをtarget参照でscopeしてからfull validationする', () => {
+  const target = {
+    eventDayId: 'day-1',
+    stageIds: new Set(['stage-1', 'stage-plain']),
+    eventBandIds: new Set(['band-a', 'band-b', 'band-c', 'band-d']),
+  }
+  for (const unrelated of [
+    constraint({ id: '', eventDayId: 'day-2', stageId: 'stage-day-2',
+      sectionId: 'section-day-2', eventBandIds: ['band-day-2', 'other-day-band'] }),
+    constraint({ eventDayId: 'day-2', stageId: 'stage-day-2',
+      sectionId: 'section-day-2', eventBandIds: ['band-day-2'] }),
+    constraint({ eventDayId: 'day-2', stageId: 'stage-day-2',
+      sectionId: 'section-day-2', eventBandIds: ['band-day-2', 'band-day-2'] }),
+  ]) {
+    assert.deepEqual(scopeTimetableOrderConstraintsForTarget({
+      timetableOrderConstraints: [unrelated], ...target,
+    }), { ok: true, constraints: [] })
+  }
+
+  for (const targetMalformed of [
+    constraint({ eventBandIds: ['band-a'] }),
+    constraint({ eventDayId: 'day-2', stageId: 'stage-1',
+      sectionId: undefined, eventBandIds: ['band-day-2'] }),
+    constraint({ eventDayId: 'day-2', stageId: 'stage-day-2',
+      sectionId: 'section-day-2', eventBandIds: ['band-a'] }),
+  ]) {
+    assert.deepEqual(scopeTimetableOrderConstraintsForTarget({
+      timetableOrderConstraints: [targetMalformed], ...target,
+    }), { ok: false })
+  }
+
+  const sparse = new Array(2)
+  sparse[1] = constraint()
+  assert.deepEqual(scopeTimetableOrderConstraintsForTarget({
+    timetableOrderConstraints: sparse, ...target,
+  }), { ok: false })
+  assert.deepEqual(scopeTimetableOrderConstraintsForTarget({
+    timetableOrderConstraints: null, ...target,
+  }), { ok: false })
 })
 
 test('一致する出演順fragmentを最大の連続Performance blockへ統合する', () => {

@@ -101,6 +101,61 @@ export const hasValidTimetableOrderConstraintCollection = (
 ): value is TimetableOrderConstraint[] =>
   Array.isArray(value) && Array.from(value).every(isTimetableOrderConstraint)
 
+interface TimetableOrderConstraintTarget {
+  eventDayId: string
+  stageIds: ReadonlySet<string>
+  eventBandIds: ReadonlySet<string>
+}
+
+interface TimetableOrderConstraintScopeReferences {
+  eventDayId?: unknown
+  stageId?: unknown
+  eventBandIds?: unknown
+}
+
+const touchesTimetableOrderConstraintTarget = (
+  value: TimetableOrderConstraintScopeReferences,
+  target: TimetableOrderConstraintTarget,
+): boolean =>
+  value.eventDayId === target.eventDayId ||
+  (typeof value.stageId === 'string' && target.stageIds.has(value.stageId)) ||
+  (Array.isArray(value.eventBandIds) && Array.from(value.eventBandIds)
+    .some(eventBandId => typeof eventBandId === 'string' && target.eventBandIds.has(eventBandId)))
+
+export type ScopedTimetableOrderConstraints =
+  | { ok: true; constraints: TimetableOrderConstraint[] }
+  | { ok: false }
+
+/**
+ * Scope unknown runtime input before full validation. Entries whose ownership
+ * references cannot be inspected safely remain fail-closed; only clearly
+ * unrelated entries may be ignored by a single-day operation.
+ */
+export const scopeTimetableOrderConstraintsForTarget = ({
+  timetableOrderConstraints,
+  eventDayId,
+  stageIds,
+  eventBandIds,
+}: {
+  timetableOrderConstraints: unknown
+  eventDayId: string
+  stageIds: ReadonlySet<string>
+  eventBandIds: ReadonlySet<string>
+}): ScopedTimetableOrderConstraints => {
+  if (!Array.isArray(timetableOrderConstraints)) return { ok: false }
+  const constraints: TimetableOrderConstraint[] = []
+  const target = { eventDayId, stageIds, eventBandIds }
+  for (const value of Array.from(timetableOrderConstraints)) {
+    if (!isRecord(value) || !isNonEmptyString(value.eventDayId) ||
+      !isNonEmptyString(value.stageId) || !Array.isArray(value.eventBandIds) ||
+      !Array.from(value.eventBandIds).every(isNonEmptyString)) return { ok: false }
+    if (!touchesTimetableOrderConstraintTarget(value, target)) continue
+    if (!isTimetableOrderConstraint(value)) return { ok: false }
+    constraints.push(value)
+  }
+  return { ok: true, constraints }
+}
+
 /** Include constraints that touch the generated day, lane, or any target band. */
 export const getTargetTimetableOrderConstraints = ({
   timetableOrderConstraints,
@@ -113,10 +168,10 @@ export const getTargetTimetableOrderConstraints = ({
   stageIds: ReadonlySet<string>
   eventBandIds: ReadonlySet<string>
 }): TimetableOrderConstraint[] => {
-  return timetableOrderConstraints.filter(constraint =>
-    constraint.eventDayId === eventDayId ||
-    stageIds.has(constraint.stageId) ||
-    constraint.eventBandIds.some(eventBandId => eventBandIds.has(eventBandId)))
+  const target = { eventDayId, stageIds, eventBandIds }
+  return timetableOrderConstraints.filter(constraint => touchesTimetableOrderConstraintTarget(
+    constraint, target,
+  ))
 }
 
 export const doesFixedPlacementConflictWithOrderConstraint = (
