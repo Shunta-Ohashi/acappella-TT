@@ -57,7 +57,8 @@ const createInput = ({ bandCount = 4, sectionCount = 2, paCount = 2 } = {}) => {
   return {
     event, eventDay, eventDays: [eventDay], stages, sections,
     members, eventMembers, eventMemberDays, eventBands,
-    scheduleItems: [], timetableLocks: [], dutyTypes: [], dutyAssignments: [],
+    scheduleItems: [], timetableLocks: [], timetableOrderConstraints: [],
+    dutyTypes: [], dutyAssignments: [],
   }
 }
 
@@ -1522,29 +1523,89 @@ const generateInFixedLane = (input, stageId, sectionId) => generateTimetablePlan
   eventBands: input.eventBands.map(band => ({ ...band, fixedPlacement: { stageId, sectionId } })),
 })
 
-const createPaThenGenericInput = ({ genericFirst = false } = {}) => {
-  const input = createInput({ bandCount: 1, sectionCount: 1, paCount: 1 })
+const createPaThenGenericInput = ({ genericFirst = false, laterSuccess = false } = {}) => {
+  const input = createInput({ bandCount: 1, sectionCount: 1, paCount: laterSuccess ? 2 : 1 })
   input.stages[0].order = genericFirst ? 1 : 0
   input.stages.push({ id: 'stage-2', eventDayId: input.eventDay.id, name: 'Other',
     order: genericFirst ? 0 : 1, plannedStartTime: '11:00' })
   input.sections.push({ id: 'section-1', stageId: 'stage-2', name: 'Other Section', order: 0 })
-  // At 10:00 the only Main PA is performing; at 11:00 band availability
-  // rejects the candidate before PA evaluation. Both are real unique proposals.
+  // At 10:00 the only available Main PA is performing. By default the 11:00
+  // candidate is rejected generically; laterSuccess adds a viable Main there.
   input.eventBands[0].memberIds = ['main-0']
-  input.eventBands[0].availableTimeRange = { until: '10:10' }
+  if (laterSuccess) {
+    input.eventMemberDays.find(day => day.eventMemberId === 'event-member-main-1')
+      .availabilityWindows = [{ from: '11:00' }]
+  } else {
+    input.eventBands[0].availableTimeRange = { until: '10:10' }
+  }
   return input
 }
 
-test('PA固有failureの後にgeneric棄却が来たら古いcodeとStage / Section参照を消す', () => {
+test('NO_FEASIBLE_PA_PLANの後にgeneric棄却が来てもspecific codeとscopeを保持する', () => {
   const input = createPaThenGenericInput()
   assert.equal(generateInFixedLane(input, 'stage-1', 'section-0').failure.code, 'NO_FEASIBLE_PA_PLAN')
   assert.equal(generateInFixedLane(input, 'stage-2', 'section-1').failure.code, 'NO_FEASIBLE_SCHEDULE')
   const original = structuredClone(input)
   const result = generateTimetablePlan(input)
   assert.deepEqual(result, { ok: false, failure: {
-    code: 'NO_FEASIBLE_SCHEDULE', eventDayId: 'day-1', attemptedSchedules: 2,
+    code: 'NO_FEASIBLE_PA_PLAN', eventDayId: 'day-1', attemptedSchedules: 2,
+    stageId: 'stage-1', sectionId: 'section-0',
   } })
   assert.deepEqual(generateTimetablePlan(input), result)
+  assert.deepEqual(input, original)
+})
+
+for (const [role, code] of [
+  ['main', 'NO_MAIN_PA_CANDIDATE'],
+  ['sub', 'NO_SUB_PA_CANDIDATE'],
+]) {
+  test(`${code}の後にgeneric棄却が来てもspecific codeとscopeを保持する`, () => {
+    const input = createPaThenGenericInput()
+    input.eventMembers.forEach(member => { member.paCapabilities[role] = false })
+    const specific = generateInFixedLane(input, 'stage-1', 'section-0')
+    assert.equal(specific.failure.code, code)
+    assert.equal(generateInFixedLane(input, 'stage-2', 'section-1').failure.code,
+      'NO_FEASIBLE_SCHEDULE')
+    const original = structuredClone(input)
+    const result = generateTimetablePlan(input)
+    assert.deepEqual(result, { ok: false, failure: {
+      code, eventDayId: 'day-1', attemptedSchedules: 2,
+      stageId: 'stage-1', sectionId: 'section-0',
+    } })
+    assert.deepEqual(generateTimetablePlan(input), result)
+    assert.deepEqual(input, original)
+  })
+}
+
+test('generic棄却だけならNO_FEASIBLE_SCHEDULEを返す', () => {
+  const input = createPaThenGenericInput()
+  input.eventBands[0].availableTimeRange = { until: '09:00' }
+  const original = structuredClone(input)
+  assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
+    code: 'NO_FEASIBLE_SCHEDULE', eventDayId: 'day-1', attemptedSchedules: 2,
+  } })
+  assert.deepEqual(input, original)
+})
+
+test('specific failureの後にfeasible candidateが見つかればsuccessを優先する', () => {
+  const input = createPaThenGenericInput({ laterSuccess: true })
+  assert.equal(generateInFixedLane(input, 'stage-1', 'section-0').failure.code,
+    'NO_FEASIBLE_PA_PLAN')
+  assert.equal(generateInFixedLane(input, 'stage-2', 'section-1').ok, true)
+  const original = structuredClone(input)
+  const result = generateTimetablePlan(input)
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.deepEqual(generateTimetablePlan(input), result)
+  assert.deepEqual(input, original)
+})
+
+test('specific failure後にSchedule探索上限へ達したらSEARCH_LIMIT_REACHEDを優先する', () => {
+  const input = createPaThenGenericInput()
+  input.options = { maxScheduleCandidates: 1 }
+  const original = structuredClone(input)
+  assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
+    code: 'SEARCH_LIMIT_REACHED', eventDayId: 'day-1', attemptedSchedules: 1,
+  } })
   assert.deepEqual(input, original)
 })
 
@@ -1926,12 +1987,29 @@ test('PA失敗の後のDuty境界失敗はDutyのStageを返し、以前のPA St
   assert.deepEqual(input, original)
 })
 
-test('Duty境界失敗の後のPA失敗は最新のPA Stage/Sectionを返す', () => {
+test('Duty境界失敗の後にPA失敗が来ても優先度の高いDuty failureを保持する', () => {
   const input = createDutyFailureInput({ dutyFirst: true })
   assert.deepEqual(generateTimetablePlan(input), { ok: false, failure: {
-    code: 'NO_MAIN_PA_CANDIDATE', eventDayId: input.eventDay.id,
-    attemptedSchedules: 2, stageId: 'stage-2', sectionId: 'section-1',
+    code: 'BROKEN_DUTY_ASSIGNMENT', eventDayId: input.eventDay.id,
+    attemptedSchedules: 2, stageId: 'stage-1',
   } })
+})
+
+test('Duty failureの後にgeneric棄却が来てもDuty codeとscopeを保持する', () => {
+  const input = createDutyFailureInput({ dutyFirst: true })
+  input.eventBands[0].availableTimeRange = { from: '11:00' }
+  assert.equal(generateInFixedLane(input, 'stage-2', 'section-1').failure.code,
+    'BROKEN_DUTY_ASSIGNMENT')
+  assert.equal(generateInFixedLane(input, 'stage-1', 'section-0').failure.code,
+    'NO_FEASIBLE_SCHEDULE')
+  const original = structuredClone(input)
+  const result = generateTimetablePlan(input)
+  assert.deepEqual(result, { ok: false, failure: {
+    code: 'BROKEN_DUTY_ASSIGNMENT', eventDayId: input.eventDay.id,
+    attemptedSchedules: 2, stageId: 'stage-1',
+  } })
+  assert.deepEqual(generateTimetablePlan(input), result)
+  assert.deepEqual(input, original)
 })
 
 test('後続Duty失敗はstickyなPA探索上限のStage/Sectionを上書きしない', () => {

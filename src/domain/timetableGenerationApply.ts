@@ -1,5 +1,5 @@
 import type { DutyAssignment, DutyType, Event, EventBand, EventDay, PaAssignment, ScheduleBoundary,
-  ScheduleItem, Section, Stage, TimetableLock } from './models'
+  ScheduleItem, Section, Stage, TimetableLock, TimetableOrderConstraint } from './models'
 import type { TimetableGenerationInput, TimetableGenerationPlan } from './timetableGeneration'
 import { isValidScheduleItemSectionAssignment } from './schedule.ts'
 import { calculateEventDayTimelines } from './timetable.ts'
@@ -13,6 +13,11 @@ import { hasSameItemContents, hasValidTimetableGenerationDutyTypes, hasValidTime
   validateTimetableGenerationBreakRemoval } from './timetableGenerationOptions.ts'
 import { hasConsistentPaOwnership, hasValidDutyAssignments,
   hasValidPaAssignments } from './timetableRuntimeValidation.ts'
+import {
+  evaluateScheduledTimetableOrderConstraints,
+  evaluateTimetableOrderConstraints,
+  scopeTimetableOrderConstraintsForTarget,
+} from './timetableOrderConstraints.ts'
 import type { CalculatedScheduleItem } from './timeline'
 
 export interface MaterializedTimetable {
@@ -41,6 +46,7 @@ interface MaterializationInput {
   dutyTypes: DutyType[]
   dutyAssignments: DutyAssignment[]
   timetableLocks: TimetableLock[]
+  timetableOrderConstraints: TimetableOrderConstraint[]
   plan: TimetableGenerationPlan
   newScheduleItemIds: string[]
   newPaAssignmentIds: string[]
@@ -329,7 +335,7 @@ export const validateTimetableGenerationCandidate = (
   const fail = (reason: string): GenerationCandidateValidation => ({ ok: false, reason })
   if (!isRecord(input)) return fail('生成元データの形式が不正です。')
   const { event, eventDay, eventDays, stages, sections, eventBands, eventMembers, eventMemberDays,
-    timetableLocks, members, dutyTypes, dutyAssignments } = input
+    timetableLocks, timetableOrderConstraints, members, dutyTypes, dutyAssignments } = input
   if (!hasUnambiguousGenerationScope(event, eventDay, eventDays, stages, sections, eventBands)) {
     return fail('開催日・Stage・Section・出演バンドの所属を一意に判定できません。')
   }
@@ -385,6 +391,22 @@ export const validateTimetableGenerationCandidate = (
   const sectionIds = new Set(targetSections.map(section => section.id))
   const targetBands = eventBands.filter(band => band.eventId === event.id && band.eventDayId === eventDay.id)
   const bandIds = new Set(targetBands.map(band => band.id))
+  const scopedOrderConstraints = scopeTimetableOrderConstraintsForTarget({
+    timetableOrderConstraints,
+    eventDayId: eventDay.id,
+    stageIds,
+    eventBandIds: bandIds,
+  })
+  if (!scopedOrderConstraints.ok) return fail('出演順制約の形式が不正です。')
+  const targetOrderConstraints = scopedOrderConstraints.constraints
+  if (!evaluateTimetableOrderConstraints({
+    eventId: event.id,
+    timetableOrderConstraints: targetOrderConstraints,
+    eventDays,
+    stages,
+    sections,
+    eventBands,
+  }).valid) return fail('出演順制約の所属または順序関係が不正です。')
   if (!preservesGenerationBaseline(input.scheduleItems, candidate.scheduleItems, stageIds, bandIds)) {
     return fail('生成結果で元のScheduleItemが欠落・変更されたか、対象外の項目が追加されています。')
   }
@@ -401,6 +423,10 @@ export const validateTimetableGenerationCandidate = (
   if (candidatePerformances.some(item => stageIds.has(item.stageId) && !bandIds.has(item.eventBandId))) {
     return fail('生成結果に対象外の出演バンドが含まれています。')
   }
+  if (!evaluateScheduledTimetableOrderConstraints({
+    timetableOrderConstraints: targetOrderConstraints,
+    scheduleItems: candidate.scheduleItems,
+  }).valid) return fail('生成結果が出演順制約と一致していません。')
   const plan = input.plan
   if (!isRecord(plan) || plan.eventDayId !== eventDay.id ||
     !Array.isArray(plan.paShifts) || !plan.paShifts.every(isRecord)) {
