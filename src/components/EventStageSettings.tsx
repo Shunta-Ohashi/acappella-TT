@@ -22,7 +22,13 @@ import {
   type StageSettingsDraft,
   type EventStageSettingsValidationErrors,
 } from '../domain/eventStageSettings'
+import { getDeleteConfirmationCopy } from '../ui/deleteConfirmation'
+import { DeleteConfirmationDialog } from './DeleteConfirmationDialog'
 import { StageSectionSettings } from './StageSectionSettings'
+
+type PendingDeletion =
+  | { kind: 'stage'; draftId: string; label: string }
+  | { kind: 'section'; draftId: string; label: string }
 
 interface EventStageSettingsProps {
   event: Event
@@ -91,6 +97,7 @@ export function EventStageSettings({
     sections: {},
   })
   const [saveMessage, setSaveMessage] = useState('')
+  const [pendingDeletion, setPendingDeletion] = useState<PendingDeletion>()
 
   const selectedEventDayId = orderedEventDays.some(
     (eventDay) => eventDay.id === selectedEventDayIdState,
@@ -211,12 +218,20 @@ export function EventStageSettings({
       return
     }
 
+    setPendingDeletion({
+      kind: 'stage',
+      draftId: stage.draftId,
+      label: stage.name.trim() || '新しいStage',
+    })
+  }
+
+  const confirmRemoveStage = (draftId: string) => {
     setStageDrafts((previous) => previous.filter(
-      (candidate) => candidate.draftId !== stage.draftId,
+      (candidate) => candidate.draftId !== draftId,
     ))
     setErrors((previous) => {
       const nextStageErrors = { ...previous.stages }
-      delete nextStageErrors[stage.draftId]
+      delete nextStageErrors[draftId]
       return { ...previous, stages: nextStageErrors, form: undefined }
     })
     setSaveMessage('')
@@ -297,12 +312,20 @@ export function EventStageSettings({
       return
     }
 
+    setPendingDeletion({
+      kind: 'section',
+      draftId: section.draftId,
+      label: section.name.trim() || '新しいSection',
+    })
+  }
+
+  const confirmRemoveSection = (draftId: string) => {
     setSectionDrafts((previous) => previous.filter(
-      (candidate) => candidate.draftId !== section.draftId,
+      (candidate) => candidate.draftId !== draftId,
     ))
     setErrors((previous) => {
       const nextSectionErrors = { ...previous.sections }
-      delete nextSectionErrors[section.draftId]
+      delete nextSectionErrors[draftId]
       return { ...previous, sections: nextSectionErrors, form: undefined }
     })
     setSaveMessage('')
@@ -853,6 +876,26 @@ export function EventStageSettings({
           </div>
         </footer>
       </form>
+      {pendingDeletion && (() => {
+        const copy = getDeleteConfirmationCopy(
+          pendingDeletion.kind,
+          pendingDeletion.label,
+        )
+        return (
+          <DeleteConfirmationDialog
+            {...copy}
+            onCancel={() => setPendingDeletion(undefined)}
+            onConfirm={() => {
+              if (pendingDeletion.kind === 'stage') {
+                confirmRemoveStage(pendingDeletion.draftId)
+              } else {
+                confirmRemoveSection(pendingDeletion.draftId)
+              }
+              setPendingDeletion(undefined)
+            }}
+          />
+        )
+      })()}
     </section>
   )
 }

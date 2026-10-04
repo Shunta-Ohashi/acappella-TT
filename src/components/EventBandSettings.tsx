@@ -22,6 +22,8 @@ import {
   type EventBandSettingsUpdateResult,
   type EventBandSettingsValidationErrors,
 } from '../domain/eventBandSettings'
+import { getDeleteConfirmationCopy } from '../ui/deleteConfirmation'
+import { DeleteConfirmationDialog } from './DeleteConfirmationDialog'
 import { EventBandEditorDialog } from './EventBandEditorDialog'
 
 interface EventBandSettingsProps {
@@ -42,6 +44,11 @@ interface EventBandSettingsProps {
 type EditorState =
   | { mode: 'add'; eventDayId: EventDayId }
   | { mode: 'edit'; draftId: string }
+
+interface PendingBandDeletion {
+  draftId: string
+  label: string
+}
 
 const emptyErrors = (): EventBandSettingsValidationErrors => ({ items: {} })
 
@@ -81,6 +88,7 @@ export function EventBandSettings({
     emptyErrors,
   )
   const [saveMessage, setSaveMessage] = useState('')
+  const [pendingDeletion, setPendingDeletion] = useState<PendingBandDeletion>()
   const memberById = new Map(members.map((member) => [member.id, member]))
   const selectedItems = selectedEventDayId
     ? draft.items.filter((item) => item.eventDayId === selectedEventDayId)
@@ -135,11 +143,23 @@ export function EventBandSettings({
       return
     }
 
+    setPendingDeletion({
+      draftId: item.draftId,
+      label: item.name.trim() || '名称未入力の出演バンド',
+    })
+  }
+
+  const confirmDelete = () => {
+    if (!pendingDeletion) return
+
     setDraft((previous) => ({
       ...previous,
-      items: previous.items.filter((candidate) => candidate.draftId !== item.draftId),
+      items: previous.items.filter(
+        (candidate) => candidate.draftId !== pendingDeletion.draftId,
+      ),
     }))
     clearFeedback()
+    setPendingDeletion(undefined)
   }
 
   const presentErrors = (validationErrors: EventBandSettingsValidationErrors) => {
@@ -332,6 +352,19 @@ export function EventBandSettings({
           onApply={handleApplyItems}
         />
       )}
+      {pendingDeletion && (() => {
+        const copy = getDeleteConfirmationCopy(
+          'event-band',
+          pendingDeletion.label,
+        )
+        return (
+          <DeleteConfirmationDialog
+            {...copy}
+            onCancel={() => setPendingDeletion(undefined)}
+            onConfirm={confirmDelete}
+          />
+        )
+      })()}
     </section>
   )
 }
