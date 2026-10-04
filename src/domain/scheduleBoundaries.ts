@@ -382,6 +382,6 @@ export const describeScheduleBoundary = (
   const edge = boundary.edge === 'start' ? '開始' : '終了'
   const suffix = offset === 0
     ? ''
-    : boundary.edge === 'start' ? `+${offset}分` : `-${offset}分`
+    : boundary.edge === 'start' ? `後${offset}分` : `${offset}分前`
   return `${sectionLabel(boundary.sectionId) ?? '参照先なし'} ${edge}${suffix}`
 }

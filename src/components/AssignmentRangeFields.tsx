@@ -181,7 +181,7 @@ export function AssignmentRangeFields({
         isSectionBoundary(until) && (
         <>
           <label htmlFor={`${idPrefix}-start-offset`}>
-            セクション開始から（分）
+            セクション開始後（分）
             <input
               id={`${idPrefix}-start-offset`}
               type="number"
@@ -196,7 +196,7 @@ export function AssignmentRangeFields({
             />
           </label>
           <label htmlFor={`${idPrefix}-end-offset`}>
-            セクション終了の（分前）
+            セクション終了前（分）
             <input
               id={`${idPrefix}-end-offset`}
               type="number"

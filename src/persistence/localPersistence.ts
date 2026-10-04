@@ -233,9 +233,8 @@ const isPersistedAppStateV3 = (value: unknown): boolean =>
   hasValidSnapshotRelationships(value as unknown as PersistedDomainState)
 
 const migrateBoundary = (boundary: LegacyScheduleBoundary): PaAssignment['from'] => ({
+  ...boundary,
   kind: 'schedule-item',
-  scheduleItemId: boundary.scheduleItemId,
-  edge: boundary.edge,
 })
 
 const migrateLegacyBoundaries = <T extends {

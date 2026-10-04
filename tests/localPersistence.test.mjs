@@ -246,6 +246,40 @@ test('V1/V2/V3のhybrid Boundaryとinvalid edgeをsilent migrationせず拒否�
   }
 })
 
+test('V1/V2/V3 Boundaryの無関係な追加fieldを非破壊migrationで維持する', () => {
+  const current = createPersistedAppState(createEmptyState())
+  for (const version of [1, 2, 3]) {
+    const legacy = {
+      ...current,
+      version,
+      paAssignments: [{
+        id: `pa-extra-v${version}`, eventId: 'event', eventDayId: 'day',
+        stageId: 'stage', memberId: 'member', role: 'main',
+        from: {
+          scheduleItemId: 'item-a', edge: 'start', futureMetadata: `from-v${version}`,
+        },
+        until: {
+          scheduleItemId: 'item-b', edge: 'end', futureMetadata: `until-v${version}`,
+        },
+      }],
+    }
+    const original = structuredClone(legacy)
+    const restored = parsePersistedState(JSON.stringify(legacy))
+
+    assert.ok(restored)
+    assert.equal(restored.version, CURRENT_STORAGE_VERSION)
+    assert.deepEqual(restored.paAssignments[0].from, {
+      scheduleItemId: 'item-a', edge: 'start',
+      futureMetadata: `from-v${version}`, kind: 'schedule-item',
+    })
+    assert.deepEqual(restored.paAssignments[0].until, {
+      scheduleItemId: 'item-b', edge: 'end',
+      futureMetadata: `until-v${version}`, kind: 'schedule-item',
+    })
+    assert.deepEqual(legacy, original)
+  }
+})
+
 test('V4では出演順制約collectionを必須としmalformed要素を拒否する', () => {
   const current = createPersistedAppState(createEmptyState())
   const { timetableOrderConstraints: _omitted, ...missing } = current

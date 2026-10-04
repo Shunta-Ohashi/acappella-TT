@@ -173,6 +173,26 @@ test('旧バックアップのhybrid Boundaryはschedule-itemへ変換せず拒�
   assert.equal(parseBackupJson(JSON.stringify(legacy)), undefined)
 })
 
+test('旧バックアップBoundaryの無関係な追加fieldをV4移行後も維持する', () => {
+  const legacy = {
+    ...createPersistedAppState(emptyState()),
+    version: 3,
+    dutyAssignments: [{
+      id: 'duty-extra', dutyTypeId: 'type', eventDayId: 'day', stageId: 'stage',
+      memberId: 'member',
+      from: { scheduleItemId: 'item-x', edge: 'start', futureMetadata: 'from-extra' },
+      until: { scheduleItemId: 'item-y', edge: 'end', futureMetadata: 'until-extra' },
+    }],
+  }
+  const original = structuredClone(legacy)
+  const restored = parseBackupJson(JSON.stringify(legacy))
+
+  assert.ok(restored)
+  assert.equal(restored.dutyAssignments[0].from.futureMetadata, 'from-extra')
+  assert.equal(restored.dutyAssignments[0].until.futureMetadata, 'until-extra')
+  assert.deepEqual(legacy, original)
+})
+
 test('V4バックアップのcross-kind hybrid Boundaryを拒否する', () => {
   const current = createPersistedAppState(emptyState())
   const hybrid = {

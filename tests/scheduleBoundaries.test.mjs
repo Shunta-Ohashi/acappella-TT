@@ -188,10 +188,13 @@ test('Boundary formatterは正常な3形式を維持しmalformed shapeを安全�
   }, labels), '第1部 開始')
   assert.equal(describeScheduleBoundary({
     kind: 'section', sectionId: 'section-1', edge: 'start', offsetMinutes: 5,
-  }, labels), '第1部 開始+5分')
+  }, labels), '第1部 開始後5分')
   assert.equal(describeScheduleBoundary({
     kind: 'section', sectionId: 'section-1', edge: 'end', offsetMinutes: 5,
-  }, labels), '第1部 終了-5分')
+  }, labels), '第1部 終了5分前')
+  assert.equal(describeScheduleBoundary({
+    kind: 'section', sectionId: 'missing', edge: 'end', offsetMinutes: 5,
+  }, labels), '参照先なし 終了5分前')
   assert.equal(describeScheduleBoundary({ kind: 'time', time: '13:00' }, labels), '13:00')
 
   for (const malformed of [
