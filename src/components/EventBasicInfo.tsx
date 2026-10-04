@@ -148,7 +148,7 @@ export function EventBasicInfo({
     setEventDeletionError('')
     setPendingEventDeletion({
       eventId: event.id,
-      label: eventName.trim() || event.name,
+      label: event.name,
     })
   }
 

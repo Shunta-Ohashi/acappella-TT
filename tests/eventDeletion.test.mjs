@@ -12,6 +12,11 @@ import {
 } from '../src/persistence/localPersistence.ts'
 
 const timeBoundary = (time) => ({ kind: 'time', time })
+const scheduleItemBoundary = (scheduleItemId, edge = 'start') => ({
+  kind: 'schedule-item',
+  scheduleItemId,
+  edge,
+})
 
 const createInput = (overrides = {}) => ({
   eventId: 'event-a',
@@ -69,6 +74,29 @@ const createInput = (overrides = {}) => ({
   ],
   ...overrides,
 })
+
+const createInputWithAmbiguousForeignScheduleItem = (overrides = {}) => {
+  const base = createInput()
+  return createInput({
+    events: [
+      ...base.events,
+      { id: 'event-c', name: 'Event C', timeZone: 'Asia/Tokyo', defaultTransitionMinutes: 2, validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 10 }, performanceSlotMinutes: [10] },
+    ],
+    eventDays: [
+      ...base.eventDays,
+      { id: 'day-c', eventId: 'event-c', date: '2026-10-03', order: 0 },
+    ],
+    eventBands: [
+      ...base.eventBands,
+      { id: 'event-band-c', eventId: 'event-c', eventDayId: 'day-c', name: 'Band C', memberIds: [], durationMinutes: 10 },
+    ],
+    scheduleItems: [
+      ...base.scheduleItems,
+      { id: 'item-bc', kind: 'performance', stageId: 'stage-b', eventBandId: 'event-band-c', order: 1 },
+    ],
+    ...overrides,
+  })
+}
 
 test('Eventと所有する全イベントデータをcascade削除し、他Eventを完全に維持する', () => {
   const input = createInput()
@@ -185,6 +213,95 @@ test('欠落参照を含む子要素も解決可能なtarget所有関係から�
   if (!result.ok) return
   assert.deepEqual(result.scheduleItems, [])
   assert.deepEqual(result.dutyAssignments, [])
+})
+
+test('foreign owners {B,C}の既存ScheduleItemをtarget Lockが参照したらconflictにする', () => {
+  const input = createInputWithAmbiguousForeignScheduleItem({
+    timetableLocks: [{
+      id: 'lock-a', eventId: 'event-a', scheduleItemId: 'item-bc',
+      stageId: 'missing-stage', position: { kind: 'first' },
+    }],
+  })
+  assert.deepEqual(createEventDeletion(input), {
+    ok: false,
+    reason: 'EVENT_RELATIONSHIP_CONFLICT',
+  })
+})
+
+test('foreign owners {B,C}の既存ScheduleItemをtarget PA Boundaryが参照したらconflictにする', () => {
+  const input = createInputWithAmbiguousForeignScheduleItem({
+    paAssignments: [{
+      id: 'pa-a', eventId: 'event-a', eventDayId: 'day-a', stageId: 'stage-a',
+      memberId: 'member-a', role: 'main',
+      from: scheduleItemBoundary('item-bc'), until: timeBoundary('11:00'),
+    }],
+  })
+  assert.deepEqual(createEventDeletion(input), {
+    ok: false,
+    reason: 'EVENT_RELATIONSHIP_CONFLICT',
+  })
+})
+
+test('foreign owners {B,C}の既存ScheduleItemをtarget Duty Boundaryが参照したらconflictにする', () => {
+  const input = createInputWithAmbiguousForeignScheduleItem({
+    dutyAssignments: [{
+      id: 'assignment-a', dutyTypeId: 'duty-a', eventDayId: 'day-a',
+      stageId: 'stage-a', memberId: 'member-a',
+      from: scheduleItemBoundary('item-bc'), until: timeBoundary('11:00'),
+    }],
+  })
+  assert.deepEqual(createEventDeletion(input), {
+    ok: false,
+    reason: 'EVENT_RELATIONSHIP_CONFLICT',
+  })
+})
+
+test('targetから参照されないforeign owners {B,C}のScheduleItemは保持して削除を妨げない', () => {
+  const input = createInputWithAmbiguousForeignScheduleItem()
+  const result = createEventDeletion(input)
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.ok(result.scheduleItems.some((item) => item.id === 'item-bc'))
+})
+
+test('owners {A,B}のScheduleItemはtarget削除をconflictにする', () => {
+  const input = createInput({
+    scheduleItems: [{
+      id: 'item-ab', kind: 'performance', stageId: 'stage-a',
+      eventBandId: 'event-band-b', order: 0,
+    }],
+    timetableLocks: [],
+  })
+  assert.deepEqual(createEventDeletion(input), {
+    ok: false,
+    reason: 'EVENT_RELATIONSHIP_CONFLICT',
+  })
+})
+
+test('single foreign owner {B}のScheduleItemをtarget Lockが参照したらconflictにする', () => {
+  const input = createInput({
+    timetableLocks: [{
+      id: 'lock-a', eventId: 'event-a', scheduleItemId: 'item-b',
+      stageId: 'missing-stage', position: { kind: 'first' },
+    }],
+  })
+  assert.deepEqual(createEventDeletion(input), {
+    ok: false,
+    reason: 'EVENT_RELATIONSHIP_CONFLICT',
+  })
+})
+
+test('missing ScheduleItemを参照するtarget Lockはbroken referenceとしてLockごと削除する', () => {
+  const input = createInput({
+    timetableLocks: [{
+      id: 'lock-a', eventId: 'event-a', scheduleItemId: 'missing-item',
+      stageId: 'missing-stage', position: { kind: 'first' },
+    }],
+  })
+  const result = createEventDeletion(input)
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.deepEqual(result.timetableLocks, [])
 })
 
 test('共通Member・Bandを保持した削除後snapshotをPersistence V4でround-tripする', () => {

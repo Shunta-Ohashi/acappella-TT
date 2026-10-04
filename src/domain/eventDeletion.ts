@@ -64,25 +64,44 @@ type OwnershipResolution =
   | { ok: true; ownership: EventDeletionOwnership }
   | { ok: false; reason: EventDeletionFailureReason }
 
-const getSingleResolvedOwner = (
-  owners: Array<EventId | undefined>,
+type OwnershipEvidence = EventId | ReadonlySet<EventId> | undefined
+
+const collectResolvedOwners = (
+  evidence: OwnershipEvidence[],
+): Set<EventId> => {
+  const resolvedOwners = new Set<EventId>()
+  for (const owner of evidence) {
+    if (owner === undefined) continue
+    if (typeof owner === 'string') {
+      resolvedOwners.add(owner)
+      continue
+    }
+    for (const candidate of owner) resolvedOwners.add(candidate)
+  }
+  return resolvedOwners
+}
+
+const resolveOwnership = (
+  evidence: OwnershipEvidence[],
   targetEventId: EventId,
-): { owner?: EventId; conflictsWithTarget: boolean } => {
-  const resolvedOwners = new Set(owners.filter(
-    (owner): owner is EventId => owner !== undefined,
-  ))
+): {
+  owners: Set<EventId>
+  owner?: EventId
+  conflictsWithTarget: boolean
+} => {
+  const owners = collectResolvedOwners(evidence)
   return {
-    owner: resolvedOwners.size === 1 ? [...resolvedOwners][0] : undefined,
-    conflictsWithTarget:
-      resolvedOwners.size > 1 && resolvedOwners.has(targetEventId),
+    owners,
+    owner: owners.size === 1 ? [...owners][0] : undefined,
+    conflictsWithTarget: owners.size > 1 && owners.has(targetEventId),
   }
 }
 
 const hasDirectOwnershipConflict = (
   owner: EventId,
-  referencedOwners: Array<EventId | undefined>,
+  referencedOwnership: OwnershipEvidence[],
   targetEventId: EventId,
-): boolean => referencedOwners.some((referencedOwner) =>
+): boolean => [...collectResolvedOwners(referencedOwnership)].some((referencedOwner) =>
   referencedOwner !== undefined &&
   referencedOwner !== owner &&
   (owner === targetEventId || referencedOwner === targetEventId),
@@ -136,7 +155,7 @@ const resolveEventDeletionOwnership = ({
 
   const eventMemberDayIds = new Set<string>()
   for (const day of eventMemberDays) {
-    const resolution = getSingleResolvedOwner([
+    const resolution = resolveOwnership([
       eventByEventMemberId.get(day.eventMemberId),
       eventByDayId.get(day.eventDayId),
     ], eventId)
@@ -164,7 +183,7 @@ const resolveEventDeletionOwnership = ({
     if (eventBand.eventId === eventId) eventBandIds.add(eventBand.id)
   }
 
-  const eventByScheduleItemId = new Map<string, EventId>()
+  const eventOwnersByScheduleItemId = new Map<string, Set<EventId>>()
   const scheduleItemIds = new Set<string>()
   for (const item of scheduleItems) {
     const referencedOwners = [
@@ -176,19 +195,19 @@ const resolveEventDeletionOwnership = ({
           ? eventBySectionId.get(item.afterSectionId)
           : undefined,
     ]
-    const resolution = getSingleResolvedOwner(referencedOwners, eventId)
+    const resolution = resolveOwnership(referencedOwners, eventId)
     if (resolution.conflictsWithTarget) {
       return { ok: false, reason: 'EVENT_RELATIONSHIP_CONFLICT' }
     }
-    if (resolution.owner !== undefined) {
-      eventByScheduleItemId.set(item.id, resolution.owner)
-      if (resolution.owner === eventId) scheduleItemIds.add(item.id)
-    }
+    eventOwnersByScheduleItemId.set(item.id, resolution.owners)
+    if (resolution.owner === eventId) scheduleItemIds.add(item.id)
   }
 
-  const getBoundaryOwner = (boundary: ScheduleBoundary): EventId | undefined => {
+  const getBoundaryOwners = (
+    boundary: ScheduleBoundary,
+  ): OwnershipEvidence => {
     if (boundary.kind === 'schedule-item') {
-      return eventByScheduleItemId.get(boundary.scheduleItemId)
+      return eventOwnersByScheduleItemId.get(boundary.scheduleItemId)
     }
     if (boundary.kind === 'section') {
       return eventBySectionId.get(boundary.sectionId)
@@ -201,8 +220,8 @@ const resolveEventDeletionOwnership = ({
     if (hasDirectOwnershipConflict(assignment.eventId, [
       eventByDayId.get(assignment.eventDayId),
       eventByStageId.get(assignment.stageId),
-      getBoundaryOwner(assignment.from),
-      getBoundaryOwner(assignment.until),
+      getBoundaryOwners(assignment.from),
+      getBoundaryOwners(assignment.until),
     ], eventId)) {
       return { ok: false, reason: 'EVENT_RELATIONSHIP_CONFLICT' }
     }
@@ -217,12 +236,12 @@ const resolveEventDeletionOwnership = ({
     .map((dutyType) => dutyType.id))
   const dutyAssignmentIds = new Set<string>()
   for (const assignment of dutyAssignments) {
-    const resolution = getSingleResolvedOwner([
+    const resolution = resolveOwnership([
       eventByDutyTypeId.get(assignment.dutyTypeId),
       eventByDayId.get(assignment.eventDayId),
       eventByStageId.get(assignment.stageId),
-      getBoundaryOwner(assignment.from),
-      getBoundaryOwner(assignment.until),
+      getBoundaryOwners(assignment.from),
+      getBoundaryOwners(assignment.until),
     ], eventId)
     if (resolution.conflictsWithTarget) {
       return { ok: false, reason: 'EVENT_RELATIONSHIP_CONFLICT' }
@@ -233,7 +252,7 @@ const resolveEventDeletionOwnership = ({
   const timetableLockIds = new Set<string>()
   for (const lock of timetableLocks) {
     if (hasDirectOwnershipConflict(lock.eventId, [
-      eventByScheduleItemId.get(lock.scheduleItemId),
+      eventOwnersByScheduleItemId.get(lock.scheduleItemId),
       eventByStageId.get(lock.stageId),
       lock.sectionId ? eventBySectionId.get(lock.sectionId) : undefined,
     ], eventId)) {
