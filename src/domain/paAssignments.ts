@@ -11,6 +11,7 @@ import type {
   PaAssignmentId,
   PaRole,
   ScheduleBoundary,
+  Section,
   Stage,
   StageId,
 } from './models'
@@ -21,7 +22,9 @@ import {
   resolveScheduleBoundaryInterval,
   type ResolvedScheduleInterval,
   type ResolveScheduleIntervalResult,
+  type ScheduleBoundaryResolutionContext,
 } from './scheduleBoundaries.ts'
+import { createDefaultAssignmentRange } from './assignmentRanges.ts'
 
 export { intervalsOverlap } from './scheduleBoundaries.ts'
 
@@ -88,10 +91,12 @@ interface PaMemberPerformanceOverlapInput {
 export const resolvePaAssignmentInterval = (
   assignment: PaAssignmentScope,
   calculatedItems: CalculatedScheduleItem[],
+  context?: ScheduleBoundaryResolutionContext,
 ): ResolvePaAssignmentIntervalResult => resolveScheduleBoundaryInterval(
   assignment,
   calculatedItems,
   'PA担当',
+  context,
 )
 
 export const getPaMemberCandidates = ({
@@ -215,6 +220,7 @@ export const validatePaAssignmentDraftItem = ({
   event,
   eventDays,
   stages,
+  sections,
   members,
   eventMembers,
   eventMemberDays,
@@ -225,6 +231,7 @@ export const validatePaAssignmentDraftItem = ({
   event: Event
   eventDays: EventDay[]
   stages: Stage[]
+  sections: Section[]
   members: Member[]
   eventMembers: EventMember[]
   eventMemberDays: EventMemberDay[]
@@ -264,7 +271,7 @@ export const validatePaAssignmentDraftItem = ({
     errors.memberId = 'この開催日に不参加のメンバーは選択できません。'
   }
 
-  const resolution = resolvePaAssignmentInterval(item, calculatedItems)
+  const resolution = resolvePaAssignmentInterval(item, calculatedItems, { stages, sections })
   if (!resolution.ok) {
     errors.interval = resolution.reason
   } else if (
@@ -303,6 +310,7 @@ export const validatePaAssignmentsDraft = ({
   event,
   eventDays,
   stages,
+  sections,
   members,
   eventMembers,
   eventMemberDays,
@@ -313,6 +321,7 @@ export const validatePaAssignmentsDraft = ({
   event: Event
   eventDays: EventDay[]
   stages: Stage[]
+  sections: Section[]
   members: Member[]
   eventMembers: EventMember[]
   eventMemberDays: EventMemberDay[]
@@ -329,6 +338,7 @@ export const validatePaAssignmentsDraft = ({
       event,
       eventDays,
       stages,
+      sections,
       members,
       eventMembers,
       eventMemberDays,
@@ -355,7 +365,9 @@ export const validatePaAssignmentsDraft = ({
 
   for (let firstIndex = 0; firstIndex < draft.items.length; firstIndex += 1) {
     const first = draft.items[firstIndex]
-    const firstResolution = resolvePaAssignmentInterval(first, calculatedItems)
+    const firstResolution = resolvePaAssignmentInterval(
+      first, calculatedItems, { stages, sections },
+    )
     if (!firstResolution.ok) continue
     for (
       let secondIndex = firstIndex + 1;
@@ -372,6 +384,7 @@ export const validatePaAssignmentsDraft = ({
       const secondResolution = resolvePaAssignmentInterval(
         second,
         calculatedItems,
+        { stages, sections },
       )
       if (
         secondResolution.ok && intervalsOverlap(
@@ -421,34 +434,39 @@ export const createPaAssignmentsDraft = (
 export const createPaAssignmentDraftItem = ({
   draftId,
   event,
-  eventDayId,
-  stageId,
+  stage,
+  sections,
   role,
   calculatedItems,
 }: {
   draftId: string
   event: Event
-  eventDayId: EventDayId
-  stageId: StageId
+  stage: Stage
+  sections: Section[]
   role: PaRole
   calculatedItems: CalculatedScheduleItem[]
 }): PaAssignmentDraftItem | undefined => {
   const stageItems = calculatedItems.filter((item) =>
-    item.eventDayId === eventDayId && item.stageId === stageId,
+    item.eventDayId === stage.eventDayId && item.stageId === stage.id,
   )
-  const first = stageItems[0]
-  const last = stageItems.at(-1)
-  if (!first || !last) return undefined
+  const mode = stageItems.length > 0
+    ? 'schedule-item'
+    : sections.some((section) => section.stageId === stage.id)
+      ? 'section-whole'
+      : 'time'
+  const range = createDefaultAssignmentRange({
+    mode, stage, sections, calculatedItems: stageItems,
+  })
+  if (!range) return undefined
 
   return {
     draftId,
     eventId: event.id,
-    eventDayId,
-    stageId,
+    eventDayId: stage.eventDayId,
+    stageId: stage.id,
     memberId: '',
     role,
-    from: { scheduleItemId: first.scheduleItemId, edge: 'start' },
-    until: { scheduleItemId: last.scheduleItemId, edge: 'end' },
+    ...range,
   }
 }
 
@@ -456,6 +474,7 @@ export const createPaAssignmentsUpdate = ({
   event,
   eventDays,
   stages,
+  sections,
   members,
   eventMembers,
   eventMemberDays,
@@ -468,6 +487,7 @@ export const createPaAssignmentsUpdate = ({
   event: Event
   eventDays: EventDay[]
   stages: Stage[]
+  sections: Section[]
   members: Member[]
   eventMembers: EventMember[]
   eventMemberDays: EventMemberDay[]
@@ -482,6 +502,7 @@ export const createPaAssignmentsUpdate = ({
     event,
     eventDays,
     stages,
+    sections,
     members,
     eventMembers,
     eventMemberDays,

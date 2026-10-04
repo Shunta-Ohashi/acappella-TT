@@ -12,6 +12,7 @@ import type {
   Member,
   PaAssignment,
   ScheduleBoundary,
+  Section,
   Stage,
   StageId,
 } from './models'
@@ -26,7 +27,9 @@ import {
   resolveScheduleBoundaryInterval,
   type ResolvedScheduleInterval,
   type ResolveScheduleIntervalResult,
+  type ScheduleBoundaryResolutionContext,
 } from './scheduleBoundaries.ts'
+import { createDefaultAssignmentRange } from './assignmentRanges.ts'
 
 export interface DutyTypeDraftItem {
   draftId: string
@@ -108,10 +111,12 @@ interface DutyAssignmentScope {
 export const resolveDutyAssignmentInterval = (
   assignment: DutyAssignmentScope,
   calculatedItems: CalculatedScheduleItem[],
+  context?: ScheduleBoundaryResolutionContext,
 ): ResolveScheduleIntervalResult => resolveScheduleBoundaryInterval(
   assignment,
   calculatedItems,
   '一般業務担当',
+  context,
 )
 
 const normalizeDutyTypeName = (name: string): string =>
@@ -339,6 +344,7 @@ export const validateDutyAssignmentDraftItem = ({
   event,
   eventDays,
   stages,
+  sections,
   members,
   eventMembers,
   eventMemberDays,
@@ -351,6 +357,7 @@ export const validateDutyAssignmentDraftItem = ({
   event: Event
   eventDays: EventDay[]
   stages: Stage[]
+  sections: Section[]
   members: Member[]
   eventMembers: EventMember[]
   eventMemberDays: EventMemberDay[]
@@ -394,7 +401,9 @@ export const validateDutyAssignmentDraftItem = ({
     errors.memberId = 'この開催日に不参加のメンバーは選択できません。'
   }
 
-  const resolution = resolveDutyAssignmentInterval(item, calculatedItems)
+  const resolution = resolveDutyAssignmentInterval(
+    item, calculatedItems, { stages, sections },
+  )
   if (!resolution.ok) {
     errors.interval = resolution.reason
   } else if (
@@ -422,7 +431,9 @@ export const validateDutyAssignmentDraftItem = ({
         assignment.memberId !== member.id ||
         assignment.eventDayId !== item.eventDayId
       ) return false
-      const paResolution = resolvePaAssignmentInterval(assignment, calculatedItems)
+      const paResolution = resolvePaAssignmentInterval(
+        assignment, calculatedItems, { stages, sections },
+      )
       return paResolution.ok && intervalsOverlap(
         resolution.interval,
         paResolution.interval,
@@ -444,6 +455,7 @@ export const validateDutySettingsDraft = ({
   event,
   eventDays,
   stages,
+  sections,
   members,
   eventMembers,
   eventMemberDays,
@@ -455,6 +467,7 @@ export const validateDutySettingsDraft = ({
   event: Event
   eventDays: EventDay[]
   stages: Stage[]
+  sections: Section[]
   members: Member[]
   eventMembers: EventMember[]
   eventMemberDays: EventMemberDay[]
@@ -476,6 +489,7 @@ export const validateDutySettingsDraft = ({
       event,
       eventDays,
       stages,
+      sections,
       members,
       eventMembers,
       eventMemberDays,
@@ -503,7 +517,9 @@ export const validateDutySettingsDraft = ({
 
   for (let firstIndex = 0; firstIndex < draft.assignments.length; firstIndex += 1) {
     const first = draft.assignments[firstIndex]
-    const firstResolution = resolveDutyAssignmentInterval(first, calculatedItems)
+    const firstResolution = resolveDutyAssignmentInterval(
+      first, calculatedItems, { stages, sections },
+    )
     if (!firstResolution.ok) continue
 
     for (
@@ -520,6 +536,7 @@ export const validateDutySettingsDraft = ({
       const secondResolution = resolveDutyAssignmentInterval(
         second,
         calculatedItems,
+        { stages, sections },
       )
       if (
         secondResolution.ok &&
@@ -598,31 +615,36 @@ export const createDutySettingsDraft = (
 export const createDutyAssignmentDraftItem = ({
   draftId,
   dutyTypeDraftId,
-  eventDayId,
-  stageId,
+  stage,
+  sections,
   calculatedItems,
 }: {
   draftId: string
   dutyTypeDraftId: string
-  eventDayId: EventDayId
-  stageId: StageId
+  stage: Stage
+  sections: Section[]
   calculatedItems: CalculatedScheduleItem[]
 }): DutyAssignmentDraftItem | undefined => {
   const stageItems = calculatedItems.filter((item) =>
-    item.eventDayId === eventDayId && item.stageId === stageId,
+    item.eventDayId === stage.eventDayId && item.stageId === stage.id,
   )
-  const first = stageItems[0]
-  const last = stageItems.at(-1)
-  if (!first || !last) return undefined
+  const mode = stageItems.length > 0
+    ? 'schedule-item'
+    : sections.some((section) => section.stageId === stage.id)
+      ? 'section-whole'
+      : 'time'
+  const range = createDefaultAssignmentRange({
+    mode, stage, sections, calculatedItems: stageItems,
+  })
+  if (!range) return undefined
 
   return {
     draftId,
     dutyTypeDraftId,
-    eventDayId,
-    stageId,
+    eventDayId: stage.eventDayId,
+    stageId: stage.id,
     memberId: '',
-    from: { scheduleItemId: first.scheduleItemId, edge: 'start' },
-    until: { scheduleItemId: last.scheduleItemId, edge: 'end' },
+    ...range,
   }
 }
 
@@ -630,6 +652,7 @@ export const createDutySettingsUpdate = ({
   event,
   eventDays,
   stages,
+  sections,
   members,
   eventMembers,
   eventMemberDays,
@@ -645,6 +668,7 @@ export const createDutySettingsUpdate = ({
   event: Event
   eventDays: EventDay[]
   stages: Stage[]
+  sections: Section[]
   members: Member[]
   eventMembers: EventMember[]
   eventMemberDays: EventMemberDay[]
@@ -662,6 +686,7 @@ export const createDutySettingsUpdate = ({
     event,
     eventDays,
     stages,
+    sections,
     members,
     eventMembers,
     eventMemberDays,

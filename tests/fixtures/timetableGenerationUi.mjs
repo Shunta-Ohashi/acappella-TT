@@ -37,7 +37,7 @@ export const createGenerationUiInput = () => {
   ]
   const pa = (id, eventId, eventDayId, stageId, itemId) => ({
     id, eventId, eventDayId, stageId, memberId: 'main', role: 'main',
-    from: { scheduleItemId: itemId, edge: 'start' }, until: { scheduleItemId: itemId, edge: 'end' },
+    from: { kind: 'schedule-item', scheduleItemId: itemId, edge: 'start' }, until: { kind: 'schedule-item', scheduleItemId: itemId, edge: 'end' },
   })
   const paAssignments = [pa('old-pa', event.id, eventDay.id, 'stage-a1', 'old-p1'),
     pa('pa-a2', event.id, 'day-a2', 'stage-a2', 'p-a2'), pa('pa-b', 'event-b', 'day-b', 'stage-b', 'p-b')]
@@ -45,8 +45,8 @@ export const createGenerationUiInput = () => {
     stageId: 'stage-a1', sectionId: 'section-1', position: { kind: 'first' } }]
   const dutyTypes = [{ id: 'duty-photo', eventId: event.id, name: '撮影', order: 0 }]
   const dutyAssignments = [{ id: 'duty-1', dutyTypeId: 'duty-photo', eventDayId: eventDay.id,
-    stageId: 'stage-a1', memberId: 'duty', from: { scheduleItemId: 'break-1', edge: 'start' },
-    until: { scheduleItemId: 'break-1', edge: 'end' } }]
+    stageId: 'stage-a1', memberId: 'duty', from: { kind: 'schedule-item', scheduleItemId: 'break-1', edge: 'start' },
+    until: { kind: 'schedule-item', scheduleItemId: 'break-1', edge: 'end' } }]
   return { event, eventDay, eventDays, stages, sections, members, eventMembers, eventMemberDays,
     eventBands, scheduleItems, paAssignments, timetableLocks, timetableOrderConstraints: [],
     dutyTypes, dutyAssignments }

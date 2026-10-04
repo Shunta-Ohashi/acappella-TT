@@ -14,6 +14,7 @@ import type {
   Member,
   PaRole,
   ScheduleItem,
+  Section,
   Stage,
   StageId,
 } from '../domain/models'
@@ -30,6 +31,7 @@ import {
   type PaAssignmentsUpdateResult,
   type PaAssignmentsValidationErrors,
 } from '../domain/paAssignments'
+import { describeScheduleBoundary } from '../domain/scheduleBoundaries.ts'
 import { PaAssignmentEditorDialog } from './PaAssignmentEditorDialog'
 import { hasPaDraftChanges } from '../ui/operationsDraftChanges'
 
@@ -38,6 +40,7 @@ interface PaSettingsProps {
   event: Event
   eventDays: EventDay[]
   stages: Stage[]
+  sections: Section[]
   members: Member[]
   eventMembers: EventMember[]
   eventMemberDays: EventMemberDay[]
@@ -77,6 +80,7 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
   event,
   eventDays,
   stages,
+  sections,
   members,
   eventMembers,
   eventMemberDays,
@@ -116,19 +120,24 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
     .sort((first, second) => first.order - second.order)
 
   const getBoundaryLabel = (item: PaAssignmentDraftItem) => {
-    const describe = (boundary: PaAssignmentDraftItem['from']) => {
-      const scheduleItem = scheduleItemById.get(boundary.scheduleItemId)
-      if (!scheduleItem) return '参照先なし'
-      const name = scheduleItem.kind === 'break'
+    const describe = (boundary: PaAssignmentDraftItem['from']) =>
+      describeScheduleBoundary(boundary, {
+        scheduleItemLabel: (id) => {
+          const scheduleItem = scheduleItemById.get(id)
+          if (!scheduleItem) return undefined
+          return scheduleItem.kind === 'break'
         ? scheduleItem.title
         : eventBandById.get(scheduleItem.eventBandId)?.name ?? '不明なバンド'
-      return `${name} ${boundary.edge === 'start' ? '開始' : '終了'}`
-    }
+        },
+        sectionLabel: (id) => sections.find((section) => section.id === id)?.name,
+      })
     return `${describe(item.from)} → ${describe(item.until)}`
   }
 
   const getTimeLabel = (item: PaAssignmentDraftItem) => {
-    const resolution = resolvePaAssignmentInterval(item, calculatedItems)
+    const resolution = resolvePaAssignmentInterval(
+      item, calculatedItems, { stages, sections },
+    )
     return resolution.ok
       ? `${formatMinuteAsLocalTime(resolution.interval.fromMinute)}〜${formatMinuteAsLocalTime(resolution.interval.untilMinute)}`
       : '参照エラー'
@@ -138,8 +147,8 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
     const item = createPaAssignmentDraftItem({
       draftId: createDraftId(),
       event,
-      eventDayId: stage.eventDayId,
-      stageId: stage.id,
+      stage,
+      sections,
       role,
       calculatedItems,
     })
@@ -176,6 +185,7 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
       event,
       eventDays,
       stages,
+      sections,
       members,
       eventMembers,
       eventMemberDays,
@@ -254,7 +264,6 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
                     type="button"
                     className="secondary-button"
                     aria-label={`${stage.name}にMain PAを追加`}
-                    disabled={stageItems.length === 0}
                     onClick={() => openNew(stage, 'main')}
                   >
                     ＋ Main PA
@@ -263,7 +272,6 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
                     type="button"
                     className="secondary-button"
                     aria-label={`${stage.name}にSub PAを追加`}
-                    disabled={stageItems.length === 0}
                     onClick={() => openNew(stage, 'sub')}
                   >
                     ＋ Sub PA
@@ -273,7 +281,7 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
 
               {stageItems.length === 0 && (
                 <p className="pa-stage-card__empty">
-                  タイムテーブルに項目がないため担当範囲を設定できません。
+                  タイムテーブル項目はありません。Sectionまたは時刻で担当範囲を指定できます。
                 </p>
               )}
               {stageItems.length > 0 && assignments.length === 0 && (
@@ -374,6 +382,7 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
           event={event}
           eventDays={eventDays}
           stages={stages}
+          sections={sections}
           members={members}
           eventMembers={eventMembers}
           eventMemberDays={eventMemberDays}

@@ -26,6 +26,7 @@ import {
   validatePerformanceSlotMinutes,
 } from '../domain/eventStageSettings.ts'
 import { isValidBreakDurationMinutes } from '../domain/schedule.ts'
+import { isValidScheduleBoundaryShape } from '../domain/scheduleBoundaries.ts'
 import { isValidLocalTime } from '../domain/timeline.ts'
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -79,8 +80,13 @@ const isFixedPlacement = (value: unknown): value is FixedPlacement =>
   isOptional(value.plannedStartTime, isLocalTime)
 
 const isScheduleBoundary = (value: unknown): value is ScheduleBoundary =>
-  isRecord(value) &&
-  isString(value.scheduleItemId) &&
+  isValidScheduleBoundaryShape(value)
+
+export const isLegacyScheduleBoundary = (value: unknown): value is {
+  scheduleItemId: string
+  edge: 'start' | 'end'
+} => isRecord(value) &&
+  isString(value.scheduleItemId) && value.scheduleItemId.trim().length > 0 &&
   (value.edge === 'start' || value.edge === 'end')
 
 export const isMember = (value: unknown): value is Member =>
@@ -236,6 +242,20 @@ export const isPaAssignment = (value: unknown): value is PaAssignment =>
   isScheduleBoundary(value.from) &&
   isScheduleBoundary(value.until)
 
+export const isLegacyPaAssignment = (value: unknown): value is Record<string, unknown> & {
+  from: { scheduleItemId: string; edge: 'start' | 'end' }
+  until: { scheduleItemId: string; edge: 'start' | 'end' }
+} =>
+  isRecord(value) &&
+  isString(value.id) &&
+  isString(value.eventId) &&
+  isString(value.eventDayId) &&
+  isString(value.stageId) &&
+  isString(value.memberId) &&
+  (value.role === 'main' || value.role === 'sub') &&
+  isLegacyScheduleBoundary(value.from) &&
+  isLegacyScheduleBoundary(value.until)
+
 export const isDutyType = (value: unknown): value is DutyType =>
   isRecord(value) &&
   isString(value.id) &&
@@ -252,5 +272,18 @@ export const isDutyAssignment = (value: unknown): value is DutyAssignment =>
   isString(value.memberId) &&
   isScheduleBoundary(value.from) &&
   isScheduleBoundary(value.until)
+
+export const isLegacyDutyAssignment = (value: unknown): value is Record<string, unknown> & {
+  from: { scheduleItemId: string; edge: 'start' | 'end' }
+  until: { scheduleItemId: string; edge: 'start' | 'end' }
+} =>
+  isRecord(value) &&
+  isString(value.id) &&
+  isString(value.dutyTypeId) &&
+  isString(value.eventDayId) &&
+  isString(value.stageId) &&
+  isString(value.memberId) &&
+  isLegacyScheduleBoundary(value.from) &&
+  isLegacyScheduleBoundary(value.until)
 
 export const isPersistedCollection = isArrayOf

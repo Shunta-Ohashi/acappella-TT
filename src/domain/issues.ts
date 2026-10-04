@@ -714,7 +714,9 @@ export const detectScheduleIssues = ({
     .forEach((assignment) => {
       const stage = stageById.get(assignment.stageId)
       const resolution = stage?.eventDayId === assignment.eventDayId
-        ? resolvePaAssignmentInterval(assignment, calculatedItems)
+        ? resolvePaAssignmentInterval(
+            assignment, calculatedItems, { stages, sections },
+          )
         : { ok: false as const, reason: 'PA担当のStageまたは開催日が正しくありません。' }
 
       if (!resolution.ok) {
@@ -878,7 +880,9 @@ export const detectScheduleIssues = ({
 
       const stage = stageById.get(assignment.stageId)
       const resolution = stage?.eventDayId === assignment.eventDayId
-        ? resolveDutyAssignmentInterval(assignment, calculatedItems)
+        ? resolveDutyAssignmentInterval(
+            assignment, calculatedItems, { stages, sections },
+          )
         : {
             ok: false as const,
             reason: '一般業務担当のStageまたは開催日が正しくありません。',

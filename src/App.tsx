@@ -177,7 +177,7 @@ import { createDemoData } from './data/demoData'
 import {
   loadPersistedStateOrFallback,
   savePersistedState,
-  type PersistedAppStateV3,
+  type PersistedAppStateV4,
   type PersistedDomainState,
 } from './persistence/localPersistence'
 import {
@@ -398,7 +398,7 @@ function App() {
     savePersistedState(domainState)
   }, [domainState])
 
-  const applyPersistedSnapshot = (snapshot: PersistedAppStateV3) => {
+  const applyPersistedSnapshot = (snapshot: PersistedAppStateV4) => {
     setGenerationOptionsScope(null)
     setResetConfirmation(null)
     setGenerationPreview(null)
@@ -811,6 +811,7 @@ function App() {
       event: selectedEvent,
       eventDays: selectedEventDays,
       stages: selectedStages,
+      sections: selectedSections,
       members,
       eventMembers: selectedEventMembers,
       eventMemberDays: selectedEventMemberDays,
@@ -842,6 +843,7 @@ function App() {
       event: selectedEvent,
       eventDays: selectedEventDays,
       stages: selectedStages,
+      sections: selectedSections,
       members,
       eventMembers: selectedEventMembers,
       eventMemberDays: selectedEventMemberDays,
@@ -1532,6 +1534,8 @@ function App() {
         dutyTypes: selectedEventDutyTypes,
         dutyAssignments: selectedEventDutyAssignments,
         issues: currentStageIssues,
+        stages: selectedStages,
+        sections: selectedSections,
       })
     : {
         rows: [],
@@ -1617,6 +1621,8 @@ function App() {
                 eventBands,
                 timetableLocks,
                 timetableOrderConstraints,
+                paAssignments,
+                dutyAssignments,
               })}
               onSave={handleSaveEventStageSettings}
               onSaveAndNext={() => setActiveStep(3)}
@@ -1851,6 +1857,7 @@ function App() {
                     event={selectedEvent}
                     eventDays={selectedEventDays}
                     stages={selectedStages}
+                    sections={selectedSections}
                     members={members}
                     eventMembers={selectedEventMembers}
                     eventMemberDays={selectedEventMemberDays}
@@ -1879,6 +1886,7 @@ function App() {
                     event={selectedEvent}
                     eventDays={selectedEventDays}
                     stages={selectedStages}
+                    sections={selectedSections}
                     members={members}
                     eventMembers={selectedEventMembers}
                     eventMemberDays={selectedEventMemberDays}

@@ -12,10 +12,12 @@ import {
 import { isValidBreakDurationMinutes, isValidScheduleLane, compareScheduleItemOrder } from './schedule.ts'
 import { evaluateScheduleConstraints, type ScheduleConstraintEvaluation } from './schedulingConstraints.ts'
 import { getDutyAssignmentsForEvent } from './dutyAssignments.ts'
+import { getReferencedScheduleItemIds } from './scheduleBoundaries.ts'
 import { calculateEventDayTimelines } from './timetable.ts'
 import { hasSafeStageTimelineArithmetic } from './timetableGenerationArithmetic.ts'
 import { hasValidTimetableGenerationDutyTypes, hasValidTimetableGenerationLocks,
   hasValidTimetableGenerationScheduleItems } from './timetableGenerationOptions.ts'
+import { hasValidDutyAssignments } from './timetableRuntimeValidation.ts'
 import { evaluateTimetableLocks, isValidFixedPosition } from './timetableLocks.ts'
 import {
   evaluateScheduledTimetableOrderConstraints,
@@ -608,6 +610,7 @@ const toInternalBoundary = (
   boundary: PlannedScheduleBoundary,
   internalIds: Map<string, string>,
 ) => ({
+  kind: 'schedule-item' as const,
   scheduleItemId: boundary.kind === 'existing-item'
     ? boundary.scheduleItemId
     : internalIds.get(boundary.eventBandId) ?? '',
@@ -635,13 +638,13 @@ const isNonEmptyId = (value: unknown): value is string =>
 
 const hasValidEntityCollection = (
   value: unknown, isValidEntry: (entry: Record<string, unknown>) => boolean,
-): boolean => Array.isArray(value) && value.every((entry: unknown) =>
-  isRecord(entry) && isNonEmptyId(entry.id) && isValidEntry(entry)) &&
-  new Set(value.map((entry: { id: string }) => entry.id)).size === value.length
-
-const hasValidDutyBoundary = (value: unknown): boolean =>
-  isRecord(value) && isNonEmptyId(value.scheduleItemId) &&
-  (value.edge === 'start' || value.edge === 'end')
+): boolean => {
+  if (!Array.isArray(value)) return false
+  const entries = Array.from(value)
+  return entries.every((entry: unknown) =>
+    isRecord(entry) && isNonEmptyId(entry.id) && isValidEntry(entry)) &&
+    new Set(entries.map((entry: { id: string }) => entry.id)).size === entries.length
+}
 
 /** Validate collection shape and fields used by generation before any entity lookup. */
 const hasValidTimetableGenerationCollections = (input: TimetableGenerationInput): boolean =>
@@ -662,11 +665,8 @@ const hasValidTimetableGenerationCollections = (input: TimetableGenerationInput)
       day.participationStatus === 'undecided')) &&
   hasValidEntityCollection(input.eventBands, band =>
     isNonEmptyId(band.eventId) && isNonEmptyId(band.eventDayId) &&
-    Array.isArray(band.memberIds) && band.memberIds.every(isNonEmptyId)) &&
-  hasValidEntityCollection(input.dutyAssignments, duty =>
-    isNonEmptyId(duty.dutyTypeId) && isNonEmptyId(duty.eventDayId) &&
-    isNonEmptyId(duty.stageId) && isNonEmptyId(duty.memberId) &&
-    hasValidDutyBoundary(duty.from) && hasValidDutyBoundary(duty.until)) &&
+    Array.isArray(band.memberIds) && Array.from(band.memberIds).every(isNonEmptyId)) &&
+  hasValidDutyAssignments(input.dutyAssignments) &&
   hasValidTimetableGenerationDutyTypes(input.dutyTypes) &&
   hasValidTimetableGenerationLocks(input.timetableLocks)
 
@@ -782,7 +782,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     targetMemberDays.some(day =>
       (day.availabilityWindows !== undefined &&
         (!Array.isArray(day.availabilityWindows) ||
-          !day.availabilityWindows.every(hasParseableTimeRangeBoundaries))) ||
+          !Array.from(day.availabilityWindows).every(hasParseableTimeRangeBoundaries))) ||
       (day.preferredTimeRange !== undefined &&
         !hasParseableTimeRangeBoundaries(day.preferredTimeRange)) ||
       validateAvailabilityWindows(day.availabilityWindows) !== undefined ||
@@ -918,8 +918,8 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
   }).filter(item => item.eventDayId === eventDay.id)
   for (const duty of targetDuties) {
     if (!dutyTypeIds.has(duty.dutyTypeId) ||
-      !itemById.has(duty.from.scheduleItemId) ||
-      !itemById.has(duty.until.scheduleItemId) ||
+      getReferencedScheduleItemIds([duty.from, duty.until])
+        .some((id) => !itemById.has(id)) ||
       !targetStageIds.has(duty.stageId)) {
       return failure('BROKEN_DUTY_ASSIGNMENT', 0, { stageId: duty.stageId })
     }
@@ -1036,7 +1036,9 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
       continue
     }
     const performance = buildPerformanceActivities(calculatedItems, targetBands)
-    const duty = buildDutyActivities(targetDuties, calculatedItems)
+    const duty = buildDutyActivities(
+      targetDuties, calculatedItems, { stages: targetStages, sections: targetSections },
+    )
     if (duty.unresolved.length > 0) {
       const assignment = targetDuties.find(item => item.id === duty.unresolved[0].id)
       setLastFailure('BROKEN_DUTY_ASSIGNMENT', assignment ? { stageId: assignment.stageId } : {})
@@ -1090,7 +1092,9 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
         setLastFailure('NO_FEASIBLE_SCHEDULE')
         continue
       }
-      const pa = buildPaActivities(plannedAssignments, calculatedItems)
+      const pa = buildPaActivities(
+        plannedAssignments, calculatedItems, { stages: targetStages, sections: targetSections },
+      )
       if (pa.unresolved.length > 0) {
         setLastFailure('NO_FEASIBLE_SCHEDULE')
         continue

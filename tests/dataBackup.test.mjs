@@ -37,7 +37,7 @@ test('15 collectionのバックアップは既存version付きsnapshotと同じ�
   const json = createBackupJson(demo)
   const restored = parseBackupJson(json)
 
-  assert.ok(json.includes('\n  "version": 3,'))
+  assert.ok(json.includes(`\n  "version": ${CURRENT_STORAGE_VERSION},`))
   assert.deepEqual(restored, createPersistedAppState(demo))
   assert.equal(restored.version, CURRENT_STORAGE_VERSION)
   assert.deepEqual(restored.scheduleItems.map((item) => item.id), demo.scheduleItems.map((item) => item.id))
@@ -73,7 +73,7 @@ test('TimetableLockをバックアップでround-tripし、旧backupでは空配
   assert.deepEqual(parseBackupJson(JSON.stringify(legacy))?.timetableLocks, [])
 })
 
-test('TimetableOrderConstraintをbackupでround-tripしV2では空配列へ移行する', () => {
+test('TimetableOrderConstraintをround-tripしV2では空配列とBoundary kindを補う', () => {
   const state = {
     ...emptyState(),
     timetableOrderConstraints: [{
@@ -90,31 +90,70 @@ test('TimetableOrderConstraintをbackupでround-tripしV2では空配列へ移�
   const current = createPersistedAppState(emptyState())
   const { timetableOrderConstraints: _omitted, ...legacy } = current
   legacy.version = 2
-  assert.deepEqual(
-    parseBackupJson(JSON.stringify(legacy))?.timetableOrderConstraints,
-    [],
-  )
+  legacy.paAssignments = [{
+    id: 'pa-v2', eventId: 'event', eventDayId: 'day', stageId: 'stage',
+    memberId: 'member', role: 'main',
+    from: { scheduleItemId: 'item-a', edge: 'start' },
+    until: { scheduleItemId: 'item-b', edge: 'end' },
+  }]
+  const restored = parseBackupJson(JSON.stringify(legacy))
+  assert.deepEqual(restored?.timetableOrderConstraints, [])
+  assert.equal(restored?.paAssignments[0].from.kind, 'schedule-item')
 })
 
-test('V1バックアップをV3へ移行し、V3出力ではPA可否をEventMemberへ置く', () => {
+test('V1バックアップをV4へ移行し、PA可否とDuty Boundaryを補う', () => {
   const legacy = {
     ...createPersistedAppState(emptyState()),
     version: 1,
     members: [{ id: 'member-1', realName: '佐藤', active: true,
       paCapabilities: { main: true, sub: false } }],
     eventMembers: [{ id: 'event-member-1', eventId: 'event-1', memberId: 'member-1' }],
+    dutyAssignments: [{
+      id: 'duty-v1', dutyTypeId: 'type', eventDayId: 'day', stageId: 'stage',
+      memberId: 'member',
+      from: { scheduleItemId: 'item-a', edge: 'start' },
+      until: { scheduleItemId: 'item-b', edge: 'end' },
+    }],
   }
   const restored = parseBackupJson(JSON.stringify(legacy))
   assert.ok(restored)
-  assert.equal(restored.version, 3)
+  assert.equal(restored.version, CURRENT_STORAGE_VERSION)
   assert.deepEqual(restored.timetableOrderConstraints, [])
   assert.deepEqual(restored.eventMembers[0].paCapabilities, { main: true, sub: false })
   assert.equal('paCapabilities' in restored.members[0], false)
+  assert.equal(restored.dutyAssignments[0].until.kind, 'schedule-item')
 
   const exported = JSON.parse(createBackupJson(restored))
-  assert.equal(exported.version, 3)
+  assert.equal(exported.version, CURRENT_STORAGE_VERSION)
   assert.equal('paCapabilities' in exported.members[0], false)
   assert.deepEqual(exported.eventMembers[0].paCapabilities, { main: true, sub: false })
+})
+
+test('V3バックアップのPA・Duty境界をV4 schedule-item境界へ移行する', () => {
+  const legacy = {
+    ...createPersistedAppState(emptyState()),
+    version: 3,
+    paAssignments: [{
+      id: 'pa-v3', eventId: 'event', eventDayId: 'day', stageId: 'stage',
+      memberId: 'member', role: 'main',
+      from: { scheduleItemId: 'item-a', edge: 'start' },
+      until: { scheduleItemId: 'item-b', edge: 'end' },
+    }],
+    dutyAssignments: [{
+      id: 'duty-v3', dutyTypeId: 'type', eventDayId: 'day', stageId: 'stage',
+      memberId: 'member',
+      from: { scheduleItemId: 'item-a', edge: 'end' },
+      until: { scheduleItemId: 'item-b', edge: 'start' },
+    }],
+  }
+  const original = structuredClone(legacy)
+  const restored = parseBackupJson(JSON.stringify(legacy))
+
+  assert.ok(restored)
+  assert.equal(restored.version, CURRENT_STORAGE_VERSION)
+  assert.equal(restored.paAssignments[0].from.kind, 'schedule-item')
+  assert.equal(restored.dutyAssignments[0].until.kind, 'schedule-item')
+  assert.deepEqual(legacy, original)
 })
 
 test('Section間Breakの配置情報をJSON export/importで維持する', () => {
@@ -139,7 +178,7 @@ test('不正JSON、未知version、必須collection不足、malformed elementを
   const valid = createPersistedAppState(emptyState())
 
   assert.equal(parseBackupJson('{broken'), undefined)
-  assert.equal(parseBackupJson(JSON.stringify({ ...valid, version: 4 })), undefined)
+  assert.equal(parseBackupJson(JSON.stringify({ ...valid, version: 999 })), undefined)
   assert.equal(parseBackupJson(JSON.stringify({ version: 1 })), undefined)
   assert.equal(parseBackupJson(JSON.stringify({ ...valid, events: [null] })), undefined)
 })
@@ -199,14 +238,14 @@ test('修復可能な参照切れとIDをバックアップで維持する', () 
     paAssignments: [{
       id: 'pa-broken', eventId: 'missing-event', eventDayId: 'missing-day',
       stageId: 'missing-stage', memberId: 'missing-member', role: 'main',
-      from: { scheduleItemId: 'missing-from', edge: 'start' },
-      until: { scheduleItemId: 'missing-until', edge: 'end' },
+      from: { kind: "schedule-item", scheduleItemId: 'missing-from', edge: 'start' },
+      until: { kind: "schedule-item", scheduleItemId: 'missing-until', edge: 'end' },
     }],
     dutyAssignments: [{
       id: 'duty-broken', dutyTypeId: 'missing-duty-type', eventDayId: 'missing-day',
       stageId: 'missing-stage', memberId: 'missing-member',
-      from: { scheduleItemId: 'missing-from', edge: 'start' },
-      until: { scheduleItemId: 'missing-until', edge: 'end' },
+      from: { kind: "schedule-item", scheduleItemId: 'missing-from', edge: 'start' },
+      until: { kind: "schedule-item", scheduleItemId: 'missing-until', edge: 'end' },
     }],
   }
 

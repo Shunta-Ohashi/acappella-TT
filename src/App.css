@@ -3496,7 +3496,8 @@
   font-weight: 700;
 }
 
-.pa-assignment-dialog__fields select {
+.pa-assignment-dialog__fields select,
+.assignment-range-fields input {
   box-sizing: border-box;
   width: 100%;
   padding: 9px 10px;
@@ -3505,6 +3506,25 @@
   background: #fff;
   color: #1e293b;
   font: inherit;
+}
+
+.assignment-range-fields {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #d9e0e7;
+  border-radius: 9px;
+}
+
+.assignment-range-fields legend {
+  padding: 0 5px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .pa-assignment-dialog__hint,
@@ -3536,6 +3556,10 @@
   }
 
   .pa-assignment-dialog__fields {
+    grid-template-columns: 1fr;
+  }
+
+  .assignment-range-fields {
     grid-template-columns: 1fr;
   }
 }

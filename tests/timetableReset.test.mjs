@@ -17,9 +17,9 @@ const fixture = () => {
     { id: 'plain', kind: 'break', stageId: 'stage-sub', title: '通常', durationMinutes: 5, order: 0 })
   input.dutyTypes.push({ id: 'foreign-type', eventId: 'event-b', name: '他Eventの仕事', order: 0 })
   input.dutyAssignments.push({ ...input.dutyAssignments[0], id: 'other-day-duty', eventDayId: 'day-a2', stageId: 'stage-a2',
-    from: { scheduleItemId: 'p-a2', edge: 'start' }, until: { scheduleItemId: 'p-a2', edge: 'end' } },
+    from: { kind: "schedule-item", scheduleItemId: 'p-a2', edge: 'start' }, until: { kind: "schedule-item", scheduleItemId: 'p-a2', edge: 'end' } },
     { ...input.dutyAssignments[0], id: 'foreign-duty', dutyTypeId: 'foreign-type', eventDayId: 'day-b', stageId: 'stage-b',
-      from: { scheduleItemId: 'p-b', edge: 'start' }, until: { scheduleItemId: 'p-b', edge: 'end' } })
+      from: { kind: "schedule-item", scheduleItemId: 'p-b', edge: 'start' }, until: { kind: "schedule-item", scheduleItemId: 'p-b', edge: 'end' } })
   input.timetableLocks.push({ ...input.timetableLocks[0], id: 'stale-item-lock', scheduleItemId: 'stale-p2', stageId: 'stage-a1' },
     { ...input.timetableLocks[0], id: 'broken-target-lock', scheduleItemId: 'missing-item' },
     { ...input.timetableLocks[0], id: 'other-day-lock', scheduleItemId: 'p-a2', stageId: 'stage-a2', sectionId: undefined },
@@ -241,11 +241,11 @@ test('foreign Lockが保持対象のtarget Breakを参照してもBreakとLock�
 for (const [name, addReference] of [
   ['foreign PAの開始Boundary', input => {
     input.paAssignments.push({ ...input.paAssignments.find(pa => pa.id === 'pa-b'),
-      id: 'cross-scope-pa', from: { scheduleItemId: 'old-p1', edge: 'start' } })
+      id: 'cross-scope-pa', from: { kind: "schedule-item", scheduleItemId: 'old-p1', edge: 'start' } })
   }],
   ['other-day PAの終了Boundary', input => {
     input.paAssignments.push({ ...input.paAssignments.find(pa => pa.id === 'pa-a2'),
-      id: 'cross-day-pa', until: { scheduleItemId: 'old-p1', edge: 'end' } })
+      id: 'cross-day-pa', until: { kind: "schedule-item", scheduleItemId: 'old-p1', edge: 'end' } })
   }],
   ['foreign Dutyの開始Boundary', input => {
     input.dutyAssignments.find(duty => duty.id === 'foreign-duty').from =
@@ -265,6 +265,23 @@ for (const [name, addReference] of [
     assert.deepEqual(input, original)
   })
 }
+
+test('Section/time境界は削除Performance参照と誤判定せずscope外担当を保持する', () => {
+  const input = fixture()
+  const otherDayPa = input.paAssignments.find(pa => pa.id === 'pa-a2')
+  otherDayPa.from = { kind: 'time', time: '10:00' }
+  otherDayPa.until = { kind: 'time', time: '10:30' }
+  const foreignDuty = input.dutyAssignments.find(duty => duty.id === 'foreign-duty')
+  foreignDuty.from = { kind: 'section', sectionId: 'section-1', edge: 'start' }
+  foreignDuty.until = { kind: 'section', sectionId: 'section-1', edge: 'end' }
+  const original = structuredClone(input)
+
+  const result = resetEventDayTimetable(input)
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.paAssignments.find(pa => pa.id === 'pa-a2'), otherDayPa)
+  assert.deepEqual(result.dutyAssignments.find(duty => duty.id === 'foreign-duty'), foreignDuty)
+  assert.deepEqual(input, original)
+})
 
 test('target StageのBreakを参照するLockはstaleな他日Stageを指していても削除し、Breakを保持する', () => {
   const input = fixture()

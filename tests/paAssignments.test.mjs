@@ -5,11 +5,13 @@ import { detectScheduleIssues } from '../src/domain/issues.ts'
 import { calculateStageTimeline } from '../src/domain/timeline.ts'
 import {
   createPaAssignmentsDraft,
+  createPaAssignmentDraftItem,
   createPaAssignmentsUpdate,
   getPaAssignmentParticipationWarning,
   getPaMemberCandidates,
   resolvePaAssignmentInterval,
   validatePaAssignmentDraftItem,
+  validatePaAssignmentsDraft,
 } from '../src/domain/paAssignments.ts'
 
 const event = {
@@ -130,17 +132,18 @@ const createItem = (overrides = {}) => ({
   stageId: 'stage-a',
   memberId: 'member-main',
   role: 'main',
-  from: { scheduleItemId: 'performance-a', edge: 'start' },
-  until: { scheduleItemId: 'break-a', edge: 'end' },
+  from: { kind: "schedule-item", scheduleItemId: 'performance-a', edge: 'start' },
+  until: { kind: "schedule-item", scheduleItemId: 'break-a', edge: 'end' },
   ...overrides,
 })
 
-const validate = (item, eventMemberDays = createMemberDays()) =>
+const validate = (item, eventMemberDays = createMemberDays(), sections = []) =>
   validatePaAssignmentDraftItem({
     item,
     event,
     eventDays,
     stages,
+    sections,
     members,
     eventMembers,
     eventMemberDays,
@@ -155,8 +158,8 @@ const assignment = (id, overrides = {}) => ({
   stageId: 'stage-a',
   memberId: 'member-main',
   role: 'main',
-  from: { scheduleItemId: 'performance-a', edge: 'start' },
-  until: { scheduleItemId: 'break-a', edge: 'end' },
+  from: { kind: "schedule-item", scheduleItemId: 'performance-a', edge: 'start' },
+  until: { kind: "schedule-item", scheduleItemId: 'break-a', edge: 'end' },
   ...overrides,
 })
 
@@ -189,8 +192,8 @@ const evaluatePaAvailability = ({
   availabilityWindows,
 }) => {
   const item = createItem({
-    from: { scheduleItemId: 'availability-range', edge: 'start' },
-    until: { scheduleItemId: 'availability-range', edge: 'end' },
+    from: { kind: "schedule-item", scheduleItemId: 'availability-range', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'availability-range', edge: 'end' },
   })
   const items = [{
     scheduleItemId: 'availability-range',
@@ -210,6 +213,7 @@ const evaluatePaAvailability = ({
     event,
     eventDays,
     stages,
+    sections: [],
     members,
     eventMembers,
     eventMemberDays: configuredMemberDays,
@@ -352,11 +356,11 @@ test('participatingは許可し、absentと日別設定不足は拒否し、unde
 
 test('PerformanceとBreakのstart/end境界からfrom < untilを導出する', () => {
   const performance = resolvePaAssignmentInterval(createItem({
-    until: { scheduleItemId: 'performance-a', edge: 'end' },
+    until: { kind: "schedule-item", scheduleItemId: 'performance-a', edge: 'end' },
   }), calculatedItems)
   const breakRange = resolvePaAssignmentInterval(createItem({
-    from: { scheduleItemId: 'break-a', edge: 'start' },
-    until: { scheduleItemId: 'break-a', edge: 'end' },
+    from: { kind: "schedule-item", scheduleItemId: 'break-a', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'break-a', edge: 'end' },
   }), calculatedItems)
 
   assert.deepEqual(performance, {
@@ -371,18 +375,18 @@ test('PerformanceとBreakのstart/end境界からfrom < untilを導出する', (
 
 test('同時刻・逆順・別Stage・missing境界を拒否する', () => {
   assert.equal(resolvePaAssignmentInterval(createItem({
-    from: { scheduleItemId: 'performance-a', edge: 'end' },
-    until: { scheduleItemId: 'break-a', edge: 'start' },
+    from: { kind: "schedule-item", scheduleItemId: 'performance-a', edge: 'end' },
+    until: { kind: "schedule-item", scheduleItemId: 'break-a', edge: 'start' },
   }), calculatedItems).ok, false)
   assert.equal(resolvePaAssignmentInterval(createItem({
-    from: { scheduleItemId: 'break-a', edge: 'end' },
-    until: { scheduleItemId: 'performance-a', edge: 'start' },
+    from: { kind: "schedule-item", scheduleItemId: 'break-a', edge: 'end' },
+    until: { kind: "schedule-item", scheduleItemId: 'performance-a', edge: 'start' },
   }), calculatedItems).ok, false)
   assert.equal(resolvePaAssignmentInterval(createItem({
-    until: { scheduleItemId: 'performance-b', edge: 'end' },
+    until: { kind: "schedule-item", scheduleItemId: 'performance-b', edge: 'end' },
   }), calculatedItems).ok, false)
   assert.equal(resolvePaAssignmentInterval(createItem({
-    from: { scheduleItemId: 'missing', edge: 'start' },
+    from: { kind: "schedule-item", scheduleItemId: 'missing', edge: 'start' },
   }), calculatedItems).ok, false)
 
   const withAnotherDay = [...calculatedItems, {
@@ -395,7 +399,7 @@ test('同時刻・逆順・別Stage・missing境界を拒否する', () => {
     plannedEndMinute: 610,
   }]
   assert.equal(resolvePaAssignmentInterval(createItem({
-    until: { scheduleItemId: 'performance-day-2', edge: 'end' },
+    until: { kind: "schedule-item", scheduleItemId: 'performance-day-2', edge: 'end' },
   }), withAnotherDay).ok, false)
 })
 
@@ -535,14 +539,94 @@ test('Section間Breakのstart/end ScheduleBoundaryをPA実時間へ解決する'
   })
   const result = resolvePaAssignmentInterval({
     ...createItem(),
-    from: { scheduleItemId: 'between-break', edge: 'start' },
-    until: { scheduleItemId: 'between-break', edge: 'end' },
+    from: { kind: "schedule-item", scheduleItemId: 'between-break', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'between-break', edge: 'end' },
   }, timeline)
 
   assert.deepEqual(result, {
     ok: true,
     interval: { fromMinute: 610, untilMinute: 625 },
   })
+})
+
+test('PAはSection全体・一部・直接時刻を共通intervalへ解決する', () => {
+  const section = {
+    id: 'section-pa', stageId: 'stage-a', name: '1部', order: 0,
+    plannedStartTime: '10:00', plannedEndTime: '11:00',
+  }
+  const resolutionContext = { stages, sections: [section] }
+  assert.deepEqual(resolvePaAssignmentInterval(createItem({
+    from: { kind: 'section', sectionId: section.id, edge: 'start' },
+    until: { kind: 'section', sectionId: section.id, edge: 'end' },
+  }), calculatedItems, resolutionContext), {
+    ok: true, interval: { fromMinute: 600, untilMinute: 660 },
+  })
+  assert.deepEqual(resolvePaAssignmentInterval(createItem({
+    from: { kind: 'section', sectionId: section.id, edge: 'start', offsetMinutes: 10 },
+    until: { kind: 'section', sectionId: section.id, edge: 'end', offsetMinutes: 5 },
+  }), calculatedItems, resolutionContext), {
+    ok: true, interval: { fromMinute: 610, untilMinute: 655 },
+  })
+  assert.deepEqual(resolvePaAssignmentInterval(createItem({
+    from: { kind: 'time', time: '10:15' },
+    until: { kind: 'time', time: '10:45' },
+  }), calculatedItems, resolutionContext), {
+    ok: true, interval: { fromMinute: 615, untilMinute: 645 },
+  })
+})
+
+test('PA新規draftはitem、空TTのSection、Sectionなし空TTの時刻へfallbackする', () => {
+  const anchoredSection = {
+    id: 'section-pa', stageId: 'stage-a', name: '1部', order: 0,
+    plannedStartTime: '10:00', plannedEndTime: '11:00',
+  }
+  const create = (configuredItems, configuredSections) => createPaAssignmentDraftItem({
+    draftId: 'new-pa', event, stage: stages[0], sections: configuredSections,
+    role: 'main', calculatedItems: configuredItems,
+  })
+  assert.equal(create(calculatedItems, [anchoredSection]).from.kind, 'schedule-item')
+  assert.equal(create([], [anchoredSection]).from.kind, 'section')
+  assert.equal(create([], []).from.kind, 'time')
+})
+
+test('PAのSection/time境界でもavailability・本人出演・PA重複を維持する', () => {
+  const section = {
+    id: 'section-pa', stageId: 'stage-a', name: '1部', order: 0,
+    plannedStartTime: '10:00', plannedEndTime: '11:00',
+  }
+  const outside = validate(createItem({
+    from: { kind: 'time', time: '10:20' },
+    until: { kind: 'time', time: '10:40' },
+  }), createMemberDays({
+    'member-main': { availabilityWindows: [{ from: '10:00', until: '10:30' }] },
+  }), [section])
+  assert.ok(outside.availability)
+
+  const performanceConflict = validate(createItem({
+    memberId: 'member-both',
+    from: { kind: 'time', time: '10:05' },
+    until: { kind: 'time', time: '10:10' },
+  }), createMemberDays(), [section])
+  assert.ok(performanceConflict.conflict)
+
+  const overlap = validatePaAssignmentsDraft({
+    draft: { items: [
+      createItem({
+        draftId: 'section-range',
+        from: { kind: 'section', sectionId: section.id, edge: 'start' },
+        until: { kind: 'section', sectionId: section.id, edge: 'end' },
+      }),
+      createItem({
+        draftId: 'time-range',
+        from: { kind: 'time', time: '10:30' },
+        until: { kind: 'time', time: '11:30' },
+      }),
+    ] },
+    event, eventDays, stages, sections: [section], members, eventMembers,
+    eventMemberDays: createMemberDays(), eventBands, calculatedItems,
+  })
+  assert.ok(overlap.items['section-range'].conflict)
+  assert.ok(overlap.items['time-range'].conflict)
 })
 
 test('PA担当中の本人出演を同一EventDayの別StageでもERRORにする', () => {
@@ -575,8 +659,8 @@ test('同じMemberのPA AssignmentはroleやStageが違っても重複時だけE
       assignment('pa-sub', {
         stageId: 'stage-b',
         role: 'sub',
-        from: { scheduleItemId: 'performance-b', edge: 'start' },
-        until: { scheduleItemId: 'performance-b', edge: 'end' },
+        from: { kind: "schedule-item", scheduleItemId: 'performance-b', edge: 'start' },
+        until: { kind: "schedule-item", scheduleItemId: 'performance-b', edge: 'end' },
       }),
     ],
   })
@@ -591,8 +675,8 @@ test('同じMemberのPA AssignmentはroleやStageが違っても重複時だけE
       assignment('pa-sub', {
         stageId: 'stage-b',
         role: 'sub',
-        from: { scheduleItemId: 'performance-b', edge: 'start' },
-        until: { scheduleItemId: 'performance-b', edge: 'end' },
+        from: { kind: "schedule-item", scheduleItemId: 'performance-b', edge: 'start' },
+        until: { kind: "schedule-item", scheduleItemId: 'performance-b', edge: 'end' },
       }),
     ],
     items: touchingItems,
@@ -647,7 +731,7 @@ test('PA担当のcapability不足・absent・日別設定不足をIssueとして
 test('Boundary参照先がなくなってもAssignmentを消さずPA_INVALID_BOUNDARYを返す', () => {
   const issues = detect({
     paAssignments: [assignment('pa-broken', {
-      from: { scheduleItemId: 'removed-item', edge: 'start' },
+      from: { kind: "schedule-item", scheduleItemId: 'removed-item', edge: 'start' },
     })],
   })
 
@@ -661,8 +745,8 @@ test('PA draftの追加・編集・削除を保存し、別EventのAssignmentを
   const removed = assignment('pa-removed', {
     memberId: 'member-sub',
     role: 'sub',
-    from: { scheduleItemId: 'break-a', edge: 'start' },
-    until: { scheduleItemId: 'break-a', edge: 'end' },
+    from: { kind: "schedule-item", scheduleItemId: 'break-a', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'break-a', edge: 'end' },
   })
   const otherEvent = assignment('pa-other', { eventId: 'event-other' })
   const draft = createPaAssignmentsDraft(event, [existing, removed, otherEvent])
@@ -673,11 +757,11 @@ test('PA draftの追加・編集・削除を保存し、別EventのAssignmentを
     item.paAssignmentId === existing.id,
   )
   assert.ok(existingDraft)
-  existingDraft.until = { scheduleItemId: 'performance-a', edge: 'end' }
+  existingDraft.until = { kind: 'schedule-item', scheduleItemId: 'performance-a', edge: 'end' }
   draft.items.push({
     ...createItem({ draftId: 'draft-new', memberId: 'member-sub', role: 'sub' }),
-    from: { scheduleItemId: 'break-a', edge: 'start' },
-    until: { scheduleItemId: 'break-a', edge: 'end' },
+    from: { kind: "schedule-item", scheduleItemId: 'break-a', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'break-a', edge: 'end' },
   })
   const result = createPaAssignmentsUpdate({
     event,
@@ -699,6 +783,7 @@ test('PA draftの追加・編集・削除を保存し、別EventのAssignmentを
     item.id === existing.id,
   )
   assert.deepEqual(updatedExisting?.until, {
+    kind: 'schedule-item',
     scheduleItemId: 'performance-a',
     edge: 'end',
   })

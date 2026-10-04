@@ -11,6 +11,8 @@ import type {
   PaAssignmentId,
   PaRole,
   ScheduleItem,
+  Section,
+  Stage,
   StageId,
 } from '../domain/models'
 import { resolveDutyAssignmentInterval } from '../domain/dutyAssignments.ts'
@@ -107,6 +109,8 @@ interface CreateTimetableWorkspaceRowsInput {
   dutyTypes: DutyType[]
   dutyAssignments: DutyAssignment[]
   issues: ScheduleIssue[]
+  stages: Stage[]
+  sections: Section[]
 }
 
 const getFixedPlacementLabels = (eventBand: EventBand): string[] => {
@@ -138,6 +142,8 @@ export const createTimetableWorkspaceRows = ({
   dutyTypes,
   dutyAssignments,
   issues,
+  stages,
+  sections,
 }: CreateTimetableWorkspaceRowsInput): TimetableWorkspaceRowsResult => {
   const scheduleItemById = new Map(
     scheduleItems.map((scheduleItem) => [scheduleItem.id, scheduleItem]),
@@ -186,7 +192,9 @@ export const createTimetableWorkspaceRows = ({
     const memberName = member
       ? getMemberDisplayName(member)
       : '不明なメンバー'
-    const resolution = resolvePaAssignmentInterval(assignment, calculatedItems)
+    const resolution = resolvePaAssignmentInterval(
+      assignment, calculatedItems, { stages, sections },
+    )
     if (!resolution.ok) {
       unresolvedPaAssignments.push({
         assignmentId: assignment.id,
@@ -256,6 +264,7 @@ export const createTimetableWorkspaceRows = ({
     const resolution = resolveDutyAssignmentInterval(
       assignment,
       calculatedItems,
+      { stages, sections },
     )
     if (!resolution.ok) {
       unresolvedDutyAssignments.push({

@@ -1,5 +1,6 @@
 import type { DutyAssignment, EventDay, PaAssignment, ScheduleItem, Stage, TimetableLock } from './models'
 import { isValidBreakDurationMinutes } from './schedule.ts'
+import { isValidScheduleBoundaryShape } from './scheduleBoundaries.ts'
 import { isValidFixedPosition } from './timetableLocks.ts'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -8,13 +9,14 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isNonEmptyId = (value: unknown): value is string =>
   typeof value === 'string' && !!value.trim()
 
-const hasUniqueIds = (items: unknown): items is (Record<string, unknown> & { id: string })[] =>
-  Array.isArray(items) && items.every(item => isRecord(item) && isNonEmptyId(item.id)) &&
-  new Set(items.map(item => item.id)).size === items.length
-
-const hasValidBoundary = (value: unknown): boolean =>
-  isRecord(value) && isNonEmptyId(value.scheduleItemId) &&
-  (value.edge === 'start' || value.edge === 'end')
+const hasUniqueIds = (
+  items: unknown,
+): items is (Record<string, unknown> & { id: string })[] => {
+  if (!Array.isArray(items)) return false
+  const denseItems = Array.from(items)
+  return denseItems.every(item => isRecord(item) && isNonEmptyId(item.id)) &&
+    new Set(denseItems.map(item => item.id)).size === denseItems.length
+}
 
 export const hasValidTimetableScheduleItems = (value: unknown): value is ScheduleItem[] =>
   hasUniqueIds(value) && value.every(item => {
@@ -36,7 +38,7 @@ export const hasValidPaAssignments = (value: unknown): value is PaAssignment[] =
     isNonEmptyId(pa.eventId) && isNonEmptyId(pa.eventDayId) &&
     isNonEmptyId(pa.stageId) && isNonEmptyId(pa.memberId) &&
     (pa.role === 'main' || pa.role === 'sub') &&
-    hasValidBoundary(pa.from) && hasValidBoundary(pa.until))
+    isValidScheduleBoundaryShape(pa.from) && isValidScheduleBoundaryShape(pa.until))
 
 /** Validate Event -> EventDay -> Stage ownership before partitioning target and retained PA. */
 export const hasConsistentPaOwnership = (
@@ -55,7 +57,7 @@ export const hasValidDutyAssignments = (value: unknown): value is DutyAssignment
   hasUniqueIds(value) && value.every(duty =>
     isNonEmptyId(duty.dutyTypeId) && isNonEmptyId(duty.eventDayId) &&
     isNonEmptyId(duty.stageId) && isNonEmptyId(duty.memberId) &&
-    hasValidBoundary(duty.from) && hasValidBoundary(duty.until))
+    isValidScheduleBoundaryShape(duty.from) && isValidScheduleBoundaryShape(duty.until))
 
 export const hasValidTimetableLocks = (value: unknown): value is TimetableLock[] =>
   hasUniqueIds(value) && value.every(lock =>

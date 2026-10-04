@@ -13,7 +13,7 @@ const sortedRows = (rows: unknown[]): string[] => rows.map(row => JSON.stringify
 const paSnapshot = (draft: PaAssignmentsDraft) => sortedRows(draft.items.map(item => ({
   id: item.paAssignmentId, eventId: item.eventId, eventDayId: item.eventDayId,
   stageId: item.stageId, memberId: item.memberId, role: item.role,
-  from: [item.from.scheduleItemId, item.from.edge], until: [item.until.scheduleItemId, item.until.edge],
+  from: item.from, until: item.until,
 })))
 
 const dutySnapshot = (draft: DutySettingsDraft) => {
@@ -25,7 +25,7 @@ const dutySnapshot = (draft: DutySettingsDraft) => {
       id: item.dutyAssignmentId,
       typeId: item.dutyTypeDraftId === undefined ? item.missingDutyTypeId : typeIdByDraftId.get(item.dutyTypeDraftId),
       eventDayId: item.eventDayId, stageId: item.stageId, memberId: item.memberId,
-      from: [item.from.scheduleItemId, item.from.edge], until: [item.until.scheduleItemId, item.until.edge],
+      from: item.from, until: item.until,
     }))),
   }
 }

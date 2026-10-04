@@ -14,6 +14,7 @@ import type {
   TimetableLock,
   TimetableOrderConstraint,
 } from './models'
+import { getReferencedSectionIds } from './scheduleBoundaries.ts'
 import {
   isValidLocalTime,
   parseLocalTimeToMinute,
@@ -99,6 +100,8 @@ export interface SectionReferences {
   eventBands: Pick<EventBand, 'fixedPlacement'>[]
   timetableLocks: Pick<TimetableLock, 'sectionId'>[]
   timetableOrderConstraints: Pick<TimetableOrderConstraint, 'sectionId'>[]
+  paAssignments: Pick<PaAssignment, 'from' | 'until'>[]
+  dutyAssignments: Pick<DutyAssignment, 'from' | 'until'>[]
 }
 
 interface CreateEventStageSettingsUpdateInput {
@@ -507,7 +510,7 @@ export const STAGE_DELETE_BLOCKED_MESSAGE =
   'このStageにはSection、タイムテーブル、固定配置、TT固定、出演順制約、PA担当、または一般業務担当の設定があるため削除できません。関連する設定を先に解除してください。'
 
 export const SECTION_DELETE_BLOCKED_MESSAGE =
-  'このSectionにはタイムテーブル、固定配置、TT固定、または出演順制約の設定があるため削除できません。関連する設定を先に解除してください。'
+  'このSectionにはタイムテーブル、固定配置、TT固定、出演順制約、PA担当、または一般業務担当の設定があるため削除できません。関連する設定を先に解除してください。'
 
 export const FIRST_SECTION_ADD_BLOCKED_MESSAGE =
   'このStageにはタイムテーブルまたは出演順制約が設定されています。Sectionを追加するには、先に関連する設定を解除してください。'
@@ -541,6 +544,8 @@ export const canDeleteSection = (
     eventBands,
     timetableLocks,
     timetableOrderConstraints,
+    paAssignments,
+    dutyAssignments,
   }: SectionReferences,
 ): boolean =>
   !scheduleItems.some((scheduleItem) =>
@@ -553,7 +558,11 @@ export const canDeleteSection = (
   ) &&
   !timetableLocks.some((lock) => lock.sectionId === sectionId) &&
   !timetableOrderConstraints.some((constraint) =>
-    constraint.sectionId === sectionId)
+    constraint.sectionId === sectionId) &&
+  !paAssignments.some((assignment) =>
+    getReferencedSectionIds([assignment.from, assignment.until]).includes(sectionId)) &&
+  !dutyAssignments.some((assignment) =>
+    getReferencedSectionIds([assignment.from, assignment.until]).includes(sectionId))
 
 export const canAddFirstSection = (
   stageId: StageId,
@@ -696,6 +705,8 @@ export const createEventStageSettingsUpdate = ({
       eventBands,
       timetableLocks,
       timetableOrderConstraints,
+      paAssignments,
+      dutyAssignments,
     }),
   )
 

@@ -1,7 +1,13 @@
 import type { DutyAssignment, DutyType, Event, EventDay, PaAssignment, ScheduleItem, Section, Stage,
   TimetableLock } from './models'
 import { isValidBreakDurationMinutes, isValidScheduleItemSectionAssignment } from './schedule.ts'
-import { hasValidTimetableLocks, hasValidTimetableScheduleItems } from './timetableRuntimeValidation.ts'
+import { getReferencedScheduleItemIds } from './scheduleBoundaries.ts'
+import {
+  hasValidDutyAssignments,
+  hasValidPaAssignments,
+  hasValidTimetableLocks,
+  hasValidTimetableScheduleItems,
+} from './timetableRuntimeValidation.ts'
 
 export interface TimetableGenerationUiOptions {
   keepIntraSectionBreaks: boolean
@@ -28,11 +34,20 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isNonEmptyId = (value: unknown): value is string =>
   typeof value === 'string' && !!value.trim()
 
+const hasValidEntityIds = (value: unknown): boolean =>
+  Array.isArray(value) && Array.from(value)
+    .every(item => isRecord(item) && isNonEmptyId(item.id))
+
 /** Validate only the DutyType fields generation uses for identity and Event ownership. */
-export const hasValidTimetableGenerationDutyTypes = (value: unknown): value is DutyType[] =>
-  Array.isArray(value) && value.every(type => isRecord(type) &&
+export const hasValidTimetableGenerationDutyTypes = (
+  value: unknown,
+): value is DutyType[] => {
+  if (!Array.isArray(value)) return false
+  const dutyTypes = Array.from(value)
+  return dutyTypes.every(type => isRecord(type) &&
     isNonEmptyId(type.id) && isNonEmptyId(type.eventId)) &&
-  new Set(value.map(type => type.id)).size === value.length
+    new Set(dutyTypes.map(type => type.id)).size === dutyTypes.length
+}
 
 /** Validate ScheduleItem structure without imposing target Event or lane ownership. */
 export const hasValidTimetableGenerationScheduleItems = hasValidTimetableScheduleItems
@@ -40,23 +55,18 @@ export const hasValidTimetableGenerationScheduleItems = hasValidTimetableSchedul
 /** Validate Lock identity and fields consumed by generation and Lock evaluation. */
 export const hasValidTimetableGenerationLocks = hasValidTimetableLocks
 
-const hasBoundaryId = (value: unknown): boolean => isRecord(value) && isNonEmptyId(value.scheduleItemId)
-
 const hasValidBreakScope = (scope: GenerationBreakScope): boolean =>
   isRecord(scope.event) && isNonEmptyId(scope.event.id) &&
   isRecord(scope.eventDay) && isNonEmptyId(scope.eventDay.id) && isNonEmptyId(scope.eventDay.eventId) &&
-  [scope.eventDays, scope.stages, scope.sections].every(items =>
-    Array.isArray(items) && items.every(item => isRecord(item) && isNonEmptyId(item.id))) &&
+  hasValidEntityIds(scope.eventDays) && hasValidEntityIds(scope.stages) &&
+  hasValidEntityIds(scope.sections) &&
   hasValidTimetableGenerationScheduleItems(scope.scheduleItems)
 
 const hasValidBreakReferences = (
   paAssignments: PaAssignment[], dutyAssignments: DutyAssignment[], timetableLocks: TimetableLock[],
 ): boolean =>
-  Array.isArray(paAssignments) && paAssignments.every(pa => isRecord(pa) &&
-    isNonEmptyId(pa.eventId) && isNonEmptyId(pa.eventDayId) &&
-    hasBoundaryId(pa.from) && hasBoundaryId(pa.until)) &&
-  Array.isArray(dutyAssignments) && dutyAssignments.every(duty => isRecord(duty) &&
-    hasBoundaryId(duty.from) && hasBoundaryId(duty.until)) &&
+  hasValidPaAssignments(paAssignments) &&
+  hasValidDutyAssignments(dutyAssignments) &&
   hasValidTimetableGenerationLocks(timetableLocks)
 
 /** Check runtime shapes before App's first generation preprocessing step. */
@@ -170,7 +180,7 @@ export const validateTimetableGenerationBreakRemoval = ({
     .filter(item => item.kind === 'break' && !generationIds.has(item.id))
     .map(item => item.id))
   const referencesRemovedBreak = ({ from, until }: Pick<PaAssignment, 'from' | 'until'>): boolean =>
-    removedBreakIds.has(from.scheduleItemId) || removedBreakIds.has(until.scheduleItemId)
+    getReferencedScheduleItemIds([from, until]).some((id) => removedBreakIds.has(id))
   if (timetableLocks.some(lock => removedBreakIds.has(lock.scheduleItemId)) ||
     dutyAssignments.some(referencesRemovedBreak) ||
     paAssignments.some(pa => (pa.eventId !== event.id || pa.eventDayId !== eventDay.id) &&

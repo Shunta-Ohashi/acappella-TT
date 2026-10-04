@@ -8,6 +8,7 @@ import type {
   Member,
   PaRole,
   ScheduleItem,
+  Section,
   Stage,
 } from '../domain/models'
 import type { CalculatedScheduleItem } from '../domain/timeline'
@@ -20,11 +21,13 @@ import {
   type PaAssignmentDraftItem,
   type PaAssignmentItemErrors,
 } from '../domain/paAssignments'
+import { AssignmentRangeFields } from './AssignmentRangeFields.tsx'
 
 interface PaAssignmentEditorDialogProps {
   event: Event
   eventDays: EventDay[]
   stages: Stage[]
+  sections: Section[]
   members: Member[]
   eventMembers: EventMember[]
   eventMemberDays: EventMemberDay[]
@@ -42,6 +45,7 @@ export function PaAssignmentEditorDialog({
   event,
   eventDays,
   stages,
+  sections,
   members,
   eventMembers,
   eventMemberDays,
@@ -114,20 +118,6 @@ export function PaAssignmentEditorDialog({
     },
   ])
 
-  const updateBoundary = (
-    field: 'from' | 'until',
-    value: string,
-  ) => {
-    const separatorIndex = value.lastIndexOf('|')
-    const scheduleItemId = value.slice(0, separatorIndex)
-    const edge = value.slice(separatorIndex + 1) as 'start' | 'end'
-    setDraft((previous) => ({
-      ...previous,
-      [field]: { scheduleItemId, edge },
-    }))
-    clearErrors()
-  }
-
   const handleSubmit = (submitEvent: FormEvent<HTMLFormElement>) => {
     submitEvent.preventDefault()
     const validationErrors = validatePaAssignmentDraftItem({
@@ -135,6 +125,7 @@ export function PaAssignmentEditorDialog({
       event,
       eventDays,
       stages,
+      sections,
       members,
       eventMembers,
       eventMemberDays,
@@ -213,37 +204,24 @@ export function PaAssignmentEditorDialog({
             </select>
           </label>
 
-          <label htmlFor="pa-assignment-from">
-            担当開始
-            <select
-              id="pa-assignment-from"
-              value={`${draft.from.scheduleItemId}|${draft.from.edge}`}
-              aria-invalid={errors.interval ? 'true' : undefined}
-              onChange={(changeEvent) => updateBoundary('from', changeEvent.target.value)}
-            >
-              {boundaryOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-
-          <label htmlFor="pa-assignment-until">
-            担当終了
-            <select
-              id="pa-assignment-until"
-              value={`${draft.until.scheduleItemId}|${draft.until.edge}`}
-              aria-invalid={errors.interval ? 'true' : undefined}
-              onChange={(changeEvent) => updateBoundary('until', changeEvent.target.value)}
-            >
-              {boundaryOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
+          <AssignmentRangeFields
+            idPrefix="pa-assignment"
+            stage={stage}
+            sections={sections}
+            calculatedItems={stageCalculatedItems}
+            boundaryOptions={boundaryOptions}
+            from={draft.from}
+            until={draft.until}
+            invalid={Boolean(errors.interval)}
+            onChange={(range) => {
+              setDraft((previous) => ({ ...previous, ...range }))
+              clearErrors()
+            }}
+          />
         </div>
 
         <p className="pa-assignment-dialog__hint">
-          {roleLabel(draft.role)}を担当する範囲を、タイムテーブル項目の境界で指定します。
+          {roleLabel(draft.role)}を担当する範囲を指定します。
         </p>
         {participationWarning && (
           <p className="pa-assignment-dialog__warning" role="status">

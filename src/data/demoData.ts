@@ -586,10 +586,12 @@ const paAssignments: PaAssignment[] = [
     memberId: 'member-demo-03',
     role: 'main',
     from: {
+      kind: 'schedule-item',
       scheduleItemId: 'schedule-demo-main-day1-break',
       edge: 'start',
     },
     until: {
+      kind: 'schedule-item',
       scheduleItemId: 'schedule-demo-main-day1-break',
       edge: 'end',
     },
@@ -602,10 +604,12 @@ const paAssignments: PaAssignment[] = [
     memberId: 'member-demo-06',
     role: 'sub',
     from: {
+      kind: 'schedule-item',
       scheduleItemId: 'schedule-demo-sub-day1-performance',
       edge: 'start',
     },
     until: {
+      kind: 'schedule-item',
       scheduleItemId: 'schedule-demo-sub-day1-performance',
       edge: 'end',
     },
@@ -635,10 +639,12 @@ const dutyAssignments: DutyAssignment[] = [
     stageId: 'stage-demo-main-day1',
     memberId: 'member-demo-01',
     from: {
+      kind: 'schedule-item',
       scheduleItemId: 'schedule-demo-main-day1-break',
       edge: 'start',
     },
     until: {
+      kind: 'schedule-item',
       scheduleItemId: 'schedule-demo-main-day1-break',
       edge: 'end',
     },
@@ -650,10 +656,12 @@ const dutyAssignments: DutyAssignment[] = [
     stageId: 'stage-demo-main-day1',
     memberId: 'member-demo-05',
     from: {
+      kind: 'schedule-item',
       scheduleItemId: 'schedule-demo-main-day1-break',
       edge: 'start',
     },
     until: {
+      kind: 'schedule-item',
       scheduleItemId: 'schedule-demo-main-day1-break',
       edge: 'end',
     },

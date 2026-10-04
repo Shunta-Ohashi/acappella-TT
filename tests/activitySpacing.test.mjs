@@ -323,13 +323,13 @@ test('PA/Duty builderは共通Boundary解決を使い、Break endと参照切れ
   ])
   const base = {
     eventDayId: 'day-1', stageId: 'stage-1', memberId: 'member-1',
-    from: { scheduleItemId: 'performance', edge: 'start' },
-    until: { scheduleItemId: 'break', edge: 'end' },
+    from: { kind: "schedule-item", scheduleItemId: 'performance', edge: 'start' },
+    until: { kind: "schedule-item", scheduleItemId: 'break', edge: 'end' },
   }
   const pa = Object.freeze({ id: 'pa-1', eventId: 'event-1', role: 'main', ...base })
   const duty = Object.freeze({ id: 'duty-1', dutyTypeId: 'duty-type-1', ...base })
   const broken = Object.freeze({ ...base, id: 'pa-broken',
-    until: { scheduleItemId: 'missing', edge: 'end' } })
+    until: { kind: "schedule-item", scheduleItemId: 'missing', edge: 'end' } })
   const paResult = buildPaActivities([pa, broken], calculated)
   const dutyResult = buildDutyActivities([duty, { ...broken, id: 'duty-broken' }], calculated)
   assert.deepEqual(paResult.activities.map(value => [value.kind, value.fromMinute,
