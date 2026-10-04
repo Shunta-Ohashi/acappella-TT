@@ -54,7 +54,7 @@ const getMemberDeletionError = (
   result: Exclude<CommonMemberDeletionCheck, { ok: true }>,
 ): string => result.reason === 'MEMBER_NOT_FOUND'
   ? '削除するメンバーが見つかりません。'
-  : 'このメンバーは固定バンドまたはイベントで使用されているため削除できません。サークルを離れたメンバーの場合は「非在籍」に変更してください。'
+  : 'このメンバーは固定バンド、イベントの参加・出演情報、PA担当、または当日運営担当で使用されているため削除できません。サークルを離れたメンバーの場合は「非在籍」に変更してください。'
 
 export function CommonDataPage({
   members,

@@ -54,8 +54,6 @@ test('Memberを参照する各collectionがHard Deleteを個別にblockする', 
     { key: 'bands', value: [{ defaultMemberIds: [targetMember.id] }] },
     { key: 'eventMembers', value: [{ memberId: targetMember.id }] },
     { key: 'eventBands', value: [{ memberIds: [targetMember.id] }] },
-    { key: 'paAssignments', value: [{ memberId: targetMember.id }] },
-    { key: 'dutyAssignments', value: [{ memberId: targetMember.id }] },
   ]
 
   for (const reference of references) {
@@ -69,6 +67,25 @@ test('Memberを参照する各collectionがHard Deleteを個別にblockする', 
       createCommonMemberDeletion(input),
       { ok: false, reason: 'MEMBER_REFERENCED' },
       reference.key,
+    )
+  }
+})
+
+test('PA担当と当日運営担当の各参照がMember削除をblockする', () => {
+  for (const key of ['paAssignments', 'dutyAssignments']) {
+    const input = createMemberInput({
+      [key]: [{ memberId: targetMember.id }],
+    })
+
+    assert.deepEqual(
+      checkCommonMemberDeletion(input),
+      { ok: false, reason: 'MEMBER_REFERENCED' },
+      key,
+    )
+    assert.deepEqual(
+      createCommonMemberDeletion(input),
+      { ok: false, reason: 'MEMBER_REFERENCED' },
+      key,
     )
   }
 })
