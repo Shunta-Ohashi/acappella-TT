@@ -140,6 +140,13 @@ import {
   type CommonMemberDeletionResult,
 } from './domain/commonDataDeletion'
 import {
+  checkEventDeletion,
+  createEventDeletion,
+  type EventDeletionCheck,
+  type EventDeletionInput,
+  type EventDeletionResult,
+} from './domain/eventDeletion'
+import {
   createEventBandSettingsUpdate,
   type EventBandSettingsDraft,
   type EventBandSettingsUpdateResult,
@@ -654,6 +661,61 @@ function App() {
     setActiveStep(1)
     setActiveView('event-editor')
     setIsCreateEventDialogOpen(false)
+  }
+
+  const getEventDeletionInput = (eventId: EventId): EventDeletionInput => ({
+    eventId,
+    events,
+    eventDays,
+    stages,
+    sections,
+    eventMembers,
+    eventMemberDays,
+    eventBands,
+    scheduleItems,
+    paAssignments,
+    dutyTypes,
+    dutyAssignments,
+    timetableLocks,
+    timetableOrderConstraints,
+  })
+
+  const handleCheckEventDeletion = (
+    eventId: EventId,
+  ): EventDeletionCheck => checkEventDeletion(getEventDeletionInput(eventId))
+
+  const handleDeleteEvent = (eventId: EventId): EventDeletionResult => {
+    const result = createEventDeletion(getEventDeletionInput(eventId))
+    if (!result.ok) return result
+
+    setEvents(result.events)
+    setEventDays(result.eventDays)
+    setStages(result.stages)
+    setSections(result.sections)
+    setEventMembers(result.eventMembers)
+    setEventMemberDays(result.eventMemberDays)
+    setEventBands(result.eventBands)
+    setScheduleItems(result.scheduleItems)
+    setPaAssignments(result.paAssignments)
+    setDutyTypes(result.dutyTypes)
+    setDutyAssignments(result.dutyAssignments)
+    setTimetableLocks(result.timetableLocks)
+    setTimetableOrderConstraints(result.timetableOrderConstraints)
+    setSelectedEventId('')
+    setSelectedTimetableEventDayId(undefined)
+    setSelectedTimetableStageId(undefined)
+    setTimetableLockFeedback(clearTimetableLockFeedback())
+    setGenerationPreview(null)
+    setGenerationOptionsScope(null)
+    setResetConfirmation(null)
+    setGenerationFeedback(null)
+    setGenerationApplyRevision((revision) => revision + 1)
+    setBreakDuration(10)
+    setIsCreateEventDialogOpen(false)
+    setActiveStep(1)
+    setActiveView('events')
+
+    return result
   }
 
   const handleSaveEventBasicInfo = (
@@ -1645,6 +1707,8 @@ function App() {
                   timetableOrderConstraints,
                 },
               )}
+              checkEventDeletion={handleCheckEventDeletion}
+              onDeleteEvent={handleDeleteEvent}
               onSave={handleSaveEventBasicInfo}
               onSaveAndNext={() => setActiveStep(2)}
             />
