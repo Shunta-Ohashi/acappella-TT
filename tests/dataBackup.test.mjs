@@ -173,6 +173,22 @@ test('旧バックアップのhybrid Boundaryはschedule-itemへ変換せず拒�
   assert.equal(parseBackupJson(JSON.stringify(legacy)), undefined)
 })
 
+test('V4バックアップのcross-kind hybrid Boundaryを拒否する', () => {
+  const current = createPersistedAppState(emptyState())
+  const hybrid = {
+    ...current,
+    paAssignments: [{
+      id: 'pa-hybrid-v4', eventId: 'event', eventDayId: 'day', stageId: 'stage',
+      memberId: 'member', role: 'main',
+      from: {
+        kind: 'time', time: '13:00', scheduleItemId: 'item-x',
+      },
+      until: { kind: 'time', time: '14:00' },
+    }],
+  }
+  assert.equal(parseBackupJson(JSON.stringify(hybrid)), undefined)
+})
+
 test('Section間Breakの配置情報をJSON export/importで維持する', () => {
   const state = {
     ...emptyState(),

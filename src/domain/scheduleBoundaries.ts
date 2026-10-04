@@ -29,14 +29,23 @@ export const isValidScheduleBoundaryShape = (
   value: unknown,
 ): value is ScheduleBoundary => isRecord(value) && (
   (value.kind === 'schedule-item' && isNonEmptyId(value.scheduleItemId) &&
-    (value.edge === 'start' || value.edge === 'end')) ||
+    (value.edge === 'start' || value.edge === 'end') &&
+    !Object.hasOwn(value, 'sectionId') &&
+    !Object.hasOwn(value, 'offsetMinutes') &&
+    !Object.hasOwn(value, 'time')) ||
   (value.kind === 'section' && isNonEmptyId(value.sectionId) &&
     (value.edge === 'start' || value.edge === 'end') &&
+    !Object.hasOwn(value, 'scheduleItemId') &&
+    !Object.hasOwn(value, 'time') &&
     (value.offsetMinutes === undefined ||
       (typeof value.offsetMinutes === 'number' &&
         Number.isSafeInteger(value.offsetMinutes) && value.offsetMinutes >= 0))) ||
   (value.kind === 'time' && typeof value.time === 'string' &&
-    isValidLocalTime(value.time))
+    isValidLocalTime(value.time) &&
+    !Object.hasOwn(value, 'scheduleItemId') &&
+    !Object.hasOwn(value, 'sectionId') &&
+    !Object.hasOwn(value, 'edge') &&
+    !Object.hasOwn(value, 'offsetMinutes'))
 )
 
 export interface ResolvedScheduleInterval {
@@ -355,7 +364,7 @@ export const resolveScheduleBoundaryInterval = (
 }
 
 export const describeScheduleBoundary = (
-  boundary: ScheduleBoundary,
+  boundary: unknown,
   {
     scheduleItemLabel,
     sectionLabel,
@@ -364,6 +373,7 @@ export const describeScheduleBoundary = (
     sectionLabel: (sectionId: SectionId) => string | undefined
   },
 ): string => {
+  if (!isValidScheduleBoundaryShape(boundary)) return '範囲指定が正しくありません'
   if (isScheduleItemBoundary(boundary)) {
     return `${scheduleItemLabel(boundary.scheduleItemId) ?? '参照先なし'} ${boundary.edge === 'start' ? '開始' : '終了'}`
   }

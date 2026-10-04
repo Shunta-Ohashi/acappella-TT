@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  describeScheduleBoundary,
   getReferencedScheduleItemIds,
   getReferencedSectionIds,
   isValidScheduleBoundaryShape,
@@ -163,6 +164,74 @@ test('resolverはmalformed Boundaryをthrowせずfail closedにする', () => {
     assert.doesNotThrow(() => resolve(from, validUntil))
     assert.equal(resolve(from, validUntil).ok, false)
   }
+})
+
+test('Boundary formatterは正常な3形式を維持しmalformed shapeを安全に表示する', () => {
+  const labels = {
+    scheduleItemLabel: id => id === 'item-1' ? '出演A' : undefined,
+    sectionLabel: id => id === 'section-1' ? '第1部' : undefined,
+  }
+  assert.equal(describeScheduleBoundary({
+    kind: 'schedule-item', scheduleItemId: 'item-1', edge: 'start',
+  }, labels), '出演A 開始')
+  assert.equal(describeScheduleBoundary({
+    kind: 'schedule-item', scheduleItemId: 'item-1', edge: 'end',
+  }, labels), '出演A 終了')
+  assert.equal(describeScheduleBoundary({
+    kind: 'schedule-item', scheduleItemId: 'missing', edge: 'end',
+  }, labels), '参照先なし 終了')
+  assert.equal(describeScheduleBoundary({
+    kind: 'section', sectionId: 'section-1', edge: 'start',
+  }, labels), '第1部 開始')
+  assert.equal(describeScheduleBoundary({
+    kind: 'section', sectionId: 'section-1', edge: 'start', offsetMinutes: 0,
+  }, labels), '第1部 開始')
+  assert.equal(describeScheduleBoundary({
+    kind: 'section', sectionId: 'section-1', edge: 'start', offsetMinutes: 5,
+  }, labels), '第1部 開始+5分')
+  assert.equal(describeScheduleBoundary({
+    kind: 'section', sectionId: 'section-1', edge: 'end', offsetMinutes: 5,
+  }, labels), '第1部 終了-5分')
+  assert.equal(describeScheduleBoundary({ kind: 'time', time: '13:00' }, labels), '13:00')
+
+  for (const malformed of [
+    null,
+    undefined,
+    { kind: 'schedule-item', scheduleItemId: 'item-1', edge: 'middle' },
+    { kind: 'schedule-item', scheduleItemId: 'item-1' },
+    { kind: 'schedule-item', scheduleItemId: 'item-1', edge: null },
+    { kind: 'section', sectionId: 'section-1', edge: 'middle' },
+    { kind: 'section', sectionId: 'section-1' },
+    { kind: 'unknown', sectionId: 'section-1', edge: 'end' },
+  ]) {
+    assert.doesNotThrow(() => describeScheduleBoundary(malformed, labels))
+    assert.equal(describeScheduleBoundary(malformed, labels), '範囲指定が正しくありません')
+  }
+})
+
+test('ScheduleBoundary shapeはcross-kind fieldをproperty presenceで拒否し無関係fieldは許容する', () => {
+  const hybrids = [
+    { kind: 'schedule-item', scheduleItemId: 'item-1', edge: 'start', sectionId: 'section-1' },
+    { kind: 'schedule-item', scheduleItemId: 'item-1', edge: 'start', time: '13:00' },
+    { kind: 'schedule-item', scheduleItemId: 'item-1', edge: 'start', offsetMinutes: 0 },
+    { kind: 'section', sectionId: 'section-1', edge: 'start', scheduleItemId: 'item-1' },
+    { kind: 'section', sectionId: 'section-1', edge: 'start', time: '13:00' },
+    { kind: 'time', time: '13:00', scheduleItemId: 'item-1' },
+    { kind: 'time', time: '13:00', sectionId: 'section-1' },
+    { kind: 'time', time: '13:00', edge: 'start' },
+    { kind: 'time', time: '13:00', offsetMinutes: 0 },
+    { kind: 'schedule-item', scheduleItemId: 'item-1', edge: 'start', sectionId: undefined },
+    { kind: 'section', sectionId: 'section-1', edge: 'start', time: undefined },
+    { kind: 'time', time: '13:00', edge: undefined },
+  ]
+  for (const hybrid of hybrids) assert.equal(isValidScheduleBoundaryShape(hybrid), false)
+
+  for (const valid of [
+    { kind: 'schedule-item', scheduleItemId: 'item-1', edge: 'start', futureMetadata: 'x' },
+    { kind: 'section', sectionId: 'section-1', edge: 'end', offsetMinutes: 0,
+      futureMetadata: 'x' },
+    { kind: 'time', time: '13:00', futureMetadata: 'x' },
+  ]) assert.equal(isValidScheduleBoundaryShape(valid), true)
 })
 
 test('Section effective intervalは明示anchorとfallback edgeをStage範囲内に制限する', () => {

@@ -1132,6 +1132,42 @@ test('PA・DutyのScheduleBoundaryをnested validationし参照先の有無は�
   }
 })
 
+test('V4 ScheduleBoundaryはcross-kind fieldを拒否し無関係な追加fieldは許容する', () => {
+  const empty = createPersistedAppState(createEmptyState())
+  const assignment = {
+    id: 'pa-v4', eventId: 'event', eventDayId: 'day', stageId: 'stage',
+    memberId: 'member', role: 'main',
+    from: { kind: 'schedule-item', scheduleItemId: 'item-a', edge: 'start' },
+    until: { kind: 'schedule-item', scheduleItemId: 'item-b', edge: 'end' },
+  }
+  const hybridBoundaries = [
+    { kind: 'schedule-item', scheduleItemId: 'item-a', edge: 'start', sectionId: 'section' },
+    { kind: 'schedule-item', scheduleItemId: 'item-a', edge: 'start', time: '13:00' },
+    { kind: 'schedule-item', scheduleItemId: 'item-a', edge: 'start', offsetMinutes: 0 },
+    { kind: 'section', sectionId: 'section', edge: 'start', scheduleItemId: 'item-a' },
+    { kind: 'section', sectionId: 'section', edge: 'start', time: '13:00' },
+    { kind: 'time', time: '13:00', scheduleItemId: 'item-a' },
+    { kind: 'time', time: '13:00', sectionId: 'section' },
+    { kind: 'time', time: '13:00', edge: 'start' },
+    { kind: 'time', time: '13:00', offsetMinutes: 0 },
+  ]
+  for (const from of hybridBoundaries) {
+    assert.equal(parsePersistedState(JSON.stringify({
+      ...empty, paAssignments: [{ ...assignment, from }],
+    })), undefined)
+  }
+
+  const restored = parsePersistedState(JSON.stringify({
+    ...empty,
+    paAssignments: [{
+      ...assignment,
+      from: { ...assignment.from, unrelatedFutureMetadata: 'x' },
+    }],
+  }))
+  assert.ok(restored)
+  assert.equal(restored.paAssignments[0].from.unrelatedFutureMetadata, 'x')
+})
+
 test('optional・nested・literal fieldを構造検証し未知の追加fieldは許容する', () => {
   const demo = createDemoData()
   const empty = createPersistedAppState(createEmptyState())
