@@ -2627,6 +2627,42 @@
   font-weight: 700;
 }
 
+.common-data-list__actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.common-member-list__delete,
+.common-band-list__delete {
+  padding: 7px 10px;
+  color: #9f2017;
+  background: #fff;
+  border: 1px solid #e2aaa5;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.common-member-list__delete:hover,
+.common-band-list__delete:hover {
+  background: #fff5f4;
+}
+
+.common-data-deletion-error {
+  margin: 0;
+  padding: 11px 13px;
+  color: #8f1c14;
+  background: #fff5f4;
+  border: 1px solid #e4b9b5;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.55;
+}
+
 .common-member-list__edit:hover,
 .common-band-list__edit:hover {
   background: #f3f7fc;

@@ -7,7 +7,13 @@ import {
   type CommonBandStatusFilter,
   type CommonBandUpdateResult,
 } from '../domain/commonBands'
+import type {
+  CommonBandDeletionCheck,
+  CommonBandDeletionResult,
+} from '../domain/commonDataDeletion'
+import { getDeleteConfirmationCopy } from '../ui/deleteConfirmation'
 import { BandEditorDialog } from './BandEditorDialog'
+import { DeleteConfirmationDialog } from './DeleteConfirmationDialog'
 
 interface CommonBandListProps {
   bands: Band[]
@@ -16,12 +22,25 @@ interface CommonBandListProps {
     bandId: BandId | undefined,
     draft: CommonBandDraft,
   ) => CommonBandUpdateResult
+  checkBandDeletion: (bandId: BandId) => CommonBandDeletionCheck
+  onDeleteBand: (bandId: BandId) => CommonBandDeletionResult
 }
 
 type BandEditorState =
   | { mode: 'create' }
   | { mode: 'edit'; bandId: BandId }
   | undefined
+
+interface PendingBandDeletion {
+  bandId: BandId
+  label: string
+}
+
+const getBandDeletionError = (
+  result: Exclude<CommonBandDeletionCheck, { ok: true }>,
+): string => result.reason === 'BAND_NOT_FOUND'
+  ? '削除する固定バンドが見つかりません。'
+  : 'この固定バンドはイベントで使用されているため削除できません。今後使用しない場合は「活動終了」に変更してください。'
 
 const formatMemberSummary = (band: Band, members: Member[]): string => {
   const resolvedMembers = resolveCommonBandMembers(band, members)
@@ -40,11 +59,15 @@ export function CommonBandList({
   bands,
   members,
   onSaveBand,
+  checkBandDeletion,
+  onDeleteBand,
 }: CommonBandListProps) {
   const [searchText, setSearchText] = useState('')
   const [statusFilter, setStatusFilter] =
     useState<CommonBandStatusFilter>('active')
   const [bandEditor, setBandEditor] = useState<BandEditorState>()
+  const [pendingDeletion, setPendingDeletion] = useState<PendingBandDeletion>()
+  const [deletionError, setDeletionError] = useState('')
   const displayedBands = filterCommonBands(bands, searchText, statusFilter)
   const editingBand = bandEditor?.mode === 'edit'
     ? bands.find((band) => band.id === bandEditor.bandId)
@@ -57,6 +80,30 @@ export function CommonBandList({
     )
     if (result.ok) setBandEditor(undefined)
     return result
+  }
+
+  const requestBandDeletion = (band: Band) => {
+    const check = checkBandDeletion(band.id)
+    if (!check.ok) {
+      setDeletionError(getBandDeletionError(check))
+      return
+    }
+
+    setDeletionError('')
+    setPendingDeletion({ bandId: band.id, label: band.name })
+  }
+
+  const confirmBandDeletion = () => {
+    if (!pendingDeletion) return
+
+    const result = onDeleteBand(pendingDeletion.bandId)
+    setPendingDeletion(undefined)
+    if (!result.ok) {
+      setDeletionError(getBandDeletionError(result))
+      return
+    }
+
+    setDeletionError('')
   }
 
   return (
@@ -102,6 +149,12 @@ export function CommonBandList({
         </div>
       </div>
 
+      {deletionError && (
+        <p className="common-data-deletion-error" role="alert">
+          {deletionError}
+        </p>
+      )}
+
       <div className="common-band-list__table-card">
         <div className="common-band-list__table-scroll">
           <table className="common-band-list__table">
@@ -132,17 +185,27 @@ export function CommonBandList({
                       </span>
                     </td>
                     <td>
-                      <button
-                        type="button"
-                        className="common-band-list__edit"
-                        aria-label={`${band.name}を編集`}
-                        onClick={() => setBandEditor({
-                          mode: 'edit',
-                          bandId: band.id,
-                        })}
-                      >
-                        編集
-                      </button>
+                      <div className="common-data-list__actions">
+                        <button
+                          type="button"
+                          className="common-band-list__edit"
+                          aria-label={`${band.name}を編集`}
+                          onClick={() => setBandEditor({
+                            mode: 'edit',
+                            bandId: band.id,
+                          })}
+                        >
+                          編集
+                        </button>
+                        <button
+                          type="button"
+                          className="common-band-list__delete"
+                          aria-label={`${band.name}を削除`}
+                          onClick={() => requestBandDeletion(band)}
+                        >
+                          削除
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 )
@@ -173,6 +236,19 @@ export function CommonBandList({
           onSave={handleSaveBand}
         />
       )}
+      {pendingDeletion && (() => {
+        const copy = getDeleteConfirmationCopy(
+          'common-band',
+          pendingDeletion.label,
+        )
+        return (
+          <DeleteConfirmationDialog
+            {...copy}
+            onCancel={() => setPendingDeletion(undefined)}
+            onConfirm={confirmBandDeletion}
+          />
+        )
+      })()}
     </section>
   )
 }

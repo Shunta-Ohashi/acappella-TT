@@ -130,6 +130,16 @@ import {
   type CommonBandUpdateResult,
 } from './domain/commonBands'
 import {
+  checkCommonBandDeletion,
+  checkCommonMemberDeletion,
+  createCommonBandDeletion,
+  createCommonMemberDeletion,
+  type CommonBandDeletionCheck,
+  type CommonBandDeletionResult,
+  type CommonMemberDeletionCheck,
+  type CommonMemberDeletionResult,
+} from './domain/commonDataDeletion'
+import {
   createEventBandSettingsUpdate,
   type EventBandSettingsDraft,
   type EventBandSettingsUpdateResult,
@@ -1076,6 +1086,50 @@ function App() {
     return result
   }
 
+  const getCommonMemberDeletionCheck = (
+    memberId: MemberId,
+  ): CommonMemberDeletionCheck => checkCommonMemberDeletion({
+    memberId,
+    members,
+    bands,
+    eventMembers,
+    eventBands,
+    paAssignments,
+    dutyAssignments,
+  })
+
+  const handleDeleteCommonMember = (
+    memberId: MemberId,
+  ): CommonMemberDeletionResult => {
+    const result = createCommonMemberDeletion({
+      memberId,
+      members,
+      bands,
+      eventMembers,
+      eventBands,
+      paAssignments,
+      dutyAssignments,
+    })
+    if (result.ok) setMembers(result.members)
+    return result
+  }
+
+  const getCommonBandDeletionCheck = (
+    bandId: BandId,
+  ): CommonBandDeletionCheck => checkCommonBandDeletion({
+    bandId,
+    bands,
+    eventBands,
+  })
+
+  const handleDeleteCommonBand = (
+    bandId: BandId,
+  ): CommonBandDeletionResult => {
+    const result = createCommonBandDeletion({ bandId, bands, eventBands })
+    if (result.ok) setBands(result.bands)
+    return result
+  }
+
   const handleSaveEventStageSettings = (
     defaultTransitionMinutes: string,
     performanceSlotMinutes: number[],
@@ -1939,6 +1993,10 @@ function App() {
           bands={bands}
           onSaveMember={handleSaveCommonMember}
           onSaveBand={handleSaveCommonBand}
+          checkMemberDeletion={getCommonMemberDeletionCheck}
+          onDeleteMember={handleDeleteCommonMember}
+          checkBandDeletion={getCommonBandDeletionCheck}
+          onDeleteBand={handleDeleteCommonBand}
         />
       ) : (
         <DataBackupSettings
