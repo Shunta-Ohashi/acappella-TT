@@ -9,6 +9,7 @@ import {
   resolveScheduleBoundaryInterval,
 } from '../src/domain/scheduleBoundaries.ts'
 import {
+  createAssignmentRangeForMode,
   createDefaultAssignmentRange,
   getAssignmentRangeMode,
 } from '../src/domain/assignmentRanges.ts'
@@ -176,4 +177,59 @@ test('Section全体と一部をoffset fieldの有無で安定して区別する'
     { ...partial.from, offsetMinutes: 15 },
     { ...partial.until, offsetMinutes: 10 },
   ), 'section-partial')
+})
+
+test('Section全体と一部の切替は現在のSection IDを維持しoffsetだけを正規化する', () => {
+  const whole = {
+    from: { kind: 'section', sectionId: 'section-2', edge: 'start' },
+    until: { kind: 'section', sectionId: 'section-2', edge: 'end' },
+  }
+  const partial = createAssignmentRangeForMode({
+    mode: 'section-partial', ...whole, stage, sections, calculatedItems: items,
+  })
+  assert.deepEqual(partial, {
+    from: { kind: 'section', sectionId: 'section-2', edge: 'start', offsetMinutes: 0 },
+    until: { kind: 'section', sectionId: 'section-2', edge: 'end', offsetMinutes: 0 },
+  })
+
+  const backToWhole = createAssignmentRangeForMode({
+    mode: 'section-whole',
+    from: { ...partial.from, offsetMinutes: 10 },
+    until: { ...partial.until, offsetMinutes: 5 },
+    stage, sections, calculatedItems: items,
+  })
+  assert.deepEqual(backToWhole, whole)
+  assert.deepEqual(createAssignmentRangeForMode({
+    mode: 'section-whole', ...partial, stage, sections, calculatedItems: items,
+  }), whole)
+})
+
+test('参照切れSectionもmode切替では維持し、他modeからは既存defaultを利用する', () => {
+  const missing = {
+    from: { kind: 'section', sectionId: 'missing-section', edge: 'start' },
+    until: { kind: 'section', sectionId: 'missing-section', edge: 'end' },
+  }
+  const missingPartial = createAssignmentRangeForMode({
+    mode: 'section-partial', ...missing, stage, sections, calculatedItems: items,
+  })
+  assert.equal(missingPartial.from.sectionId, 'missing-section')
+  assert.equal(missingPartial.until.sectionId, 'missing-section')
+
+  for (const current of [
+    {
+      from: { kind: 'schedule-item', scheduleItemId: 'item-2', edge: 'start' },
+      until: { kind: 'schedule-item', scheduleItemId: 'item-2', edge: 'end' },
+    },
+    {
+      from: { kind: 'time', time: '12:00' },
+      until: { kind: 'time', time: '13:00' },
+    },
+  ]) {
+    assert.deepEqual(createAssignmentRangeForMode({
+      mode: 'section-whole', ...current, stage, sections, calculatedItems: items,
+    }), {
+      from: { kind: 'section', sectionId: 'section-1', edge: 'start' },
+      until: { kind: 'section', sectionId: 'section-1', edge: 'end' },
+    })
+  }
 })

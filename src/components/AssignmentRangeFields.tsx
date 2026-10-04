@@ -5,7 +5,7 @@ import type {
 } from '../domain/models'
 import type { CalculatedScheduleItem } from '../domain/timeline'
 import {
-  createDefaultAssignmentRange,
+  createAssignmentRangeForMode,
   getAssignmentRangeMode,
   type AssignmentRangeMode,
 } from '../domain/assignmentRanges.ts'
@@ -69,8 +69,10 @@ export function AssignmentRangeFields({
 
   const changeMode = (nextMode: AssignmentRangeMode) => {
     if (!stage) return
-    const range = createDefaultAssignmentRange({
+    const range = createAssignmentRangeForMode({
       mode: nextMode,
+      from,
+      until,
       stage,
       sections,
       calculatedItems,

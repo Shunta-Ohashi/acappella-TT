@@ -89,3 +89,36 @@ export const createDefaultAssignmentRange = ({
     until: { kind: 'section', sectionId: section.id, edge: 'end', ...offset },
   }
 }
+
+export const createAssignmentRangeForMode = ({
+  mode,
+  from,
+  until,
+  stage,
+  sections,
+  calculatedItems,
+}: {
+  mode: AssignmentRangeMode
+  from: ScheduleBoundary
+  until: ScheduleBoundary
+  stage: Stage
+  sections: Section[]
+  calculatedItems: CalculatedScheduleItem[]
+}): { from: ScheduleBoundary; until: ScheduleBoundary } | undefined => {
+  const currentMode = getAssignmentRangeMode(from, until)
+  const isSectionMode = mode === 'section-whole' || mode === 'section-partial'
+  if (
+    isSectionMode &&
+    isSectionBoundary(from) && isSectionBoundary(until) &&
+    from.sectionId === until.sectionId &&
+    from.edge === 'start' && until.edge === 'end'
+  ) {
+    if (currentMode === mode) return { from: { ...from }, until: { ...until } }
+    const offset = mode === 'section-partial' ? { offsetMinutes: 0 } : {}
+    return {
+      from: { kind: 'section', sectionId: from.sectionId, edge: 'start', ...offset },
+      until: { kind: 'section', sectionId: until.sectionId, edge: 'end', ...offset },
+    }
+  }
+  return createDefaultAssignmentRange({ mode, stage, sections, calculatedItems })
+}
