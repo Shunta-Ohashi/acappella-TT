@@ -13,6 +13,11 @@ import {
   isValidLocalTime,
   parseLocalTimeToMinute,
 } from './timeline.ts'
+import {
+  isMinuteRangeWithinStageTimeRange,
+  isSectionWithinStageTimeRange,
+  isValidStageTimeRange,
+} from './stageTimeRanges.ts'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -126,6 +131,9 @@ const getEffectiveSectionEdges = ({
   if (section.stageId !== stage.id) {
     return { reason: 'Sectionは担当Stageに属していません。' }
   }
+  if (!isSectionWithinStageTimeRange(stage, section)) {
+    return { reason: 'Section時間は担当Stageの時間内にしてください。' }
+  }
 
   const sectionItems = getSectionItems(section.id, stage.id, calculatedItems)
   const firstItem = sectionItems[0]
@@ -145,6 +153,10 @@ const getEffectiveSectionEdges = ({
   if (!section.plannedEndTime && lastItem?.kind === 'performance') {
     const transition = getCrossSectionTransitions(sections, calculatedItems).get(section.id)
     if (transition) untilMinute = transition.untilItem.plannedStartMinute
+  }
+
+  if (!isMinuteRangeWithinStageTimeRange(stage, fromMinute, untilMinute)) {
+    return { reason: 'Sectionの有効時間は担当Stageの時間内にしてください。' }
   }
 
   return { fromMinute, untilMinute }
@@ -188,6 +200,9 @@ const resolveBoundaryMinute = ({
   edgeLabel: '開始' | '終了'
   subjectLabel: string
 }): { ok: true; minute: number } | { ok: false; reason: string } => {
+  if (!isValidScheduleBoundaryShape(boundary)) {
+    return { ok: false, reason: `${subjectLabel}範囲の${edgeLabel}指定が正しくありません。` }
+  }
   if (isScheduleItemBoundary(boundary)) {
     const item = calculatedItems.find((candidate) =>
       candidate.scheduleItemId === boundary.scheduleItemId,
@@ -216,18 +231,8 @@ const resolveBoundaryMinute = ({
   if (!stage || stage.eventDayId !== assignment.eventDayId) {
     return { ok: false, reason: `${subjectLabel}のStageまたは開催日が正しくありません。` }
   }
-  if (
-    !isValidLocalTime(stage.plannedStartTime) ||
-    (stage.plannedEndTime !== undefined && !isValidLocalTime(stage.plannedEndTime))
-  ) {
+  if (!isValidStageTimeRange(stage.plannedStartTime, stage.plannedEndTime)) {
     return { ok: false, reason: `${subjectLabel}のStage時間が正しくありません。` }
-  }
-  if (
-    stage.plannedEndTime !== undefined &&
-    parseLocalTimeToMinute(stage.plannedStartTime) >=
-      parseLocalTimeToMinute(stage.plannedEndTime)
-  ) {
-    return { ok: false, reason: `${subjectLabel}のStage終了は開始より後である必要があります。` }
   }
 
   if (isTimeBoundary(boundary)) {
@@ -310,6 +315,12 @@ export const resolveScheduleBoundaryInterval = (
   subjectLabel: string,
   context?: ScheduleBoundaryResolutionContext,
 ): ResolveScheduleIntervalResult => {
+  if (!isRecord(assignment) || !isNonEmptyId(assignment.eventDayId) ||
+    !isNonEmptyId(assignment.stageId) ||
+    !isValidScheduleBoundaryShape(assignment.from) ||
+    !isValidScheduleBoundaryShape(assignment.until)) {
+    return { ok: false, reason: `${subjectLabel}範囲の指定が正しくありません。` }
+  }
   const fromResolution = resolveBoundaryMinute({
     boundary: assignment.from,
     assignment,

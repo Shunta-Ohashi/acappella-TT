@@ -16,7 +16,7 @@ import type {
   TimetableLock,
   TimetableOrderConstraint,
 } from '../domain/models'
-import { isSectionWithinStageTimeRange } from '../domain/eventStageSettings.ts'
+import { isSectionWithinStageTimeRange } from '../domain/stageTimeRanges.ts'
 import { isTimetableOrderConstraint } from '../domain/timetableOrderConstraints.ts'
 import {
   isBand,
@@ -325,13 +325,16 @@ export const parsePersistedState = (
     const parsed: unknown = JSON.parse(serialized)
     if (isPersistedAppStateV4(parsed)) return parsed as PersistedAppStateV4
     if (isPersistedAppStateV3(parsed)) {
-      return migrateV3ToV4(parsed as PersistedAppStateV3)
+      const migrated = migrateV3ToV4(parsed as PersistedAppStateV3)
+      return isPersistedAppStateV4(migrated) ? migrated : undefined
     }
     if (isPersistedAppStateV2(parsed)) {
-      return migrateV2ToV4(parsed as PersistedAppStateV2)
+      const migrated = migrateV2ToV4(parsed as PersistedAppStateV2)
+      return isPersistedAppStateV4(migrated) ? migrated : undefined
     }
     if (isPersistedAppStateV1(parsed)) {
-      return migrateV1ToV4(parsed as PersistedAppStateV1)
+      const migrated = migrateV1ToV4(parsed as PersistedAppStateV1)
+      return isPersistedAppStateV4(migrated) ? migrated : undefined
     }
     return undefined
   } catch {

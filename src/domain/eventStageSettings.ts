@@ -19,6 +19,12 @@ import {
   isValidLocalTime,
   parseLocalTimeToMinute,
 } from './timeline.ts'
+import {
+  isSectionWithinStageTimeRange,
+  isValidStageTimeRange,
+} from './stageTimeRanges.ts'
+
+export { isSectionWithinStageTimeRange, isValidStageTimeRange } from './stageTimeRanges.ts'
 
 export type StageEndMode = 'automatic' | 'fixed'
 export type StageTransitionMode = 'event-default' | 'stage-specific'
@@ -187,48 +193,6 @@ const hasStageErrors = (errors: StageSettingsValidationErrors): boolean =>
 
 const hasSectionErrors = (errors: SectionSettingsValidationErrors): boolean =>
   Object.values(errors).some(Boolean)
-
-export const isValidStageTimeRange = (
-  plannedStartTime: LocalTime,
-  plannedEndTime?: LocalTime,
-): boolean => {
-  if (!isValidLocalTime(plannedStartTime)) return false
-  if (plannedEndTime === undefined) return true
-  if (!isValidLocalTime(plannedEndTime)) return false
-
-  return parseLocalTimeToMinute(plannedStartTime) <
-    parseLocalTimeToMinute(plannedEndTime)
-}
-
-export const isSectionWithinStageTimeRange = (
-  stage: Pick<Stage, 'plannedStartTime' | 'plannedEndTime'>,
-  section: Pick<Section, 'plannedStartTime' | 'plannedEndTime'>,
-): boolean => {
-  if (!isValidStageTimeRange(stage.plannedStartTime, stage.plannedEndTime)) return false
-  if (section.plannedStartTime !== undefined &&
-    !isValidLocalTime(section.plannedStartTime)) return false
-  if (section.plannedEndTime !== undefined &&
-    !isValidLocalTime(section.plannedEndTime)) return false
-  if (section.plannedStartTime !== undefined &&
-    section.plannedEndTime !== undefined &&
-    !isValidStageTimeRange(section.plannedStartTime, section.plannedEndTime)) return false
-
-  const stageStart = parseLocalTimeToMinute(stage.plannedStartTime)
-  const stageEnd = stage.plannedEndTime === undefined
-    ? undefined
-    : parseLocalTimeToMinute(stage.plannedEndTime)
-  const sectionStart = section.plannedStartTime === undefined
-    ? undefined
-    : parseLocalTimeToMinute(section.plannedStartTime)
-  const sectionEnd = section.plannedEndTime === undefined
-    ? undefined
-    : parseLocalTimeToMinute(section.plannedEndTime)
-
-  return (sectionStart === undefined ||
-    (sectionStart >= stageStart && (stageEnd === undefined || sectionStart < stageEnd))) &&
-    (sectionEnd === undefined ||
-      (sectionEnd > stageStart && (stageEnd === undefined || sectionEnd <= stageEnd)))
-}
 
 export const canSetStageStartTime = (
   stage: Pick<Stage, 'id' | 'plannedEndTime'>,

@@ -141,6 +141,60 @@ test('直接時刻はLocalTimeとStage範囲を検証し、同値・逆転interv
   ).ok, false)
 })
 
+test('resolverはmalformed Boundaryをthrowせずfail closedにする', () => {
+  const validUntil = { kind: 'schedule-item', scheduleItemId: 'item-1', edge: 'end' }
+  const malformed = [
+    undefined,
+    null,
+    { scheduleItemId: 'item-1', edge: 'start' },
+    { kind: 'schedule-item', scheduleItemId: 'item-1', edge: 'middle' },
+    { kind: 'schedule-item', scheduleItemId: 'item-1', edge: null },
+    { kind: 'schedule-item', scheduleItemId: 'item-1' },
+    { kind: 'section', sectionId: 'section-1', edge: 'middle' },
+    { kind: 'section', sectionId: 'section-1' },
+    { kind: 'unknown', edge: 'start' },
+    { kind: 'schedule-item', edge: 'start' },
+    { kind: 'section', edge: 'start' },
+    { kind: 'time' },
+    { kind: 'section', sectionId: 'section-1', edge: 'start', offsetMinutes: -1 },
+    { kind: 'time', time: '24:00' },
+  ]
+  for (const from of malformed) {
+    assert.doesNotThrow(() => resolve(from, validUntil))
+    assert.equal(resolve(from, validUntil).ok, false)
+  }
+})
+
+test('Section effective intervalは明示anchorとfallback edgeをStage範囲内に制限する', () => {
+  for (const section of [
+    { id: 'too-early', stageId: stage.id, name: '早い', order: 0,
+      plannedStartTime: '09:00', plannedEndTime: '11:00' },
+    { id: 'too-late', stageId: stage.id, name: '遅い', order: 0,
+      plannedStartTime: '17:00', plannedEndTime: '19:00' },
+    { id: 'reversed', stageId: stage.id, name: '逆転', order: 0,
+      plannedStartTime: '12:00', plannedEndTime: '11:00' },
+    { id: 'at-end', stageId: stage.id, name: '終了境界', order: 0,
+      plannedStartTime: '18:00' },
+  ]) {
+    assert.equal(resolveEffectiveSectionInterval({
+      section, stage, sections: [section], calculatedItems: [],
+    }).ok, false)
+  }
+
+  const exact = { id: 'exact', stageId: stage.id, name: '全時間', order: 0,
+    plannedStartTime: '10:00', plannedEndTime: '18:00' }
+  assert.deepEqual(resolveEffectiveSectionInterval({
+    section: exact, stage, sections: [exact], calculatedItems: [],
+  }), { ok: true, interval: { fromMinute: 600, untilMinute: 1080 } })
+
+  const fallback = { id: 'fallback', stageId: stage.id, name: 'fallback', order: 0 }
+  assert.equal(resolveEffectiveSectionInterval({
+    section: fallback, stage, sections: [fallback],
+    calculatedItems: [{ ...items[0], sectionId: fallback.id,
+      plannedStartMinute: 590, plannedEndMinute: 610 }],
+  }).ok, false)
+})
+
 test('別StageのSectionを拒否し、参照helperは各boundary kindだけを抽出する', () => {
   const foreignSection = { id: 'foreign', stageId: 'stage-2', name: '別', order: 0 }
   assert.equal(resolve(

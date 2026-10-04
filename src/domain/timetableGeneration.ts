@@ -26,7 +26,7 @@ import {
   scopeTimetableOrderConstraintsForTarget,
 } from './timetableOrderConstraints.ts'
 import { detectScheduleIssues } from './issues.ts'
-import { isValidStageTimeRange, isSectionWithinStageTimeRange } from './eventStageSettings.ts'
+import { isValidStageTimeRange, isSectionWithinStageTimeRange } from './stageTimeRanges.ts'
 import {
   getTimeRangeValidationError, validateAvailabilityWindows, validatePreferredTimeRange,
 } from './eventMemberDayDetails.ts'

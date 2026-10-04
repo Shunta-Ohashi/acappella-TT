@@ -21,12 +21,10 @@ import type {
 } from '../domain/models'
 import { isValidLocalDate } from '../domain/eventCreation.ts'
 import { getTimeRangeValidationError } from '../domain/eventMemberDayDetails.ts'
-import {
-  isValidStageTimeRange,
-  validatePerformanceSlotMinutes,
-} from '../domain/eventStageSettings.ts'
+import { validatePerformanceSlotMinutes } from '../domain/eventStageSettings.ts'
 import { isValidBreakDurationMinutes } from '../domain/schedule.ts'
 import { isValidScheduleBoundaryShape } from '../domain/scheduleBoundaries.ts'
+import { isValidStageTimeRange } from '../domain/stageTimeRanges.ts'
 import { isValidLocalTime } from '../domain/timeline.ts'
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -86,6 +84,10 @@ export const isLegacyScheduleBoundary = (value: unknown): value is {
   scheduleItemId: string
   edge: 'start' | 'end'
 } => isRecord(value) &&
+  !Object.hasOwn(value, 'kind') &&
+  !Object.hasOwn(value, 'sectionId') &&
+  !Object.hasOwn(value, 'time') &&
+  !Object.hasOwn(value, 'offsetMinutes') &&
   isString(value.scheduleItemId) && value.scheduleItemId.trim().length > 0 &&
   (value.edge === 'start' || value.edge === 'end')
 

@@ -211,6 +211,41 @@ test('V1のPA・Duty ScheduleBoundaryもV4へ移行する', () => {
   assert.equal(restored.dutyAssignments[0].until.kind, 'schedule-item')
 })
 
+test('V1/V2/V3のhybrid Boundaryとinvalid edgeをsilent migrationせず拒否する', () => {
+  const current = createPersistedAppState(createEmptyState())
+  const boundaries = [
+    {
+      kind: 'section', sectionId: 'section-x',
+      scheduleItemId: 'item-x', edge: 'start',
+    },
+    {
+      kind: 'time', time: '13:00',
+      scheduleItemId: 'item-x', edge: 'start',
+    },
+    { scheduleItemId: 'item-x' },
+    { scheduleItemId: 'item-x', edge: null },
+    { scheduleItemId: 'item-x', edge: 'middle' },
+    { scheduleItemId: '', edge: 'start' },
+    { scheduleItemId: '   ', edge: 'start' },
+    { scheduleItemId: 123, edge: 'start' },
+  ]
+  for (const version of [1, 2, 3]) {
+    for (const boundary of boundaries) {
+      const legacy = {
+        ...current,
+        version,
+        paAssignments: [{
+          id: `pa-v${version}`, eventId: 'event', eventDayId: 'day', stageId: 'stage',
+          memberId: 'member', role: 'main',
+          from: boundary,
+          until: { scheduleItemId: 'item-y', edge: 'end' },
+        }],
+      }
+      assert.equal(parsePersistedState(JSON.stringify(legacy)), undefined)
+    }
+  }
+})
+
 test('V4では出演順制約collectionを必須としmalformed要素を拒否する', () => {
   const current = createPersistedAppState(createEmptyState())
   const { timetableOrderConstraints: _omitted, ...missing } = current
@@ -366,6 +401,7 @@ test('V1のTimetableLock有無を移行し、V2の必須PA可否を検証する'
 
 test('V1の既存PA Assignmentは移行後も同じIDと担当可能roleを維持する', () => {
   const demo = createDemoData()
+  const toLegacyBoundary = ({ scheduleItemId, edge }) => ({ scheduleItemId, edge })
   const legacy = {
     ...createPersistedAppState(demo),
     version: 1,
@@ -377,6 +413,16 @@ test('V1の既存PA Assignmentは移行後も同じIDと担当可能roleを維�
     eventMembers: demo.eventMembers.map(({
       paCapabilities: _capabilities, ...eventMember
     }) => eventMember),
+    paAssignments: demo.paAssignments.map((assignment) => ({
+      ...assignment,
+      from: toLegacyBoundary(assignment.from),
+      until: toLegacyBoundary(assignment.until),
+    })),
+    dutyAssignments: demo.dutyAssignments.map((assignment) => ({
+      ...assignment,
+      from: toLegacyBoundary(assignment.from),
+      until: toLegacyBoundary(assignment.until),
+    })),
   }
   const restored = parsePersistedState(JSON.stringify(legacy))
   assert.ok(restored)

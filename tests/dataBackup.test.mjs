@@ -156,6 +156,23 @@ test('V3バックアップのPA・Duty境界をV4 schedule-item境界へ移行�
   assert.deepEqual(legacy, original)
 })
 
+test('旧バックアップのhybrid Boundaryはschedule-itemへ変換せず拒否する', () => {
+  const legacy = {
+    ...createPersistedAppState(emptyState()),
+    version: 3,
+    dutyAssignments: [{
+      id: 'duty-hybrid', dutyTypeId: 'type', eventDayId: 'day', stageId: 'stage',
+      memberId: 'member',
+      from: {
+        kind: 'section', sectionId: 'section-x',
+        scheduleItemId: 'item-x', edge: 'start',
+      },
+      until: { scheduleItemId: 'item-y', edge: 'end' },
+    }],
+  }
+  assert.equal(parseBackupJson(JSON.stringify(legacy)), undefined)
+})
+
 test('Section間Breakの配置情報をJSON export/importで維持する', () => {
   const state = {
     ...emptyState(),
