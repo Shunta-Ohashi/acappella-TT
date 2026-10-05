@@ -22,6 +22,7 @@ import {
 } from '../ui/timetableOrderConstraintPresentation'
 import { DeleteConfirmationDialog } from './DeleteConfirmationDialog'
 import { TimetableOrderConstraintDialog } from './TimetableOrderConstraintDialog'
+import { TimetableOrderConstraintRepairPanel } from './TimetableOrderConstraintRepairPanel'
 
 interface TimetableOrderConstraintSettingsProps {
   event: Event
@@ -92,31 +93,10 @@ export function TimetableOrderConstraintSettings({
       (sectionOrderById.get(left.sectionId ?? '') ?? Number.MAX_SAFE_INTEGER) -
         (sectionOrderById.get(right.sectionId ?? '') ?? Number.MAX_SAFE_INTEGER) ||
       left.id.localeCompare(right.id))
-  const unreachableConstraints = currentEventConstraints
-    .filter(constraint => !isScopeReachable(constraint))
-    .sort((left, right) =>
-      left.eventDayId.localeCompare(right.eventDayId) ||
-      left.stageId.localeCompare(right.stageId) ||
-      left.id.localeCompare(right.id))
-  const currentEventDayIds = new Set(eventDays
-    .filter(candidate => candidate.eventId === event.id)
-    .map(candidate => candidate.id))
-
-  const formatBandOrder = (
-    constraint: TimetableOrderConstraint,
-    scopedBandById: ReadonlyMap<string, EventBand> = bandById,
-  ): string =>
+  const formatBandOrder = (constraint: TimetableOrderConstraint): string =>
     constraint.eventBandIds.map(eventBandId =>
-      scopedBandById.get(eventBandId)?.name ?? `参照先不明（${eventBandId}）`,
+      bandById.get(eventBandId)?.name ?? `参照先不明（${eventBandId}）`,
     ).join(' → ')
-
-  const getConstraintBandById = (constraint: TimetableOrderConstraint) => {
-    if (!currentEventDayIds.has(constraint.eventDayId)) return new Map<string, EventBand>()
-    return new Map(eventBands
-      .filter(band => band.eventId === event.id &&
-        band.eventDayId === constraint.eventDayId)
-      .map(band => [band.id, band]))
-  }
 
   const getSemanticMessages = (constraint: TimetableOrderConstraint): string[] =>
     [...new Set(semanticEvaluation.violations
@@ -265,72 +245,16 @@ export function TimetableOrderConstraintSettings({
         </ul>
       )}
 
-      {unreachableConstraints.length > 0 && (
-        <section
-          className="timetable-order-settings__repair"
-          aria-label="修復が必要な出演順制約"
-        >
-          <h3>修復が必要な出演順制約 {unreachableConstraints.length}件</h3>
-          <p className="timetable-order-settings__guide">
-            開催日またはStageの参照を確認できません。内容を確認して削除してください。
-          </p>
-          <ul className="timetable-order-settings__list">
-            {unreachableConstraints.map((constraint, index) => {
-              const referencedDay = eventDays.find(candidate =>
-                candidate.id === constraint.eventDayId && candidate.eventId === event.id)
-              const referencedStage = stages.find(candidate =>
-                candidate.id === constraint.stageId)
-              const dayLabel = referencedDay
-                ? referencedDay.label?.trim() || referencedDay.date
-                : `参照先不明（${constraint.eventDayId}）`
-              const stageLabel = referencedStage && referencedDay &&
-                referencedStage.eventDayId === constraint.eventDayId
-                ? referencedStage.name
-                : referencedStage
-                  ? `${referencedStage.name}（開催日不一致）`
-                  : `参照先不明（${constraint.stageId}）`
-              const bandOrder = formatBandOrder(
-                constraint,
-                getConstraintBandById(constraint),
-              )
-              const semanticMessages = getSemanticMessages(constraint)
-              return (
-                <li
-                  key={`repair:${constraint.id}:${index}`}
-                  className="timetable-order-settings__item"
-                >
-                  <div>
-                    <strong>{dayLabel} / {stageLabel}</strong>
-                    <small className="timetable-order-settings__constraint-id">
-                      制約ID: {constraint.id}
-                    </small>
-                    <p>{bandOrder}</p>
-                    <small className="timetable-order-settings__status timetable-order-settings__status--invalid">
-                      出演順制約：要修正
-                    </small>
-                    <ul className="timetable-order-settings__validation-messages">
-                      {semanticMessages.map(message => <li key={message}>{message}</li>)}
-                    </ul>
-                  </div>
-                  <div className="timetable-order-settings__actions">
-                    <button
-                      type="button"
-                      className="timetable-order-settings__delete"
-                      aria-label={`scopeを確認できない出演順制約 ${constraint.id} を削除`}
-                      onClick={() => {
-                        setActionError('')
-                        setPendingDeletion(constraint)
-                      }}
-                    >
-                      削除
-                    </button>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
-        </section>
-      )}
+      <TimetableOrderConstraintRepairPanel
+        event={event}
+        eventDays={eventDays}
+        stages={stages}
+        sections={sections}
+        eventBands={eventBands}
+        timetableOrderConstraints={timetableOrderConstraints}
+        semanticViolations={semanticEvaluation.violations}
+        onCommit={onCommit}
+      />
 
       {actionError && <p className="form-error" role="alert">{actionError}</p>}
 
@@ -350,11 +274,7 @@ export function TimetableOrderConstraintSettings({
       {pendingDeletion && (
         <DeleteConfirmationDialog
           title="出演順制約を削除しますか？"
-          description={!isScopeReachable(pendingDeletion)
-            ? `scopeを確認できない出演順制約（ID: ${pendingDeletion.id}、出演順: ${
-              formatBandOrder(pendingDeletion, getConstraintBandById(pendingDeletion))
-            }）を削除します。この操作は取り消せません。`
-            : `「${formatBandOrder(pendingDeletion)}」の出演順制約を削除します。この操作は取り消せません。`}
+          description={`「${formatBandOrder(pendingDeletion)}」の出演順制約を削除します。この操作は取り消せません。`}
           confirmLabel="削除する"
           cancelLabel="キャンセル"
           onConfirm={confirmDeletion}
