@@ -47,6 +47,7 @@ import {
   type ScheduleLane,
 } from './domain/schedule'
 import { calculateEventDayTimelines } from './domain/timetable'
+import { formatMinuteAsLocalTime } from './domain/timeline'
 import { detectScheduleIssues } from './domain/issues'
 import {
   AppShell,
@@ -73,8 +74,24 @@ import {
   TimetableGrid,
   TimetableLockRepairPanel,
 } from './components/TimetableGrid'
+import { TimetableGridAssignmentDialog } from './components/TimetableGridAssignmentDialog'
+import { TimetableGridAssignmentDeletionDialog } from './components/TimetableGridAssignmentDeletionDialog'
 import { TimetableOperationsWorkspace } from './components/TimetableOperationsWorkspace'
-import type { TimetableGridRangeSelection } from './ui/timetableGridSelection'
+import {
+  areTimetableGridAssignmentTargetsEqual,
+  resolveTimetableGridSelection,
+  type ResolvedTimetableGridRangeSelection,
+  type TimetableGridRangeSelection,
+} from './ui/timetableGridSelection'
+import {
+  createTimetableGridAssignment,
+  deleteTimetableGridAssignments,
+  getTimetableGridAssignmentCandidates,
+  getTimetableGridSelectionAssignmentTargets,
+  type TimetableGridAssignmentCandidate,
+  type TimetableGridAssignmentDeletionPresentation,
+  type TimetableGridAssignmentDeletionTarget,
+} from './ui/timetableGridAssignment'
 import { TimetableGenerationPreviewDialog } from './components/TimetableGenerationPreviewDialog'
 import { TimetableGenerationOptionsDialog } from './components/TimetableGenerationOptionsDialog'
 import { TimetableGenerationFailureGuidance } from './components/TimetableGenerationFailureGuidance'
@@ -351,7 +368,7 @@ function App() {
   const paSettingsRef = useRef<PaSettingsHandle>(null)
   const dutySettingsRef = useRef<DutySettingsHandle>(null)
   const [generationPreview, setGenerationPreview] = useState<GenerationPreviewState | null>(null)
-  const [generationApplyRevision, setGenerationApplyRevision] = useState(0)
+  const [operationsPanelRevision, setOperationsPanelRevision] = useState(0)
   const [generationOptions, setGenerationOptions] = useState<TimetableGenerationUiOptions>(
     { ...DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS },
   )
@@ -392,6 +409,29 @@ function App() {
     context: typeof timetableGridSelectionContext
     selection: TimetableGridRangeSelection | null
   }>(() => ({ context: timetableGridSelectionContext, selection: null }))
+  const [gridAssignmentDialog, setGridAssignmentDialog] = useState<{
+    eventId: EventId
+    selection: ResolvedTimetableGridRangeSelection
+    targetLabel: string
+    candidates: TimetableGridAssignmentCandidate[]
+    errors: string[]
+  } | null>(null)
+  const [gridAssignmentDeletion, setGridAssignmentDeletion] = useState<{
+    eventId: EventId
+    eventDayId: EventDayId
+    stageId: StageId
+    selection: ResolvedTimetableGridRangeSelection
+    targets: TimetableGridAssignmentDeletionTarget[]
+    items: TimetableGridAssignmentDeletionPresentation[]
+    includesOutsideSelection: boolean
+  } | null>(null)
+  const [gridAssignmentFeedback, setGridAssignmentFeedback] = useState<{
+    eventId: EventId
+    eventDayId: EventDayId
+    stageId: StageId
+    kind: 'success' | 'error'
+    message: string
+  } | null>(null)
   const selectionContextMatches =
     timetableGridSelectionState.context.activeStep === activeStep &&
     timetableGridSelectionState.context.dutyTypes === dutyTypes &&
@@ -411,6 +451,9 @@ function App() {
   const handleTimetableGridSelectionChange = (
     selection: TimetableGridRangeSelection | null,
   ) => {
+    setGridAssignmentDialog(null)
+    setGridAssignmentDeletion(null)
+    setGridAssignmentFeedback(null)
     setTimetableGridSelectionState({
       context: {
         activeStep,
@@ -466,6 +509,9 @@ function App() {
     setResetConfirmation(null)
     setGenerationPreview(null)
     setGenerationFeedback(null)
+    setGridAssignmentDialog(null)
+    setGridAssignmentDeletion(null)
+    setGridAssignmentFeedback(null)
     setMembers(snapshot.members)
     setBands(snapshot.bands)
     setEvents(snapshot.events)
@@ -643,6 +689,9 @@ function App() {
     setGenerationOptionsScope(null)
     setResetConfirmation(null)
     setGenerationFeedback(null)
+    setGridAssignmentDialog(null)
+    setGridAssignmentDeletion(null)
+    setGridAssignmentFeedback(null)
     setSelectedEventId(eventId)
     setSelectedTimetableEventDayId(undefined)
     setSelectedTimetableStageId(undefined)
@@ -657,11 +706,17 @@ function App() {
     setGenerationOptionsScope(null)
     setResetConfirmation(null)
     setGenerationFeedback(null)
+    setGridAssignmentDialog(null)
+    setGridAssignmentDeletion(null)
+    setGridAssignmentFeedback(null)
     setSelectedTimetableStageId(getStagesForEventDay(stages, eventDayId)[0]?.id)
   }
 
   const handleSelectTimetableStage = (stageId: StageId) => {
     if (!timetableStages.some(stage => stage.id === stageId)) return
+    setGridAssignmentDialog(null)
+    setGridAssignmentDeletion(null)
+    setGridAssignmentFeedback(null)
     setSelectedTimetableStageId(stageId)
   }
 
@@ -670,6 +725,9 @@ function App() {
     setGenerationOptionsScope(null)
     setResetConfirmation(null)
     setGenerationFeedback(null)
+    setGridAssignmentDialog(null)
+    setGridAssignmentDeletion(null)
+    setGridAssignmentFeedback(null)
     const eventId = createId('event')
     const eventDayIds = draft.dates.map(() => createId('event-day'))
     const created = createEventData({
@@ -736,7 +794,10 @@ function App() {
     setGenerationOptionsScope(null)
     setResetConfirmation(null)
     setGenerationFeedback(null)
-    setGenerationApplyRevision((revision) => revision + 1)
+    setGridAssignmentDialog(null)
+    setGridAssignmentDeletion(null)
+    setGridAssignmentFeedback(null)
+    setOperationsPanelRevision((revision) => revision + 1)
     setBreakDuration(10)
     setIsCreateEventDialogOpen(false)
     setActiveStep(1)
@@ -1080,7 +1141,7 @@ function App() {
     // Autosave observes the resulting complete domain snapshot, never a half apply.
     setScheduleItems(generationPreview.candidate.scheduleItems)
     setPaAssignments(generationPreview.candidate.paAssignments)
-    setGenerationApplyRevision(revision => revision + 1)
+    setOperationsPanelRevision(revision => revision + 1)
     setGenerationFeedback({ eventId: selectedEvent.id, eventDayId: timetableEventDay.id, kind: 'success',
       message: `✓ ${formatGenerationDay(timetableEventDay)}のタイムテーブルとPA担当を自動生成結果へ更新しました。`,
     })
@@ -1119,7 +1180,7 @@ function App() {
     setPaAssignments(result.paAssignments)
     setDutyAssignments(result.dutyAssignments)
     setTimetableLocks(result.timetableLocks)
-    setGenerationApplyRevision(revision => revision + 1)
+    setOperationsPanelRevision(revision => revision + 1)
     setTimetableLockFeedback(clearTimetableLockFeedback())
     setGenerationPreview(null)
     setGenerationFeedback({ eventId: selectedEvent.id, eventDayId: timetableEventDay.id, kind: 'success',
@@ -1692,6 +1753,308 @@ function App() {
         unresolvedDutyAssignments: [],
         offGridDutyAssignments: [],
       }
+
+  const getGridAssignmentContext = () => selectedEvent ? {
+    event: selectedEvent,
+    eventDays: selectedEventDays,
+    stages: selectedStages,
+    sections: selectedSections,
+    members,
+    eventMembers: selectedEventMembers,
+    eventMemberDays: selectedEventMemberDays,
+    eventBands: selectedEventBands,
+    calculatedItems: selectedEventCalculatedItems,
+    paAssignments,
+    dutyTypes,
+    dutyAssignments,
+  } : undefined
+
+  const getCurrentResolvedGridSelection = () => timetableGridSelection
+    ? resolveTimetableGridSelection(
+        timetableGridSelection,
+        timetableWorkspaceRows.rows,
+      )
+    : undefined
+
+  const rejectStaleGridSelection = () => {
+    setGridAssignmentDialog(null)
+    handleTimetableGridSelectionChange(null)
+    if (selectedEvent && timetableSelection.eventDayId && currentStage) {
+      setGridAssignmentFeedback({
+        eventId: selectedEvent.id,
+        eventDayId: timetableSelection.eventDayId,
+        stageId: currentStage.id,
+        kind: 'error',
+        message: '選択範囲または編集対象が変わりました。範囲を選択し直してください。',
+      })
+    }
+  }
+
+  const handleOpenGridAssignment = () => {
+    const selection = getCurrentResolvedGridSelection()
+    const context = getGridAssignmentContext()
+    if (
+      !selection || !context || !currentStage || !timetableSelection.eventDayId ||
+      selection.eventDayId !== timetableSelection.eventDayId ||
+      selection.stageId !== currentStage.id
+    ) {
+      rejectStaleGridSelection()
+      return
+    }
+    if (hasUnsavedOperations()) {
+      setGridAssignmentFeedback({
+        eventId: context.event.id,
+        eventDayId: selection.eventDayId,
+        stageId: selection.stageId,
+        kind: 'error',
+        message: 'PAまたは当日運営に未保存の変更があります。右側の設定を保存してから担当を割り当ててください。',
+      })
+      return
+    }
+
+    const candidates = getTimetableGridAssignmentCandidates(context, selection)
+    if (!candidates.ok) {
+      handleTimetableGridSelectionChange(null)
+      setGridAssignmentFeedback({
+        eventId: context.event.id,
+        eventDayId: selection.eventDayId,
+        stageId: selection.stageId,
+        kind: 'error',
+        message: candidates.errors.join(' '),
+      })
+      return
+    }
+
+    setGridAssignmentFeedback(null)
+    setGridAssignmentDialog({
+      eventId: context.event.id,
+      selection,
+      targetLabel: candidates.targetLabel,
+      candidates: candidates.candidates,
+      errors: [],
+    })
+  }
+
+  const handleSubmitGridAssignment = (memberId: string) => {
+    if (!gridAssignmentDialog) return
+    const currentSelection = getCurrentResolvedGridSelection()
+    const context = getGridAssignmentContext()
+    const originalSelection = gridAssignmentDialog.selection
+    const selectionIsCurrent = currentSelection !== undefined &&
+      gridAssignmentDialog.eventId === selectedEvent?.id &&
+      currentSelection.eventDayId === originalSelection.eventDayId &&
+      currentSelection.stageId === originalSelection.stageId &&
+      currentSelection.fromMinute === originalSelection.fromMinute &&
+      currentSelection.untilMinute === originalSelection.untilMinute &&
+      areTimetableGridAssignmentTargetsEqual(
+        currentSelection.target,
+        originalSelection.target,
+      ) &&
+      currentSelection.scheduleItemIds.length === originalSelection.scheduleItemIds.length &&
+      currentSelection.scheduleItemIds.every((id, index) =>
+        id === originalSelection.scheduleItemIds[index],
+      )
+    if (!context || !currentSelection || !selectionIsCurrent) {
+      rejectStaleGridSelection()
+      return
+    }
+    if (hasUnsavedOperations()) {
+      setGridAssignmentDialog((current) => current ? {
+        ...current,
+        errors: ['PAまたは当日運営に未保存の変更があります。右側の設定を保存してから担当を割り当ててください。'],
+      } : current)
+      return
+    }
+
+    const result = createTimetableGridAssignment({
+      context,
+      selection: currentSelection,
+      memberId,
+      newAssignmentId: createId(
+        currentSelection.target.kind === 'pa'
+          ? 'pa-assignment'
+          : 'duty-assignment',
+      ),
+    })
+    if (!result.ok) {
+      setGridAssignmentDialog((current) => current ? {
+        ...current,
+        errors: result.errors,
+      } : current)
+      return
+    }
+
+    if (result.kind === 'pa') setPaAssignments(result.paAssignments)
+    else setDutyAssignments(result.dutyAssignments)
+    setOperationsPanelRevision((revision) => revision + 1)
+    setGridAssignmentDialog(null)
+    setTimetableGridSelectionState({
+      context: timetableGridSelectionContext,
+      selection: null,
+    })
+    const warning = result.warnings.length > 0
+      ? ` 注意：${result.warnings.join(' / ')}`
+      : ''
+    setGridAssignmentFeedback({
+      eventId: context.event.id,
+      eventDayId: currentSelection.eventDayId,
+      stageId: currentSelection.stageId,
+      kind: 'success',
+      message: `${result.targetLabel}に${result.memberName}を${formatMinuteAsLocalTime(currentSelection.fromMinute)}〜${formatMinuteAsLocalTime(currentSelection.untilMinute)}で割り当てました。${warning}`,
+    })
+  }
+
+  const handleOpenGridAssignmentDeletion = () => {
+    const selection = getCurrentResolvedGridSelection()
+    const context = getGridAssignmentContext()
+    const eventDayId = timetableSelection.eventDayId
+    const stageId = currentStage?.id
+    if (!selection || !context || !eventDayId || !stageId) {
+      rejectStaleGridSelection()
+      return
+    }
+    if (hasUnsavedOperations()) {
+      setGridAssignmentFeedback({
+        eventId: context.event.id,
+        eventDayId,
+        stageId,
+        kind: 'error',
+        message: 'PAまたは当日運営に未保存の変更があります。右側の設定を保存してから担当を削除してください。',
+      })
+      return
+    }
+
+    const targets = getTimetableGridSelectionAssignmentTargets(
+      selection,
+      timetableWorkspaceRows.rows,
+    )
+    if (targets.length === 0) return
+    const deletion = deleteTimetableGridAssignments({
+      context,
+      targets,
+      eventDayId,
+      stageId,
+    })
+    if (!deletion.ok) {
+      setGridAssignmentFeedback({
+        eventId: context.event.id,
+        eventDayId,
+        stageId,
+        kind: 'error',
+        message: deletion.errors.join(' '),
+      })
+      return
+    }
+
+    setGridAssignmentFeedback(null)
+    setGridAssignmentDialog(null)
+    setGridAssignmentDeletion({
+      eventId: context.event.id,
+      eventDayId,
+      stageId,
+      selection,
+      targets,
+      items: deletion.deleted,
+      includesOutsideSelection: deletion.deleted.some((item) =>
+        item.fromMinute < selection.fromMinute ||
+        item.untilMinute > selection.untilMinute,
+      ),
+    })
+  }
+
+  const handleConfirmGridAssignmentDeletion = () => {
+    const confirmation = gridAssignmentDeletion
+    const context = getGridAssignmentContext()
+    if (!confirmation || !context) return
+    setGridAssignmentDeletion(null)
+    const selection = getCurrentResolvedGridSelection()
+    if (
+      !selection ||
+      confirmation.eventId !== context.event.id ||
+      confirmation.eventDayId !== timetableSelection.eventDayId ||
+      confirmation.stageId !== currentStage?.id ||
+      !areTimetableGridAssignmentTargetsEqual(
+        selection.target,
+        confirmation.selection.target,
+      ) ||
+      selection.scheduleItemIds.length !== confirmation.selection.scheduleItemIds.length ||
+      !selection.scheduleItemIds.every((id, index) =>
+        id === confirmation.selection.scheduleItemIds[index]
+      )
+    ) {
+      setGridAssignmentFeedback({
+        eventId: context.event.id,
+        eventDayId: confirmation.eventDayId,
+        stageId: confirmation.stageId,
+        kind: 'error',
+        message: '編集対象が変わったため担当を削除できませんでした。',
+      })
+      return
+    }
+    if (hasUnsavedOperations()) {
+      setGridAssignmentFeedback({
+        eventId: context.event.id,
+        eventDayId: confirmation.eventDayId,
+        stageId: confirmation.stageId,
+        kind: 'error',
+        message: 'PAまたは当日運営に未保存の変更があります。右側の設定を保存してから担当を削除してください。',
+      })
+      return
+    }
+
+    const currentTargets = getTimetableGridSelectionAssignmentTargets(
+      selection,
+      timetableWorkspaceRows.rows,
+    )
+    const targetsAreCurrent = currentTargets.length === confirmation.targets.length &&
+      currentTargets.every((target, index) => {
+        const expected = confirmation.targets[index]
+        return expected !== undefined &&
+          target.kind === expected.kind &&
+          target.assignmentId === expected.assignmentId
+      })
+    if (!targetsAreCurrent) {
+      setGridAssignmentFeedback({
+        eventId: context.event.id,
+        eventDayId: confirmation.eventDayId,
+        stageId: confirmation.stageId,
+        kind: 'error',
+        message: '選択範囲の担当が変わったため削除できませんでした。',
+      })
+      return
+    }
+
+    const deletion = deleteTimetableGridAssignments({
+      context,
+      targets: confirmation.targets,
+      eventDayId: confirmation.eventDayId,
+      stageId: confirmation.stageId,
+    })
+    if (!deletion.ok) {
+      setGridAssignmentFeedback({
+        eventId: context.event.id,
+        eventDayId: confirmation.eventDayId,
+        stageId: confirmation.stageId,
+        kind: 'error',
+        message: deletion.errors.join(' '),
+      })
+      return
+    }
+
+    if (deletion.kind === 'pa') setPaAssignments(deletion.paAssignments)
+    else setDutyAssignments(deletion.dutyAssignments)
+    setOperationsPanelRevision((revision) => revision + 1)
+    const message = deletion.deleted.length === 1
+      ? `${deletion.deleted[0].targetLabel} ${deletion.deleted[0].memberName}の担当を削除しました。`
+      : `選択範囲の担当${deletion.deleted.length}件を削除しました。`
+    setGridAssignmentFeedback({
+      eventId: context.event.id,
+      eventDayId: confirmation.eventDayId,
+      stageId: confirmation.stageId,
+      kind: 'success',
+      message,
+    })
+  }
   const timetableLockEvaluation = evaluateSelectedEventLocks(scheduleItems)
   const unavailableTimetableLockRepair = (
     <TimetableLockRepairPanel
@@ -1702,6 +2065,15 @@ function App() {
       onUnlockTimetableLock={handleUnlockTimetableLock}
     />
   )
+  const activeGridAssignmentDialog =
+    gridAssignmentDialog?.eventId === selectedEvent?.id &&
+    timetableGridSelection
+      ? gridAssignmentDialog
+      : null
+  const activeGridAssignmentDeletion =
+    gridAssignmentDeletion?.eventId === selectedEvent?.id
+      ? gridAssignmentDeletion
+      : null
 
   return (
     <AppShell
@@ -1982,6 +2354,15 @@ function App() {
                     onUnlockAllTimetableLocks={handleUnlockAllTimetableLocks}
                     selection={timetableGridSelection}
                     onSelectionChange={handleTimetableGridSelectionChange}
+                    assignmentFeedback={
+                      gridAssignmentFeedback?.eventId === selectedEvent.id &&
+                      gridAssignmentFeedback.eventDayId === timetableSelection.eventDayId &&
+                      gridAssignmentFeedback.stageId === currentStage.id
+                        ? gridAssignmentFeedback
+                        : null
+                    }
+                    onAssignSelection={handleOpenGridAssignment}
+                    onDeleteSelectionAssignments={handleOpenGridAssignmentDeletion}
                   />
                 ) : null}
                 issuePanel={(
@@ -1998,7 +2379,7 @@ function App() {
                 renderPaPanel={(onValidationFailed) => currentStage ? (
                   <PaSettings
                     ref={paSettingsRef}
-                    key={`${selectedEvent.id}:${generationApplyRevision}`}
+                    key={`${selectedEvent.id}:${operationsPanelRevision}`}
                     event={selectedEvent}
                     eventDays={selectedEventDays}
                     stages={selectedStages}
@@ -2027,7 +2408,7 @@ function App() {
                 renderOperationsPanel={(onValidationFailed) => currentStage ? (
                   <DutySettings
                     ref={dutySettingsRef}
-                    key={`${selectedEvent.id}:${generationApplyRevision}`}
+                    key={`${selectedEvent.id}:${operationsPanelRevision}`}
                     event={selectedEvent}
                     eventDays={selectedEventDays}
                     stages={selectedStages}
@@ -2120,6 +2501,27 @@ function App() {
         resetConfirmation?.eventDayId === timetableEventDay?.id && timetableEventDay && (
         <TimetableResetConfirmDialog dayLabel={formatGenerationDay(timetableEventDay)}
           onCancel={() => setResetConfirmation(null)} onReset={handleResetTimetable} />
+      )}
+      {activeGridAssignmentDialog && (
+          <TimetableGridAssignmentDialog
+            selection={activeGridAssignmentDialog.selection}
+            targetLabel={activeGridAssignmentDialog.targetLabel}
+            candidates={activeGridAssignmentDialog.candidates}
+            errors={activeGridAssignmentDialog.errors}
+            onCancel={() => setGridAssignmentDialog(null)}
+            onClearErrors={() => setGridAssignmentDialog((current) =>
+              current ? { ...current, errors: [] } : current,
+            )}
+            onSubmit={handleSubmitGridAssignment}
+          />
+      )}
+      {activeGridAssignmentDeletion && (
+        <TimetableGridAssignmentDeletionDialog
+          items={activeGridAssignmentDeletion.items}
+          includesOutsideSelection={activeGridAssignmentDeletion.includesOutsideSelection}
+          onConfirm={handleConfirmGridAssignmentDeletion}
+          onCancel={() => setGridAssignmentDeletion(null)}
+        />
       )}
     </AppShell>
   )

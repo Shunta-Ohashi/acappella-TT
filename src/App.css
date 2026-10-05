@@ -3567,7 +3567,8 @@
   font-weight: 700;
 }
 
-.pa-settings .danger-button {
+.pa-settings .danger-button,
+.duty-settings .danger-button {
   padding: 8px 12px;
   border: 1px solid #f0b4ae;
   border-radius: 8px;
@@ -3575,6 +3576,13 @@
   color: #9f2017;
   cursor: pointer;
   font: inherit;
+}
+
+.pa-settings .danger-button:hover,
+.duty-settings .danger-button:hover {
+  border-color: #d97870;
+  background: #fff5f4;
+  color: #821b14;
 }
 
 .pa-assignment-dialog {
@@ -3624,6 +3632,32 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+}
+
+.timetable-grid-assignment-dialog__summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.timetable-grid-assignment-dialog__summary div {
+  padding: 10px 12px;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.timetable-grid-assignment-dialog__summary dt {
+  color: #526175;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.timetable-grid-assignment-dialog__summary dd {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 750;
 }
 
 .pa-assignment-dialog__fields label {
@@ -3694,6 +3728,10 @@
   }
 
   .pa-assignment-dialog__fields {
+    grid-template-columns: 1fr;
+  }
+
+  .timetable-grid-assignment-dialog__summary {
     grid-template-columns: 1fr;
   }
 
@@ -4232,13 +4270,24 @@
 }
 
 .timetable-grid__selection-hint,
-.timetable-grid__selection-summary {
+.timetable-grid__selection-summary,
+.timetable-grid__assignment-feedback {
   box-sizing: border-box;
   min-width: var(--timetable-grid-min-width);
   margin: 0;
   padding: 6px 10px;
   border-bottom: 1px solid #dce3ea;
   font-size: 10px;
+}
+
+.timetable-grid__assignment-feedback {
+  color: #24633d;
+  background: #effaf3;
+}
+
+.timetable-grid__assignment-feedback--error {
+  color: #9f2017;
+  background: #fff1f0;
 }
 
 .timetable-grid__selection-hint {
@@ -4265,6 +4314,22 @@
   cursor: pointer;
   font: inherit;
   font-weight: 750;
+}
+
+.timetable-grid__selection-summary .danger-button {
+  color: #9f2017;
+  border-color: #d9a39e;
+}
+
+.timetable-grid__selection-summary .danger-button:hover {
+  color: #821b14;
+  background: #fff5f4;
+  border-color: #c9675f;
+}
+
+.timetable-grid__selection-actions {
+  display: flex;
+  gap: 6px;
 }
 
 .timetable-empty-state .timetable-grid__broken-locks,
@@ -4955,9 +5020,52 @@
   font-weight: 750;
 }
 
+.duty-type-list .danger-button {
+  border-color: #f0b4ae;
+  color: #9f2017;
+}
+
+.timetable-grid-assignment-deletion-dialog__description {
+  display: grid;
+  gap: 8px;
+}
+
+.timetable-grid-assignment-deletion-dialog__description p {
+  margin: 0;
+}
+
+.timetable-grid-assignment-deletion-dialog__description ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.timetable-grid-assignment-deletion-dialog__warning {
+  color: #9f2017;
+  font-weight: 700;
+}
+
 .duty-type-list button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.duty-type-list > li > .duty-type-inline-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  width: 100%;
+}
+
+.duty-type-inline-editor__actions {
+  display: flex;
+  gap: 5px;
+}
+
+.duty-type-inline-editor .form-error {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 .duty-type-input {
@@ -4973,7 +5081,8 @@
   font-weight: 750;
 }
 
-.duty-type-input input {
+.duty-type-input input,
+.duty-type-inline-editor input {
   box-sizing: border-box;
   min-width: 0;
   min-height: 30px;

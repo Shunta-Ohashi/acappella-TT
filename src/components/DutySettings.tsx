@@ -88,6 +88,7 @@ interface AssignmentEditorState {
 interface TypeEditorState {
   draftId: string
   name: string
+  error?: string
 }
 
 const emptyErrors = (): DutySettingsValidationErrors => ({
@@ -292,7 +293,10 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
       )
       const nextErrors = validateDutyTypeDrafts(nextTypes)
       if (nextErrors[typeEditor.draftId]?.name) {
-        setTypeActionError(nextErrors[typeEditor.draftId].name ?? '')
+        setTypeEditor((previous) => previous ? {
+          ...previous,
+          error: nextErrors[typeEditor.draftId]?.name,
+        } : previous)
         return
       }
       setDraft((previous) => ({ ...previous, dutyTypes: nextTypes }))
@@ -354,106 +358,148 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
               <p className="duty-settings__empty">仕事はまだ登録されていません。</p>
             ) : (
               <ul className="duty-type-list">
-                {draft.dutyTypes.map((dutyType, index) => (
-                  <li key={dutyType.draftId}>
-                    <strong>{dutyType.name}</strong>
-                    <div>
-                      <button
-                        type="button"
-                        aria-label={`${dutyType.name}を上へ移動`}
-                        disabled={index === 0}
-                        onClick={() => {
-                          setDraft((previous) => ({
-                            ...previous,
-                            dutyTypes: moveDutyTypeDraft(
-                              previous.dutyTypes,
-                              dutyType.draftId,
-                              -1,
-                            ),
-                          }))
-                          markChanged()
-                        }}
-                      >↑</button>
-                      <button
-                        type="button"
-                        aria-label={`${dutyType.name}を下へ移動`}
-                        disabled={index === draft.dutyTypes.length - 1}
-                        onClick={() => {
-                          setDraft((previous) => ({
-                            ...previous,
-                            dutyTypes: moveDutyTypeDraft(
-                              previous.dutyTypes,
-                              dutyType.draftId,
-                              1,
-                            ),
-                          }))
-                          markChanged()
-                        }}
-                      >↓</button>
-                      <button
-                        type="button"
-                        aria-label={`${dutyType.name}の名前を変更`}
-                        onClick={() => setTypeEditor({
-                          draftId: dutyType.draftId,
-                          name: dutyType.name,
-                        })}
-                      >編集</button>
-                      <button
-                        type="button"
-                        aria-label={`${dutyType.name}を削除`}
-                        onClick={() => {
-                          if (!canDeleteDutyType(
-                            dutyType,
-                            draft.assignments,
-                            dutyAssignments,
-                          )) {
-                            setTypeActionError(
-                              'この仕事には担当設定があります。先に担当を削除して保存してください。',
-                            )
-                            return
-                          }
-                          setDraft((previous) => ({
-                            ...previous,
-                            dutyTypes: previous.dutyTypes.filter((candidate) =>
-                              candidate.draftId !== dutyType.draftId,
-                            ),
-                          }))
-                          markChanged()
-                        }}
-                      >削除</button>
-                    </div>
-                  </li>
-                ))}
+                {draft.dutyTypes.map((dutyType, index) => {
+                  const isEditing = typeEditor?.draftId === dutyType.draftId
+                  const inputId = `duty-type-rename-${dutyType.draftId}`
+                  return (
+                    <li
+                      key={dutyType.draftId}
+                      className={isEditing ? 'duty-type-list__item--editing' : undefined}
+                    >
+                      {isEditing ? (
+                        <div className="duty-type-inline-editor">
+                          <label className="visually-hidden" htmlFor={inputId}>
+                            {dutyType.name}の仕事名
+                          </label>
+                          <input
+                            id={inputId}
+                            autoFocus
+                            value={typeEditor.name}
+                            aria-invalid={Boolean(typeEditor.error)}
+                            aria-describedby={typeEditor.error
+                              ? `${inputId}-error`
+                              : undefined}
+                            onChange={(event) => setTypeEditor((previous) => previous
+                              ? { ...previous, name: event.target.value, error: undefined }
+                              : previous)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault()
+                                applyTypeRename()
+                              } else if (event.key === 'Escape') {
+                                event.preventDefault()
+                                setTypeEditor(undefined)
+                              }
+                            }}
+                          />
+                          <div className="duty-type-inline-editor__actions">
+                            <button type="button" onClick={applyTypeRename}>保存</button>
+                            <button type="button" onClick={() => setTypeEditor(undefined)}>
+                              取消
+                            </button>
+                          </div>
+                          {typeEditor.error && (
+                            <p
+                              id={`${inputId}-error`}
+                              className="form-error"
+                              role="alert"
+                            >
+                              {typeEditor.error}
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <>
+                          <strong>{dutyType.name}</strong>
+                          <div>
+                            <button
+                              type="button"
+                              aria-label={`${dutyType.name}を上へ移動`}
+                              disabled={index === 0}
+                              onClick={() => {
+                                setDraft((previous) => ({
+                                  ...previous,
+                                  dutyTypes: moveDutyTypeDraft(
+                                    previous.dutyTypes,
+                                    dutyType.draftId,
+                                    -1,
+                                  ),
+                                }))
+                                markChanged()
+                              }}
+                            >↑</button>
+                            <button
+                              type="button"
+                              aria-label={`${dutyType.name}を下へ移動`}
+                              disabled={index === draft.dutyTypes.length - 1}
+                              onClick={() => {
+                                setDraft((previous) => ({
+                                  ...previous,
+                                  dutyTypes: moveDutyTypeDraft(
+                                    previous.dutyTypes,
+                                    dutyType.draftId,
+                                    1,
+                                  ),
+                                }))
+                                markChanged()
+                              }}
+                            >↓</button>
+                            <button
+                              type="button"
+                              aria-label={`${dutyType.name}の名前を変更`}
+                              onClick={() => {
+                                setTypeActionError('')
+                                setTypeEditor({
+                                  draftId: dutyType.draftId,
+                                  name: dutyType.name,
+                                })
+                              }}
+                            >編集</button>
+                            <button
+                              type="button"
+                              className="danger-button"
+                              aria-label={`${dutyType.name}を削除`}
+                              onClick={() => {
+                                if (!canDeleteDutyType(
+                                  dutyType,
+                                  draft.assignments,
+                                  dutyAssignments,
+                                )) {
+                                  setTypeActionError(
+                                    'この仕事には担当設定があります。先に担当を削除して保存してください。',
+                                  )
+                                  return
+                                }
+                                setDraft((previous) => ({
+                                  ...previous,
+                                  dutyTypes: previous.dutyTypes.filter((candidate) =>
+                                    candidate.draftId !== dutyType.draftId,
+                                  ),
+                                }))
+                                markChanged()
+                              }}
+                            >削除</button>
+                          </div>
+                        </>
+                      )}
+                    </li>
+                  )
+                })}
               </ul>
             )}
 
-            {typeEditor ? (
-              <div className="duty-type-input">
-                <label htmlFor="duty-type-rename">仕事名</label>
-                <input
-                  id="duty-type-rename"
-                  value={typeEditor.name}
-                  onChange={(event) => setTypeEditor((previous) => previous
-                    ? { ...previous, name: event.target.value }
-                    : previous)}
-                />
-                <button type="button" onClick={applyTypeRename}>名前を保存</button>
-                <button type="button" onClick={() => setTypeEditor(undefined)}>取消</button>
-              </div>
-            ) : (
-              <div className="duty-type-input">
-                <label htmlFor="new-duty-type-name">新しい仕事名</label>
-                <input
-                  id="new-duty-type-name"
-                  value={newTypeName}
-                  onChange={(event) => {
-                    setNewTypeName(event.target.value)
-                    setTypeActionError('')
-                  }}
-                />
-                <button type="button" onClick={addDutyType}>＋ 仕事を追加</button>
-              </div>
-            )}
+            <div className="duty-type-input">
+              <label htmlFor="new-duty-type-name">新しい仕事名</label>
+              <input
+                id="new-duty-type-name"
+                value={newTypeName}
+                onChange={(event) => {
+                  setNewTypeName(event.target.value)
+                  setTypeActionError('')
+                }}
+              />
+              <button type="button" onClick={addDutyType}>＋ 仕事を追加</button>
+            </div>
             {typeActionError && (
               <p className="form-error" role="alert">{typeActionError}</p>
             )}
