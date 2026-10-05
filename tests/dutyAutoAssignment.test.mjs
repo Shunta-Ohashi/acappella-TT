@@ -698,6 +698,76 @@ test('applyはselectedMemberIdsとcandidateMetricsの対応が壊れたplanを�
   assert.deepEqual(input.dutyAssignments, [])
 })
 
+test('applyはruntime shapeが壊れたplanをthrowせずINVALID_PLANにする', () => {
+  const input = context()
+  const planned = planDutyAutoAssignments(input, request())
+  assert.equal(planned.ok, true)
+  const metric = planned.plan.candidateMetrics[0]
+  const malformedPlans = [
+    null,
+    undefined,
+    { ...planned.plan, selectedMemberIds: undefined },
+    { ...planned.plan, selectedMemberIds: null },
+    { ...planned.plan, selectedMemberIds: {} },
+    { ...planned.plan, selectedMemberIds: [null] },
+    { ...planned.plan, selectedMemberIds: [123] },
+    { ...planned.plan, candidateMetrics: undefined },
+    { ...planned.plan, candidateMetrics: null },
+    { ...planned.plan, candidateMetrics: {} },
+    { ...planned.plan, candidateMetrics: [null] },
+    { ...planned.plan, candidateMetrics: [{}] },
+    {
+      ...planned.plan,
+      candidateMetrics: [{ ...metric, addedSpacingPenalty: Number.NaN }],
+    },
+    { ...planned.plan, warnings: null },
+    { ...planned.plan, planKey: undefined },
+    { ...planned.plan, planKey: 123 },
+    { ...planned.plan, fromBoundary: undefined },
+    { ...planned.plan, untilBoundary: null },
+    { ...planned.plan, fromBoundary: { kind: 'unknown' } },
+    { ...planned.plan, dutyTypeId: undefined },
+    { ...planned.plan, fromMinute: '780' },
+    { ...planned.plan, untilMinute: Number.NaN },
+  ]
+  const before = structuredClone(input)
+
+  for (const plan of malformedPlans) {
+    let result
+    assert.doesNotThrow(() => {
+      result = createDutyAutoAssignments({
+        context: input,
+        plan,
+        newDutyAssignmentIds: ['auto-malformed-plan'],
+      })
+    })
+    assert.equal(result.ok, false)
+    assert.equal(result.code, 'INVALID_PLAN')
+  }
+  assert.deepEqual(input, before)
+})
+
+test('applyはruntime shapeが壊れた新規ID一覧をthrowせずINVALID_IDSにする', () => {
+  const input = context()
+  const planned = planDutyAutoAssignments(input, request())
+  assert.equal(planned.ok, true)
+  const before = structuredClone({ input, plan: planned.plan })
+
+  for (const newDutyAssignmentIds of [undefined, null, {}, 'auto-id']) {
+    let result
+    assert.doesNotThrow(() => {
+      result = createDutyAutoAssignments({
+        context: input,
+        plan: planned.plan,
+        newDutyAssignmentIds,
+      })
+    })
+    assert.equal(result.ok, false)
+    assert.equal(result.code, 'INVALID_IDS')
+  }
+  assert.deepEqual({ input, plan: planned.plan }, before)
+})
+
 test('applyはDutyType・Boundary・minute・planKeyの改変を全件atomicに拒否する', () => {
   const otherDutyType = {
     id: 'duty-reception', eventId: event.id, name: '受付', order: 1,

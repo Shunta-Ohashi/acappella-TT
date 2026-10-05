@@ -35,6 +35,7 @@ import {
 } from './dutyAssignments.ts'
 import { isIntervalWithinAvailabilityWindows } from './eventBandSettings.ts'
 import { detectScheduleIssues } from './issues.ts'
+import { isValidScheduleBoundaryShape } from './scheduleBoundaries.ts'
 
 export interface DutyAutoAssignmentContext {
   event: Event
@@ -118,6 +119,54 @@ export type DutyAutoAssignmentApplyResult =
     }
 
 const cloneBoundary = (boundary: ScheduleBoundary): ScheduleBoundary => ({ ...boundary })
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === 'string' && value.trim().length > 0
+
+const isDutyAutoAssignmentCandidateMetric = (
+  value: unknown,
+): value is DutyAutoAssignmentCandidateMetric => isRecord(value) &&
+  isNonEmptyString(value.memberId) &&
+  isNonEmptyString(value.eventMemberId) &&
+  isNonEmptyString(value.eventMemberDayId) &&
+  (value.participationStatus === 'participating' ||
+    value.participationStatus === 'undecided') &&
+  Number.isSafeInteger(value.addedLastResortCount) &&
+  (value.addedLastResortCount as number) >= 0 &&
+  typeof value.addedSpacingPenalty === 'number' &&
+  Number.isFinite(value.addedSpacingPenalty) &&
+  value.addedSpacingPenalty >= 0 &&
+  Number.isSafeInteger(value.existingDutyMinutes) &&
+  (value.existingDutyMinutes as number) >= 0 &&
+  Number.isSafeInteger(value.existingDutyAssignmentCount) &&
+  (value.existingDutyAssignmentCount as number) >= 0
+
+const isDutyAutoAssignmentPlanRuntimeShape = (
+  value: unknown,
+): value is DutyAutoAssignmentPlan => {
+  if (!isRecord(value) ||
+    !isNonEmptyString(value.dutyTypeId) ||
+    !isNonEmptyString(value.eventDayId) ||
+    !isNonEmptyString(value.stageId) ||
+    !isValidScheduleBoundaryShape(value.fromBoundary) ||
+    !isValidScheduleBoundaryShape(value.untilBoundary) ||
+    !Number.isSafeInteger(value.fromMinute) ||
+    !Number.isSafeInteger(value.untilMinute) ||
+    (value.fromMinute as number) >= (value.untilMinute as number) ||
+    !Number.isSafeInteger(value.additionalCount) ||
+    (value.additionalCount as number) < 1 ||
+    !Array.isArray(value.selectedMemberIds) ||
+    !Array.from(value.selectedMemberIds).every(isNonEmptyString) ||
+    !Array.isArray(value.candidateMetrics) ||
+    !Array.from(value.candidateMetrics).every(isDutyAutoAssignmentCandidateMetric) ||
+    !Array.isArray(value.warnings) ||
+    !Array.from(value.warnings).every((warning) => typeof warning === 'string') ||
+    !isNonEmptyString(value.planKey)) return false
+  return true
+}
 
 const activitySpacingCategories = [
   'performance-to-performance',
@@ -644,6 +693,13 @@ export const createDutyAutoAssignments = ({
   plan: DutyAutoAssignmentPlan
   newDutyAssignmentIds: DutyAssignmentId[]
 }): DutyAutoAssignmentApplyResult => {
+  if (!isDutyAutoAssignmentPlanRuntimeShape(plan)) {
+    return {
+      ok: false,
+      code: 'INVALID_PLAN',
+      message: '自動割り当てplanの形式が正しくありません。候補を更新してください。',
+    }
+  }
   if (
     !hasValidScope(context) ||
     plan.eventDayId !== context.eventDay.id ||
@@ -705,8 +761,9 @@ export const createDutyAutoAssignments = ({
   }
   const existingIds = new Set(context.dutyAssignments.map((assignment) => assignment.id))
   if (
+    !Array.isArray(newDutyAssignmentIds) ||
     newDutyAssignmentIds.length !== authorizedPlan.selectedMemberIds.length ||
-    newDutyAssignmentIds.some((id) => typeof id !== 'string' || !id.trim()) ||
+    Array.from(newDutyAssignmentIds).some((id) => !isNonEmptyString(id)) ||
     new Set(newDutyAssignmentIds).size !== newDutyAssignmentIds.length ||
     newDutyAssignmentIds.some((id) => existingIds.has(id))
   ) {
