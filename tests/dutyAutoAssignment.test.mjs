@@ -215,7 +215,7 @@ test('別Event由来でcurrent day IDを持つDutyを評価対象へ混入させ
     {
       dutyTypeId: foreignDutyType.id,
       eventDayId: eventDay.id,
-      stageId: foreignStage.id,
+      stageId: stage.id,
     },
   )
   const foreignPa = pa('foreign-stale-pa', 'member-a', '13:00', '14:00', {

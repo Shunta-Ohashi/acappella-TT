@@ -427,9 +427,8 @@ export const planDutyAutoAssignments = (
         sections: context.sections,
         paAssignments: dayPaAssignments,
         dutyTypes: context.dutyTypes,
-        dutyAssignments: addition.dutyAssignments.filter((assignment) =>
-          assignment.eventDayId === context.eventDay.id,
-        ),
+        dutyAssignments: getEventDutyAssignments(context, addition.dutyAssignments)
+          .filter((assignment) => assignment.eventDayId === context.eventDay.id),
         calculatedItems,
       }).filter((issue) =>
         issue.severity === 'ERROR' && issue.dutyAssignmentIds?.includes(syntheticId),
