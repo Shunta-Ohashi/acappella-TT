@@ -74,6 +74,7 @@ import {
   TimetableLockRepairPanel,
 } from './components/TimetableGrid'
 import { TimetableOperationsWorkspace } from './components/TimetableOperationsWorkspace'
+import type { TimetableGridRangeSelection } from './ui/timetableGridSelection'
 import { TimetableGenerationPreviewDialog } from './components/TimetableGenerationPreviewDialog'
 import { TimetableGenerationOptionsDialog } from './components/TimetableGenerationOptionsDialog'
 import { TimetableGenerationFailureGuidance } from './components/TimetableGenerationFailureGuidance'
@@ -379,6 +380,49 @@ function App() {
   const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>(
     initialAppState.scheduleItems,
   )
+  const timetableGridSelectionContext = {
+    activeStep,
+    dutyTypes,
+    scheduleItems,
+    eventId: selectedEventId,
+    eventDayId: timetableSelection.eventDayId,
+    stageId: timetableSelection.stageId,
+  }
+  const [timetableGridSelectionState, setTimetableGridSelectionState] = useState<{
+    context: typeof timetableGridSelectionContext
+    selection: TimetableGridRangeSelection | null
+  }>(() => ({ context: timetableGridSelectionContext, selection: null }))
+  const selectionContextMatches =
+    timetableGridSelectionState.context.activeStep === activeStep &&
+    timetableGridSelectionState.context.dutyTypes === dutyTypes &&
+    timetableGridSelectionState.context.scheduleItems === scheduleItems &&
+    timetableGridSelectionState.context.eventId === selectedEventId &&
+    timetableGridSelectionState.context.eventDayId === timetableSelection.eventDayId &&
+    timetableGridSelectionState.context.stageId === timetableSelection.stageId
+  if (!selectionContextMatches) {
+    setTimetableGridSelectionState({
+      context: timetableGridSelectionContext,
+      selection: null,
+    })
+  }
+  const timetableGridSelection = selectionContextMatches
+    ? timetableGridSelectionState.selection
+    : null
+  const handleTimetableGridSelectionChange = (
+    selection: TimetableGridRangeSelection | null,
+  ) => {
+    setTimetableGridSelectionState({
+      context: {
+        activeStep,
+        dutyTypes,
+        scheduleItems,
+        eventId: selectedEventId,
+        eventDayId: timetableSelection.eventDayId,
+        stageId: timetableSelection.stageId,
+      },
+      selection,
+    })
+  }
 
   const domainState = useMemo<PersistedDomainState>(() => ({
     members,
@@ -1936,6 +1980,8 @@ function App() {
                     onSetTimetableLock={handleSetTimetableLock}
                     onUnlockTimetableLock={handleUnlockTimetableLock}
                     onUnlockAllTimetableLocks={handleUnlockAllTimetableLocks}
+                    selection={timetableGridSelection}
+                    onSelectionChange={handleTimetableGridSelectionChange}
                   />
                 ) : null}
                 issuePanel={(

@@ -544,6 +544,53 @@ test('同一DutyType・同一rowの担当が3人でも全員をcoverageへ保持
   )
 })
 
+test('実在する部間Break rowにもPAとDutyのcoverageを保持する', () => {
+  const interSectionBreak = {
+    id: 'inter-section-break',
+    stageId: 'stage-1',
+    order: 0,
+    kind: 'break',
+    title: '部間休憩',
+    durationMinutes: 10,
+    afterSectionId: 'section-1',
+  }
+  const calculatedBreak = {
+    scheduleItemId: interSectionBreak.id,
+    eventDayId: 'day-1',
+    stageId: 'stage-1',
+    afterSectionId: 'section-1',
+    kind: 'break',
+    plannedStartMinute: 610,
+    plannedEndMinute: 620,
+  }
+  const { rows } = createRows({
+    scheduleItems: [interSectionBreak],
+    calculatedItems: [calculatedBreak],
+    dutyTypes,
+    paAssignments: [assignment({
+      id: 'inter-break-pa',
+      role: 'main',
+      fromId: interSectionBreak.id,
+      untilId: interSectionBreak.id,
+    })],
+    dutyAssignments: [dutyAssignment({
+      id: 'inter-break-duty',
+      fromId: interSectionBreak.id,
+      untilId: interSectionBreak.id,
+    })],
+  })
+
+  assert.equal(rows[0].scheduleItem.afterSectionId, 'section-1')
+  assert.deepEqual(
+    rows[0].paCoverage.main.map((coverage) => coverage.assignmentId),
+    ['inter-break-pa'],
+  )
+  assert.deepEqual(
+    rows[0].dutyCoverage['duty-photo'].map((coverage) => coverage.assignmentId),
+    ['inter-break-duty'],
+  )
+})
+
 test('ScheduleItem間だけの一般業務はGrid外へ保持し、参照切れと区別する', () => {
   const result = createRows({
     dutyTypes,

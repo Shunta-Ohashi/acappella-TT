@@ -1,5 +1,14 @@
 import { Draggable, Droppable, type DraggableProvided } from '@hello-pangea/dnd'
-import { Fragment, type CSSProperties, type FormEvent, type ReactNode } from 'react'
+import {
+  Fragment,
+  useEffect,
+  useRef,
+  type CSSProperties,
+  type FormEvent,
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactNode,
+} from 'react'
 import type {
   DutyType,
   EventBand,
@@ -41,6 +50,14 @@ import {
   getSectionDroppableId,
   getStageDroppableId,
 } from '../ui/timetableDnd'
+import {
+  areTimetableGridAssignmentTargetsEqual,
+  getTimetableGridAssignmentTargetLabel,
+  resolveTimetableGridSelection,
+  selectTimetableGridCell,
+  type TimetableGridAssignmentTarget,
+  type TimetableGridRangeSelection,
+} from '../ui/timetableGridSelection'
 
 interface TimetableGridProps {
   stage: Stage
@@ -67,6 +84,8 @@ interface TimetableGridProps {
   ) => void
   onUnlockTimetableLock: (lockId: TimetableLockId) => void
   onUnlockAllTimetableLocks: () => void
+  selection: TimetableGridRangeSelection | null
+  onSelectionChange: (selection: TimetableGridRangeSelection | null) => void
 }
 
 export function TimetableLockRepairPanel({
@@ -122,14 +141,65 @@ const issueLabels = (row: TimetableWorkspaceRow): string[] => [
   row.issueCounts.INFO > 0 ? `INFO ${row.issueCounts.INFO}` : undefined,
 ].filter((label): label is string => label !== undefined)
 
+interface AssignmentCellInteractionProps {
+  row: TimetableWorkspaceRow
+  target: TimetableGridAssignmentTarget
+  targetLabel: string
+  currentAssignmentLabel?: string
+  selected: boolean
+  rangeStart: boolean
+  rangeEnd: boolean
+  onPointerDown: (
+    event: PointerEvent<HTMLDivElement>,
+    row: TimetableWorkspaceRow,
+    target: TimetableGridAssignmentTarget,
+  ) => void
+  onPointerEnter: (
+    event: PointerEvent<HTMLDivElement>,
+    row: TimetableWorkspaceRow,
+    target: TimetableGridAssignmentTarget,
+  ) => void
+  onPointerUp: () => void
+  onKeyDown: (
+    event: KeyboardEvent<HTMLDivElement>,
+    row: TimetableWorkspaceRow,
+    target: TimetableGridAssignmentTarget,
+  ) => void
+}
+
+const getAssignmentCellProps = (
+  className: string,
+  interaction: AssignmentCellInteractionProps,
+) => ({
+  className: [
+    className,
+    'timetable-grid__assignment-cell',
+    interaction.selected ? 'timetable-grid__assignment-cell--selected' : '',
+    interaction.rangeStart ? 'timetable-grid__assignment-cell--range-start' : '',
+    interaction.rangeEnd ? 'timetable-grid__assignment-cell--range-end' : '',
+  ].filter(Boolean).join(' '),
+  role: 'cell',
+  tabIndex: 0,
+  'aria-label': `${interaction.targetLabel} ${formatMinuteAsLocalTime(interaction.row.calculatedItem.plannedStartMinute)}〜${formatMinuteAsLocalTime(interaction.row.calculatedItem.plannedEndMinute)}を選択${interaction.selected ? '（選択中）' : ''}${interaction.currentAssignmentLabel ? `。現在の担当: ${interaction.currentAssignmentLabel}` : ''}`,
+  onPointerDown: (event: PointerEvent<HTMLDivElement>) =>
+    interaction.onPointerDown(event, interaction.row, interaction.target),
+  onPointerEnter: (event: PointerEvent<HTMLDivElement>) =>
+    interaction.onPointerEnter(event, interaction.row, interaction.target),
+  onPointerUp: interaction.onPointerUp,
+  onKeyDown: (event: KeyboardEvent<HTMLDivElement>) =>
+    interaction.onKeyDown(event, interaction.row, interaction.target),
+})
+
 const PaTimelineCell = ({
   role,
   coverage,
+  interaction,
 }: {
   role: PaRole
   coverage: TimetableWorkspacePaCoverage[]
+  interaction: AssignmentCellInteractionProps
 }) => (
-  <div className="timetable-grid__pa-cell" role="cell">
+  <div {...getAssignmentCellProps('timetable-grid__pa-cell', interaction)}>
     {coverage.length === 0 ? (
       <span className="timetable-grid__pa-empty" aria-label={`${role} PA担当なし`}>
         —
@@ -153,11 +223,13 @@ const PaTimelineCell = ({
 const DutyTimelineCell = ({
   dutyType,
   coverage,
+  interaction,
 }: {
   dutyType: DutyType
   coverage: TimetableWorkspaceDutyCoverage[]
+  interaction: AssignmentCellInteractionProps
 }) => (
-  <div className="timetable-grid__duty-cell" role="cell">
+  <div {...getAssignmentCellProps('timetable-grid__duty-cell', interaction)}>
     {coverage.length === 0 ? (
       <span
         className="timetable-grid__duty-empty"
@@ -193,7 +265,7 @@ const TimetableRow = ({
   row,
   index,
   onRemoveScheduleItem,
-  dutyTypes,
+  assignmentCells,
   timetableLock,
   onSetTimetableLock,
   onUnlockTimetableLock,
@@ -201,7 +273,7 @@ const TimetableRow = ({
   row: TimetableWorkspaceRow
   index: number
   onRemoveScheduleItem: (scheduleItemId: ScheduleItemId) => void
-  dutyTypes: DutyType[]
+  assignmentCells: ReactNode
   timetableLock?: TimetableLock
   onSetTimetableLock: (
     scheduleItemId: ScheduleItemId,
@@ -337,15 +409,7 @@ const TimetableRow = ({
             )}
           </div>
 
-          <PaTimelineCell role="main" coverage={row.paCoverage.main} />
-          <PaTimelineCell role="sub" coverage={row.paCoverage.sub} />
-          {dutyTypes.map((dutyType) => (
-            <DutyTimelineCell
-              key={dutyType.id}
-              dutyType={dutyType}
-              coverage={row.dutyCoverage[dutyType.id] ?? []}
-            />
-          ))}
+          {assignmentCells}
         </div>
       )}
     </Draggable>
@@ -358,33 +422,24 @@ const InterSectionBreakRow = ({
   previousSection,
   nextSection,
   columns,
-  dutyTypes,
   addBreakForm,
   onRemoveScheduleItem,
   timetableLock,
+  assignmentCells,
 }: {
   row?: TimetableWorkspaceRow
   index: number
   previousSection: Section
   nextSection: Section
   columns: TimetableGridColumn[]
-  dutyTypes: DutyType[]
   addBreakForm?: ReactNode
   onRemoveScheduleItem: (scheduleItemId: ScheduleItemId) => void
   timetableLock?: TimetableLock
+  assignmentCells?: ReactNode
 }) => {
   const item = row?.scheduleItem.kind === 'break' ? row.scheduleItem : undefined
   const presentation = getInterSectionBreakPresentation(previousSection, nextSection, columns, item)
   const labels = row ? issueLabels(row) : []
-  // Preserve real coverage when present, without rendering empty PA/Duty cells.
-  const coverageLabels = row ? [
-    ...(['main', 'sub'] as const).flatMap(role => row.paCoverage[role].length > 0
-      ? [`${role === 'main' ? 'Main' : 'Sub'} PA: ${row.paCoverage[role].map(coverage => coverage.memberName).join(' / ')}`]
-      : []),
-    ...dutyTypes.flatMap(type => (row.dutyCoverage[type.id]?.length ?? 0) > 0
-      ? [`${type.name}: ${row.dutyCoverage[type.id].map(coverage => coverage.memberName).join(' / ')}`]
-      : []),
-  ] : []
   const renderRow = (provided?: DraggableProvided) => (
     <div
       ref={provided?.innerRef}
@@ -404,7 +459,13 @@ const InterSectionBreakRow = ({
           <span>〜{formatMinuteAsLocalTime(row.calculatedItem.plannedEndMinute)}</span>
         </> : <span aria-label="部間休憩の時刻未設定">—</span>}
       </div>
-      <div className="timetable-grid__inter-section-cell" role="cell" aria-colspan={presentation.contentColumnSpan}>
+      <div
+        className={row
+          ? 'timetable-grid__item timetable-grid__inter-section-item'
+          : 'timetable-grid__inter-section-cell'}
+        role="cell"
+        {...(!row ? { 'aria-colspan': presentation.contentColumnSpan } : {})}
+      >
         <div className="timetable-grid__inter-section-content">
           <div className="timetable-grid__inter-section-summary">
             {provided && <span
@@ -433,10 +494,8 @@ const InterSectionBreakRow = ({
           </div>
           {addBreakForm && <div className="timetable-grid__inter-section-actions">{addBreakForm}</div>}
         </div>
-        {coverageLabels.length > 0 && <div className="timetable-grid__inter-section-coverage">
-          {coverageLabels.map((label, index) => <span key={`${index}-${label}`}>{label}</span>)}
-        </div>}
       </div>
+      {row && assignmentCells}
     </div>
   )
   return item ? (
@@ -468,6 +527,8 @@ export function TimetableGrid({
   onSetTimetableLock,
   onUnlockTimetableLock,
   onUnlockAllTimetableLocks,
+  selection,
+  onSelectionChange,
 }: TimetableGridProps) {
   const timetableGridColumns = createTimetableGridColumns(dutyTypes)
   const gridTemplateColumns = timetableGridColumns
@@ -485,6 +546,164 @@ export function TimetableGrid({
   const timetableLockByScheduleItemId = new Map(
     timetableLocks.map((lock) => [lock.scheduleItemId, lock]),
   )
+  const resolvedSelection = selection
+    ? resolveTimetableGridSelection(selection, rows)
+    : undefined
+  const hasInvalidSelection = selection !== null &&
+    resolvedSelection === undefined
+  const pointerSelectionRef = useRef<{
+    target: TimetableGridAssignmentTarget
+    anchorScheduleItemId: ScheduleItemId
+  } | null>(null)
+
+  useEffect(() => {
+    const finishPointerSelection = () => {
+      pointerSelectionRef.current = null
+    }
+    window.addEventListener('pointerup', finishPointerSelection)
+    window.addEventListener('pointercancel', finishPointerSelection)
+    return () => {
+      window.removeEventListener('pointerup', finishPointerSelection)
+      window.removeEventListener('pointercancel', finishPointerSelection)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (hasInvalidSelection) onSelectionChange(null)
+  }, [hasInvalidSelection, onSelectionChange])
+
+  const updateSelection = (
+    row: TimetableWorkspaceRow,
+    target: TimetableGridAssignmentTarget,
+    extend: boolean,
+  ) => {
+    onSelectionChange(selectTimetableGridCell({
+      selection,
+      eventDayId: row.calculatedItem.eventDayId,
+      stageId: row.calculatedItem.stageId,
+      target,
+      scheduleItemId: row.scheduleItem.id,
+      extend,
+    }))
+  }
+
+  const handleAssignmentPointerDown = (
+    event: PointerEvent<HTMLDivElement>,
+    row: TimetableWorkspaceRow,
+    target: TimetableGridAssignmentTarget,
+  ) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.currentTarget.focus()
+    const nextSelection = selectTimetableGridCell({
+      selection,
+      eventDayId: row.calculatedItem.eventDayId,
+      stageId: row.calculatedItem.stageId,
+      target,
+      scheduleItemId: row.scheduleItem.id,
+      extend: event.shiftKey,
+    })
+    pointerSelectionRef.current = {
+      target,
+      anchorScheduleItemId: nextSelection.anchorScheduleItemId,
+    }
+    onSelectionChange(nextSelection)
+  }
+
+  const handleAssignmentPointerEnter = (
+    event: PointerEvent<HTMLDivElement>,
+    row: TimetableWorkspaceRow,
+    target: TimetableGridAssignmentTarget,
+  ) => {
+    const pointerSelection = pointerSelectionRef.current
+    if (!pointerSelection || (event.buttons & 1) === 0) return
+    if (!areTimetableGridAssignmentTargetsEqual(pointerSelection.target, target)) {
+      return
+    }
+    onSelectionChange({
+      eventDayId: row.calculatedItem.eventDayId,
+      stageId: row.calculatedItem.stageId,
+      target: pointerSelection.target,
+      anchorScheduleItemId: pointerSelection.anchorScheduleItemId,
+      focusScheduleItemId: row.scheduleItem.id,
+    })
+  }
+
+  const handleAssignmentKeyDown = (
+    event: KeyboardEvent<HTMLDivElement>,
+    row: TimetableWorkspaceRow,
+    target: TimetableGridAssignmentTarget,
+  ) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      onSelectionChange(null)
+      return
+    }
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    updateSelection(row, target, event.shiftKey)
+  }
+
+  const renderAssignmentCells = (row: TimetableWorkspaceRow) => {
+    const selectedIndex = resolvedSelection?.scheduleItemIds.indexOf(
+      row.scheduleItem.id,
+    ) ?? -1
+    const interactionFor = (
+      target: TimetableGridAssignmentTarget,
+      currentAssignmentLabel?: string,
+    ): AssignmentCellInteractionProps => {
+      const selected = selectedIndex >= 0 && selection !== null &&
+        areTimetableGridAssignmentTargetsEqual(selection.target, target)
+      return {
+        row,
+        target,
+        targetLabel: getTimetableGridAssignmentTargetLabel(target, dutyTypes),
+        ...(currentAssignmentLabel ? { currentAssignmentLabel } : {}),
+        selected,
+        rangeStart: selected && selectedIndex === 0,
+        rangeEnd: selected && selectedIndex ===
+          (resolvedSelection?.scheduleItemIds.length ?? 0) - 1,
+        onPointerDown: handleAssignmentPointerDown,
+        onPointerEnter: handleAssignmentPointerEnter,
+        onPointerUp: () => {
+          pointerSelectionRef.current = null
+        },
+        onKeyDown: handleAssignmentKeyDown,
+      }
+    }
+
+    return <>
+      <PaTimelineCell
+        role="main"
+        coverage={row.paCoverage.main}
+        interaction={interactionFor(
+          { kind: 'pa', role: 'main' },
+          row.paCoverage.main.map((coverage) => coverage.memberName).join('、'),
+        )}
+      />
+      <PaTimelineCell
+        role="sub"
+        coverage={row.paCoverage.sub}
+        interaction={interactionFor(
+          { kind: 'pa', role: 'sub' },
+          row.paCoverage.sub.map((coverage) => coverage.memberName).join('、'),
+        )}
+      />
+      {dutyTypes.map((dutyType) => (
+        <DutyTimelineCell
+          key={dutyType.id}
+          dutyType={dutyType}
+          coverage={row.dutyCoverage[dutyType.id] ?? []}
+          interaction={interactionFor({
+            kind: 'duty',
+            dutyTypeId: dutyType.id,
+          }, (row.dutyCoverage[dutyType.id] ?? [])
+            .map((coverage) => coverage.memberName)
+            .join('、'))}
+        />
+      ))}
+    </>
+  }
 
   const renderBreakForm = (
     targetName: string,
@@ -562,12 +781,12 @@ export function TimetableGrid({
               index={index}
               {...interSection}
               columns={timetableGridColumns}
-              dutyTypes={dutyTypes}
               addBreakForm={index === 0
                 ? renderInterSectionBreakForm(interSection.previousSection, interSection.nextSection)
                 : undefined}
               onRemoveScheduleItem={onRemoveScheduleItem}
               timetableLock={timetableLockByScheduleItemId.get(row.scheduleItem.id)}
+              assignmentCells={renderAssignmentCells(row)}
             />
           ) : (
             <TimetableRow
@@ -575,7 +794,7 @@ export function TimetableGrid({
               row={row}
               index={index}
               onRemoveScheduleItem={onRemoveScheduleItem}
-              dutyTypes={dutyTypes}
+              assignmentCells={renderAssignmentCells(row)}
               timetableLock={timetableLockByScheduleItemId.get(row.scheduleItem.id)}
               onSetTimetableLock={onSetTimetableLock}
               onUnlockTimetableLock={onUnlockTimetableLock}
@@ -586,7 +805,6 @@ export function TimetableGrid({
               index={0}
               {...interSection}
               columns={timetableGridColumns}
-              dutyTypes={dutyTypes}
               addBreakForm={renderInterSectionBreakForm(interSection.previousSection, interSection.nextSection)}
               onRemoveScheduleItem={onRemoveScheduleItem}
             />
@@ -693,6 +911,32 @@ export function TimetableGrid({
             ))}
           </ul>
           <span>詳細の確認・編集は右の当日運営を利用してください。</span>
+        </div>
+      )}
+
+      <p className="timetable-grid__selection-hint">
+        PA・当日運営のセルをドラッグ、またはShift+クリックすると担当範囲を選択できます。
+      </p>
+
+      {resolvedSelection && (
+        <div
+          className="timetable-grid__selection-summary"
+          aria-live="polite"
+          role="status"
+        >
+          <span>
+            <strong>選択中:</strong>{' '}
+            {getTimetableGridAssignmentTargetLabel(
+              resolvedSelection.target,
+              dutyTypes,
+            )}{' / '}
+            {formatMinuteAsLocalTime(resolvedSelection.fromMinute)}〜
+            {formatMinuteAsLocalTime(resolvedSelection.untilMinute)}{' / '}
+            {resolvedSelection.rowCount}枠
+          </span>
+          <button type="button" onClick={() => onSelectionChange(null)}>
+            選択解除
+          </button>
         </div>
       )}
 
