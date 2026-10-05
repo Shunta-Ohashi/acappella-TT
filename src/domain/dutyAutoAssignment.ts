@@ -65,6 +65,8 @@ export interface DutyAutoAssignmentRequest {
 
 export interface DutyAutoAssignmentCandidateMetric {
   memberId: MemberId
+  eventMemberId: EventMember['id']
+  eventMemberDayId: EventMemberDay['id']
   participationStatus: EventMemberDay['participationStatus']
   addedLastResortCount: number
   addedSpacingPenalty: number
@@ -132,7 +134,7 @@ const createPlanKey = (
   request: DutyAutoAssignmentRequest,
   selectedMetrics: readonly DutyAutoAssignmentCandidateMetric[],
 ): string => [
-  'duty-auto-v1',
+  'duty-auto-v2',
   context.event.id,
   context.eventDay.id,
   context.stage.id,
@@ -144,6 +146,8 @@ const createPlanKey = (
   request.additionalCount,
   ...selectedMetrics.map((metric) => [
     metric.memberId,
+    metric.eventMemberId,
+    metric.eventMemberDayId,
     metric.participationStatus,
     metric.addedLastResortCount,
     metric.addedSpacingPenalty,
@@ -190,6 +194,70 @@ const getEventDutyAssignments = (
     dutyTypes: context.dutyTypes,
     dutyAssignments,
   })
+}
+
+interface DutyCandidateIdentityScope {
+  eventMember: EventMember
+  eventMemberDay: EventMemberDay
+  eventMembers: EventMember[]
+  eventMemberDays: EventMemberDay[]
+}
+
+const createDutyCandidateIdentityScope = ({
+  event,
+  eventDayId,
+  memberId,
+  eventMemberId,
+  eventMemberDayId,
+  eventMembers,
+  eventMemberDays,
+}: {
+  event: Pick<Event, 'id'>
+  eventDayId: EventDay['id']
+  memberId: MemberId
+  eventMemberId: EventMember['id']
+  eventMemberDayId: EventMemberDay['id']
+  eventMembers: EventMember[]
+  eventMemberDays: EventMemberDay[]
+}): DutyCandidateIdentityScope | undefined => {
+  const matchingEventMembers = eventMembers.filter((candidate) =>
+    candidate.id === eventMemberId,
+  )
+  const matchingMemberDays = eventMemberDays.filter((candidate) =>
+    candidate.id === eventMemberDayId,
+  )
+  if (
+    matchingEventMembers.length !== 1 ||
+    matchingEventMembers[0].eventId !== event.id ||
+    matchingEventMembers[0].memberId !== memberId ||
+    matchingMemberDays.length !== 1 ||
+    matchingMemberDays[0].eventMemberId !== eventMemberId ||
+    matchingMemberDays[0].eventDayId !== eventDayId
+  ) return undefined
+
+  const duplicateEventMemberIds = new Set(
+    eventMembers
+      .filter((candidate) =>
+        candidate.eventId === event.id && candidate.memberId === memberId,
+      )
+      .map((candidate) => candidate.id),
+  )
+  return {
+    eventMember: matchingEventMembers[0],
+    eventMemberDay: matchingMemberDays[0],
+    eventMembers: [
+      matchingEventMembers[0],
+      ...eventMembers.filter((candidate) =>
+        !duplicateEventMemberIds.has(candidate.id),
+      ),
+    ],
+    eventMemberDays: [
+      matchingMemberDays[0],
+      ...eventMemberDays.filter((candidate) =>
+        !duplicateEventMemberIds.has(candidate.eventMemberId),
+      ),
+    ],
+  }
 }
 
 const getSyntheticId = (
@@ -362,8 +430,18 @@ export const planDutyAutoAssignments = (
   })) {
     if (evaluatedMemberIds.has(candidate.member.id)) continue
     evaluatedMemberIds.add(candidate.member.id)
+    const identityScope = createDutyCandidateIdentityScope({
+      event: context.event,
+      eventDayId: context.eventDay.id,
+      memberId: candidate.member.id,
+      eventMemberId: candidate.eventMemberId,
+      eventMemberDayId: candidate.eventMemberDay.id,
+      eventMembers: context.eventMembers,
+      eventMemberDays: context.eventMemberDays,
+    })
+    if (!identityScope) continue
     if (!isIntervalWithinAvailabilityWindows(
-      candidate.eventMemberDay.availabilityWindows,
+      identityScope.eventMemberDay.availabilityWindows,
       request.fromMinute,
       request.untilMinute,
     )) continue
@@ -376,32 +454,14 @@ export const planDutyAutoAssignments = (
     )) continue
 
     const syntheticId = getSyntheticId(candidate.member.id, context.dutyAssignments)
-    const duplicateEventMemberIds = new Set(
-      context.eventMembers
-        .filter((item) =>
-          item.eventId === context.event.id &&
-          item.memberId === candidate.member.id,
-        )
-        .map((item) => item.id),
-    )
-    const candidateEventMembers = [
-      ...context.eventMembers.filter((item) => item.id === candidate.eventMemberId),
-      ...context.eventMembers.filter((item) => !duplicateEventMemberIds.has(item.id)),
-    ]
-    const candidateEventMemberDays = [
-      candidate.eventMemberDay,
-      ...context.eventMemberDays.filter((item) =>
-        !duplicateEventMemberIds.has(item.eventMemberId),
-      ),
-    ]
     const addition = createDutyAssignmentAddition({
       event: context.event,
       eventDays: context.eventDays,
       stages: eventStages,
       sections: context.sections,
       members: context.members,
-      eventMembers: candidateEventMembers,
-      eventMemberDays: candidateEventMemberDays,
+      eventMembers: identityScope.eventMembers,
+      eventMemberDays: identityScope.eventMemberDays,
       eventBands: context.eventBands,
       paAssignments: eventPaAssignments,
       calculatedItems: context.calculatedItems,
@@ -424,8 +484,8 @@ export const planDutyAutoAssignments = (
       relatedErrors = detectScheduleIssues({
         event: context.event,
         members: context.members,
-        eventMembers: candidateEventMembers,
-        eventMemberDays: candidateEventMemberDays,
+        eventMembers: identityScope.eventMembers,
+        eventMemberDays: identityScope.eventMemberDays,
         eventBands: context.eventBands,
         stages: context.stages,
         sections: context.sections,
@@ -486,6 +546,8 @@ export const planDutyAutoAssignments = (
     )
     metrics.push({
       memberId: candidate.member.id,
+      eventMemberId: candidate.eventMemberId,
+      eventMemberDayId: candidate.eventMemberDay.id,
       participationStatus: candidate.participationStatus,
       addedLastResortCount: addedPairs.filter((pair) =>
         pair.level === 'last-resort',
@@ -548,7 +610,13 @@ export const createDutyAutoAssignments = ({
     plan.eventDayId !== context.eventDay.id ||
     plan.stageId !== context.stage.id ||
     plan.additionalCount !== plan.selectedMemberIds.length ||
-    new Set(plan.selectedMemberIds).size !== plan.selectedMemberIds.length
+    plan.candidateMetrics.length !== plan.selectedMemberIds.length ||
+    new Set(plan.selectedMemberIds).size !== plan.selectedMemberIds.length ||
+    new Set(plan.candidateMetrics.map((metric) => metric.memberId)).size !==
+      plan.candidateMetrics.length ||
+    plan.candidateMetrics.some((metric, index) =>
+      metric.memberId !== plan.selectedMemberIds[index],
+    )
   ) {
     return {
       ok: false,
@@ -574,6 +642,30 @@ export const createDutyAutoAssignments = ({
   const eventPaAssignments = context.paAssignments.filter((assignment) =>
     assignment.eventId === context.event.id,
   )
+  const identityScopes: DutyCandidateIdentityScope[] = []
+  let scopedEventMembers = context.eventMembers
+  let scopedEventMemberDays = context.eventMemberDays
+  for (const metric of plan.candidateMetrics) {
+    const identityScope = createDutyCandidateIdentityScope({
+      event: context.event,
+      eventDayId: plan.eventDayId,
+      memberId: metric.memberId,
+      eventMemberId: metric.eventMemberId,
+      eventMemberDayId: metric.eventMemberDayId,
+      eventMembers: scopedEventMembers,
+      eventMemberDays: scopedEventMemberDays,
+    })
+    if (!identityScope) {
+      return {
+        ok: false,
+        code: 'INVALID_PLAN',
+        message: '自動割り当てplanの参加情報を現在のデータで確認できません。',
+      }
+    }
+    identityScopes.push(identityScope)
+    scopedEventMembers = identityScope.eventMembers
+    scopedEventMemberDays = identityScope.eventMemberDays
+  }
   let workingAssignments = [...context.dutyAssignments]
   for (let index = 0; index < plan.selectedMemberIds.length; index += 1) {
     const addition = createDutyAssignmentAddition({
@@ -582,8 +674,8 @@ export const createDutyAutoAssignments = ({
       stages: eventStages,
       sections: context.sections,
       members: context.members,
-      eventMembers: context.eventMembers,
-      eventMemberDays: context.eventMemberDays,
+      eventMembers: identityScopes[index].eventMembers,
+      eventMemberDays: identityScopes[index].eventMemberDays,
       eventBands: context.eventBands,
       paAssignments: eventPaAssignments,
       calculatedItems: context.calculatedItems,
@@ -620,8 +712,8 @@ export const createDutyAutoAssignments = ({
     issueErrors = uniqueMessages(detectScheduleIssues({
       event: context.event,
       members: context.members,
-      eventMembers: context.eventMembers,
-      eventMemberDays: context.eventMemberDays,
+      eventMembers: scopedEventMembers,
+      eventMemberDays: scopedEventMemberDays,
       eventBands: context.eventBands,
       stages: context.stages,
       sections: context.sections,

@@ -123,7 +123,7 @@ test('重複EventMemberではcandidate生成時のEventMemberDay identityを維�
     ...eventMembers[0],
     id: 'event-member-member-a-available',
   }
-  const result = planDutyAutoAssignments(context({
+  const identityContext = context({
     eventMembers: [eventMembers[0], duplicateEventMember],
     eventMemberDays: [
       memberDay('member-a', {
@@ -138,14 +138,63 @@ test('重複EventMemberではcandidate生成時のEventMemberDay identityを維�
         availabilityWindows: [{ from: '13:00', until: '14:00' }],
       },
     ],
-  }), request())
+  })
+  const result = planDutyAutoAssignments(identityContext, request())
 
   assert.equal(result.ok, true, JSON.stringify(result))
   assert.deepEqual(result.plan.selectedMemberIds, ['member-a'])
+  assert.equal(result.plan.candidateMetrics[0].eventMemberId, duplicateEventMember.id)
+  assert.equal(result.plan.candidateMetrics[0].eventMemberDayId, 'member-day-a-available')
   assert.equal(result.plan.candidateMetrics[0].participationStatus, 'undecided')
   assert.deepEqual(result.plan.warnings, [
     'Aさんはこの開催日の参加状況が未定です。',
   ])
+
+  const applied = createDutyAutoAssignments({
+    context: identityContext,
+    plan: result.plan,
+    newDutyAssignmentIds: ['auto-identity'],
+  })
+  assert.equal(applied.ok, true, JSON.stringify(applied))
+  assert.equal(applied.dutyAssignments.at(-1)?.memberId, 'member-a')
+
+  const changedIdentity = planDutyAutoAssignments(context({
+    eventMembers: [eventMembers[0], duplicateEventMember],
+    eventMemberDays: [
+      memberDay('member-a', {
+        participationStatus: 'undecided',
+        availabilityWindows: [{ from: '13:00', until: '14:00' }],
+      }),
+      {
+        ...memberDay('member-a'),
+        id: 'member-day-a-available',
+        eventMemberId: duplicateEventMember.id,
+        participationStatus: 'absent',
+        availabilityWindows: [{ until: '12:00' }],
+      },
+    ],
+  }), request())
+  assert.equal(changedIdentity.ok, true)
+  assert.deepEqual(changedIdentity.plan.selectedMemberIds, ['member-a'])
+  assert.notEqual(changedIdentity.plan.candidateMetrics[0].eventMemberId,
+    result.plan.candidateMetrics[0].eventMemberId)
+  assert.notEqual(changedIdentity.plan.planKey, result.plan.planKey)
+
+  const staleIdentityContext = {
+    ...identityContext,
+    eventMemberDays: identityContext.eventMemberDays.filter((day) =>
+      day.id !== result.plan.candidateMetrics[0].eventMemberDayId,
+    ),
+  }
+  const staleBefore = structuredClone(staleIdentityContext)
+  const stale = createDutyAutoAssignments({
+    context: staleIdentityContext,
+    plan: result.plan,
+    newDutyAssignmentIds: ['auto-stale-identity'],
+  })
+  assert.equal(stale.ok, false)
+  assert.equal(stale.code, 'INVALID_PLAN')
+  assert.deepEqual(staleIdentityContext, staleBefore)
 })
 
 test('absent・日別設定なし・範囲全体がavailability外のMemberを除外する', () => {
@@ -500,6 +549,35 @@ test('applyはID不足・空・重複・既存collisionを全件atomicに拒否�
     assert.equal(result.code, 'INVALID_IDS')
   }
   assert.deepEqual(input.dutyAssignments, [existing])
+})
+
+test('applyはselectedMemberIdsとcandidateMetricsの対応が壊れたplanを拒否する', () => {
+  const input = context()
+  const planned = planDutyAutoAssignments(input, request({ additionalCount: 2 }))
+  assert.equal(planned.ok, true)
+  const malformedPlans = [
+    { ...planned.plan, candidateMetrics: planned.plan.candidateMetrics.slice(0, 1) },
+    {
+      ...planned.plan,
+      candidateMetrics: [...planned.plan.candidateMetrics].reverse(),
+    },
+    {
+      ...planned.plan,
+      candidateMetrics: planned.plan.candidateMetrics.map((metric, index) =>
+        index === 0 ? { ...metric, eventMemberId: 'missing-event-member' } : metric),
+    },
+  ]
+
+  for (const plan of malformedPlans) {
+    const result = createDutyAutoAssignments({
+      context: input,
+      plan,
+      newDutyAssignmentIds: ['auto-a', 'auto-b'],
+    })
+    assert.equal(result.ok, false)
+    assert.equal(result.code, 'INVALID_PLAN')
+  }
+  assert.deepEqual(input.dutyAssignments, [])
 })
 
 test('apply途中の2人目validation失敗でも部分適用せず、unrelated ERRORはblockしない', () => {
