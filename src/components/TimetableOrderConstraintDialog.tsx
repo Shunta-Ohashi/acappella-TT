@@ -23,6 +23,11 @@ interface TimetableOrderConstraintDialogProps {
   onSave: (draft: TimetableOrderConstraintDraft) => TimetableOrderConstraintMutationResult
 }
 
+interface BandDraftRow {
+  rowId: string
+  eventBandId: string
+}
+
 export function TimetableOrderConstraintDialog({
   event,
   eventDay,
@@ -42,12 +47,19 @@ export function TimetableOrderConstraintDialog({
   const orderedBands = [...eventBands].sort((left, right) =>
     left.name.localeCompare(right.name, 'ja') || left.id.localeCompare(right.id))
   const [sectionId, setSectionId] = useState(constraint?.sectionId ?? '')
-  const [eventBandIds, setEventBandIds] = useState<string[]>(
-    () => constraint ? [...constraint.eventBandIds] : ['', ''],
+  const initialEventBandIds = constraint ? constraint.eventBandIds : ['', '']
+  const nextRowSequence = useRef(initialEventBandIds.length)
+  const [bandRows, setBandRows] = useState<BandDraftRow[]>(
+    () => initialEventBandIds.map((eventBandId, index) => ({
+      rowId: `initial-${index}`,
+      eventBandId,
+    })),
   )
   const [errors, setErrors] = useState<string[]>([])
   const bandById = new Map(eventBands.map(band => [band.id, band]))
   const sectionById = new Map(sections.map(section => [section.id, section]))
+  const cannotAddBandRow = bandRows.length >= orderedBands.length ||
+    bandRows.some(row => !row.eventBandId)
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -58,16 +70,17 @@ export function TimetableOrderConstraintDialog({
     }
   }, [])
 
-  const updateBand = (index: number, eventBandId: string) => {
-    setEventBandIds(previous => previous.map((value, candidateIndex) =>
-      candidateIndex === index ? eventBandId : value))
+  const updateBand = (rowId: string, eventBandId: string) => {
+    setBandRows(previous => previous.map(row =>
+      row.rowId === rowId ? { ...row, eventBandId } : row))
     setErrors([])
   }
 
-  const moveBand = (index: number, offset: -1 | 1) => {
-    setEventBandIds(previous => {
+  const moveBand = (rowId: string, offset: -1 | 1) => {
+    setBandRows(previous => {
+      const index = previous.findIndex(row => row.rowId === rowId)
       const destination = index + offset
-      if (destination < 0 || destination >= previous.length) return previous
+      if (index < 0 || destination < 0 || destination >= previous.length) return previous
       const next = [...previous]
       ;[next[index], next[destination]] = [next[destination], next[index]]
       return next
@@ -79,7 +92,7 @@ export function TimetableOrderConstraintDialog({
     submitEvent.preventDefault()
     const result = onSave({
       ...(sectionId ? { sectionId } : {}),
-      eventBandIds: [...eventBandIds],
+      eventBandIds: bandRows.map(row => row.eventBandId),
     })
     if (!result.ok) setErrors(result.errors)
   }
@@ -99,7 +112,7 @@ export function TimetableOrderConstraintDialog({
         <header>
           <p>STEP 6</p>
           <h2 id={titleId}>{constraint ? '出演順制約を編集' : '出演順制約を追加'}</h2>
-          <span>{event.name} / {eventDay.label ?? eventDay.date} / {stage.name}</span>
+          <span>{event.name} / {eventDay.label?.trim() || eventDay.date} / {stage.name}</span>
         </header>
 
         {orderedSections.length > 0 ? (
@@ -128,25 +141,26 @@ export function TimetableOrderConstraintDialog({
 
         <fieldset className="timetable-order-dialog__bands">
           <legend>出演順</legend>
-          {eventBandIds.map((eventBandId, index) => {
-            const bandLabel = bandById.get(eventBandId)?.name ??
-              (eventBandId ? `参照先不明（${eventBandId}）` : `${index + 1}組目`)
-            const selectedElsewhere = new Set(eventBandIds.filter((_, candidateIndex) =>
-              candidateIndex !== index))
+          {bandRows.map((row, index) => {
+            const bandLabel = bandById.get(row.eventBandId)?.name ??
+              (row.eventBandId ? `参照先不明（${row.eventBandId}）` : `${index + 1}組目`)
+            const selectedElsewhere = new Set(bandRows
+              .filter(candidate => candidate.rowId !== row.rowId)
+              .map(candidate => candidate.eventBandId))
             return (
-              <div className="timetable-order-dialog__band-row" key={`${index}-${eventBandId}`}>
+              <div className="timetable-order-dialog__band-row" key={row.rowId}>
                 <span aria-hidden="true">{index + 1}</span>
                 <label>
                   <span className="visually-hidden">{index + 1}組目のバンド</span>
                   <select
-                    value={eventBandId}
+                    value={row.eventBandId}
                     aria-label={`${index + 1}組目のバンド`}
                     aria-invalid={errors.length ? 'true' : undefined}
-                    onChange={changeEvent => updateBand(index, changeEvent.target.value)}
+                    onChange={changeEvent => updateBand(row.rowId, changeEvent.target.value)}
                   >
                     <option value="">選択してください</option>
-                    {eventBandId && !bandById.has(eventBandId) && (
-                      <option value={eventBandId} disabled>{bandLabel}</option>
+                    {row.eventBandId && !bandById.has(row.eventBandId) && (
+                      <option value={row.eventBandId} disabled>{bandLabel}</option>
                     )}
                     {orderedBands.map(band => (
                       <option
@@ -164,7 +178,7 @@ export function TimetableOrderConstraintDialog({
                   className="secondary-button"
                   aria-label={`${bandLabel}を上へ移動`}
                   disabled={index === 0}
-                  onClick={() => moveBand(index, -1)}
+                  onClick={() => moveBand(row.rowId, -1)}
                 >
                   ↑
                 </button>
@@ -172,8 +186,8 @@ export function TimetableOrderConstraintDialog({
                   type="button"
                   className="secondary-button"
                   aria-label={`${bandLabel}を下へ移動`}
-                  disabled={index === eventBandIds.length - 1}
-                  onClick={() => moveBand(index, 1)}
+                  disabled={index === bandRows.length - 1}
+                  onClick={() => moveBand(row.rowId, 1)}
                 >
                   ↓
                 </button>
@@ -181,10 +195,10 @@ export function TimetableOrderConstraintDialog({
                   type="button"
                   className="timetable-order-dialog__remove"
                   aria-label={`${bandLabel}を出演順から削除`}
-                  disabled={eventBandIds.length <= 2}
+                  disabled={bandRows.length <= 2}
                   onClick={() => {
-                    setEventBandIds(previous => previous.filter((_, candidateIndex) =>
-                      candidateIndex !== index))
+                    setBandRows(previous => previous.filter(candidate =>
+                      candidate.rowId !== row.rowId))
                     setErrors([])
                   }}
                 >
@@ -196,9 +210,11 @@ export function TimetableOrderConstraintDialog({
           <button
             type="button"
             className="secondary-button timetable-order-dialog__add-band"
-            disabled={!orderedBands.some(band => !eventBandIds.includes(band.id))}
+            disabled={cannotAddBandRow}
             onClick={() => {
-              setEventBandIds(previous => [...previous, ''])
+              const rowId = `added-${nextRowSequence.current}`
+              nextRowSequence.current += 1
+              setBandRows(previous => [...previous, { rowId, eventBandId: '' }])
               setErrors([])
             }}
           >
