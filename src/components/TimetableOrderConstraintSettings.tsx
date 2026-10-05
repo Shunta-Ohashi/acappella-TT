@@ -62,7 +62,7 @@ export function TimetableOrderConstraintSettings({
     .filter(band => band.eventId === event.id && band.eventDayId === eventDay.id)
     .sort((left, right) => left.name.localeCompare(right.name, 'ja') ||
       left.id.localeCompare(right.id))
-  const bandById = new Map(eventBands.map(band => [band.id, band]))
+  const bandById = new Map(currentDayBands.map(band => [band.id, band]))
   const constraints = timetableOrderConstraints
     .filter(constraint => constraint.eventId === event.id &&
       constraint.eventDayId === eventDay.id && constraint.stageId === stage.id)
@@ -73,7 +73,7 @@ export function TimetableOrderConstraintSettings({
 
   const formatBandOrder = (constraint: TimetableOrderConstraint): string =>
     constraint.eventBandIds.map(eventBandId =>
-      bandById.get(eventBandId)?.name ?? `不明なバンド（${eventBandId}）`,
+      bandById.get(eventBandId)?.name ?? `参照先不明（${eventBandId}）`,
     ).join(' → ')
 
   const applyResult = (
