@@ -731,7 +731,7 @@ export const createDutyAssignmentAddition = ({
   }
   draft.assignments.push(newItem)
 
-  const errors = validateDutySettingsDraft({
+  const validationErrors = validateDutySettingsDraft({
     draft,
     event,
     eventDays,
@@ -743,8 +743,26 @@ export const createDutyAssignmentAddition = ({
     eventBands,
     paAssignments,
     calculatedItems,
-  }).assignments[draftId]
-  if (errors && hasDutyAssignmentItemErrors(errors)) {
+  })
+  const assignmentErrors = validationErrors.assignments[draftId] ?? {}
+  const selectedDutyTypeMessages = Object.values(
+    validationErrors.dutyTypes[dutyTypeDraft.draftId] ?? {},
+  ).filter((message): message is string =>
+    typeof message === 'string' && Boolean(message.trim()),
+  )
+  const dutyTypeMessages = [
+    assignmentErrors.dutyTypeId,
+    ...selectedDutyTypeMessages,
+  ].filter((message): message is string =>
+    typeof message === 'string' && Boolean(message.trim()),
+  )
+  const errors: DutyAssignmentItemErrors = {
+    ...assignmentErrors,
+    ...(dutyTypeMessages.length > 0
+      ? { dutyTypeId: [...new Set(dutyTypeMessages)].join(' ') }
+      : {}),
+  }
+  if (hasDutyAssignmentItemErrors(errors)) {
     return { ok: false, errors }
   }
 

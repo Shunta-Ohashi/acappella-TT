@@ -361,6 +361,73 @@ test('無関係なstale Dutyと未使用DutyType errorを保持して正常なDu
   assert.deepEqual(input, before)
 })
 
+test('選択中DutyType自身の同名重複を具体的なerrorでrejectする', () => {
+  const duplicateSelectedTypes = [
+    ...dutyTypes,
+    { id: 'duty-photo-duplicate', eventId: event.id, name: ' 撮影 ', order: 1 },
+  ]
+  const input = context({ dutyTypes: duplicateSelectedTypes })
+  const before = structuredClone(input)
+  const addition = {
+    context: input,
+    selection: selection({ kind: 'duty', dutyTypeId: 'duty-photo' }),
+    memberId: 'member-main',
+    newAssignmentId: 'duty-selected-type-duplicate',
+  }
+
+  const first = createTimetableGridAssignment(addition)
+  const second = createTimetableGridAssignment(addition)
+
+  assert.equal(first.ok, false)
+  assert.match(first.errors.join(' '), /同名/)
+  assert.deepEqual(second, first)
+  assert.deepEqual(input, before)
+})
+
+test('選択外DutyTypeだけの同名重複は正常なDuty追加をblockしない', () => {
+  const unrelatedDuplicateTypes = [
+    ...dutyTypes,
+    { id: 'duty-reception-a', eventId: event.id, name: '受付', order: 1 },
+    { id: 'duty-reception-b', eventId: event.id, name: ' 受付 ', order: 2 },
+  ]
+  const result = createTimetableGridAssignment({
+    context: context({ dutyTypes: unrelatedDuplicateTypes }),
+    selection: selection({ kind: 'duty', dutyTypeId: 'duty-photo' }),
+    memberId: 'member-main',
+    newAssignmentId: 'duty-unrelated-type-duplicate',
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.kind, 'duty')
+  assert.equal(result.dutyAssignments.at(-1).id, 'duty-unrelated-type-duplicate')
+})
+
+test('選択中DutyTypeと新規Duty Assignmentのerrorを両方返す', () => {
+  const duplicateSelectedTypes = [
+    ...dutyTypes,
+    { id: 'duty-photo-duplicate', eventId: event.id, name: '撮影', order: 1 },
+  ]
+  const overlappingPa = {
+    id: 'pa-selected-type-conflict', eventId: event.id,
+    eventDayId: 'day-1', stageId: 'stage-1', memberId: 'member-main', role: 'main',
+    from: { kind: 'schedule-item', scheduleItemId: 'item-1', edge: 'start' },
+    until: { kind: 'schedule-item', scheduleItemId: 'item-2', edge: 'end' },
+  }
+  const result = createTimetableGridAssignment({
+    context: context({
+      dutyTypes: duplicateSelectedTypes,
+      paAssignments: [overlappingPa],
+    }),
+    selection: selection({ kind: 'duty', dutyTypeId: 'duty-photo' }),
+    memberId: 'member-main',
+    newAssignmentId: 'duty-selected-type-and-assignment-error',
+  })
+
+  assert.equal(result.ok, false)
+  assert.match(result.errors.join(' '), /同名/)
+  assert.match(result.errors.join(' '), /PA.*重複/)
+})
+
 test('新規Dutyと既存PAのcross-domain重複は引き続きrejectする', () => {
   const overlappingPa = {
     id: 'pa-existing', eventId: event.id, eventDayId: 'day-1', stageId: 'stage-1',
