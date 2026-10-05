@@ -1,5 +1,4 @@
 import type {
-  Event,
   EventBand,
   EventDayId,
   ScheduleItem,
@@ -29,14 +28,12 @@ export interface CalculatedEventDayTimelines {
 }
 
 export const calculateEventDayTimelines = ({
-  event,
   eventDayId,
   stages,
   sections,
   scheduleItems,
   eventBands,
 }: {
-  event: Event
   eventDayId: EventDayId
   stages: Stage[]
   sections: Section[]
@@ -64,7 +61,6 @@ export const calculateEventDayTimelines = ({
     }
 
     calculatedItems.push(...calculateStageTimeline({
-      event,
       stage,
       sections: stageSections,
       scheduleItems: stageScheduleItems,

@@ -60,7 +60,6 @@ test('demoDataは想定件数と全EventDayのdomain invariantを満たす', () 
       stage.eventDayId === eventDay.id,
     )
     const timelines = calculateEventDayTimelines({
-      event,
       eventDayId: eventDay.id,
       stages: data.stages,
       sections: data.sections,
@@ -177,7 +176,7 @@ test('自動生成デモの部内休憩に撮影3名とPAを欠落なく表示�
   const event = data.events.find(event => event.id === GENERATION_DEMO_EVENT_ID)
   const eventDay = data.eventDays.find(day => day.eventId === event.id)
   const stage = data.stages.find(stage => stage.eventDayId === eventDay.id)
-  const timelines = calculateEventDayTimelines({ ...data, event, eventDayId: eventDay.id })
+  const timelines = calculateEventDayTimelines({ ...data, eventDayId: eventDay.id })
   const rows = createTimetableWorkspaceRows({ ...data, eventDayId: eventDay.id,
     stageId: stage.id, calculatedItems: timelines.calculatedItems, issues: [] }).rows
   const photo = rows.find(row => row.scheduleItem.id === 'break-demo-generation-inside')

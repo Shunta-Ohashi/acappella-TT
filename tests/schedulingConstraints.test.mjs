@@ -29,7 +29,6 @@ const section = (id, order, overrides = {}) => ({
 const input = (overrides = {}) => ({
   event: {
     id: 'event-1', name: 'テスト', timeZone: 'Asia/Tokyo',
-    defaultTransitionMinutes: 0,
     validationPolicy: { minimumGapBands: 0, minimumRestMinutes: 0 },
     performanceSlotMinutes: [10],
   },
@@ -56,7 +55,6 @@ const find = (violations, code) => violations.find((violation) => violation.code
 const issueCodes = (candidate) => {
   const calculatedItems = candidate.eventDays.flatMap((day) =>
     calculateEventDayTimelines({
-      event: candidate.event,
       eventDayId: day.id,
       stages: candidate.stages,
       sections: candidate.sections,
@@ -610,7 +608,6 @@ test('Section間Breakを有効配置としてTimelineへ反映し、Break自体�
   const candidate = input({
     event: {
       ...input().event,
-      defaultTransitionMinutes: 2,
       validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 20 },
     },
     sections: [section('section-1', 0), section('section-2', 1)],

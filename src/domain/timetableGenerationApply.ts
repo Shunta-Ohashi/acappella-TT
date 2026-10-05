@@ -492,10 +492,10 @@ export const validateTimetableGenerationCandidate = (
   })
   try {
     if (targetStages.some(stage => !hasSafeStageTimelineArithmetic({
-      event, stage, sections: targetSections, scheduleItems: targetItems, eventBands: targetBands,
+      stage, sections: targetSections, scheduleItems: targetItems, eventBands: targetBands,
     }))) return fail('予定時刻を安全に計算できません。')
     const timeline = calculateEventDayTimelines({
-      event, eventDayId: eventDay.id, stages: targetStages, sections: targetSections,
+      eventDayId: eventDay.id, stages: targetStages, sections: targetSections,
       scheduleItems: targetItems, eventBands: targetBands,
     })
     if (timeline.invalidStages.length) return fail('Sectionと出演項目の所属が一致していません。')

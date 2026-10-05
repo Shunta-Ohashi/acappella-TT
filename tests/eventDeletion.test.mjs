@@ -21,8 +21,8 @@ const scheduleItemBoundary = (scheduleItemId, edge = 'start') => ({
 const createInput = (overrides = {}) => ({
   eventId: 'event-a',
   events: [
-    { id: 'event-a', name: 'Event A', timeZone: 'Asia/Tokyo', defaultTransitionMinutes: 2, validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 10 }, performanceSlotMinutes: [10] },
-    { id: 'event-b', name: 'Event B', timeZone: 'Asia/Tokyo', defaultTransitionMinutes: 2, validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 10 }, performanceSlotMinutes: [10] },
+    { id: 'event-a', name: 'Event A', timeZone: 'Asia/Tokyo', validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 10 }, performanceSlotMinutes: [10] },
+    { id: 'event-b', name: 'Event B', timeZone: 'Asia/Tokyo', validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 10 }, performanceSlotMinutes: [10] },
   ],
   eventDays: [
     { id: 'day-a', eventId: 'event-a', date: '2026-10-01', order: 0 },
@@ -80,7 +80,7 @@ const createInputWithAmbiguousForeignScheduleItem = (overrides = {}) => {
   return createInput({
     events: [
       ...base.events,
-      { id: 'event-c', name: 'Event C', timeZone: 'Asia/Tokyo', defaultTransitionMinutes: 2, validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 10 }, performanceSlotMinutes: [10] },
+      { id: 'event-c', name: 'Event C', timeZone: 'Asia/Tokyo', validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 10 }, performanceSlotMinutes: [10] },
     ],
     eventDays: [
       ...base.eventDays,
@@ -354,7 +354,7 @@ test('targetと無関係なduplicate IDも削除scopeを曖昧にするためfai
   })
 })
 
-test('共通Member・Bandを保持した削除後snapshotをPersistence V4でround-tripする', () => {
+test('共通Member・Bandを保持した削除後snapshotをPersistence V5でround-tripする', () => {
   const input = createInput({ timetableOrderConstraints: [] })
   const result = createEventDeletion(input)
   assert.equal(result.ok, true)

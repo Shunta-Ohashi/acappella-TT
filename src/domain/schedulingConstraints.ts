@@ -398,7 +398,6 @@ export const evaluateScheduleConstraints = ({
       }
 
       calculatedItems.push(...calculateStageTimeline({
-        event,
         stage,
         sections: stageSections,
         scheduleItems: timedItems,

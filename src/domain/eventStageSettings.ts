@@ -27,7 +27,6 @@ import {
 export { isSectionWithinStageTimeRange, isValidStageTimeRange } from './stageTimeRanges.ts'
 
 export type StageEndMode = 'automatic' | 'fixed'
-export type StageTransitionMode = 'event-default' | 'stage-specific'
 export type SectionTimeMode = 'automatic' | 'fixed'
 
 export interface StageSettingsDraft {
@@ -39,8 +38,6 @@ export interface StageSettingsDraft {
   plannedStartTime: LocalTime
   endMode: StageEndMode
   plannedEndTime: LocalTime
-  transitionMode: StageTransitionMode
-  transitionMinutes: string
 }
 
 export interface SectionSettingsDraft {
@@ -55,7 +52,6 @@ export interface SectionSettingsDraft {
 }
 
 export interface EventStageSettingsDraft {
-  defaultTransitionMinutes: string
   performanceSlotMinutes: number[]
   stages: StageSettingsDraft[]
   sections: SectionSettingsDraft[]
@@ -65,7 +61,6 @@ export interface StageSettingsValidationErrors {
   name?: string
   plannedStartTime?: string
   plannedEndTime?: string
-  transitionMinutes?: string
   form?: string
 }
 
@@ -77,7 +72,6 @@ export interface SectionSettingsValidationErrors {
 }
 
 export interface EventStageSettingsValidationErrors {
-  defaultTransitionMinutes?: string
   performanceSlotMinutes?: string
   stages: Record<string, StageSettingsValidationErrors>
   sections: Record<string, SectionSettingsValidationErrors>
@@ -129,9 +123,6 @@ interface CreateEventStageSettingsUpdateInput {
 export type EventStageSettingsUpdateResult =
   | { ok: true; event: Event; stages: Stage[]; sections: Section[] }
   | { ok: false; errors: EventStageSettingsValidationErrors }
-
-const isNonNegativeInteger = (value: string): boolean =>
-  /^\d+$/.test(value) && Number.isSafeInteger(Number(value))
 
 const isValidPerformanceSlotMinute = (value: number): boolean =>
   Number.isFinite(value) && Number.isSafeInteger(value) && value > 0
@@ -239,12 +230,6 @@ export const createEventStageSettingsDraft = (
       plannedStartTime: stage.plannedStartTime,
       endMode: stage.plannedEndTime ? 'fixed' as const : 'automatic' as const,
       plannedEndTime: stage.plannedEndTime ?? '',
-      transitionMode: stage.transitionMinutes === undefined
-        ? 'event-default' as const
-        : 'stage-specific' as const,
-      transitionMinutes: stage.transitionMinutes === undefined
-        ? ''
-        : String(stage.transitionMinutes),
     }))
   const stageDraftIdByStageId = new Map(
     stageDrafts.flatMap((stage) =>
@@ -258,7 +243,6 @@ export const createEventStageSettingsDraft = (
   )
 
   return {
-    defaultTransitionMinutes: String(event.defaultTransitionMinutes),
     performanceSlotMinutes: normalizePerformanceSlotMinutes(
       event.performanceSlotMinutes,
     ),
@@ -292,10 +276,6 @@ export const validateEventStageSettingsDraft = (
     sections: {},
   }
 
-  if (!isNonNegativeInteger(draft.defaultTransitionMinutes)) {
-    errors.defaultTransitionMinutes = '0以上の整数を入力してください。'
-  }
-
   errors.performanceSlotMinutes = validatePerformanceSlotMinutes(
     draft.performanceSlotMinutes,
   )
@@ -323,13 +303,6 @@ export const validateEventStageSettingsDraft = (
         stageErrors.plannedEndTime =
           '終了時刻は開始時刻より後にしてください。'
       }
-    }
-
-    if (
-      stage.transitionMode === 'stage-specific' &&
-      !isNonNegativeInteger(stage.transitionMinutes)
-    ) {
-      stageErrors.transitionMinutes = '0以上の整数を入力してください。'
     }
 
     if (hasStageErrors(stageErrors)) {
@@ -436,7 +409,6 @@ export const validateEventStageSettingsDraft = (
 export const hasEventStageSettingsErrors = (
   errors: EventStageSettingsValidationErrors,
 ): boolean => Boolean(
-  errors.defaultTransitionMinutes ||
   errors.performanceSlotMinutes ||
   errors.form ||
   Object.values(errors.stages).some(hasStageErrors) ||
@@ -710,9 +682,6 @@ export const createEventStageSettingsUpdate = ({
       plannedEndTime: stageDraft.endMode === 'fixed'
         ? stageDraft.plannedEndTime
         : undefined,
-      transitionMinutes: stageDraft.transitionMode === 'stage-specific'
-        ? Number(stageDraft.transitionMinutes)
-        : undefined,
     }
 
     if (stageDraft.stageId) {
@@ -818,7 +787,6 @@ export const createEventStageSettingsUpdate = ({
     ok: true,
     event: {
       ...event,
-      defaultTransitionMinutes: Number(draft.defaultTransitionMinutes),
       performanceSlotMinutes: normalizePerformanceSlotMinutes(
         draft.performanceSlotMinutes,
       ),

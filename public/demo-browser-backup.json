@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 5,
   "members": [
     {
       "id": "member-demo-01",
@@ -228,31 +228,29 @@
       "name": "2026 デモライブ",
       "description": "複数日・複数Stageの動作確認用イベントです。",
       "timeZone": "Asia/Tokyo",
-      "defaultTransitionMinutes": 2,
       "validationPolicy": {
         "minimumGapBands": 1,
         "minimumRestMinutes": 10
       },
       "performanceSlotMinutes": [
-        5,
         7,
-        10,
-        15
+        9,
+        12,
+        17
       ]
     },
     {
       "id": "event-demo-festival",
       "name": "2026 学祭デモ",
       "timeZone": "Asia/Tokyo",
-      "defaultTransitionMinutes": 2,
       "validationPolicy": {
         "minimumGapBands": 1,
         "minimumRestMinutes": 10
       },
       "performanceSlotMinutes": [
-        5,
-        10,
-        15
+        7,
+        12,
+        17
       ]
     },
     {
@@ -260,16 +258,15 @@
       "name": "自動生成お試しライブ（2日開催）",
       "description": "両日とも自動生成可能。部内／部間休憩、TT固定、PA、撮影3名を確認できます。",
       "timeZone": "Asia/Tokyo",
-      "defaultTransitionMinutes": 2,
       "validationPolicy": {
         "minimumGapBands": 1,
         "minimumRestMinutes": 10
       },
       "performanceSlotMinutes": [
-        5,
         7,
-        10,
-        15
+        9,
+        12,
+        17
       ]
     }
   ],
@@ -317,8 +314,7 @@
       "location": "大ホール",
       "order": 0,
       "plannedStartTime": "10:00",
-      "plannedEndTime": "18:00",
-      "transitionMinutes": 2
+      "plannedEndTime": "18:00"
     },
     {
       "id": "stage-demo-sub-day1",
@@ -327,8 +323,7 @@
       "location": "中庭",
       "order": 1,
       "plannedStartTime": "11:00",
-      "plannedEndTime": "17:00",
-      "transitionMinutes": 2
+      "plannedEndTime": "17:00"
     },
     {
       "id": "stage-demo-main-day2",
@@ -337,8 +332,7 @@
       "location": "大ホール",
       "order": 0,
       "plannedStartTime": "10:00",
-      "plannedEndTime": "18:00",
-      "transitionMinutes": 2
+      "plannedEndTime": "18:00"
     },
     {
       "id": "stage-demo-sub-day2",
@@ -347,8 +341,7 @@
       "location": "中庭",
       "order": 1,
       "plannedStartTime": "11:00",
-      "plannedEndTime": "17:00",
-      "transitionMinutes": 2
+      "plannedEndTime": "17:00"
     },
     {
       "id": "stage-demo-festival",
@@ -1218,7 +1211,7 @@
         "member-demo-03",
         "member-demo-04"
       ],
-      "durationMinutes": 15
+      "durationMinutes": 17
     },
     {
       "id": "event-band-demo-main-02",
@@ -1232,7 +1225,7 @@
         "member-demo-05",
         "member-demo-06"
       ],
-      "durationMinutes": 10
+      "durationMinutes": 12
     },
     {
       "id": "event-band-demo-main-03",
@@ -1244,7 +1237,7 @@
         "member-demo-06",
         "member-demo-07"
       ],
-      "durationMinutes": 10,
+      "durationMinutes": 12,
       "availableTimeRange": {
         "from": "15:00"
       },
@@ -1261,7 +1254,7 @@
         "member-demo-04",
         "member-demo-09"
       ],
-      "durationMinutes": 7,
+      "durationMinutes": 9,
       "availableTimeRange": {
         "from": "11:00",
         "until": "16:00"
@@ -1282,7 +1275,7 @@
         "member-demo-03",
         "member-demo-04"
       ],
-      "durationMinutes": 15
+      "durationMinutes": 17
     },
     {
       "id": "event-band-demo-main-06",
@@ -1295,7 +1288,7 @@
         "member-demo-06",
         "member-demo-08"
       ],
-      "durationMinutes": 10,
+      "durationMinutes": 12,
       "preferredTimeRange": {
         "from": "15:00",
         "until": "17:00"
@@ -1312,7 +1305,7 @@
         "member-demo-08",
         "member-demo-09"
       ],
-      "durationMinutes": 5,
+      "durationMinutes": 7,
       "fixedPlacement": {
         "stageId": "stage-demo-main-day2",
         "sectionId": "section-demo-day2-02",
@@ -1330,7 +1323,7 @@
         "member-demo-03",
         "member-demo-09"
       ],
-      "durationMinutes": 7,
+      "durationMinutes": 9,
       "fixedPlacement": {
         "stageId": "stage-demo-sub-day2",
         "plannedStartTime": "14:00"
@@ -1346,7 +1339,7 @@
         "member-demo-01",
         "member-demo-02"
       ],
-      "durationMinutes": 10
+      "durationMinutes": 12
     },
     {
       "id": "event-band-demo-festival-02",
@@ -1357,7 +1350,7 @@
         "member-demo-03",
         "member-demo-04"
       ],
-      "durationMinutes": 5
+      "durationMinutes": 7
     },
     {
       "id": "eb-demo-generation-1-1",
@@ -1371,7 +1364,7 @@
         "member-demo-03",
         "member-demo-04"
       ],
-      "durationMinutes": 10,
+      "durationMinutes": 12,
       "fixedPlacement": {
         "stageId": "stage-demo-generation-main-1",
         "sectionId": "section-demo-generation-1a"
@@ -1390,7 +1383,7 @@
         "member-demo-05",
         "member-demo-06"
       ],
-      "durationMinutes": 15,
+      "durationMinutes": 17,
       "fixedPlacement": {
         "stageId": "stage-demo-generation-main-1",
         "sectionId": "section-demo-generation-1b"
@@ -1409,7 +1402,7 @@
         "member-demo-07",
         "member-demo-08"
       ],
-      "durationMinutes": 7,
+      "durationMinutes": 9,
       "fixedPlacement": {
         "stageId": "stage-demo-generation-main-1",
         "sectionId": "section-demo-generation-1c"
@@ -1428,7 +1421,7 @@
         "member-demo-07",
         "member-demo-08"
       ],
-      "durationMinutes": 10,
+      "durationMinutes": 12,
       "fixedPlacement": {
         "stageId": "stage-demo-generation-sub-1"
       },
@@ -1454,7 +1447,7 @@
         "member-demo-03",
         "member-demo-04"
       ],
-      "durationMinutes": 10,
+      "durationMinutes": 12,
       "fixedPlacement": {
         "stageId": "stage-demo-generation-main-2",
         "sectionId": "section-demo-generation-2a"
@@ -1473,7 +1466,7 @@
         "member-demo-05",
         "member-demo-06"
       ],
-      "durationMinutes": 15,
+      "durationMinutes": 17,
       "fixedPlacement": {
         "stageId": "stage-demo-generation-main-2",
         "sectionId": "section-demo-generation-2b"
@@ -1492,7 +1485,7 @@
         "member-demo-07",
         "member-demo-08"
       ],
-      "durationMinutes": 7,
+      "durationMinutes": 9,
       "fixedPlacement": {
         "stageId": "stage-demo-generation-sub-2",
         "plannedStartTime": "14:00"
@@ -1511,7 +1504,7 @@
         "member-demo-07",
         "member-demo-08"
       ],
-      "durationMinutes": 10,
+      "durationMinutes": 12,
       "fixedPlacement": {
         "stageId": "stage-demo-generation-sub-2"
       },
@@ -1565,7 +1558,7 @@
       "sectionId": "section-demo-day2-01",
       "order": 1,
       "kind": "break",
-      "title": "転換調整",
+      "title": "進行調整",
       "durationMinutes": 10
     },
     {
@@ -1659,10 +1652,12 @@
       "memberId": "member-demo-03",
       "role": "main",
       "from": {
+        "kind": "schedule-item",
         "scheduleItemId": "schedule-demo-main-day1-break",
         "edge": "start"
       },
       "until": {
+        "kind": "schedule-item",
         "scheduleItemId": "schedule-demo-main-day1-break",
         "edge": "end"
       }
@@ -1675,10 +1670,12 @@
       "memberId": "member-demo-06",
       "role": "sub",
       "from": {
+        "kind": "schedule-item",
         "scheduleItemId": "schedule-demo-sub-day1-performance",
         "edge": "start"
       },
       "until": {
+        "kind": "schedule-item",
         "scheduleItemId": "schedule-demo-sub-day1-performance",
         "edge": "end"
       }
@@ -1691,10 +1688,12 @@
       "memberId": "member-demo-generation-main-haru",
       "role": "main",
       "from": {
+        "kind": "schedule-item",
         "scheduleItemId": "schedule-demo-generation-opening",
         "edge": "start"
       },
       "until": {
+        "kind": "schedule-item",
         "scheduleItemId": "schedule-demo-generation-opening",
         "edge": "end"
       }
@@ -1707,10 +1706,12 @@
       "memberId": "member-demo-generation-sub-saki",
       "role": "sub",
       "from": {
+        "kind": "schedule-item",
         "scheduleItemId": "schedule-demo-generation-opening",
         "edge": "start"
       },
       "until": {
+        "kind": "schedule-item",
         "scheduleItemId": "schedule-demo-generation-opening",
         "edge": "end"
       }
@@ -1750,10 +1751,12 @@
       "stageId": "stage-demo-main-day1",
       "memberId": "member-demo-01",
       "from": {
+        "kind": "schedule-item",
         "scheduleItemId": "schedule-demo-main-day1-break",
         "edge": "start"
       },
       "until": {
+        "kind": "schedule-item",
         "scheduleItemId": "schedule-demo-main-day1-break",
         "edge": "end"
       }
@@ -1765,10 +1768,12 @@
       "stageId": "stage-demo-main-day1",
       "memberId": "member-demo-05",
       "from": {
+        "kind": "schedule-item",
         "scheduleItemId": "schedule-demo-main-day1-break",
         "edge": "start"
       },
       "until": {
+        "kind": "schedule-item",
         "scheduleItemId": "schedule-demo-main-day1-break",
         "edge": "end"
       }
@@ -1780,10 +1785,12 @@
       "stageId": "stage-demo-generation-main-1",
       "memberId": "member-demo-generation-duty-koh",
       "from": {
+        "kind": "schedule-item",
         "scheduleItemId": "break-demo-generation-inside",
         "edge": "start"
       },
       "until": {
+        "kind": "schedule-item",
         "scheduleItemId": "break-demo-generation-inside",
         "edge": "end"
       }
@@ -1795,10 +1802,12 @@
       "stageId": "stage-demo-generation-main-1",
       "memberId": "member-demo-generation-duty-rio",
       "from": {
+        "kind": "schedule-item",
         "scheduleItemId": "break-demo-generation-inside",
         "edge": "start"
       },
       "until": {
+        "kind": "schedule-item",
         "scheduleItemId": "break-demo-generation-inside",
         "edge": "end"
       }
@@ -1810,10 +1819,12 @@
       "stageId": "stage-demo-generation-main-1",
       "memberId": "member-demo-generation-duty-sui",
       "from": {
+        "kind": "schedule-item",
         "scheduleItemId": "break-demo-generation-inside",
         "edge": "start"
       },
       "until": {
+        "kind": "schedule-item",
         "scheduleItemId": "break-demo-generation-inside",
         "edge": "end"
       }
@@ -1830,5 +1841,6 @@
         "kind": "first"
       }
     }
-  ]
+  ],
+  "timetableOrderConstraints": []
 }

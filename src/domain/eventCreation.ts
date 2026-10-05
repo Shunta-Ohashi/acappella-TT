@@ -22,11 +22,11 @@ interface CreateEventDataInput {
   draft: NewEventDraft
   defaults: Pick<
     Event,
-    'timeZone' | 'defaultTransitionMinutes' | 'validationPolicy'
+    'timeZone' | 'validationPolicy'
   >
 }
 
-export const DEFAULT_PERFORMANCE_SLOT_MINUTES = [5, 10, 15]
+export const DEFAULT_PERFORMANCE_SLOT_MINUTES = [7, 12, 17]
 
 export const isValidLocalDate = (value: LocalDate): boolean => {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
@@ -87,7 +87,6 @@ export const createEventData = ({
       id: eventId,
       name: draft.name.trim(),
       timeZone: defaults.timeZone,
-      defaultTransitionMinutes: defaults.defaultTransitionMinutes,
       validationPolicy: { ...defaults.validationPolicy },
       performanceSlotMinutes: [...DEFAULT_PERFORMANCE_SLOT_MINUTES],
     },

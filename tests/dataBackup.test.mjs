@@ -53,7 +53,7 @@ test('15 collectionのバックアップは既存version付きsnapshotと同じ�
   assert.equal('selectedEventId' in restored, false)
 })
 
-test('TimetableLockをバックアップでround-tripし、旧backupでは空配列にする', () => {
+test('TimetableLockをV5バックアップでround-tripし、旧backupは拒否する', () => {
   const state = {
     ...emptyState(),
     timetableLocks: [{
@@ -70,10 +70,10 @@ test('TimetableLockをバックアップでround-tripし、旧backupでは空配
   const current = createPersistedAppState(emptyState())
   const { timetableLocks: _omitted, ...legacy } = current
   legacy.version = 1
-  assert.deepEqual(parseBackupJson(JSON.stringify(legacy))?.timetableLocks, [])
+  assert.equal(parseBackupJson(JSON.stringify(legacy)), undefined)
 })
 
-test('TimetableOrderConstraintをround-tripしV2では空配列とBoundary kindを補う', () => {
+test('TimetableOrderConstraintをround-tripしV2 backupは拒否する', () => {
   const state = {
     ...emptyState(),
     timetableOrderConstraints: [{
@@ -97,11 +97,10 @@ test('TimetableOrderConstraintをround-tripしV2では空配列とBoundary kind�
     until: { scheduleItemId: 'item-b', edge: 'end' },
   }]
   const restored = parseBackupJson(JSON.stringify(legacy))
-  assert.deepEqual(restored?.timetableOrderConstraints, [])
-  assert.equal(restored?.paAssignments[0].from.kind, 'schedule-item')
+  assert.equal(restored, undefined)
 })
 
-test('V1バックアップをV4へ移行し、PA可否とDuty Boundaryを補う', () => {
+test('V1バックアップは移行せず拒否する', () => {
   const legacy = {
     ...createPersistedAppState(emptyState()),
     version: 1,
@@ -116,20 +115,10 @@ test('V1バックアップをV4へ移行し、PA可否とDuty Boundaryを補う'
     }],
   }
   const restored = parseBackupJson(JSON.stringify(legacy))
-  assert.ok(restored)
-  assert.equal(restored.version, CURRENT_STORAGE_VERSION)
-  assert.deepEqual(restored.timetableOrderConstraints, [])
-  assert.deepEqual(restored.eventMembers[0].paCapabilities, { main: true, sub: false })
-  assert.equal('paCapabilities' in restored.members[0], false)
-  assert.equal(restored.dutyAssignments[0].until.kind, 'schedule-item')
-
-  const exported = JSON.parse(createBackupJson(restored))
-  assert.equal(exported.version, CURRENT_STORAGE_VERSION)
-  assert.equal('paCapabilities' in exported.members[0], false)
-  assert.deepEqual(exported.eventMembers[0].paCapabilities, { main: true, sub: false })
+  assert.equal(restored, undefined)
 })
 
-test('V3バックアップのPA・Duty境界をV4 schedule-item境界へ移行する', () => {
+test('V3バックアップは移行せず拒否する', () => {
   const legacy = {
     ...createPersistedAppState(emptyState()),
     version: 3,
@@ -149,11 +138,17 @@ test('V3バックアップのPA・Duty境界をV4 schedule-item境界へ移行�
   const original = structuredClone(legacy)
   const restored = parseBackupJson(JSON.stringify(legacy))
 
-  assert.ok(restored)
-  assert.equal(restored.version, CURRENT_STORAGE_VERSION)
-  assert.equal(restored.paAssignments[0].from.kind, 'schedule-item')
-  assert.equal(restored.dutyAssignments[0].until.kind, 'schedule-item')
+  assert.equal(restored, undefined)
   assert.deepEqual(legacy, original)
+})
+
+test('V4バックアップは移行せず拒否する', () => {
+  const legacy = {
+    ...createPersistedAppState(emptyState()),
+    version: 4,
+  }
+
+  assert.equal(parseBackupJson(JSON.stringify(legacy)), undefined)
 })
 
 test('旧バックアップのhybrid Boundaryはschedule-itemへ変換せず拒否する', () => {
@@ -173,7 +168,7 @@ test('旧バックアップのhybrid Boundaryはschedule-itemへ変換せず拒�
   assert.equal(parseBackupJson(JSON.stringify(legacy)), undefined)
 })
 
-test('旧バックアップBoundaryの無関係な追加fieldをV4移行後も維持する', () => {
+test('旧バックアップBoundaryに追加fieldがあっても移行せず拒否する', () => {
   const legacy = {
     ...createPersistedAppState(emptyState()),
     version: 3,
@@ -187,13 +182,11 @@ test('旧バックアップBoundaryの無関係な追加fieldをV4移行後も�
   const original = structuredClone(legacy)
   const restored = parseBackupJson(JSON.stringify(legacy))
 
-  assert.ok(restored)
-  assert.equal(restored.dutyAssignments[0].from.futureMetadata, 'from-extra')
-  assert.equal(restored.dutyAssignments[0].until.futureMetadata, 'until-extra')
+  assert.equal(restored, undefined)
   assert.deepEqual(legacy, original)
 })
 
-test('V4バックアップのcross-kind hybrid Boundaryを拒否する', () => {
+test('V5バックアップのcross-kind hybrid Boundaryを拒否する', () => {
   const current = createPersistedAppState(emptyState())
   const hybrid = {
     ...current,

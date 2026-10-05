@@ -12,7 +12,7 @@ import {
   STORAGE_KEY,
   clearPersistedState,
   createPersistedAppState,
-  isPersistedAppStateV4,
+  isPersistedAppStateV5,
   loadPersistedState,
   loadPersistedStateOrFallback,
   parsePersistedState,
@@ -78,6 +78,7 @@ test('主要domain collectionをversion付き単一snapshotでround-tripする',
   assert.ok(parsed)
   assert.equal(parsed.version, CURRENT_STORAGE_VERSION)
   assert.deepEqual(parsed, createPersistedAppState(demo))
+  assert.doesNotMatch(serialized, /transition/i)
 })
 
 test('ScheduleBoundaryを含む全IDをround-trip後も維持する', () => {
@@ -113,7 +114,7 @@ test('TimetableLockをIDと配置条件を変えずにround-tripする', () => {
   assert.deepEqual(restored.timetableLocks, state.timetableLocks)
 })
 
-test('TimetableOrderConstraintをV4 snapshotでround-tripする', () => {
+test('TimetableOrderConstraintをV5 snapshotでround-tripする', () => {
   const demo = createDemoData()
   const state = {
     ...demo,
@@ -133,7 +134,7 @@ test('TimetableOrderConstraintをV4 snapshotでround-tripする', () => {
   )
 })
 
-test('V2 snapshotは出演順制約の空配列とBoundary kindを補ってV4へ移行する', () => {
+test('V2 snapshotは移行せず拒否する', () => {
   const current = createPersistedAppState(createEmptyState())
   const { timetableOrderConstraints: _omitted, ...legacy } = current
   legacy.version = 2
@@ -150,14 +151,10 @@ test('V2 snapshotは出演順制約の空配列とBoundary kindを補ってV4へ
     until: { scheduleItemId: 'item-b', edge: 'start' },
   }]
   const restored = parsePersistedState(JSON.stringify(legacy))
-  assert.ok(restored)
-  assert.equal(restored.version, CURRENT_STORAGE_VERSION)
-  assert.deepEqual(restored.timetableOrderConstraints, [])
-  assert.equal(restored.paAssignments[0].from.kind, 'schedule-item')
-  assert.equal(restored.dutyAssignments[0].until.kind, 'schedule-item')
+  assert.equal(restored, undefined)
 })
 
-test('V3のPA・Duty ScheduleBoundaryを非破壊でV4へ移行する', () => {
+test('V3 snapshotは移行せず拒否する', () => {
   const legacy = {
     ...createPersistedAppState(createEmptyState()),
     version: 3,
@@ -177,16 +174,11 @@ test('V3のPA・Duty ScheduleBoundaryを非破壊でV4へ移行する', () => {
   const original = structuredClone(legacy)
   const restored = parsePersistedState(JSON.stringify(legacy))
 
-  assert.ok(restored)
-  assert.equal(restored.version, CURRENT_STORAGE_VERSION)
-  assert.deepEqual(restored.paAssignments[0].from,
-    { kind: 'schedule-item', scheduleItemId: 'item-a', edge: 'start' })
-  assert.deepEqual(restored.dutyAssignments[0].until,
-    { kind: 'schedule-item', scheduleItemId: 'item-b', edge: 'start' })
+  assert.equal(restored, undefined)
   assert.deepEqual(legacy, original)
 })
 
-test('V1のPA・Duty ScheduleBoundaryもV4へ移行する', () => {
+test('V1 snapshotは移行せず拒否する', () => {
   const legacy = {
     ...createPersistedAppState(createEmptyState()),
     version: 1,
@@ -205,10 +197,7 @@ test('V1のPA・Duty ScheduleBoundaryもV4へ移行する', () => {
   }
   const restored = parsePersistedState(JSON.stringify(legacy))
 
-  assert.ok(restored)
-  assert.equal(restored.version, CURRENT_STORAGE_VERSION)
-  assert.equal(restored.paAssignments[0].from.kind, 'schedule-item')
-  assert.equal(restored.dutyAssignments[0].until.kind, 'schedule-item')
+  assert.equal(restored, undefined)
 })
 
 test('V1/V2/V3のhybrid Boundaryとinvalid edgeをsilent migrationせず拒否する', () => {
@@ -246,7 +235,7 @@ test('V1/V2/V3のhybrid Boundaryとinvalid edgeをsilent migrationせず拒否�
   }
 })
 
-test('V1/V2/V3 Boundaryの無関係な追加fieldを非破壊migrationで維持する', () => {
+test('V1/V2/V3 Boundaryの追加fieldに関係なく旧snapshotを拒否する', () => {
   const current = createPersistedAppState(createEmptyState())
   for (const version of [1, 2, 3]) {
     const legacy = {
@@ -266,21 +255,12 @@ test('V1/V2/V3 Boundaryの無関係な追加fieldを非破壊migrationで維持�
     const original = structuredClone(legacy)
     const restored = parsePersistedState(JSON.stringify(legacy))
 
-    assert.ok(restored)
-    assert.equal(restored.version, CURRENT_STORAGE_VERSION)
-    assert.deepEqual(restored.paAssignments[0].from, {
-      scheduleItemId: 'item-a', edge: 'start',
-      futureMetadata: `from-v${version}`, kind: 'schedule-item',
-    })
-    assert.deepEqual(restored.paAssignments[0].until, {
-      scheduleItemId: 'item-b', edge: 'end',
-      futureMetadata: `until-v${version}`, kind: 'schedule-item',
-    })
+    assert.equal(restored, undefined)
     assert.deepEqual(legacy, original)
   }
 })
 
-test('V4では出演順制約collectionを必須としmalformed要素を拒否する', () => {
+test('V5では出演順制約collectionを必須としmalformed要素を拒否する', () => {
   const current = createPersistedAppState(createEmptyState())
   const { timetableOrderConstraints: _omitted, ...missing } = current
   assert.equal(parsePersistedState(JSON.stringify(missing)), undefined)
@@ -293,7 +273,7 @@ test('V4では出演順制約collectionを必須としmalformed要素を拒否�
   })), undefined)
 })
 
-test('V4共通配列validatorはtop-levelとnestedのsparse arrayを拒否する', () => {
+test('V5共通配列validatorはtop-levelとnestedのsparse arrayを拒否する', () => {
   const current = createPersistedAppState(createEmptyState())
   const validConstraint = {
     id: 'order-1', eventId: 'event-1', eventDayId: 'day-1',
@@ -310,21 +290,20 @@ test('V4共通配列validatorはtop-levelとnestedのsparse arrayを拒否する
   sparsePerformanceSlots[2] = 10
   const eventWithSparseSlots = {
     id: 'event-1', name: '学園祭', timeZone: 'Asia/Tokyo',
-    defaultTransitionMinutes: 2,
     validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 10 },
     performanceSlotMinutes: sparsePerformanceSlots,
   }
 
-  assert.equal(isPersistedAppStateV4(current), true)
-  assert.equal(isPersistedAppStateV4({
+  assert.equal(isPersistedAppStateV5(current), true)
+  assert.equal(isPersistedAppStateV5({
     ...current,
     timetableOrderConstraints: sparseConstraints,
   }), false)
-  assert.equal(isPersistedAppStateV4({
+  assert.equal(isPersistedAppStateV5({
     ...current,
     members: sparseMembers,
   }), false)
-  assert.equal(isPersistedAppStateV4({
+  assert.equal(isPersistedAppStateV5({
     ...current,
     events: [eventWithSparseSlots],
   }), false)
@@ -349,15 +328,14 @@ test('出演順制約の参照切れやcycleはsemantic評価へ委ねsnapshot�
   assert.deepEqual(restored.timetableOrderConstraints, state.timetableOrderConstraints)
 })
 
-test('timetableLocksがない旧snapshotは空配列として復元する', () => {
+test('timetableLocksがない旧snapshotは移行せず拒否する', () => {
   const current = createPersistedAppState(createEmptyState())
   const { timetableLocks: _omitted, ...legacy } = current
   legacy.version = 1
 
   const restored = parsePersistedState(JSON.stringify(legacy))
 
-  assert.ok(restored)
-  assert.deepEqual(restored.timetableLocks, [])
+  assert.equal(restored, undefined)
 })
 
 test('malformed TimetableLockはsnapshotを拒否し、参照切れLockは保持する', () => {
@@ -384,40 +362,29 @@ test('malformed TimetableLockはsnapshotを拒否し、参照切れLockは保持
   assert.deepEqual(restored.timetableLocks, [brokenReferenceLock])
 })
 
-test('version 4を受理し未知versionを拒否する', () => {
+test('version 5だけを受理しV4と未知versionを拒否する', () => {
   const valid = createPersistedAppState(createEmptyState())
 
-  assert.equal(isPersistedAppStateV4(valid), true)
+  assert.equal(isPersistedAppStateV5(valid), true)
   assert.equal(parsePersistedState(JSON.stringify(valid))?.version, CURRENT_STORAGE_VERSION)
+  assert.equal(parsePersistedState(JSON.stringify({ ...valid, version: 4 })), undefined)
   assert.equal(parsePersistedState(JSON.stringify({ ...valid, version: 999 })), undefined)
 })
 
-test('V1の共通PA可否を各EventMemberへ移し、未設定と参照切れはfalseにする', () => {
+test('V1の共通PA可否を含むsnapshotは移行せず拒否する', () => {
   const legacy = createLegacyState()
   const restored = parsePersistedState(JSON.stringify(legacy))
-  assert.ok(restored)
-  assert.equal(restored.version, CURRENT_STORAGE_VERSION)
-  assert.deepEqual(restored.timetableOrderConstraints, [])
-  assert.deepEqual(restored.eventMembers.map(({ id, paCapabilities }) =>
-    [id, paCapabilities]), [
-    ['event-member-a', { main: true, sub: false }],
-    ['event-member-b', { main: true, sub: false }],
-    ['event-member-unset', { main: false, sub: false }],
-    ['event-member-broken', { main: false, sub: false }],
-  ])
-  assert.equal(restored.eventMembers.length, legacy.eventMembers.length)
-  assert.ok(restored.members.every((member) => !('paCapabilities' in member)))
-  assert.ok(restored.eventMembers.every((member) => 'paCapabilities' in member))
+  assert.equal(restored, undefined)
 })
 
-test('V1のTimetableLock有無を移行し、V2の必須PA可否を検証する', () => {
+test('V1のTimetableLock有無にかかわらず旧snapshotを拒否する', () => {
   const legacy = createLegacyState()
   const { timetableLocks: _omitted, ...withoutLocks } = legacy
-  assert.deepEqual(parsePersistedState(JSON.stringify(withoutLocks))?.timetableLocks, [])
+  assert.equal(parsePersistedState(JSON.stringify(withoutLocks)), undefined)
   const locks = [{ id: 'lock-1', eventId: 'event-a', scheduleItemId: 'item-1',
     stageId: 'stage-1', position: { kind: 'first' } }]
-  assert.deepEqual(parsePersistedState(JSON.stringify({ ...legacy,
-    timetableLocks: locks }))?.timetableLocks, locks)
+  assert.equal(parsePersistedState(JSON.stringify({ ...legacy,
+    timetableLocks: locks })), undefined)
 
   const current = createPersistedAppState(createEmptyState())
   assert.equal(parsePersistedState(JSON.stringify({ ...current,
@@ -433,7 +400,7 @@ test('V1のTimetableLock有無を移行し、V2の必須PA可否を検証する'
   })), undefined)
 })
 
-test('V1の既存PA Assignmentは移行後も同じIDと担当可能roleを維持する', () => {
+test('実データ相当のV1 snapshotも移行せず拒否する', () => {
   const demo = createDemoData()
   const toLegacyBoundary = ({ scheduleItemId, edge }) => ({ scheduleItemId, edge })
   const legacy = {
@@ -459,14 +426,7 @@ test('V1の既存PA Assignmentは移行後も同じIDと担当可能roleを維�
     })),
   }
   const restored = parsePersistedState(JSON.stringify(legacy))
-  assert.ok(restored)
-  assert.deepEqual(restored.paAssignments, demo.paAssignments)
-  for (const assignment of restored.paAssignments) {
-    const eventMember = restored.eventMembers.find((candidate) =>
-      candidate.eventId === assignment.eventId &&
-      candidate.memberId === assignment.memberId)
-    assert.ok(eventMember?.paCapabilities[assignment.role], assignment.id)
-  }
+  assert.equal(restored, undefined)
 })
 
 test('壊れたJSONを例外なく拒否しstorage entryを削除する', () => {
@@ -1084,10 +1044,10 @@ test('保存済み数値を各fieldの整数・符号制約で検証し、許可
   const dutyType = demo.dutyTypes[0]
   const allowedZero = {
     ...empty,
-    events: [{ ...event, defaultTransitionMinutes: 0,
+    events: [{ ...event,
       validationPolicy: { minimumGapBands: 0, minimumRestMinutes: 0 } }],
     eventDays: [{ ...eventDay, order: 0 }],
-    stages: [{ ...stage, order: 0, transitionMinutes: 0 }],
+    stages: [{ ...stage, order: 0 }],
     sections: [{ ...section, order: 0 }],
     scheduleItems: [breakItem],
     dutyTypes: [{ ...dutyType, order: 0 }],
@@ -1099,15 +1059,12 @@ test('保存済み数値を各fieldの整数・符号制約で検証し、許可
 
   const invalid = [
     { members: [{ ...member, entryAcademicYear: 0 }] },
-    { events: [{ ...event, defaultTransitionMinutes: -1 }] },
-    { events: [{ ...event, defaultTransitionMinutes: 1.5 }] },
     { events: [{ ...event, validationPolicy: { ...event.validationPolicy, minimumGapBands: -1 } }] },
     { events: [{ ...event, validationPolicy: { ...event.validationPolicy, minimumRestMinutes: 1.5 } }] },
     { events: [{ ...event, performanceSlotMinutes: [0] }] },
     { events: [{ ...event, performanceSlotMinutes: [1.5] }] },
     { eventDays: [{ ...eventDay, order: -1 }] },
     { stages: [{ ...stage, order: 1.5 }] },
-    { stages: [{ ...stage, transitionMinutes: -1 }] },
     { sections: [{ ...section, order: -1 }] },
     { eventBands: [{ ...eventBand, durationMinutes: 0 }] },
     { eventBands: [{ ...eventBand, durationMinutes: 1.5 }] },
@@ -1166,7 +1123,7 @@ test('PA・DutyのScheduleBoundaryをnested validationし参照先の有無は�
   }
 })
 
-test('V4 ScheduleBoundaryはcross-kind fieldを拒否し無関係な追加fieldは許容する', () => {
+test('V5 ScheduleBoundaryはcross-kind fieldを拒否し無関係な追加fieldは許容する', () => {
   const empty = createPersistedAppState(createEmptyState())
   const assignment = {
     id: 'pa-v4', eventId: 'event', eventDayId: 'day', stageId: 'stage',

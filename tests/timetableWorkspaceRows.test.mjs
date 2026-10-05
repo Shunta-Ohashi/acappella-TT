@@ -166,7 +166,7 @@ const dutyAssignment = ({
   until: { kind: "schedule-item", scheduleItemId: untilId, edge: untilEdge },
 })
 
-test('Timeline順にPerformance・Breakのrowを作り、出演枠へ転換時間を混ぜない', () => {
+test('Timeline順にPerformance・Breakのrowを作り、出演枠へ暗黙時間を加えない', () => {
   const result = createRows()
 
   assert.deepEqual(
@@ -216,7 +216,7 @@ test('Section間Breakの配置参照をStep 6 rowへ維持する', () => {
 const previousSection = { id: 'section-1', stageId: 'stage-1', name: '第1部', order: 0 }
 const nextSection = { id: 'section-2', stageId: 'stage-1', name: '第2部', order: 1 }
 const betweenBreak = { id: 'between-break', kind: 'break', stageId: 'stage-1',
-  afterSectionId: previousSection.id, title: '機材転換と休憩', durationMinutes: 30, order: 0 }
+  afterSectionId: previousSection.id, title: '機材調整と休憩', durationMinutes: 30, order: 0 }
 
 test('部間休憩の統合セルは実Section名・title・durationと対象を識別できる削除名を使う', () => {
   const original = structuredClone(betweenBreak)
@@ -224,8 +224,8 @@ test('部間休憩の統合セルは実Section名・title・durationと対象を
     createTimetableGridColumns([]), betweenBreak)
   assert.deepEqual(result, {
     sectionLabel: '第1部 → 第2部', contentColumnSpan: 3,
-    title: '機材転換と休憩', durationLabel: '30分',
-    removeAccessibleName: '第1部と第2部の間の休憩「機材転換と休憩」（30分）を削除',
+    title: '機材調整と休憩', durationLabel: '30分',
+    removeAccessibleName: '第1部と第2部の間の休憩「機材調整と休憩」（30分）を削除',
   })
   assert.deepEqual(betweenBreak, original, '表示用helperはScheduleItemを変更しない')
 })
@@ -311,7 +311,7 @@ test('Main PAの単一row担当と複数row・Breakをまたぐ担当を表示�
   assert.equal(rows[2].paCoverage.main[0].endsHere, true)
 })
 
-test('通常のPA区間はrowへ表示し、transitionだけの有効区間はGrid外担当として保持する', () => {
+test('通常のPA区間はrowへ表示し、ScheduleItem間だけの有効区間はGrid外担当として保持する', () => {
   const normal = createRows({
     paAssignments: [assignment({
       id: 'main-performance',
@@ -327,9 +327,9 @@ test('通常のPA区間はrowへ表示し、transitionだけの有効区間はGr
   )
   assert.deepEqual(normal.offGridPaAssignments, [])
 
-  const transitionOnly = createRows({
+  const betweenItemsOnly = createRows({
     paAssignments: [assignment({
-      id: 'main-transition',
+      id: 'main-between-items',
       role: 'main',
       fromId: 'performance-1',
       fromEdge: 'end',
@@ -339,12 +339,12 @@ test('通常のPA区間はrowへ表示し、transitionだけの有効区間はGr
   })
 
   assert.deepEqual(
-    transitionOnly.rows.map((row) => row.paCoverage.main.length),
+    betweenItemsOnly.rows.map((row) => row.paCoverage.main.length),
     [0, 0, 0],
   )
-  assert.deepEqual(transitionOnly.unresolvedPaAssignments, [])
-  assert.deepEqual(transitionOnly.offGridPaAssignments, [{
-    assignmentId: 'main-transition',
+  assert.deepEqual(betweenItemsOnly.unresolvedPaAssignments, [])
+  assert.deepEqual(betweenItemsOnly.offGridPaAssignments, [{
+    assignmentId: 'main-between-items',
     memberName: 'やまだ',
     role: 'main',
     fromMinute: 610,
@@ -544,12 +544,12 @@ test('同一DutyType・同一rowの担当が3人でも全員をcoverageへ保持
   )
 })
 
-test('transition-only一般業務はGrid外へ保持し、参照切れと区別する', () => {
+test('ScheduleItem間だけの一般業務はGrid外へ保持し、参照切れと区別する', () => {
   const result = createRows({
     dutyTypes,
     dutyAssignments: [
       dutyAssignment({
-        id: 'transition-duty',
+        id: 'between-items-duty',
         fromId: 'performance-1',
         fromEdge: 'end',
         untilId: 'performance-2',
@@ -564,7 +564,7 @@ test('transition-only一般業務はGrid外へ保持し、参照切れと区別�
   })
 
   assert.deepEqual(result.offGridDutyAssignments, [{
-    assignmentId: 'transition-duty',
+    assignmentId: 'between-items-duty',
     dutyTypeName: '撮影',
     memberName: 'やまだ',
     fromMinute: 610,

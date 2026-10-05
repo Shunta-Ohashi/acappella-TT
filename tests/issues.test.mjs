@@ -22,7 +22,6 @@ const createEvent = (policy = {}) => ({
   id: 'event-1',
   name: 'テストイベント',
   timeZone: 'Asia/Tokyo',
-  defaultTransitionMinutes: 0,
   validationPolicy: {
     minimumGapBands: 1,
     minimumRestMinutes: 0,
@@ -971,7 +970,6 @@ test('Stage固定終了が未設定・未満・一致の場合はIssueを返さ�
     {
       stage: createStage('stage-a', {
         plannedEndTime: '17:00',
-        transitionMinutes: 5,
       }),
       calculatedItem: performance(
         'performance-equal',

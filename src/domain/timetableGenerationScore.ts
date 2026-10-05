@@ -1,8 +1,6 @@
 import type { MemberId, PaRole, Section, Stage } from './models'
-import { getCrossSectionTransitions, type CalculatedScheduleItem } from './timeline.ts'
+import type { CalculatedScheduleItem } from './timeline.ts'
 import { DEFAULT_SCHEDULING_WEIGHTS, type SoftConstraintViolation } from './schedulingConstraints.ts'
-
-export { getCrossSectionTransitions } from './timeline.ts'
 
 export interface TimetableGenerationScore {
   lastResortActivityCount: number
@@ -105,7 +103,6 @@ export const getExactSectionBalance = (
   sections: Section[],
   calculatedItems: CalculatedScheduleItem[],
 ): { durationImbalance: bigint; bandCountImbalance: bigint } => {
-  const transitions = getCrossSectionTransitions(sections, calculatedItems)
   let durationImbalance = 0n
   let bandCountImbalance = 0n
   for (const stage of stages) {
@@ -115,8 +112,7 @@ export const getExactSectionBalance = (
       const items = calculatedItems.filter(item => item.sectionId === section.id)
       return items.length === 0 ? 0n :
         BigInt(Math.max(...items.map(item => item.plannedEndMinute))) -
-        BigInt(Math.min(...items.map(item => item.plannedStartMinute))) +
-        BigInt(transitions.get(section.id)?.durationMinutes ?? 0)
+        BigInt(Math.min(...items.map(item => item.plannedStartMinute)))
     })
     const counts = stageSections.map(section => calculatedItems.filter(item =>
       item.sectionId === section.id && item.kind === 'performance',

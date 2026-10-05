@@ -23,7 +23,6 @@ const event = {
   id: 'event-1',
   name: 'テストイベント',
   timeZone: 'Asia/Tokyo',
-  defaultTransitionMinutes: 2,
   validationPolicy: {
     minimumGapBands: 1,
     minimumRestMinutes: 10,
@@ -69,9 +68,8 @@ const performance = (id, eventBandId, order, overrides = {}) => ({
   ...overrides,
 })
 
-test('SectionなしではStage開始時刻とEventの転換時間を使ってPerformanceを計算する', () => {
+test('Sectionなしでは出演枠を順番に単純加算する', () => {
   const result = calculateStageTimeline({
-    event,
     stage: createStage(),
     sections: [],
     scheduleItems: [
@@ -83,14 +81,13 @@ test('SectionなしではStage開始時刻とEventの転換時間を使ってPer
 
   assert.deepEqual(
     result.map(item => [item.plannedStartMinute, item.plannedEndMinute]),
-    [[780, 795], [797, 807]],
+    [[780, 795], [795, 805]],
   )
 })
 
-test('転換時間はPerformance同士の直結時だけ適用し、SectionなしStageのBreak前後には加えない', () => {
+test('PerformanceとBreakを種類に関係なく順番に単純加算する', () => {
   const result = calculateStageTimeline({
-    event,
-    stage: createStage({ plannedStartTime: '10:00', transitionMinutes: 5 }),
+    stage: createStage({ plannedStartTime: '10:00' }),
     sections: [],
     scheduleItems: [
       performance('item-1', 'event-band-2', 0),
@@ -113,10 +110,45 @@ test('転換時間はPerformance同士の直結時だけ適用し、Sectionな�
   )
 })
 
-test('複数Breakが連続しても前後へ転換時間を加えない', () => {
+test('7分枠・12分枠・10分休憩・7分枠を追加時間なしで連続計算する', () => {
+  const bands = [
+    { ...eventBands[0], id: 'event-band-7-a', durationMinutes: 7 },
+    { ...eventBands[0], id: 'event-band-12', durationMinutes: 12 },
+    { ...eventBands[0], id: 'event-band-7-b', durationMinutes: 7 },
+  ]
   const result = calculateStageTimeline({
-    event,
-    stage: createStage({ plannedStartTime: '10:00', transitionMinutes: 5 }),
+    stage: createStage({ plannedStartTime: '10:00' }),
+    sections: [],
+    scheduleItems: [
+      performance('item-a', 'event-band-7-a', 0),
+      performance('item-b', 'event-band-12', 1),
+      {
+        id: 'break-1',
+        stageId: 'stage-1',
+        order: 2,
+        kind: 'break',
+        title: '休憩',
+        durationMinutes: 10,
+      },
+      performance('item-c', 'event-band-7-b', 3),
+    ],
+    eventBands: bands,
+  })
+
+  assert.deepEqual(
+    result.map(item => [item.scheduleItemId, item.plannedStartMinute, item.plannedEndMinute]),
+    [
+      ['item-a', 600, 607],
+      ['item-b', 607, 619],
+      ['break-1', 619, 629],
+      ['item-c', 629, 636],
+    ],
+  )
+})
+
+test('複数Breakが連続しても各durationだけを加算する', () => {
+  const result = calculateStageTimeline({
+    stage: createStage({ plannedStartTime: '10:00' }),
     sections: [],
     scheduleItems: [
       performance('item-1', 'event-band-2', 0),
@@ -145,7 +177,6 @@ test('Sectionをorder順に計算し、plannedStartTimeを開始アンカーと�
     { id: 'section-1', stageId: 'stage-1', name: '1部', order: 0, plannedStartTime: '13:30' },
   ]
   const result = calculateStageTimeline({
-    event,
     stage: createStage(),
     sections,
     scheduleItems: [
@@ -163,8 +194,7 @@ test('Sectionをorder順に計算し、plannedStartTimeを開始アンカーと�
 
 test('Section開始時刻がなければ前Sectionの終了後から続ける', () => {
   const result = calculateStageTimeline({
-    event,
-    stage: createStage({ plannedStartTime: '11:00', transitionMinutes: 3 }),
+    stage: createStage({ plannedStartTime: '11:00' }),
     sections: [
       { id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 },
       { id: 'section-2', stageId: 'stage-1', name: '2部', order: 1 },
@@ -192,8 +222,7 @@ test('Section開始時刻がなければ前Sectionの終了後から続ける', 
 
 test('Section内BreakとSection間Breakを順に計算し、次SectionとStage終了へ反映する', () => {
   const result = calculateStageTimeline({
-    event,
-    stage: createStage({ plannedStartTime: '10:00', transitionMinutes: 2 }),
+    stage: createStage({ plannedStartTime: '10:00' }),
     sections: [
       { id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 },
       { id: 'section-2', stageId: 'stage-1', name: '2部', order: 1 },
@@ -230,10 +259,9 @@ test('Section内BreakとSection間Breakを順に計算し、次SectionとStage�
   )
 })
 
-test('BreakなしのSection境界でPerformanceが直接続く場合は転換時間を適用する', () => {
+test('BreakなしのSection境界でもPerformance枠を直接連続させる', () => {
   const result = calculateStageTimeline({
-    event,
-    stage: createStage({ plannedStartTime: '10:00', transitionMinutes: 2 }),
+    stage: createStage({ plannedStartTime: '10:00' }),
     sections: [
       { id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 },
       { id: 'section-2', stageId: 'stage-1', name: '2部', order: 1 },
@@ -247,7 +275,7 @@ test('BreakなしのSection境界でPerformanceが直接続く場合は転換時
 
   assert.deepEqual(
     result.map(item => [item.plannedStartMinute, item.plannedEndMinute]),
-    [[600, 610], [612, 622]],
+    [[600, 610], [610, 620]],
   )
 })
 
@@ -263,7 +291,6 @@ test('Section間Breakは最後のSection・不明Section・曖昧配置では計
     {},
   ]) {
     assert.throws(() => calculateStageTimeline({
-      event,
       stage: createStage(),
       sections,
       scheduleItems: [{
@@ -281,7 +308,6 @@ test('SectionなしStageでも不正なSection配置を計算前に拒否する'
     { afterSectionId: 'missing-section' },
   ]) {
     assert.throws(() => calculateStageTimeline({
-      event,
       stage: createStage(),
       sections: [],
       scheduleItems: [{
@@ -302,7 +328,6 @@ test('PerformanceのafterSectionIdはSectionの有無にかかわらず計算前
     ],
   ]) {
     assert.throws(() => calculateStageTimeline({
-      event,
       stage: createStage(),
       sections,
       scheduleItems: [performance('invalid-performance', 'event-band-1', 0, {
@@ -316,7 +341,6 @@ test('PerformanceのafterSectionIdはSectionの有無にかかわらず計算前
 
 test('次Sectionの開始アンカーが前Sectionの終了より前でも、その時刻を優先する', () => {
   const result = calculateStageTimeline({
-    event,
     stage: createStage({ plannedStartTime: '10:00' }),
     sections: [
       { id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 },
@@ -351,8 +375,8 @@ test('StageごとにScheduleItemを独立して計算する', () => {
     { ...eventBands[1], eventDayId: eventDays[1].id },
   ]
 
-  const resultA = calculateStageTimeline({ event, stage: stageA, sections: [], scheduleItems, eventBands: eventBandsByDay })
-  const resultB = calculateStageTimeline({ event, stage: stageB, sections: [], scheduleItems, eventBands: eventBandsByDay })
+  const resultA = calculateStageTimeline({ stage: stageA, sections: [], scheduleItems, eventBands: eventBandsByDay })
+  const resultB = calculateStageTimeline({ stage: stageB, sections: [], scheduleItems, eventBands: eventBandsByDay })
 
   assert.deepEqual(resultA.map(item => item.scheduleItemId), ['item-a'])
   assert.deepEqual(resultB.map(item => item.scheduleItemId), ['item-b'])
@@ -365,7 +389,6 @@ test('StageごとにScheduleItemを独立して計算する', () => {
 test('SectionありでsectionId未設定のScheduleItemは明示的なエラーにする', () => {
   assert.throws(
     () => calculateStageTimeline({
-      event,
       stage: createStage(),
       sections: [{ id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 }],
       scheduleItems: [performance('item-1', 'event-band-1', 0)],
@@ -378,7 +401,6 @@ test('SectionありでsectionId未設定のScheduleItemは明示的なエラー�
 test('Sectionありで存在しないsectionIdを参照するScheduleItemは明示的なエラーにする', () => {
   assert.throws(
     () => calculateStageTimeline({
-      event,
       stage: createStage(),
       sections: [{ id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 }],
       scheduleItems: [
@@ -392,7 +414,6 @@ test('Sectionありで存在しないsectionIdを参照するScheduleItemは明�
 
 test('Sectionありで有効なSectionに所属するScheduleItemは従来どおり計算する', () => {
   const result = calculateStageTimeline({
-    event,
     stage: createStage(),
     sections: [{ id: 'section-1', stageId: 'stage-1', name: '1部', order: 0 }],
     scheduleItems: [
@@ -432,7 +453,6 @@ test('Issue用Timelineは同じEventDayの複数Stageを集約し、別日を混
     },
   ]
   const result = calculateEventDayTimelines({
-    event,
     eventDayId: eventDays[0].id,
     stages,
     sections: [],
@@ -455,7 +475,6 @@ test('不正なSection所属を持つStageは集約時に記録し、他Stageの
   const validStage = createStage({ id: 'stage-valid' })
   const invalidStage = createStage({ id: 'stage-invalid', order: 1 })
   const result = calculateEventDayTimelines({
-    event,
     eventDayId: eventDays[0].id,
     stages: [validStage, invalidStage],
     sections: [

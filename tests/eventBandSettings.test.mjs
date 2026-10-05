@@ -23,7 +23,6 @@ const event = {
   id: 'event-1',
   name: '学園祭',
   timeZone: 'Asia/Tokyo',
-  defaultTransitionMinutes: 2,
   validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 10 },
   performanceSlotMinutes: [5, 10, 15],
 }

@@ -18,7 +18,6 @@ const event = {
   id: 'event-1',
   name: 'テストイベント',
   timeZone: 'Asia/Tokyo',
-  defaultTransitionMinutes: 2,
   validationPolicy: {
     minimumGapBands: 1,
     minimumRestMinutes: 10,

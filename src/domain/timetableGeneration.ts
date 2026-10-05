@@ -36,7 +36,7 @@ import { planPaShifts, type PlannedPaShift, type PlannedPaShiftScope,
   type PlannedScheduleBoundary } from './paShiftPlanning.ts'
 import {
   compareExactTimetableGenerationScores, getExactPaWorkloadImbalance,
-  getExactSectionBalance, getExactSchedulingSoftPenalty, getCrossSectionTransitions,
+  getExactSectionBalance, getExactSchedulingSoftPenalty,
   toPublicTimetableGenerationScore,
   type ExactTimetableGenerationScore, type TimetableGenerationScore,
 } from './timetableGenerationScore.ts'
@@ -571,11 +571,9 @@ const evaluateActivities = (
 
 const getShiftScopes = (
   lanes: GenerationLane[],
-  sections: Section[],
   calculatedItems: CalculatedScheduleItem[],
   internalIds: Map<string, string>,
 ): PlannedPaShiftScope[] => {
-  const transitions = getCrossSectionTransitions(sections, calculatedItems)
   const bandByInternalId = new Map([...internalIds].map(([bandId, id]) => [id, bandId]))
   const boundary = (item: CalculatedScheduleItem, edge: 'start' | 'end'):
     PlannedScheduleBoundary => {
@@ -592,16 +590,15 @@ const getShiftScopes = (
       item.plannedStartMinute < best.plannedStartMinute ? item : best)
     const last = laneItems.reduce((best, item) =>
       item.plannedEndMinute > best.plannedEndMinute ? item : best)
-    const transition = lane.section ? transitions.get(lane.section.id) : undefined
     return [{
       key: lane.key,
       eventDayId: lane.stage.eventDayId,
       stageId: lane.stage.id,
       ...(lane.section ? { sectionId: lane.section.id } : {}),
       fromMinute: first.plannedStartMinute,
-      untilMinute: transition?.untilItem.plannedStartMinute ?? last.plannedEndMinute,
+      untilMinute: last.plannedEndMinute,
       fromBoundary: boundary(first, 'start'),
-      untilBoundary: transition ? boundary(transition.untilItem, 'start') : boundary(last, 'end'),
+      untilBoundary: boundary(last, 'end'),
     }]
   })
 }
@@ -619,9 +616,6 @@ const toInternalBoundary = (
 
 const isPerfectScore = (score: ExactTimetableGenerationScore): boolean =>
   Object.values(score).every(value => value === 0 || value === 0n)
-
-const isValidTransitionMinutes = (value: number): boolean =>
-  Number.isSafeInteger(value) && value >= 0
 
 // Input validators trim form values, but downstream parsers consume the original
 // persisted boundaries. Check those without normalizing or changing the input.
@@ -715,7 +709,6 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
   const options = { ...DEFAULT_OPTIONS, ...input.options }
   if (eventDay.eventId !== event.id ||
     !eventDays.some(day => day.id === eventDay.id && day.eventId === event.id) ||
-    !isValidTransitionMinutes(event.defaultTransitionMinutes) ||
     Object.values(options).some(value => !Number.isSafeInteger(value) || value < 1)) {
     return failure('INVALID_INPUT', 0)
   }
@@ -765,8 +758,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     eventBands,
   })
   if (!orderConstraintEvaluation.valid) return failure('INVALID_ORDER_CONSTRAINTS', 0)
-  if (targetStages.some(stage => !isValidStageTimeRange(stage.plannedStartTime, stage.plannedEndTime) ||
-    (stage.transitionMinutes !== undefined && !isValidTransitionMinutes(stage.transitionMinutes))) ||
+  if (targetStages.some(stage => !isValidStageTimeRange(stage.plannedStartTime, stage.plannedEndTime)) ||
     targetSections.some(section => {
       const stage = targetStageById.get(section.stageId)
       return !stage || !isSectionWithinStageTimeRange(stage, section)
@@ -980,7 +972,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
       continue
     }
     if (targetStages.some(stage => !hasSafeStageTimelineArithmetic({
-      event, stage, sections: targetSections, scheduleItems: targetProposalItems,
+      stage, sections: targetSections, scheduleItems: targetProposalItems,
       eventBands: targetBands,
     }))) {
       setLastFailure('NO_FEASIBLE_SCHEDULE')
@@ -1007,7 +999,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
     let timeline: ReturnType<typeof calculateEventDayTimelines>
     try {
       timeline = calculateEventDayTimelines({
-        event, eventDayId: eventDay.id, stages: targetStages, sections: targetSections,
+        eventDayId: eventDay.id, stages: targetStages, sections: targetSections,
         scheduleItems: targetProposalItems, eventBands: targetBands,
       })
     } catch {
@@ -1053,7 +1045,7 @@ export const generateTimetablePlan = (input: TimetableGenerationInput): Timetabl
       setLastFailure('NO_FEASIBLE_SCHEDULE')
       continue
     }
-    const scopes = getShiftScopes(lanes, targetSections, calculatedItems, internalIds)
+    const scopes = getShiftScopes(lanes, calculatedItems, internalIds)
     const paResult = planPaShifts({
       event, eventDayId: eventDay.id, scopes, calculatedItems, baseActivities,
       policy: activitySpacingPolicy, members, eventMembers, eventMemberDays: targetMemberDays,

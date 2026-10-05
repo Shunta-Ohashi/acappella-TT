@@ -223,7 +223,7 @@ export const getEventBandDayFeasibility = ({
       !commonWindows.some((window) => window.end - window.start >= durationMinutes)
     ) {
       blockingReasons.push(
-        `出演時間${durationMinutes}分を確保できる共通の参加可能時間がありません。`,
+        `出演枠${durationMinutes}分を確保できる共通の参加可能時間がありません。`,
       )
     }
   }
@@ -412,7 +412,7 @@ export const validateEventBandSettingsItem = ({
     !Number.isSafeInteger(durationMinutes) ||
     durationMinutes <= 0
   ) {
-    errors.durationMinutes = '出演時間は1分以上の整数で入力してください。'
+    errors.durationMinutes = '出演枠は1分以上の整数で入力してください。'
   } else if (
     !performanceSlotMinutes.includes(durationMinutes)
   ) {
