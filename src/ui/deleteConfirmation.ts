@@ -1,4 +1,5 @@
 export type DeleteConfirmationTarget =
+  | 'event'
   | 'event-day'
   | 'stage'
   | 'section'
@@ -25,6 +26,13 @@ export const getDeleteConfirmationCopy = (
   }
 
   switch (target) {
+    case 'event':
+      return {
+        title: `「${label}」を削除しますか？`,
+        description: 'このイベントと、開催日、Stage・Section、参加メンバー設定、出演バンド・固定配置、タイムテーブル、PA・当日運営担当、TT固定・出演順制約を完全に削除します。共通データのメンバーと固定バンドは削除されません。この操作は元に戻せません。',
+        ...labels,
+        confirmLabel: 'イベントを削除',
+      }
     case 'event-day':
       return {
         title: '開催日を削除しますか？',

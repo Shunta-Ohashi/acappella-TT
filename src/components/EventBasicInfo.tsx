@@ -8,12 +8,18 @@ import {
   type EventBasicInfoValidationErrors,
 } from '../domain/eventBasicInfo'
 import { getDeleteConfirmationCopy } from '../ui/deleteConfirmation'
+import type {
+  EventDeletionCheck,
+  EventDeletionResult,
+} from '../domain/eventDeletion'
 import { DeleteConfirmationDialog } from './DeleteConfirmationDialog'
 
 interface EventBasicInfoProps {
   event: Event
   eventDays: EventDay[]
   canDeleteEventDay: (eventDayId: EventDayId) => boolean
+  checkEventDeletion: (eventId: Event['id']) => EventDeletionCheck
+  onDeleteEvent: (eventId: Event['id']) => EventDeletionResult
   onSave: (draft: EventBasicInfoDraft) => EventBasicInfoUpdateResult
   onSaveAndNext: () => void
 }
@@ -39,6 +45,8 @@ export function EventBasicInfo({
   event,
   eventDays,
   canDeleteEventDay,
+  checkEventDeletion,
+  onDeleteEvent,
   onSave,
   onSaveAndNext,
 }: EventBasicInfoProps) {
@@ -56,6 +64,16 @@ export function EventBasicInfo({
   const [errors, setErrors] = useState<EventBasicInfoValidationErrors>({})
   const [saveMessage, setSaveMessage] = useState('')
   const [pendingDeletion, setPendingDeletion] = useState<Pick<DateInput, 'key' | 'value'>>()
+  const [pendingEventDeletion, setPendingEventDeletion] = useState<{
+    eventId: Event['id']
+    label: string
+  }>()
+  const [eventDeletionError, setEventDeletionError] = useState('')
+
+  const getEventDeletionError = (result: Exclude<EventDeletionCheck, { ok: true }>) =>
+    result.reason === 'EVENT_NOT_FOUND'
+      ? '削除するイベントが見つかりません。イベント一覧へ戻って状態を確認してください。'
+      : 'イベント間の参照に矛盾があるため削除できません。データの整合性を確認してください。'
 
   const clearFeedback = () => {
     setSaveMessage('')
@@ -119,6 +137,28 @@ export function EventBasicInfo({
     }))
     setSaveMessage('')
     setPendingDeletion(undefined)
+  }
+
+  const requestEventDeletion = () => {
+    const result = checkEventDeletion(event.id)
+    if (!result.ok) {
+      setEventDeletionError(getEventDeletionError(result))
+      return
+    }
+    setEventDeletionError('')
+    setPendingEventDeletion({
+      eventId: event.id,
+      label: event.name,
+    })
+  }
+
+  const confirmEventDeletion = () => {
+    if (!pendingEventDeletion) return
+    const result = onDeleteEvent(pendingEventDeletion.eventId)
+    if (!result.ok) {
+      setPendingEventDeletion(undefined)
+      setEventDeletionError(getEventDeletionError(result))
+    }
   }
 
   const save = (moveToNext: boolean) => {
@@ -306,6 +346,26 @@ export function EventBasicInfo({
           </div>
         </footer>
       </form>
+      <div className="event-basic-info__danger-zone">
+        <div>
+          <h3>危険な操作</h3>
+          <p>
+            このイベントとイベント内の設定を完全に削除します。共通データのメンバーと固定バンドは残ります。
+          </p>
+          {eventDeletionError && (
+            <p className="form-error" role="alert">
+              {eventDeletionError}
+            </p>
+          )}
+        </div>
+        <button
+          type="button"
+          className="event-basic-info__delete-event"
+          onClick={requestEventDeletion}
+        >
+          このイベントを削除
+        </button>
+      </div>
       {pendingDeletion && (() => {
         const copy = getDeleteConfirmationCopy(
           'event-day',
@@ -316,6 +376,19 @@ export function EventBasicInfo({
             {...copy}
             onCancel={() => setPendingDeletion(undefined)}
             onConfirm={confirmRemoveDate}
+          />
+        )
+      })()}
+      {pendingEventDeletion && (() => {
+        const copy = getDeleteConfirmationCopy(
+          'event',
+          pendingEventDeletion.label,
+        )
+        return (
+          <DeleteConfirmationDialog
+            {...copy}
+            onCancel={() => setPendingEventDeletion(undefined)}
+            onConfirm={confirmEventDeletion}
           />
         )
       })()}

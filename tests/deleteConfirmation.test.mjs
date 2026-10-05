@@ -45,6 +45,18 @@ test('共通メンバーと固定バンドの確認は即時削除と取消不�
   assert.doesNotMatch(bandCopy.description, /保存すると/)
 })
 
+test('Event削除確認はcascade範囲と共通データ保持と取消不可を示す', () => {
+  const copy = getDeleteConfirmationCopy('event', 'Autumn Live')
+
+  assert.match(copy.title, /Autumn Live/)
+  assert.match(copy.description, /開催日/)
+  assert.match(copy.description, /タイムテーブル/)
+  assert.match(copy.description, /PA・当日運営/)
+  assert.match(copy.description, /メンバーと固定バンドは削除されません/)
+  assert.match(copy.description, /この操作は元に戻せません/)
+  assert.equal(copy.confirmLabel, 'イベントを削除')
+})
+
 test('削除確認の操作ラベルを全対象で共通化する', () => {
   const targets = [
     'event-day',
@@ -61,4 +73,9 @@ test('削除確認の操作ラベルを全対象で共通化する', () => {
     assert.equal(copy.cancelLabel, 'キャンセル')
     assert.equal(copy.confirmLabel, '削除する')
   }
+
+  assert.equal(
+    getDeleteConfirmationCopy('event', '対象').confirmLabel,
+    'イベントを削除',
+  )
 })
