@@ -76,6 +76,7 @@ import {
 } from './components/TimetableGrid'
 import { TimetableGridAssignmentDialog } from './components/TimetableGridAssignmentDialog'
 import { TimetableGridAssignmentDeletionDialog } from './components/TimetableGridAssignmentDeletionDialog'
+import { TimetableDutyAutoAssignmentDialog } from './components/TimetableDutyAutoAssignmentDialog'
 import { TimetableOperationsWorkspace } from './components/TimetableOperationsWorkspace'
 import {
   areTimetableGridAssignmentTargetsEqual,
@@ -101,6 +102,11 @@ import { createScheduleItemsForTimetableGeneration, DEFAULT_TIMETABLE_GENERATION
   type TimetableGenerationUiOptions } from './domain/timetableGenerationOptions'
 import { resetEventDayTimetable } from './domain/timetableReset'
 import { hasUnsavedOperationsChanges } from './ui/operationsDraftChanges'
+import {
+  createDutyAutoAssignments,
+  planDutyAutoAssignments,
+  type DutyAutoAssignmentPlanResult,
+} from './domain/dutyAutoAssignment'
 import { generateTimetablePlan } from './domain/timetableGeneration'
 import {
   materializeTimetableGenerationPlan, validateTimetableGenerationCandidate,
@@ -416,6 +422,15 @@ function App() {
     candidates: TimetableGridAssignmentCandidate[]
     errors: string[]
   } | null>(null)
+  const [dutyAutoAssignmentDialog, setDutyAutoAssignmentDialog] = useState<{
+    eventId: EventId
+    selection: ResolvedTimetableGridRangeSelection
+    dutyTypeName: string
+    additionalCount: string
+    preview: DutyAutoAssignmentPlanResult
+    notice?: string
+    errors: string[]
+  } | null>(null)
   const [gridAssignmentDeletion, setGridAssignmentDeletion] = useState<{
     eventId: EventId
     eventDayId: EventDayId
@@ -452,6 +467,7 @@ function App() {
     selection: TimetableGridRangeSelection | null,
   ) => {
     setGridAssignmentDialog(null)
+    setDutyAutoAssignmentDialog(null)
     setGridAssignmentDeletion(null)
     setGridAssignmentFeedback(null)
     setTimetableGridSelectionState({
@@ -510,6 +526,7 @@ function App() {
     setGenerationPreview(null)
     setGenerationFeedback(null)
     setGridAssignmentDialog(null)
+    setDutyAutoAssignmentDialog(null)
     setGridAssignmentDeletion(null)
     setGridAssignmentFeedback(null)
     setMembers(snapshot.members)
@@ -690,6 +707,7 @@ function App() {
     setResetConfirmation(null)
     setGenerationFeedback(null)
     setGridAssignmentDialog(null)
+    setDutyAutoAssignmentDialog(null)
     setGridAssignmentDeletion(null)
     setGridAssignmentFeedback(null)
     setSelectedEventId(eventId)
@@ -707,6 +725,7 @@ function App() {
     setResetConfirmation(null)
     setGenerationFeedback(null)
     setGridAssignmentDialog(null)
+    setDutyAutoAssignmentDialog(null)
     setGridAssignmentDeletion(null)
     setGridAssignmentFeedback(null)
     setSelectedTimetableStageId(getStagesForEventDay(stages, eventDayId)[0]?.id)
@@ -715,6 +734,7 @@ function App() {
   const handleSelectTimetableStage = (stageId: StageId) => {
     if (!timetableStages.some(stage => stage.id === stageId)) return
     setGridAssignmentDialog(null)
+    setDutyAutoAssignmentDialog(null)
     setGridAssignmentDeletion(null)
     setGridAssignmentFeedback(null)
     setSelectedTimetableStageId(stageId)
@@ -726,6 +746,7 @@ function App() {
     setResetConfirmation(null)
     setGenerationFeedback(null)
     setGridAssignmentDialog(null)
+    setDutyAutoAssignmentDialog(null)
     setGridAssignmentDeletion(null)
     setGridAssignmentFeedback(null)
     const eventId = createId('event')
@@ -795,6 +816,7 @@ function App() {
     setResetConfirmation(null)
     setGenerationFeedback(null)
     setGridAssignmentDialog(null)
+    setDutyAutoAssignmentDialog(null)
     setGridAssignmentDeletion(null)
     setGridAssignmentFeedback(null)
     setOperationsPanelRevision((revision) => revision + 1)
@@ -1769,6 +1791,65 @@ function App() {
     dutyAssignments,
   } : undefined
 
+  const getDutyAutoAssignmentContext = (
+    context: NonNullable<ReturnType<typeof getGridAssignmentContext>>,
+    selection: ResolvedTimetableGridRangeSelection,
+  ) => {
+    const matchingDays = context.eventDays.filter((eventDay) =>
+      eventDay.id === selection.eventDayId,
+    )
+    const matchingStages = context.stages.filter((stage) =>
+      stage.id === selection.stageId,
+    )
+    if (matchingDays.length !== 1 || matchingStages.length !== 1) return undefined
+    return {
+      ...context,
+      eventDay: matchingDays[0],
+      stage: matchingStages[0],
+    }
+  }
+
+  const selectionsMatch = (
+    current: ResolvedTimetableGridRangeSelection,
+    expected: ResolvedTimetableGridRangeSelection,
+  ) => current.eventDayId === expected.eventDayId &&
+    current.stageId === expected.stageId &&
+    current.fromMinute === expected.fromMinute &&
+    current.untilMinute === expected.untilMinute &&
+    areTimetableGridAssignmentTargetsEqual(current.target, expected.target) &&
+    current.scheduleItemIds.length === expected.scheduleItemIds.length &&
+    current.scheduleItemIds.every((id, index) => id === expected.scheduleItemIds[index])
+
+  const planDutyAutoAssignment = (
+    context: NonNullable<ReturnType<typeof getGridAssignmentContext>>,
+    selection: ResolvedTimetableGridRangeSelection,
+    additionalCount: number,
+  ): DutyAutoAssignmentPlanResult => {
+    if (selection.target.kind !== 'duty') {
+      return {
+        ok: false,
+        code: 'INVALID_SCOPE',
+        message: '当日運営の仕事を選択してください。',
+      }
+    }
+    const autoContext = getDutyAutoAssignmentContext(context, selection)
+    if (!autoContext) {
+      return {
+        ok: false,
+        code: 'INVALID_SCOPE',
+        message: '選択した開催日またはStageを確認できません。',
+      }
+    }
+    return planDutyAutoAssignments(autoContext, {
+      dutyTypeId: selection.target.dutyTypeId,
+      fromBoundary: selection.fromBoundary,
+      untilBoundary: selection.untilBoundary,
+      fromMinute: selection.fromMinute,
+      untilMinute: selection.untilMinute,
+      additionalCount,
+    })
+  }
+
   const getCurrentResolvedGridSelection = () => timetableGridSelection
     ? resolveTimetableGridSelection(
         timetableGridSelection,
@@ -1778,6 +1859,7 @@ function App() {
 
   const rejectStaleGridSelection = () => {
     setGridAssignmentDialog(null)
+    setDutyAutoAssignmentDialog(null)
     handleTimetableGridSelectionChange(null)
     if (selectedEvent && timetableSelection.eventDayId && currentStage) {
       setGridAssignmentFeedback({
@@ -1826,6 +1908,7 @@ function App() {
     }
 
     setGridAssignmentFeedback(null)
+    setDutyAutoAssignmentDialog(null)
     setGridAssignmentDialog({
       eventId: context.event.id,
       selection,
@@ -1888,6 +1971,7 @@ function App() {
     else setDutyAssignments(result.dutyAssignments)
     setOperationsPanelRevision((revision) => revision + 1)
     setGridAssignmentDialog(null)
+    setDutyAutoAssignmentDialog(null)
     setTimetableGridSelectionState({
       context: timetableGridSelectionContext,
       selection: null,
@@ -1901,6 +1985,148 @@ function App() {
       stageId: currentSelection.stageId,
       kind: 'success',
       message: `${result.targetLabel}に${result.memberName}を${formatMinuteAsLocalTime(currentSelection.fromMinute)}〜${formatMinuteAsLocalTime(currentSelection.untilMinute)}で割り当てました。${warning}`,
+    })
+  }
+
+  const handleOpenDutyAutoAssignment = () => {
+    const selection = getCurrentResolvedGridSelection()
+    const context = getGridAssignmentContext()
+    if (
+      !selection || selection.target.kind !== 'duty' || !context ||
+      !currentStage || !timetableSelection.eventDayId ||
+      selection.eventDayId !== timetableSelection.eventDayId ||
+      selection.stageId !== currentStage.id
+    ) {
+      rejectStaleGridSelection()
+      return
+    }
+    if (hasUnsavedOperations()) {
+      setGridAssignmentFeedback({
+        eventId: context.event.id,
+        eventDayId: selection.eventDayId,
+        stageId: selection.stageId,
+        kind: 'error',
+        message: 'PAまたは当日運営に未保存の変更があります。右側の設定を保存してから自動割り当てしてください。',
+      })
+      return
+    }
+
+    const dutyTypeId = selection.target.dutyTypeId
+    const dutyType = context.dutyTypes.find((candidate) =>
+      candidate.id === dutyTypeId,
+    )
+    const preview = planDutyAutoAssignment(context, selection, 1)
+    setGridAssignmentFeedback(null)
+    setGridAssignmentDialog(null)
+    setDutyAutoAssignmentDialog({
+      eventId: context.event.id,
+      selection,
+      dutyTypeName: dutyType?.name ?? '当日運営',
+      additionalCount: '1',
+      preview,
+      errors: [],
+    })
+  }
+
+  const handleDutyAutoAssignmentCountChange = (value: string) => {
+    const dialog = dutyAutoAssignmentDialog
+    const selection = getCurrentResolvedGridSelection()
+    const context = getGridAssignmentContext()
+    if (!dialog || !selection || !context || !selectionsMatch(selection, dialog.selection)) {
+      rejectStaleGridSelection()
+      return
+    }
+    setDutyAutoAssignmentDialog({
+      ...dialog,
+      additionalCount: value,
+      preview: planDutyAutoAssignment(context, selection, Number(value)),
+      notice: undefined,
+      errors: [],
+    })
+  }
+
+  const handleApplyDutyAutoAssignment = () => {
+    const dialog = dutyAutoAssignmentDialog
+    const selection = getCurrentResolvedGridSelection()
+    const context = getGridAssignmentContext()
+    if (!dialog || !selection || !context || !selectionsMatch(selection, dialog.selection)) {
+      rejectStaleGridSelection()
+      return
+    }
+    if (hasUnsavedOperations()) {
+      setDutyAutoAssignmentDialog({
+        ...dialog,
+        errors: ['PAまたは当日運営に未保存の変更があります。右側の設定を保存してから自動割り当てしてください。'],
+      })
+      return
+    }
+
+    const latestPreview = planDutyAutoAssignment(
+      context,
+      selection,
+      Number(dialog.additionalCount),
+    )
+    if (!latestPreview.ok) {
+      setDutyAutoAssignmentDialog({
+        ...dialog,
+        preview: latestPreview,
+        notice: undefined,
+        errors: [],
+      })
+      return
+    }
+    if (!dialog.preview.ok || dialog.preview.plan.planKey !== latestPreview.plan.planKey) {
+      setDutyAutoAssignmentDialog({
+        ...dialog,
+        preview: latestPreview,
+        notice: '担当状況が変わったため候補を更新しました。内容を確認してもう一度追加してください。',
+        errors: [],
+      })
+      return
+    }
+    const autoContext = getDutyAutoAssignmentContext(context, selection)
+    if (!autoContext) {
+      rejectStaleGridSelection()
+      return
+    }
+    const result = createDutyAutoAssignments({
+      context: autoContext,
+      plan: latestPreview.plan,
+      newDutyAssignmentIds: latestPreview.plan.selectedMemberIds.map(() =>
+        createId('duty-assignment'),
+      ),
+    })
+    if (!result.ok) {
+      setDutyAutoAssignmentDialog({
+        ...dialog,
+        preview: latestPreview,
+        errors: result.errors ?? [result.message],
+      })
+      return
+    }
+
+    setDutyAssignments(result.dutyAssignments)
+    setOperationsPanelRevision((revision) => revision + 1)
+    setDutyAutoAssignmentDialog(null)
+    setTimetableGridSelectionState({
+      context: timetableGridSelectionContext,
+      selection: null,
+    })
+    const selectedNames = latestPreview.plan.selectedMemberIds.map((memberId) =>
+      members.find((member) => member.id === memberId)?.realName ?? memberId,
+    )
+    const assignedLabel = selectedNames.length === 1
+      ? selectedNames[0]
+      : `${selectedNames.length}名`
+    const warning = latestPreview.plan.warnings.length > 0
+      ? ` 注意：${latestPreview.plan.warnings.join(' / ')}`
+      : ''
+    setGridAssignmentFeedback({
+      eventId: context.event.id,
+      eventDayId: selection.eventDayId,
+      stageId: selection.stageId,
+      kind: 'success',
+      message: `${dialog.dutyTypeName}に${assignedLabel}を自動割り当てしました。${warning}`,
     })
   }
 
@@ -1948,6 +2174,7 @@ function App() {
 
     setGridAssignmentFeedback(null)
     setGridAssignmentDialog(null)
+    setDutyAutoAssignmentDialog(null)
     setGridAssignmentDeletion({
       eventId: context.event.id,
       eventDayId,
@@ -2069,6 +2296,11 @@ function App() {
     gridAssignmentDialog?.eventId === selectedEvent?.id &&
     timetableGridSelection
       ? gridAssignmentDialog
+      : null
+  const activeDutyAutoAssignmentDialog =
+    dutyAutoAssignmentDialog?.eventId === selectedEvent?.id &&
+    timetableGridSelection
+      ? dutyAutoAssignmentDialog
       : null
   const activeGridAssignmentDeletion =
     gridAssignmentDeletion?.eventId === selectedEvent?.id
@@ -2362,6 +2594,7 @@ function App() {
                         : null
                     }
                     onAssignSelection={handleOpenGridAssignment}
+                    onAutoAssignSelection={handleOpenDutyAutoAssignment}
                     onDeleteSelectionAssignments={handleOpenGridAssignmentDeletion}
                   />
                 ) : null}
@@ -2514,6 +2747,20 @@ function App() {
             )}
             onSubmit={handleSubmitGridAssignment}
           />
+      )}
+      {activeDutyAutoAssignmentDialog && (
+        <TimetableDutyAutoAssignmentDialog
+          selection={activeDutyAutoAssignmentDialog.selection}
+          dutyTypeName={activeDutyAutoAssignmentDialog.dutyTypeName}
+          additionalCount={activeDutyAutoAssignmentDialog.additionalCount}
+          preview={activeDutyAutoAssignmentDialog.preview}
+          members={members}
+          notice={activeDutyAutoAssignmentDialog.notice}
+          errors={activeDutyAutoAssignmentDialog.errors}
+          onAdditionalCountChange={handleDutyAutoAssignmentCountChange}
+          onCancel={() => setDutyAutoAssignmentDialog(null)}
+          onSubmit={handleApplyDutyAutoAssignment}
+        />
       )}
       {activeGridAssignmentDeletion && (
         <TimetableGridAssignmentDeletionDialog

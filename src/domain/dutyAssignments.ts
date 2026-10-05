@@ -89,6 +89,8 @@ export type DutyAssignmentAdditionResult =
 
 export interface DutyMemberCandidate {
   member: Member
+  eventMemberId: EventMember['id']
+  eventMemberDay: EventMemberDay
   participationStatus: EventMemberDay['participationStatus']
   warning?: string
 }
@@ -310,6 +312,8 @@ export const getDutyMemberCandidates = ({
       }
       return [{
         member,
+        eventMemberId: eventMember.id,
+        eventMemberDay: memberDay,
         participationStatus: memberDay.participationStatus,
         ...(memberDay.participationStatus === 'undecided'
           ? { warning: 'この開催日の参加状況が未定です。' }

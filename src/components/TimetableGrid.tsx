@@ -90,6 +90,7 @@ interface TimetableGridProps {
   onSelectionChange: (selection: TimetableGridRangeSelection | null) => void
   assignmentFeedback: { kind: 'success' | 'error'; message: string } | null
   onAssignSelection: () => void
+  onAutoAssignSelection: () => void
   onDeleteSelectionAssignments: () => void
 }
 
@@ -535,6 +536,7 @@ export function TimetableGrid({
   onSelectionChange,
   assignmentFeedback,
   onAssignSelection,
+  onAutoAssignSelection,
   onDeleteSelectionAssignments,
 }: TimetableGridProps) {
   const timetableGridColumns = createTimetableGridColumns(dutyTypes)
@@ -949,6 +951,15 @@ export function TimetableGrid({
             >
               担当を設定
             </button>
+            {resolvedSelection.target.kind === 'duty' && (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={onAutoAssignSelection}
+              >
+                自動割り当て
+              </button>
+            )}
             {selectionAssignmentTargets.length > 0 && (
               <button
                 type="button"
