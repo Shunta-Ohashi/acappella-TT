@@ -331,6 +331,31 @@ test('participatingをundecidedより優先し、undecidedだけならwarning付
   assert.equal(undecided.plan.warnings.join(' ').includes('さんさん'), false)
 })
 
+test('同名のundecided Memberは異なるidentityで選出し同じwarning文字列を持てる', () => {
+  const sameNameMembers = [
+    { ...members[0], realName: '田中' },
+    { ...members[1], realName: '田中' },
+  ]
+  const result = planDutyAutoAssignments(context({
+    members: sameNameMembers,
+    eventMembers: eventMembers.slice(0, 2),
+    eventMemberDays: eventMemberDays.slice(0, 2).map((day) => ({
+      ...day,
+      participationStatus: 'undecided',
+    })),
+  }), request({ additionalCount: 2 }))
+
+  assert.equal(result.ok, true)
+  assert.equal(new Set(result.plan.selectedMemberIds).size, 2)
+  assert.equal(new Set(result.plan.candidateMetrics.map((metric) =>
+    `${metric.memberId}:${metric.eventMemberId}:${metric.eventMemberDayId}`,
+  )).size, 2)
+  assert.deepEqual(result.plan.warnings, [
+    '田中はこの開催日の参加状況が未定です。',
+    '田中はこの開催日の参加状況が未定です。',
+  ])
+})
+
 test('別Event由来でcurrent day IDを持つDutyを評価対象へ混入させない', () => {
   const foreignEvent = {
     ...event,

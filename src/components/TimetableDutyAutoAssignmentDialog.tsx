@@ -33,6 +33,11 @@ export function TimetableDutyAutoAssignmentDialog({
   const titleId = useId()
   const countId = useId()
   const memberById = new Map(members.map((member) => [member.id, member]))
+  const warningMetrics = preview.ok
+    ? preview.plan.candidateMetrics.filter((metric) =>
+        metric.participationStatus === 'undecided',
+      )
+    : []
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -112,11 +117,17 @@ export function TimetableDutyAutoAssignmentDialog({
                 </li>
               ))}
             </ol>
-            {preview.plan.warnings.map((warning) => (
-              <p className="pa-assignment-dialog__warning" role="status" key={warning}>
-                注意：{warning}
-              </p>
-            ))}
+            {preview.plan.warnings.map((warning, index) => {
+              const metric = warningMetrics[index]
+              const key = metric
+                ? `${metric.memberId}:${metric.eventMemberId}:${metric.eventMemberDayId}`
+                : `warning:${index}:${warning}`
+              return (
+                <p className="pa-assignment-dialog__warning" role="status" key={key}>
+                  注意：{warning}
+                </p>
+              )
+            })}
           </section>
         ) : (
           <p className="form-error" role="alert">{preview.message}</p>
