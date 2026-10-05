@@ -5,32 +5,119 @@ import { materializeTimetableGenerationPlan, validateTimetableGenerationCandidat
 import { materializationInput } from './fixtures/timetableGenerationUi.mjs'
 
 for (const [code, wording] of [
-  ['INVALID_INPUT', /設定に不整合/], ['INVALID_LOCK_CONSTRAINTS', /固定.*競合/],
-  ['INVALID_ORDER_CONSTRAINTS', /出演順制約.*競合/],
-  ['BROKEN_DUTY_ASSIGNMENT', /当日運営.*壊れた参照/], ['NO_MAIN_PA_CANDIDATE', /Main PA/],
-  ['NO_SUB_PA_CANDIDATE', /Sub PA/], ['NO_FEASIBLE_PA_PLAN', /PA配置/],
+  ['INVALID_INPUT', /設定/], ['INVALID_LOCK_CONSTRAINTS', /TT固定/],
+  ['INVALID_ORDER_CONSTRAINTS', /出演順制約/],
+  ['BROKEN_DUTY_ASSIGNMENT', /当日運営担当/], ['NO_MAIN_PA_CANDIDATE', /Main PA/],
+  ['NO_SUB_PA_CANDIDATE', /Sub PA/], ['NO_FEASIBLE_PA_PLAN', /PA担当/],
   ['NO_FEASIBLE_SCHEDULE', /タイムテーブル/], ['SEARCH_LIMIT_REACHED', /探索上限/],
 ]) {
-  test(`${code}を日本語で表示し探索件数を含める`, () => {
-    const text = presentTimetableGenerationFailure({ code, eventDayId: 'day-a1', attemptedSchedules: 3 }, materializationInput())
-    assert.match(text, wording)
-    assert.match(text, /Schedule候補評価数: 3/)
+  test(`${code}を構造化して表示し探索件数を含める`, () => {
+    const presentation = presentTimetableGenerationFailure(
+      { code, eventDayId: 'day-a1', attemptedSchedules: 3 },
+      materializationInput(),
+    )
+    assert.equal(presentation.code, code)
+    assert.match(presentation.title, wording)
+    assert.ok(presentation.summary.length > 0)
+    assert.ok(presentation.checks.length > 0)
+    assert.ok(presentation.details.includes('評価したタイムテーブル候補: 3件'))
+    assert.ok(presentation.details.includes(`エラーコード: ${code}`))
   })
 }
 
-test('failure referenceをStage・Section・バンド名へ解決しmissing referenceはIDを表示する', () => {
+test('failure referenceをStage・Section・バンド名へ階層的に解決する', () => {
   const failure = { code: 'INVALID_INPUT', eventDayId: 'day-a1', attemptedSchedules: 0,
     stageId: 'stage-a1', sectionId: 'section-1', eventBandId: 'band-2' }
-  assert.match(presentTimetableGenerationFailure(failure, materializationInput()), /Main Stage.*第1部.*Blend Note/)
-  assert.match(presentTimetableGenerationFailure({ ...failure, stageId: 'missing-stage' }, materializationInput()), /missing-stage/)
+  const details = presentTimetableGenerationFailure(failure, materializationInput()).details
+  assert.deepEqual(details.slice(0, 3), [
+    'Stage: Main Stage', 'Section: 第1部', 'バンド: Blend Note',
+  ])
+
+  const sectionOnly = presentTimetableGenerationFailure({
+    code: 'BROKEN_DUTY_ASSIGNMENT', eventDayId: 'day-a1', attemptedSchedules: 0,
+    sectionId: 'section-1',
+  }, materializationInput())
+  assert.deepEqual(sectionOnly.details.slice(0, 2), ['Stage: Main Stage', 'Section: 第1部'])
 })
 
-test('INVALID_INPUTではStep 6の休憩配置も確認対象と案内する', () => {
-  const text = presentTimetableGenerationFailure({
+test('missing referenceはthrowせずIDへfallbackする', () => {
+  const presentation = presentTimetableGenerationFailure({
     code: 'INVALID_INPUT', eventDayId: 'day-a1', attemptedSchedules: 0,
+    stageId: 'missing-stage', sectionId: 'missing-section', eventBandId: 'missing-band',
   }, materializationInput())
-  assert.match(text, /Step 1〜6/)
-  assert.match(text, /休憩配置/)
+  assert.deepEqual(presentation.details.slice(0, 3), [
+    'Stage: missing-stage', 'Section: missing-section', 'バンド: missing-band',
+  ])
+})
+
+test('failure codeごとに実際に変更できる確認先を案内する', () => {
+  const references = materializationInput()
+  const checks = (code) => presentTimetableGenerationFailure({
+    code, eventDayId: 'day-a1', attemptedSchedules: 1,
+  }, references).checks.join(' ')
+
+  assert.match(checks('INVALID_INPUT'), /Step 2.*Step 3.*Step 4.*Step 6/)
+  assert.match(checks('INVALID_LOCK_CONSTRAINTS'), /TT固定.*解除/)
+  assert.match(checks('INVALID_ORDER_CONSTRAINTS'), /出演順制約.*固定配置.*TT固定/)
+  assert.match(checks('BROKEN_DUTY_ASSIGNMENT'), /当日運営.*担当開始・終了/)
+  assert.match(checks('NO_MAIN_PA_CANDIDATE'), /Main PA担当可.*参加状況.*参加可能時間/)
+  assert.match(checks('NO_SUB_PA_CANDIDATE'), /Sub PA担当可.*参加状況.*参加可能時間/)
+  assert.match(
+    presentTimetableGenerationFailure({
+      code: 'NO_FEASIBLE_PA_PLAN', eventDayId: 'day-a1', attemptedSchedules: 1,
+    }, references).summary,
+    /PA担当可能者はいますが.*組み合わせ/,
+  )
+})
+
+test('INVALID_INPUTは対象Bandを最初の確認先として案内する', () => {
+  const presentation = presentTimetableGenerationFailure({
+    code: 'INVALID_INPUT', eventDayId: 'day-a1', attemptedSchedules: 0,
+    eventBandId: 'band-2',
+  }, materializationInput())
+  assert.match(presentation.checks[0], /Step 4.*Blend Note.*出演枠.*固定配置/)
+})
+
+test('NO_FEASIBLE_SCHEDULEは複数条件を順番に案内し原因を断定しない', () => {
+  const presentation = presentTimetableGenerationFailure({
+    code: 'NO_FEASIBLE_SCHEDULE', eventDayId: 'day-a1', attemptedSchedules: 4,
+  }, materializationInput())
+  assert.match(presentation.summary, /複数の必須条件の組み合わせ/)
+  assert.equal(presentation.checks.length, 6)
+  assert.match(presentation.checks.join(' '), /Stage・Section.*固定配置.*TT固定.*出演順制約.*掛け持ち.*当日運営担当・PA担当/)
+  assert.doesNotMatch(`${presentation.summary} ${presentation.checks.join(' ')}`, /が原因です/)
+})
+
+test('候補0件は探索前段階の可能性として表示し原因を断定しない', () => {
+  const presentation = presentTimetableGenerationFailure({
+    code: 'NO_FEASIBLE_SCHEDULE', eventDayId: 'day-a1', attemptedSchedules: 0,
+  }, materializationInput())
+  assert.match(presentation.summary, /候補を評価できる段階まで到達していない可能性/)
+  assert.ok(presentation.details.includes('評価したタイムテーブル候補: 0件'))
+  assert.doesNotMatch(presentation.summary, /固定配置が原因/)
+})
+
+test('SEARCH_LIMIT_REACHEDは変更可能な条件だけを案内する', () => {
+  const presentation = presentTimetableGenerationFailure({
+    code: 'SEARCH_LIMIT_REACHED', eventDayId: 'day-a1', attemptedSchedules: 24,
+  }, materializationInput())
+  const checks = presentation.checks.join(' ')
+  assert.match(checks, /固定配置.*TT固定.*出演順制約.*出演可能時間.*条件を少し緩め/)
+  assert.doesNotMatch(checks, /探索上限を増や/)
+})
+
+test('同じfailureとreferenceからdeterministicなpresentationを返し入力を変更しない', () => {
+  const references = materializationInput()
+  const failure = {
+    code: 'INVALID_INPUT', eventDayId: 'day-a1', attemptedSchedules: 0,
+    stageId: 'stage-a1', sectionId: 'section-1', eventBandId: 'band-2',
+  }
+  const originalReferences = structuredClone(references)
+  const originalFailure = structuredClone(failure)
+  const first = presentTimetableGenerationFailure(failure, references)
+  assert.deepEqual(presentTimetableGenerationFailure(failure, references), first)
+  assert.deepEqual(references, originalReferences)
+  assert.deepEqual(failure, originalFailure)
 })
 
 test('read-only previewはStage/Section/実Timeline順と部間Break・PA role/member/正式境界時刻を表示する', () => {

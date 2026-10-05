@@ -76,6 +76,7 @@ import {
 import { TimetableOperationsWorkspace } from './components/TimetableOperationsWorkspace'
 import { TimetableGenerationPreviewDialog } from './components/TimetableGenerationPreviewDialog'
 import { TimetableGenerationOptionsDialog } from './components/TimetableGenerationOptionsDialog'
+import { TimetableGenerationFailureGuidance } from './components/TimetableGenerationFailureGuidance'
 import { TimetableResetConfirmDialog } from './components/TimetableResetConfirmDialog'
 import { createScheduleItemsForTimetableGeneration, DEFAULT_TIMETABLE_GENERATION_UI_OPTIONS,
   hasValidTimetableGenerationPreprocessingInput, validateTimetableGenerationBreakRemoval,
@@ -89,6 +90,7 @@ import {
 } from './domain/timetableGenerationApply'
 import {
   createTimetableGenerationPreview, formatGenerationDay, presentTimetableGenerationFailure,
+  type TimetableGenerationFailurePresentation,
   type TimetableGenerationPreview,
 } from './ui/timetableGenerationPresentation'
 import { EventList } from './components/EventList'
@@ -360,6 +362,7 @@ function App() {
   } | null>(null)
   const [generationFeedback, setGenerationFeedback] = useState<{
     eventId: EventId; eventDayId: EventDayId; kind: 'success' | 'error'; message: string
+    guidance?: TimetableGenerationFailurePresentation
   } | null>(null)
   const selectedEventBands = eventBands.filter(
     (eventBand) => eventBand.eventId === selectedEventId,
@@ -948,8 +951,12 @@ function App() {
 
   const handleGenerateTimetable = () => {
     if (!selectedEvent || !timetableEventDay || !timetableStages.length || !currentDayEventBands.length) return
-    const feedback = (message: string) => setGenerationFeedback({
-      eventId: selectedEvent.id, eventDayId: timetableEventDay.id, kind: 'error', message,
+    const feedback = (
+      message: string,
+      guidance?: TimetableGenerationFailurePresentation,
+    ) => setGenerationFeedback({
+      eventId: selectedEvent.id, eventDayId: timetableEventDay.id,
+      kind: 'error', message, guidance,
     })
     if (generationOptionsScope?.eventId !== selectedEvent.id || generationOptionsScope.eventDayId !== timetableEventDay.id) {
       setGenerationOptionsScope(null)
@@ -965,7 +972,7 @@ function App() {
     if (!hasValidTimetableGenerationPreprocessingInput({ event: selectedEvent,
       eventDay: timetableEventDay, eventDays, stages, sections, scheduleItems, options: generationOptions,
       paAssignments, dutyTypes, dutyAssignments, timetableLocks })) {
-      feedback('自動生成に必要なデータの形式または参照を確認できません。データを確認してください。')
+      feedback('自動生成に必要なデータの形式または参照を確認できません。Step 2〜6の設定と、既存の休憩・TT固定・PA／当日運営の担当範囲を確認してください。')
       return
     }
     const generationScheduleItems = createScheduleItemsForTimetableGeneration({ event: selectedEvent,
@@ -977,8 +984,8 @@ function App() {
     })
     if (!breakRemoval.ok) {
       feedback(breakRemoval.code === 'INVALID_REFERENCE_SHAPE'
-        ? '自動生成に必要なデータの形式または参照を確認できません。データを確認してください。'
-        : '選択した休憩を除外すると、当日運営・TT固定、または保持されるPA担当の参照が壊れるため自動生成できません。担当範囲やTT固定を変更してから再度お試しください。')
+        ? '自動生成に必要なデータの形式または参照を確認できません。Step 2〜6の設定と、既存の休憩・TT固定・PA／当日運営の担当範囲を確認してください。'
+        : '選択した休憩を除外すると、当日運営・TT固定、または保持されるPA担当の参照が壊れるため自動生成できません。自動生成設定でその休憩を残すか、先に担当範囲・TT固定を変更してください。')
       return
     }
     const input = { event: selectedEvent, eventDay: timetableEventDay, eventDays, stages, sections,
@@ -986,7 +993,11 @@ function App() {
       timetableLocks, timetableOrderConstraints, dutyTypes, dutyAssignments }
     const result = generateTimetablePlan(input)
     if (!result.ok) {
-      feedback(presentTimetableGenerationFailure(result.failure, { stages, sections, eventBands }))
+      const guidance = presentTimetableGenerationFailure(
+        result.failure,
+        { stages, sections, eventBands },
+      )
+      feedback(guidance.summary, guidance)
       return
     }
     const candidate = materializeTimetableGenerationPlan({ ...input, sourceScheduleItems: scheduleItems,
@@ -996,7 +1007,7 @@ function App() {
       newPaAssignmentIds: result.plan.paShifts.map(() => createId('pa-assignment')),
     })
     if (!candidate.ok) {
-      feedback(`生成結果を適用可能な形式へ変換できませんでした。（${candidate.code}）`)
+      feedback(`生成結果を安全にプレビューへ変換できませんでした。設定を変更せず再度生成しても解消しない場合は、Step 2〜6のデータの参照関係を確認してください。（詳細: ${candidate.code}）`)
       return
     }
     const validation = validateTimetableGenerationCandidate({ ...input, paAssignments, plan: result.plan }, candidate)
@@ -1794,10 +1805,14 @@ function App() {
                     </div>
                     {generationFeedback?.eventId === selectedEvent.id &&
                       generationFeedback.eventDayId === timetableEventDay?.id && (
-                        <p role={generationFeedback.kind === 'error' ? 'alert' : 'status'}
-                          className={generationFeedback.kind === 'error' ? 'form-error' : 'timetable-generation-feedback'}>
-                          {generationFeedback.message}
-                        </p>
+                        generationFeedback.kind === 'error' && generationFeedback.guidance
+                          ? <TimetableGenerationFailureGuidance guidance={generationFeedback.guidance} />
+                          : (
+                            <p role={generationFeedback.kind === 'error' ? 'alert' : 'status'}
+                              className={generationFeedback.kind === 'error' ? 'form-error' : 'timetable-generation-feedback'}>
+                              {generationFeedback.message}
+                            </p>
+                          )
                       )}
                   </div>
                 )}

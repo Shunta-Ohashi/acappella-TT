@@ -3858,6 +3858,43 @@
   color: #245936;
 }
 
+.timetable-generation-failure {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  color: #5f211c;
+  background: #fff7f6;
+  border: 1px solid #e6b8b2;
+  border-radius: 8px;
+}
+
+.timetable-generation-failure h3,
+.timetable-generation-failure h4,
+.timetable-generation-failure p,
+.timetable-generation-failure ul {
+  margin: 0;
+}
+
+.timetable-generation-failure h3 {
+  font-size: 14px;
+}
+
+.timetable-generation-failure h4 {
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.timetable-generation-failure ul {
+  display: grid;
+  gap: 3px;
+  padding-left: 20px;
+  font-size: 12px;
+}
+
+.timetable-generation-failure__details {
+  color: #6b4d49;
+}
+
 .generation-preview-dialog {
   box-sizing: border-box;
   width: min(960px, calc(100vw - 32px));
