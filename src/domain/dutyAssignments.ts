@@ -83,6 +83,10 @@ export type DutySettingsUpdateResult =
     }
   | { ok: false; errors: DutySettingsValidationErrors }
 
+export type DutyAssignmentAdditionResult =
+  | { ok: true; dutyAssignments: DutyAssignment[] }
+  | { ok: false; errors: DutyAssignmentItemErrors }
+
 export interface DutyMemberCandidate {
   member: Member
   participationStatus: EventMemberDay['participationStatus']
@@ -645,6 +649,119 @@ export const createDutyAssignmentDraftItem = ({
     stageId: stage.id,
     memberId: '',
     ...range,
+  }
+}
+
+export const createDutyAssignmentAddition = ({
+  event,
+  eventDays,
+  stages,
+  sections,
+  members,
+  eventMembers,
+  eventMemberDays,
+  eventBands,
+  paAssignments,
+  calculatedItems,
+  dutyTypes,
+  dutyAssignments,
+  item,
+  newDutyAssignmentId,
+}: {
+  event: Event
+  eventDays: EventDay[]
+  stages: Stage[]
+  sections: Section[]
+  members: Member[]
+  eventMembers: EventMember[]
+  eventMemberDays: EventMemberDay[]
+  eventBands: EventBand[]
+  paAssignments: PaAssignment[]
+  calculatedItems: CalculatedScheduleItem[]
+  dutyTypes: DutyType[]
+  dutyAssignments: DutyAssignment[]
+  item: Omit<
+    DutyAssignmentDraftItem,
+    'draftId' | 'dutyAssignmentId' | 'dutyTypeDraftId' | 'missingDutyTypeId'
+  > & { dutyTypeId: DutyTypeId }
+  newDutyAssignmentId: DutyAssignmentId
+}): DutyAssignmentAdditionResult => {
+  if (
+    typeof newDutyAssignmentId !== 'string' ||
+    !newDutyAssignmentId.trim() ||
+    dutyAssignments.some((assignment) => assignment.id === newDutyAssignmentId)
+  ) {
+    return { ok: false, errors: { form: '新しい担当のIDを生成できませんでした。' } }
+  }
+
+  const matchingDutyTypes = dutyTypes.filter((dutyType) =>
+    dutyType.id === item.dutyTypeId,
+  )
+  if (
+    matchingDutyTypes.length !== 1 ||
+    matchingDutyTypes[0].eventId !== event.id
+  ) {
+    return { ok: false, errors: { dutyTypeId: '仕事の種類を確認できません。' } }
+  }
+
+  const draft = createDutySettingsDraft(
+    event,
+    stages,
+    dutyTypes,
+    dutyAssignments,
+  )
+  const dutyTypeDraft = draft.dutyTypes.find((dutyType) =>
+    dutyType.dutyTypeId === item.dutyTypeId,
+  )
+  const draftId = `timetable-grid-duty-${newDutyAssignmentId}`
+  if (
+    !dutyTypeDraft ||
+    draft.assignments.some((draftItem) => draftItem.draftId === draftId)
+  ) {
+    return { ok: false, errors: { form: '新しい一般業務担当draftを生成できませんでした。' } }
+  }
+  const newItem: DutyAssignmentDraftItem = {
+    draftId,
+    dutyTypeDraftId: dutyTypeDraft.draftId,
+    eventDayId: item.eventDayId,
+    stageId: item.stageId,
+    memberId: item.memberId,
+    from: { ...item.from },
+    until: { ...item.until },
+  }
+  draft.assignments.push(newItem)
+
+  const errors = validateDutySettingsDraft({
+    draft,
+    event,
+    eventDays,
+    stages,
+    sections,
+    members,
+    eventMembers,
+    eventMemberDays,
+    eventBands,
+    paAssignments,
+    calculatedItems,
+  }).assignments[draftId]
+  if (errors && hasDutyAssignmentItemErrors(errors)) {
+    return { ok: false, errors }
+  }
+
+  return {
+    ok: true,
+    dutyAssignments: [
+      ...dutyAssignments,
+      {
+        id: newDutyAssignmentId,
+        dutyTypeId: item.dutyTypeId,
+        eventDayId: item.eventDayId,
+        stageId: item.stageId,
+        memberId: item.memberId,
+        from: { ...item.from },
+        until: { ...item.until },
+      },
+    ],
   }
 }
 

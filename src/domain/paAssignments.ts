@@ -64,6 +64,10 @@ export type PaAssignmentsUpdateResult =
   | { ok: true; paAssignments: PaAssignment[] }
   | { ok: false; errors: PaAssignmentsValidationErrors }
 
+export type PaAssignmentAdditionResult =
+  | { ok: true; paAssignments: PaAssignment[] }
+  | { ok: false; errors: PaAssignmentItemErrors }
+
 export type ResolvedPaAssignmentInterval = ResolvedScheduleInterval
 export type ResolvePaAssignmentIntervalResult = ResolveScheduleIntervalResult
 
@@ -467,6 +471,88 @@ export const createPaAssignmentDraftItem = ({
     memberId: '',
     role,
     ...range,
+  }
+}
+
+export const createPaAssignmentAddition = ({
+  event,
+  eventDays,
+  stages,
+  sections,
+  members,
+  eventMembers,
+  eventMemberDays,
+  eventBands,
+  calculatedItems,
+  paAssignments,
+  item,
+  newPaAssignmentId,
+}: {
+  event: Event
+  eventDays: EventDay[]
+  stages: Stage[]
+  sections: Section[]
+  members: Member[]
+  eventMembers: EventMember[]
+  eventMemberDays: EventMemberDay[]
+  eventBands: EventBand[]
+  calculatedItems: CalculatedScheduleItem[]
+  paAssignments: PaAssignment[]
+  item: Omit<PaAssignmentDraftItem, 'draftId' | 'paAssignmentId'>
+  newPaAssignmentId: PaAssignmentId
+}): PaAssignmentAdditionResult => {
+  if (
+    typeof newPaAssignmentId !== 'string' ||
+    !newPaAssignmentId.trim() ||
+    paAssignments.some((assignment) => assignment.id === newPaAssignmentId)
+  ) {
+    return { ok: false, errors: { form: '新しいPA担当のIDを生成できませんでした。' } }
+  }
+
+  const draft = createPaAssignmentsDraft(event, paAssignments)
+  const draftId = `timetable-grid-pa-${newPaAssignmentId}`
+  if (draft.items.some((draftItem) => draftItem.draftId === draftId)) {
+    return { ok: false, errors: { form: '新しいPA担当draftを生成できませんでした。' } }
+  }
+  const newItem: PaAssignmentDraftItem = {
+    draftId,
+    ...item,
+    from: { ...item.from },
+    until: { ...item.until },
+  }
+  draft.items.push(newItem)
+
+  const errors = validatePaAssignmentsDraft({
+    draft,
+    event,
+    eventDays,
+    stages,
+    sections,
+    members,
+    eventMembers,
+    eventMemberDays,
+    eventBands,
+    calculatedItems,
+  }).items[draftId]
+  if (errors && hasPaAssignmentItemErrors(errors)) {
+    return { ok: false, errors }
+  }
+
+  return {
+    ok: true,
+    paAssignments: [
+      ...paAssignments,
+      {
+        id: newPaAssignmentId,
+        eventId: item.eventId,
+        eventDayId: item.eventDayId,
+        stageId: item.stageId,
+        memberId: item.memberId,
+        role: item.role,
+        from: { ...item.from },
+        until: { ...item.until },
+      },
+    ],
   }
 }
 

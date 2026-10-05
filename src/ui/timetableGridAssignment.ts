@@ -18,18 +18,14 @@ import type {
 import type { CalculatedScheduleItem } from '../domain/timeline'
 import type { TimetableWorkspaceRow } from './timetableWorkspaceRows.ts'
 import {
-  createPaAssignmentsDraft,
-  createPaAssignmentsUpdate,
+  createPaAssignmentAddition,
   getPaMemberCandidates,
   resolvePaAssignmentInterval,
-  type PaAssignmentsValidationErrors,
 } from '../domain/paAssignments.ts'
 import {
-  createDutySettingsDraft,
-  createDutySettingsUpdate,
+  createDutyAssignmentAddition,
   getDutyMemberCandidates,
   resolveDutyAssignmentInterval,
-  type DutySettingsValidationErrors,
 } from '../domain/dutyAssignments.ts'
 import { detectScheduleIssues } from '../domain/issues.ts'
 import { getMemberDisplayName } from './eventBandPresentation.ts'
@@ -215,30 +211,6 @@ export const getTimetableGridAssignmentCandidates = (
   }
 }
 
-const flattenPaErrors = (errors: PaAssignmentsValidationErrors): string[] =>
-  uniqueMessages([
-    errors.form,
-    ...Object.values(errors.items).flatMap((item) => Object.values(item)),
-  ])
-
-const flattenDutyErrors = (errors: DutySettingsValidationErrors): string[] =>
-  uniqueMessages([
-    errors.form,
-    ...Object.values(errors.dutyTypes).flatMap((item) => Object.values(item)),
-    ...Object.values(errors.assignments).flatMap((item) => Object.values(item)),
-  ])
-
-const haveSameDutyTypes = (
-  left: readonly DutyType[],
-  right: readonly DutyType[],
-): boolean => left.length === right.length && left.every((dutyType) => {
-  const candidate = right.find((item) => item.id === dutyType.id)
-  return candidate !== undefined &&
-    candidate.eventId === dutyType.eventId &&
-    candidate.name === dutyType.name &&
-    candidate.order === dutyType.order
-})
-
 export const createTimetableGridAssignment = ({
   context,
   selection,
@@ -261,19 +233,7 @@ export const createTimetableGridAssignment = ({
   }
 
   if (selection.target.kind === 'pa') {
-    const draft = createPaAssignmentsDraft(context.event, context.paAssignments)
-    const draftId = `timetable-grid-pa-${newAssignmentId}`
-    draft.items.push({
-      draftId,
-      eventId: context.event.id,
-      eventDayId: selection.eventDayId,
-      stageId: selection.stageId,
-      memberId,
-      role: selection.target.role,
-      from: { ...selection.fromBoundary },
-      until: { ...selection.untilBoundary },
-    })
-    const update = createPaAssignmentsUpdate({
+    const update = createPaAssignmentAddition({
       event: context.event,
       eventDays: context.eventDays,
       stages: context.stages,
@@ -284,10 +244,20 @@ export const createTimetableGridAssignment = ({
       eventBands: context.eventBands,
       calculatedItems: context.calculatedItems,
       paAssignments: context.paAssignments,
-      draft,
-      newPaAssignmentIds: [newAssignmentId],
+      item: {
+        eventId: context.event.id,
+        eventDayId: selection.eventDayId,
+        stageId: selection.stageId,
+        memberId,
+        role: selection.target.role,
+        from: { ...selection.fromBoundary },
+        until: { ...selection.untilBoundary },
+      },
+      newPaAssignmentId: newAssignmentId,
     })
-    if (!update.ok) return { ok: false, errors: flattenPaErrors(update.errors) }
+    if (!update.ok) {
+      return { ok: false, errors: uniqueMessages(Object.values(update.errors)) }
+    }
 
     const relatedIssues = detectScheduleIssues({
       ...context,
@@ -314,28 +284,7 @@ export const createTimetableGridAssignment = ({
   }
 
   const dutyTypeId = selection.target.dutyTypeId
-  const draft = createDutySettingsDraft(
-    context.event,
-    context.stages,
-    context.dutyTypes,
-    context.dutyAssignments,
-  )
-  const dutyTypeDraft = draft.dutyTypes.find((dutyType) =>
-    dutyType.dutyTypeId === dutyTypeId,
-  )
-  if (!dutyTypeDraft) {
-    return { ok: false, errors: ['選択した当日運営の仕事を確認できません。'] }
-  }
-  draft.assignments.push({
-    draftId: `timetable-grid-duty-${newAssignmentId}`,
-    dutyTypeDraftId: dutyTypeDraft.draftId,
-    eventDayId: selection.eventDayId,
-    stageId: selection.stageId,
-    memberId,
-    from: { ...selection.fromBoundary },
-    until: { ...selection.untilBoundary },
-  })
-  const update = createDutySettingsUpdate({
+  const update = createDutyAssignmentAddition({
     event: context.event,
     eventDays: context.eventDays,
     stages: context.stages,
@@ -348,18 +297,22 @@ export const createTimetableGridAssignment = ({
     calculatedItems: context.calculatedItems,
     dutyTypes: context.dutyTypes,
     dutyAssignments: context.dutyAssignments,
-    draft,
-    newDutyTypeIds: [],
-    newDutyAssignmentIds: [newAssignmentId],
+    item: {
+      dutyTypeId,
+      eventDayId: selection.eventDayId,
+      stageId: selection.stageId,
+      memberId,
+      from: { ...selection.fromBoundary },
+      until: { ...selection.untilBoundary },
+    },
+    newDutyAssignmentId: newAssignmentId,
   })
-  if (!update.ok) return { ok: false, errors: flattenDutyErrors(update.errors) }
-  if (!haveSameDutyTypes(context.dutyTypes, update.dutyTypes)) {
-    return { ok: false, errors: ['当日運営の仕事設定が変更されたため、担当を追加できませんでした。'] }
+  if (!update.ok) {
+    return { ok: false, errors: uniqueMessages(Object.values(update.errors)) }
   }
 
   const relatedIssues = detectScheduleIssues({
     ...context,
-    dutyTypes: update.dutyTypes,
     dutyAssignments: update.dutyAssignments,
   }).filter((issue) => issue.dutyAssignmentIds?.includes(newAssignmentId))
   const errors = uniqueMessages(relatedIssues

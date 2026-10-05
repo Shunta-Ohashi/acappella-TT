@@ -309,6 +309,103 @@ test('参加未定warningだけなら追加でき、無関係な既存Issueで�
     assignment.id === 'pa-undecided'), true)
 })
 
+test('無関係なstale PAを変更せず保持して正常なPAだけ追加する', () => {
+  const stalePa = {
+    id: 'pa-stale', eventId: event.id, eventDayId: 'day-1', stageId: 'stage-1',
+    memberId: 'member-sub', role: 'sub',
+    from: { kind: 'schedule-item', scheduleItemId: 'missing-item', edge: 'start' },
+    until: { kind: 'schedule-item', scheduleItemId: 'missing-item', edge: 'end' },
+  }
+  const input = context({ paAssignments: [stalePa] })
+  const before = structuredClone(input)
+  const result = createTimetableGridAssignment({
+    context: input,
+    selection: selection(),
+    memberId: 'member-main',
+    newAssignmentId: 'pa-with-stale-existing',
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.kind, 'pa')
+  assert.deepEqual(result.paAssignments[0], stalePa)
+  assert.equal(result.paAssignments.at(-1).id, 'pa-with-stale-existing')
+  assert.deepEqual(input, before)
+})
+
+test('無関係なstale Dutyと未使用DutyType errorを保持して正常なDutyだけ追加する', () => {
+  const staleDuty = {
+    id: 'duty-stale', dutyTypeId: 'duty-invalid-a',
+    eventDayId: 'day-1', stageId: 'stage-1', memberId: 'member-sub',
+    from: { kind: 'schedule-item', scheduleItemId: 'missing-item', edge: 'start' },
+    until: { kind: 'schedule-item', scheduleItemId: 'missing-item', edge: 'end' },
+  }
+  const invalidTypes = [
+    ...dutyTypes,
+    { id: 'duty-invalid-a', eventId: event.id, name: '重複名', order: 1 },
+    { id: 'duty-invalid-b', eventId: event.id, name: ' 重複名 ', order: 2 },
+  ]
+  const input = context({
+    dutyTypes: invalidTypes,
+    dutyAssignments: [staleDuty],
+  })
+  const before = structuredClone(input)
+  const result = createTimetableGridAssignment({
+    context: input,
+    selection: selection({ kind: 'duty', dutyTypeId: 'duty-photo' }),
+    memberId: 'member-main',
+    newAssignmentId: 'duty-with-stale-existing',
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.kind, 'duty')
+  assert.deepEqual(result.dutyAssignments[0], staleDuty)
+  assert.equal(result.dutyAssignments.at(-1).id, 'duty-with-stale-existing')
+  assert.deepEqual(input, before)
+})
+
+test('新規Dutyと既存PAのcross-domain重複は引き続きrejectする', () => {
+  const overlappingPa = {
+    id: 'pa-existing', eventId: event.id, eventDayId: 'day-1', stageId: 'stage-1',
+    memberId: 'member-main', role: 'main',
+    from: { kind: 'schedule-item', scheduleItemId: 'item-1', edge: 'start' },
+    until: { kind: 'schedule-item', scheduleItemId: 'item-1', edge: 'end' },
+  }
+  const result = createTimetableGridAssignment({
+    context: context({ paAssignments: [overlappingPa] }),
+    selection: selection({ kind: 'duty', dutyTypeId: 'duty-photo' }),
+    memberId: 'member-main',
+    newAssignmentId: 'duty-pa-overlap',
+  })
+  assert.equal(result.ok, false)
+  assert.match(result.errors.join(' '), /重複/)
+})
+
+test('Dutyの新規ID衝突とPA/Dutyの空IDをfail closedにする', () => {
+  const existingDuty = {
+    id: 'duty-collision', dutyTypeId: 'duty-photo',
+    eventDayId: 'day-1', stageId: 'stage-1', memberId: 'member-sub',
+    from: { kind: 'schedule-item', scheduleItemId: 'item-3', edge: 'start' },
+    until: { kind: 'schedule-item', scheduleItemId: 'item-3', edge: 'end' },
+  }
+  const collision = createTimetableGridAssignment({
+    context: context({ dutyAssignments: [existingDuty] }),
+    selection: selection({ kind: 'duty', dutyTypeId: 'duty-photo' }),
+    memberId: 'member-main', newAssignmentId: existingDuty.id,
+  })
+  assert.equal(collision.ok, false)
+  assert.match(collision.errors.join(' '), /ID/)
+
+  for (const [target, id] of [
+    [{ kind: 'pa', role: 'main' }, ''],
+    [{ kind: 'duty', dutyTypeId: 'duty-photo' }, '   '],
+  ]) {
+    const result = createTimetableGridAssignment({
+      context: context(), selection: selection(target),
+      memberId: 'member-main', newAssignmentId: id,
+    })
+    assert.equal(result.ok, false)
+    assert.match(result.errors.join(' '), /ID/)
+  }
+})
+
 test('失敗・成功のどちらでもselectionと入力collectionをmutationしない', () => {
   const input = context()
   const selectedRange = selection()
