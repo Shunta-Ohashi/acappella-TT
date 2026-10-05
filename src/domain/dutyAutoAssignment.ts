@@ -302,7 +302,9 @@ const compareMetrics = (
     memberById.get(right.memberId)?.realName ?? '',
     'ja',
   ) ||
-  left.memberId.localeCompare(right.memberId)
+  left.memberId.localeCompare(right.memberId) ||
+  left.eventMemberId.localeCompare(right.eventMemberId) ||
+  left.eventMemberDayId.localeCompare(right.eventMemberDayId)
 )
 
 export const planDutyAutoAssignments = (
@@ -418,8 +420,7 @@ export const planDutyAutoAssignments = (
   const unresolvedPaIds = new Set(paActivities.unresolved.map((source) => source.id))
   const unresolvedDutyIds = new Set(dutyActivities.unresolved.map((source) => source.id))
   const memberById = new Map(context.members.map((member) => [member.id, member]))
-  const metrics: DutyAutoAssignmentCandidateMetric[] = []
-  const evaluatedMemberIds = new Set<MemberId>()
+  const viableMetrics: DutyAutoAssignmentCandidateMetric[] = []
 
   for (const candidate of getDutyMemberCandidates({
     event: context.event,
@@ -428,8 +429,6 @@ export const planDutyAutoAssignments = (
     eventMembers: context.eventMembers,
     eventMemberDays: context.eventMemberDays,
   })) {
-    if (evaluatedMemberIds.has(candidate.member.id)) continue
-    evaluatedMemberIds.add(candidate.member.id)
     const identityScope = createDutyCandidateIdentityScope({
       event: context.event,
       eventDayId: context.eventDay.id,
@@ -544,7 +543,7 @@ export const planDutyAutoAssignments = (
     const addedPairs = spacing.pairs.filter((pair) =>
       pair.previous.id === proposedActivity.id || pair.next.id === proposedActivity.id,
     )
-    metrics.push({
+    viableMetrics.push({
       memberId: candidate.member.id,
       eventMemberId: candidate.eventMemberId,
       eventMemberDayId: candidate.eventMemberDay.id,
@@ -560,6 +559,14 @@ export const planDutyAutoAssignments = (
     })
   }
 
+  const bestMetricByMember = new Map<MemberId, DutyAutoAssignmentCandidateMetric>()
+  for (const metric of viableMetrics) {
+    const currentBest = bestMetricByMember.get(metric.memberId)
+    if (!currentBest || compareMetrics(metric, currentBest, memberById) < 0) {
+      bestMetricByMember.set(metric.memberId, metric)
+    }
+  }
+  const metrics = [...bestMetricByMember.values()]
   metrics.sort((left, right) => compareMetrics(left, right, memberById))
   if (metrics.length < request.additionalCount) {
     return {
@@ -609,6 +616,8 @@ export const createDutyAutoAssignments = ({
   if (
     plan.eventDayId !== context.eventDay.id ||
     plan.stageId !== context.stage.id ||
+    !Number.isSafeInteger(plan.additionalCount) ||
+    plan.additionalCount < 1 ||
     plan.additionalCount !== plan.selectedMemberIds.length ||
     plan.candidateMetrics.length !== plan.selectedMemberIds.length ||
     new Set(plan.selectedMemberIds).size !== plan.selectedMemberIds.length ||

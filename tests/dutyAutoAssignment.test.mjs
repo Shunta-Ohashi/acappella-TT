@@ -127,7 +127,7 @@ test('重複EventMemberではcandidate生成時のEventMemberDay identityを維�
     eventMembers: [eventMembers[0], duplicateEventMember],
     eventMemberDays: [
       memberDay('member-a', {
-        participationStatus: 'absent',
+        participationStatus: 'participating',
         availabilityWindows: [{ until: '12:00' }],
       }),
       {
@@ -195,6 +195,68 @@ test('重複EventMemberではcandidate生成時のEventMemberDay identityを維�
   assert.equal(stale.ok, false)
   assert.equal(stale.code, 'INVALID_PLAN')
   assert.deepEqual(staleIdentityContext, staleBefore)
+})
+
+test('重複identityは全件評価してparticipatingの最良候補を入力順に依存せず選ぶ', () => {
+  const participatingEventMember = {
+    ...eventMembers[0],
+    id: 'event-member-member-a-participating',
+  }
+  const undecidedDay = memberDay('member-a', {
+    participationStatus: 'undecided',
+    availabilityWindows: [{ from: '13:00', until: '14:00' }],
+  })
+  const participatingDay = {
+    ...memberDay('member-a'),
+    id: 'member-day-a-participating',
+    eventMemberId: participatingEventMember.id,
+    availabilityWindows: [{ from: '13:00', until: '14:00' }],
+  }
+  const forward = planDutyAutoAssignments(context({
+    eventMembers: [eventMembers[0], participatingEventMember],
+    eventMemberDays: [undecidedDay, participatingDay],
+  }), request())
+  const reversed = planDutyAutoAssignments(context({
+    eventMembers: [participatingEventMember, eventMembers[0]],
+    eventMemberDays: [participatingDay, undecidedDay],
+  }), request())
+
+  assert.equal(forward.ok, true)
+  assert.equal(reversed.ok, true)
+  assert.equal(forward.plan.candidateMetrics[0].eventMemberId,
+    participatingEventMember.id)
+  assert.equal(forward.plan.candidateMetrics[0].participationStatus, 'participating')
+  assert.deepEqual(forward.plan.warnings, [])
+  assert.deepEqual(reversed, forward)
+})
+
+test('重複identityの評価値が同じならidentity IDで安定して選ぶ', () => {
+  const laterEventMember = {
+    ...eventMembers[0],
+    id: 'event-member-member-a-z',
+  }
+  const baseDay = memberDay('member-a', {
+    availabilityWindows: [{ from: '13:00', until: '14:00' }],
+  })
+  const laterDay = {
+    ...baseDay,
+    id: 'member-day-a-z',
+    eventMemberId: laterEventMember.id,
+  }
+  const forward = planDutyAutoAssignments(context({
+    eventMembers: [laterEventMember, eventMembers[0]],
+    eventMemberDays: [laterDay, baseDay],
+  }), request())
+  const reversed = planDutyAutoAssignments(context({
+    eventMembers: [eventMembers[0], laterEventMember],
+    eventMemberDays: [baseDay, laterDay],
+  }), request())
+
+  assert.equal(forward.ok, true)
+  assert.equal(reversed.ok, true)
+  assert.equal(forward.plan.candidateMetrics[0].eventMemberId, eventMembers[0].id)
+  assert.equal(forward.plan.candidateMetrics[0].eventMemberDayId, baseDay.id)
+  assert.deepEqual(reversed, forward)
 })
 
 test('absent・日別設定なし・範囲全体がavailability外のMemberを除外する', () => {
@@ -578,6 +640,29 @@ test('applyはselectedMemberIdsとcandidateMetricsの対応が壊れたplanを�
     assert.equal(result.code, 'INVALID_PLAN')
   }
   assert.deepEqual(input.dutyAssignments, [])
+})
+
+test('applyは0・負数・小数・非有限のadditionalCountをINVALID_PLANにする', () => {
+  const input = context()
+  const planned = planDutyAutoAssignments(input, request())
+  assert.equal(planned.ok, true)
+  const before = structuredClone(input)
+
+  for (const additionalCount of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const result = createDutyAutoAssignments({
+      context: input,
+      plan: {
+        ...planned.plan,
+        additionalCount,
+        selectedMemberIds: [],
+        candidateMetrics: [],
+      },
+      newDutyAssignmentIds: [],
+    })
+    assert.equal(result.ok, false)
+    assert.equal(result.code, 'INVALID_PLAN')
+  }
+  assert.deepEqual(input, before)
 })
 
 test('apply途中の2人目validation失敗でも部分適用せず、unrelated ERRORはblockしない', () => {
