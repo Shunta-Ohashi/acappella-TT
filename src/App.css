@@ -5051,6 +5051,23 @@
   opacity: 0.45;
 }
 
+.duty-type-list > li > .duty-type-inline-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  width: 100%;
+}
+
+.duty-type-inline-editor__actions {
+  display: flex;
+  gap: 5px;
+}
+
+.duty-type-inline-editor .form-error {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
 .duty-type-input {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -5064,7 +5081,8 @@
   font-weight: 750;
 }
 
-.duty-type-input input {
+.duty-type-input input,
+.duty-type-inline-editor input {
   box-sizing: border-box;
   min-width: 0;
   min-height: 30px;
