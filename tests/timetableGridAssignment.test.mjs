@@ -3,7 +3,10 @@ import test from 'node:test'
 
 import {
   createTimetableGridAssignment,
+  deleteTimetableGridAssignment,
+  deleteTimetableGridAssignments,
   getTimetableGridAssignmentCandidates,
+  getTimetableGridSelectionAssignmentTargets,
 } from '../src/ui/timetableGridAssignment.ts'
 
 const event = {
@@ -458,4 +461,361 @@ test('foreign EventDayをrejectし、同じinputにはdeterministicな結果を�
     createTimetableGridAssignment(input),
     createTimetableGridAssignment(input),
   )
+})
+
+const paAssignment = (overrides = {}) => ({
+  id: 'pa-delete',
+  eventId: event.id,
+  eventDayId: 'day-1',
+  stageId: 'stage-1',
+  memberId: 'member-main',
+  role: 'main',
+  from: { kind: 'schedule-item', scheduleItemId: 'item-1', edge: 'start' },
+  until: { kind: 'schedule-item', scheduleItemId: 'item-2', edge: 'end' },
+  ...overrides,
+})
+
+const dutyAssignment = (overrides = {}) => ({
+  id: 'duty-delete',
+  dutyTypeId: 'duty-photo',
+  eventDayId: 'day-1',
+  stageId: 'stage-1',
+  memberId: 'member-main',
+  from: { kind: 'schedule-item', scheduleItemId: 'item-1', edge: 'start' },
+  until: { kind: 'schedule-item', scheduleItemId: 'item-2', edge: 'end' },
+  ...overrides,
+})
+
+test('PA AssignmentをIDで1件だけ削除し他Event・他Day・他Stageを保持する', () => {
+  const assignments = [
+    paAssignment(),
+    paAssignment({ id: 'pa-other-current' }),
+    paAssignment({ id: 'pa-foreign', eventId: 'event-foreign' }),
+    paAssignment({
+      id: 'pa-other-day', eventDayId: 'day-2', stageId: 'stage-2',
+      from: { kind: 'schedule-item', scheduleItemId: 'other-day', edge: 'start' },
+      until: { kind: 'schedule-item', scheduleItemId: 'other-day', edge: 'end' },
+    }),
+    paAssignment({ id: 'pa-other-stage', stageId: 'stage-1b' }),
+  ]
+  const result = deleteTimetableGridAssignment({
+    context: context({
+      stages: [...stages, {
+        id: 'stage-1b', eventDayId: 'day-1', name: 'Sub', order: 1,
+        plannedStartTime: '10:00',
+      }],
+      paAssignments: assignments,
+    }),
+    target: { kind: 'pa', assignmentId: 'pa-delete' },
+    eventDayId: 'day-1',
+    stageId: 'stage-1',
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.kind, 'pa')
+  assert.deepEqual(result.paAssignments.map((item) => item.id), [
+    'pa-other-current', 'pa-foreign', 'pa-other-day', 'pa-other-stage',
+  ])
+  assert.equal(result.targetLabel, 'Main PA')
+  assert.equal(result.memberName, 'Main担当')
+  assert.deepEqual([result.fromMinute, result.untilMinute], [600, 620])
+})
+
+test('Duty AssignmentをIDで1件だけ削除し他Duty・他Eventを保持する', () => {
+  const foreignType = {
+    id: 'duty-foreign-type', eventId: 'event-foreign', name: '他Event業務', order: 0,
+  }
+  const assignments = [
+    dutyAssignment(),
+    dutyAssignment({ id: 'duty-other-current' }),
+    dutyAssignment({ id: 'duty-foreign', dutyTypeId: foreignType.id }),
+    dutyAssignment({ id: 'duty-other-day', eventDayId: 'day-2', stageId: 'stage-2' }),
+    dutyAssignment({ id: 'duty-other-stage', stageId: 'stage-1b' }),
+  ]
+  const result = deleteTimetableGridAssignment({
+    context: context({
+      stages: [...stages, {
+        id: 'stage-1b', eventDayId: 'day-1', name: 'Sub', order: 1,
+        plannedStartTime: '10:00',
+      }],
+      dutyTypes: [...dutyTypes, foreignType],
+      dutyAssignments: assignments,
+    }),
+    target: { kind: 'duty', assignmentId: 'duty-delete' },
+    eventDayId: 'day-1',
+    stageId: 'stage-1',
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.kind, 'duty')
+  assert.deepEqual(result.dutyAssignments.map((item) => item.id), [
+    'duty-other-current', 'duty-foreign', 'duty-other-day', 'duty-other-stage',
+  ])
+  assert.equal(result.targetLabel, '撮影')
+})
+
+test('missing・foreign・EventDay/Stage不一致のPA削除をfail closedにする', () => {
+  const cases = [
+    {
+      label: 'missing ID',
+      assignments: [paAssignment()],
+      targetId: 'missing-pa',
+    },
+    {
+      label: 'foreign Event',
+      assignments: [paAssignment({ eventId: 'event-foreign' })],
+      targetId: 'pa-delete',
+    },
+    {
+      label: 'other EventDay',
+      assignments: [paAssignment({ eventDayId: 'day-2', stageId: 'stage-2' })],
+      targetId: 'pa-delete',
+    },
+    {
+      label: 'other Stage',
+      assignments: [paAssignment({ stageId: 'stage-1b' })],
+      targetId: 'pa-delete',
+    },
+  ]
+  for (const testCase of cases) {
+    const result = deleteTimetableGridAssignment({
+      context: context({
+        stages: [...stages, {
+          id: 'stage-1b', eventDayId: 'day-1', name: 'Sub', order: 1,
+          plannedStartTime: '10:00',
+        }],
+        paAssignments: testCase.assignments,
+      }),
+      target: { kind: 'pa', assignmentId: testCase.targetId },
+      eventDayId: 'day-1',
+      stageId: 'stage-1',
+    })
+    assert.equal(result.ok, false, testCase.label)
+  }
+})
+
+test('missing ID・DutyType missing/foreign・EventDay/Stage不一致のDuty削除をfail closedにする', () => {
+  const cases = [
+    {
+      label: 'missing ID',
+      assignments: [dutyAssignment()],
+      targetId: 'missing-duty',
+      types: dutyTypes,
+    },
+    {
+      label: 'missing DutyType',
+      assignments: [dutyAssignment({ dutyTypeId: 'missing-type' })],
+      targetId: 'duty-delete',
+      types: dutyTypes,
+    },
+    {
+      label: 'foreign DutyType',
+      assignments: [dutyAssignment({ dutyTypeId: 'foreign-type' })],
+      targetId: 'duty-delete',
+      types: [...dutyTypes, {
+        id: 'foreign-type', eventId: 'event-foreign', name: '別Event', order: 0,
+      }],
+    },
+    {
+      label: 'other EventDay',
+      assignments: [dutyAssignment({ eventDayId: 'day-2', stageId: 'stage-2' })],
+      targetId: 'duty-delete',
+      types: dutyTypes,
+    },
+    {
+      label: 'other Stage',
+      assignments: [dutyAssignment({ stageId: 'stage-1b' })],
+      targetId: 'duty-delete',
+      types: dutyTypes,
+    },
+  ]
+  for (const testCase of cases) {
+    const result = deleteTimetableGridAssignment({
+      context: context({
+        stages: [...stages, {
+          id: 'stage-1b', eventDayId: 'day-1', name: 'Sub', order: 1,
+          plannedStartTime: '10:00',
+        }],
+        dutyTypes: testCase.types,
+        dutyAssignments: testCase.assignments,
+      }),
+      target: { kind: 'duty', assignmentId: testCase.targetId },
+      eventDayId: 'day-1',
+      stageId: 'stage-1',
+    })
+    assert.equal(result.ok, false, testCase.label)
+  }
+})
+
+test('Assignment削除はdeterministicかつinput non-mutationである', () => {
+  const inputContext = context({
+    paAssignments: [paAssignment(), paAssignment({ id: 'pa-retained' })],
+    dutyAssignments: [dutyAssignment()],
+  })
+  const before = structuredClone(inputContext)
+  const input = {
+    context: inputContext,
+    target: { kind: 'pa', assignmentId: 'pa-delete' },
+    eventDayId: 'day-1',
+    stageId: 'stage-1',
+  }
+  assert.deepEqual(
+    deleteTimetableGridAssignment(input),
+    deleteTimetableGridAssignment(input),
+  )
+  assert.deepEqual(inputContext, before)
+})
+
+const coverageRow = ({
+  id,
+  main = [],
+  sub = [],
+  duties = {},
+  kind = 'performance',
+  sectionId,
+  afterSectionId,
+}) => ({
+  scheduleItem: {
+    id,
+    kind,
+    ...(sectionId ? { sectionId } : {}),
+    ...(afterSectionId ? { afterSectionId } : {}),
+  },
+  paCoverage: {
+    main: main.map((assignmentId) => ({ assignmentId })),
+    sub: sub.map((assignmentId) => ({ assignmentId })),
+  },
+  dutyCoverage: Object.fromEntries(
+    Object.entries(duties).map(([dutyTypeId, assignmentIds]) => [
+      dutyTypeId,
+      assignmentIds.map((assignmentId) => ({ assignmentId })),
+    ]),
+  ),
+})
+
+const selectedCoverage = (target, scheduleItemIds) => selection(target, {
+  scheduleItemIds,
+  rowCount: scheduleItemIds.length,
+})
+
+test('selection列だけからMain/Sub PAとDutyのAssignment IDを収集する', () => {
+  const rows = [coverageRow({
+    id: 'item-1',
+    main: ['pa-main'],
+    sub: ['pa-sub'],
+    duties: { 'duty-photo': ['duty-photo-a'], 'duty-reception': ['duty-reception-a'] },
+  })]
+  assert.deepEqual(getTimetableGridSelectionAssignmentTargets(
+    selectedCoverage({ kind: 'pa', role: 'main' }, ['item-1']), rows,
+  ), [{ kind: 'pa', assignmentId: 'pa-main' }])
+  assert.deepEqual(getTimetableGridSelectionAssignmentTargets(
+    selectedCoverage({ kind: 'pa', role: 'sub' }, ['item-1']), rows,
+  ), [{ kind: 'pa', assignmentId: 'pa-sub' }])
+  assert.deepEqual(getTimetableGridSelectionAssignmentTargets(
+    selectedCoverage({ kind: 'duty', dutyTypeId: 'duty-photo' }, ['item-1']), rows,
+  ), [{ kind: 'duty', assignmentId: 'duty-photo-a' }])
+})
+
+test('複数rowの同一Assignmentを重複除去し異なるAssignmentは安定順で収集する', () => {
+  const rows = [
+    coverageRow({ id: 'item-1', main: ['pa-a'] }),
+    coverageRow({
+      id: 'inter-section-break', main: ['pa-a'], kind: 'break',
+      afterSectionId: 'section-1',
+    }),
+    coverageRow({ id: 'item-3', main: ['pa-a', 'pa-b'], sectionId: 'section-2' }),
+  ]
+  const resolved = selectedCoverage(
+    { kind: 'pa', role: 'main' },
+    ['item-1', 'inter-section-break', 'item-3'],
+  )
+  assert.deepEqual(getTimetableGridSelectionAssignmentTargets(resolved, rows), [
+    { kind: 'pa', assignmentId: 'pa-a' },
+    { kind: 'pa', assignmentId: 'pa-b' },
+  ])
+})
+
+test('Duty複数件を収集し担当なしselectionは空にする', () => {
+  const rows = [
+    coverageRow({ id: 'item-1', duties: { 'duty-photo': ['duty-a'] } }),
+    coverageRow({ id: 'item-2', duties: { 'duty-photo': ['duty-a', 'duty-b'] } }),
+    coverageRow({ id: 'item-3' }),
+  ]
+  assert.deepEqual(getTimetableGridSelectionAssignmentTargets(
+    selectedCoverage({ kind: 'duty', dutyTypeId: 'duty-photo' }, ['item-1', 'item-2']),
+    rows,
+  ), [
+    { kind: 'duty', assignmentId: 'duty-a' },
+    { kind: 'duty', assignmentId: 'duty-b' },
+  ])
+  assert.deepEqual(getTimetableGridSelectionAssignmentTargets(
+    selectedCoverage({ kind: 'duty', dutyTypeId: 'duty-photo' }, ['item-3']),
+    rows,
+  ), [])
+})
+
+test('selection target収集はdeterministicかつinput non-mutationである', () => {
+  const rows = [coverageRow({ id: 'item-1', main: ['pa-a', 'pa-b'] })]
+  const resolved = selectedCoverage({ kind: 'pa', role: 'main' }, ['item-1'])
+  const before = structuredClone({ rows, resolved })
+  assert.deepEqual(
+    getTimetableGridSelectionAssignmentTargets(resolved, rows),
+    getTimetableGridSelectionAssignmentTargets(resolved, rows),
+  )
+  assert.deepEqual({ rows, resolved }, before)
+})
+
+test('複数PA Assignmentを1回のatomic結果として削除する', () => {
+  const inputContext = context({
+    paAssignments: [
+      paAssignment({ id: 'pa-a' }),
+      paAssignment({ id: 'pa-b', memberId: 'member-sub' }),
+      paAssignment({ id: 'pa-retained' }),
+    ],
+  })
+  const result = deleteTimetableGridAssignments({
+    context: inputContext,
+    targets: [
+      { kind: 'pa', assignmentId: 'pa-a' },
+      { kind: 'pa', assignmentId: 'pa-b' },
+    ],
+    eventDayId: 'day-1',
+    stageId: 'stage-1',
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.kind, 'pa')
+  assert.deepEqual(result.paAssignments.map((item) => item.id), ['pa-retained'])
+  assert.deepEqual(result.deleted.map((item) => item.target.assignmentId), ['pa-a', 'pa-b'])
+})
+
+test('複数Duty Assignmentをatomicに削除し1件でも不正なら全体を失敗させる', () => {
+  const assignments = [
+    dutyAssignment({ id: 'duty-a' }),
+    dutyAssignment({ id: 'duty-b', memberId: 'member-sub' }),
+    dutyAssignment({ id: 'duty-retained' }),
+  ]
+  const inputContext = context({ dutyAssignments: assignments })
+  const success = deleteTimetableGridAssignments({
+    context: inputContext,
+    targets: [
+      { kind: 'duty', assignmentId: 'duty-a' },
+      { kind: 'duty', assignmentId: 'duty-b' },
+    ],
+    eventDayId: 'day-1',
+    stageId: 'stage-1',
+  })
+  assert.equal(success.ok, true)
+  assert.equal(success.kind, 'duty')
+  assert.deepEqual(success.dutyAssignments.map((item) => item.id), ['duty-retained'])
+
+  const before = structuredClone(inputContext)
+  const failure = deleteTimetableGridAssignments({
+    context: inputContext,
+    targets: [
+      { kind: 'duty', assignmentId: 'duty-a' },
+      { kind: 'duty', assignmentId: 'missing-duty' },
+    ],
+    eventDayId: 'day-1',
+    stageId: 'stage-1',
+  })
+  assert.equal(failure.ok, false)
+  assert.deepEqual(inputContext, before)
 })

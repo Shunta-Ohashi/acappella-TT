@@ -400,6 +400,7 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
                       >編集</button>
                       <button
                         type="button"
+                        className="danger-button"
                         aria-label={`${dutyType.name}を削除`}
                         onClick={() => {
                           if (!canDeleteDutyType(

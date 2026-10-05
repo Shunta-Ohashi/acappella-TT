@@ -59,6 +59,7 @@ import {
   type TimetableGridAssignmentTarget,
   type TimetableGridRangeSelection,
 } from '../ui/timetableGridSelection'
+import { getTimetableGridSelectionAssignmentTargets } from '../ui/timetableGridAssignment'
 
 interface TimetableGridProps {
   stage: Stage
@@ -89,6 +90,7 @@ interface TimetableGridProps {
   onSelectionChange: (selection: TimetableGridRangeSelection | null) => void
   assignmentFeedback: { kind: 'success' | 'error'; message: string } | null
   onAssignSelection: () => void
+  onDeleteSelectionAssignments: () => void
 }
 
 export function TimetableLockRepairPanel({
@@ -533,6 +535,7 @@ export function TimetableGrid({
   onSelectionChange,
   assignmentFeedback,
   onAssignSelection,
+  onDeleteSelectionAssignments,
 }: TimetableGridProps) {
   const timetableGridColumns = createTimetableGridColumns(dutyTypes)
   const gridTemplateColumns = timetableGridColumns
@@ -553,6 +556,9 @@ export function TimetableGrid({
   const resolvedSelection = selection
     ? resolveTimetableGridSelection(selection, rows)
     : undefined
+  const selectionAssignmentTargets = resolvedSelection
+    ? getTimetableGridSelectionAssignmentTargets(resolvedSelection, rows)
+    : []
   const hasInvalidSelection = selection !== null &&
     resolvedSelection === undefined
   const pointerSelectionRef = useRef<TimetableGridRangeSelection | null>(null)
@@ -943,6 +949,17 @@ export function TimetableGrid({
             >
               担当を設定
             </button>
+            {selectionAssignmentTargets.length > 0 && (
+              <button
+                type="button"
+                className="danger-button"
+                onClick={onDeleteSelectionAssignments}
+              >
+                {selectionAssignmentTargets.length === 1
+                  ? '現在の担当を削除'
+                  : `選択範囲の担当を削除（${selectionAssignmentTargets.length}件）`}
+              </button>
+            )}
             <button type="button" onClick={() => onSelectionChange(null)}>
               選択解除
             </button>

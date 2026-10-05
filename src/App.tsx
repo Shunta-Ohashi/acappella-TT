@@ -75,6 +75,7 @@ import {
   TimetableLockRepairPanel,
 } from './components/TimetableGrid'
 import { TimetableGridAssignmentDialog } from './components/TimetableGridAssignmentDialog'
+import { TimetableGridAssignmentDeletionDialog } from './components/TimetableGridAssignmentDeletionDialog'
 import { TimetableOperationsWorkspace } from './components/TimetableOperationsWorkspace'
 import {
   areTimetableGridAssignmentTargetsEqual,
@@ -84,8 +85,12 @@ import {
 } from './ui/timetableGridSelection'
 import {
   createTimetableGridAssignment,
+  deleteTimetableGridAssignments,
   getTimetableGridAssignmentCandidates,
+  getTimetableGridSelectionAssignmentTargets,
   type TimetableGridAssignmentCandidate,
+  type TimetableGridAssignmentDeletionPresentation,
+  type TimetableGridAssignmentDeletionTarget,
 } from './ui/timetableGridAssignment'
 import { TimetableGenerationPreviewDialog } from './components/TimetableGenerationPreviewDialog'
 import { TimetableGenerationOptionsDialog } from './components/TimetableGenerationOptionsDialog'
@@ -411,6 +416,15 @@ function App() {
     candidates: TimetableGridAssignmentCandidate[]
     errors: string[]
   } | null>(null)
+  const [gridAssignmentDeletion, setGridAssignmentDeletion] = useState<{
+    eventId: EventId
+    eventDayId: EventDayId
+    stageId: StageId
+    selection: ResolvedTimetableGridRangeSelection
+    targets: TimetableGridAssignmentDeletionTarget[]
+    items: TimetableGridAssignmentDeletionPresentation[]
+    includesOutsideSelection: boolean
+  } | null>(null)
   const [gridAssignmentFeedback, setGridAssignmentFeedback] = useState<{
     eventId: EventId
     eventDayId: EventDayId
@@ -438,6 +452,7 @@ function App() {
     selection: TimetableGridRangeSelection | null,
   ) => {
     setGridAssignmentDialog(null)
+    setGridAssignmentDeletion(null)
     setGridAssignmentFeedback(null)
     setTimetableGridSelectionState({
       context: {
@@ -495,6 +510,7 @@ function App() {
     setGenerationPreview(null)
     setGenerationFeedback(null)
     setGridAssignmentDialog(null)
+    setGridAssignmentDeletion(null)
     setGridAssignmentFeedback(null)
     setMembers(snapshot.members)
     setBands(snapshot.bands)
@@ -674,6 +690,7 @@ function App() {
     setResetConfirmation(null)
     setGenerationFeedback(null)
     setGridAssignmentDialog(null)
+    setGridAssignmentDeletion(null)
     setGridAssignmentFeedback(null)
     setSelectedEventId(eventId)
     setSelectedTimetableEventDayId(undefined)
@@ -690,6 +707,7 @@ function App() {
     setResetConfirmation(null)
     setGenerationFeedback(null)
     setGridAssignmentDialog(null)
+    setGridAssignmentDeletion(null)
     setGridAssignmentFeedback(null)
     setSelectedTimetableStageId(getStagesForEventDay(stages, eventDayId)[0]?.id)
   }
@@ -697,6 +715,7 @@ function App() {
   const handleSelectTimetableStage = (stageId: StageId) => {
     if (!timetableStages.some(stage => stage.id === stageId)) return
     setGridAssignmentDialog(null)
+    setGridAssignmentDeletion(null)
     setGridAssignmentFeedback(null)
     setSelectedTimetableStageId(stageId)
   }
@@ -707,6 +726,7 @@ function App() {
     setResetConfirmation(null)
     setGenerationFeedback(null)
     setGridAssignmentDialog(null)
+    setGridAssignmentDeletion(null)
     setGridAssignmentFeedback(null)
     const eventId = createId('event')
     const eventDayIds = draft.dates.map(() => createId('event-day'))
@@ -774,6 +794,9 @@ function App() {
     setGenerationOptionsScope(null)
     setResetConfirmation(null)
     setGenerationFeedback(null)
+    setGridAssignmentDialog(null)
+    setGridAssignmentDeletion(null)
+    setGridAssignmentFeedback(null)
     setOperationsPanelRevision((revision) => revision + 1)
     setBreakDuration(10)
     setIsCreateEventDialogOpen(false)
@@ -1880,6 +1903,158 @@ function App() {
       message: `${result.targetLabel}に${result.memberName}を${formatMinuteAsLocalTime(currentSelection.fromMinute)}〜${formatMinuteAsLocalTime(currentSelection.untilMinute)}で割り当てました。${warning}`,
     })
   }
+
+  const handleOpenGridAssignmentDeletion = () => {
+    const selection = getCurrentResolvedGridSelection()
+    const context = getGridAssignmentContext()
+    const eventDayId = timetableSelection.eventDayId
+    const stageId = currentStage?.id
+    if (!selection || !context || !eventDayId || !stageId) {
+      rejectStaleGridSelection()
+      return
+    }
+    if (hasUnsavedOperations()) {
+      setGridAssignmentFeedback({
+        eventId: context.event.id,
+        eventDayId,
+        stageId,
+        kind: 'error',
+        message: 'PAまたは当日運営に未保存の変更があります。右側の設定を保存してから担当を削除してください。',
+      })
+      return
+    }
+
+    const targets = getTimetableGridSelectionAssignmentTargets(
+      selection,
+      timetableWorkspaceRows.rows,
+    )
+    if (targets.length === 0) return
+    const deletion = deleteTimetableGridAssignments({
+      context,
+      targets,
+      eventDayId,
+      stageId,
+    })
+    if (!deletion.ok) {
+      setGridAssignmentFeedback({
+        eventId: context.event.id,
+        eventDayId,
+        stageId,
+        kind: 'error',
+        message: deletion.errors.join(' '),
+      })
+      return
+    }
+
+    setGridAssignmentFeedback(null)
+    setGridAssignmentDialog(null)
+    setGridAssignmentDeletion({
+      eventId: context.event.id,
+      eventDayId,
+      stageId,
+      selection,
+      targets,
+      items: deletion.deleted,
+      includesOutsideSelection: deletion.deleted.some((item) =>
+        item.fromMinute < selection.fromMinute ||
+        item.untilMinute > selection.untilMinute,
+      ),
+    })
+  }
+
+  const handleConfirmGridAssignmentDeletion = () => {
+    const confirmation = gridAssignmentDeletion
+    const context = getGridAssignmentContext()
+    if (!confirmation || !context) return
+    setGridAssignmentDeletion(null)
+    const selection = getCurrentResolvedGridSelection()
+    if (
+      !selection ||
+      confirmation.eventId !== context.event.id ||
+      confirmation.eventDayId !== timetableSelection.eventDayId ||
+      confirmation.stageId !== currentStage?.id ||
+      !areTimetableGridAssignmentTargetsEqual(
+        selection.target,
+        confirmation.selection.target,
+      ) ||
+      selection.scheduleItemIds.length !== confirmation.selection.scheduleItemIds.length ||
+      !selection.scheduleItemIds.every((id, index) =>
+        id === confirmation.selection.scheduleItemIds[index]
+      )
+    ) {
+      setGridAssignmentFeedback({
+        eventId: context.event.id,
+        eventDayId: confirmation.eventDayId,
+        stageId: confirmation.stageId,
+        kind: 'error',
+        message: '編集対象が変わったため担当を削除できませんでした。',
+      })
+      return
+    }
+    if (hasUnsavedOperations()) {
+      setGridAssignmentFeedback({
+        eventId: context.event.id,
+        eventDayId: confirmation.eventDayId,
+        stageId: confirmation.stageId,
+        kind: 'error',
+        message: 'PAまたは当日運営に未保存の変更があります。右側の設定を保存してから担当を削除してください。',
+      })
+      return
+    }
+
+    const currentTargets = getTimetableGridSelectionAssignmentTargets(
+      selection,
+      timetableWorkspaceRows.rows,
+    )
+    const targetsAreCurrent = currentTargets.length === confirmation.targets.length &&
+      currentTargets.every((target, index) => {
+        const expected = confirmation.targets[index]
+        return expected !== undefined &&
+          target.kind === expected.kind &&
+          target.assignmentId === expected.assignmentId
+      })
+    if (!targetsAreCurrent) {
+      setGridAssignmentFeedback({
+        eventId: context.event.id,
+        eventDayId: confirmation.eventDayId,
+        stageId: confirmation.stageId,
+        kind: 'error',
+        message: '選択範囲の担当が変わったため削除できませんでした。',
+      })
+      return
+    }
+
+    const deletion = deleteTimetableGridAssignments({
+      context,
+      targets: confirmation.targets,
+      eventDayId: confirmation.eventDayId,
+      stageId: confirmation.stageId,
+    })
+    if (!deletion.ok) {
+      setGridAssignmentFeedback({
+        eventId: context.event.id,
+        eventDayId: confirmation.eventDayId,
+        stageId: confirmation.stageId,
+        kind: 'error',
+        message: deletion.errors.join(' '),
+      })
+      return
+    }
+
+    if (deletion.kind === 'pa') setPaAssignments(deletion.paAssignments)
+    else setDutyAssignments(deletion.dutyAssignments)
+    setOperationsPanelRevision((revision) => revision + 1)
+    const message = deletion.deleted.length === 1
+      ? `${deletion.deleted[0].targetLabel} ${deletion.deleted[0].memberName}の担当を削除しました。`
+      : `選択範囲の担当${deletion.deleted.length}件を削除しました。`
+    setGridAssignmentFeedback({
+      eventId: context.event.id,
+      eventDayId: confirmation.eventDayId,
+      stageId: confirmation.stageId,
+      kind: 'success',
+      message,
+    })
+  }
   const timetableLockEvaluation = evaluateSelectedEventLocks(scheduleItems)
   const unavailableTimetableLockRepair = (
     <TimetableLockRepairPanel
@@ -1894,6 +2069,10 @@ function App() {
     gridAssignmentDialog?.eventId === selectedEvent?.id &&
     timetableGridSelection
       ? gridAssignmentDialog
+      : null
+  const activeGridAssignmentDeletion =
+    gridAssignmentDeletion?.eventId === selectedEvent?.id
+      ? gridAssignmentDeletion
       : null
 
   return (
@@ -2183,6 +2362,7 @@ function App() {
                         : null
                     }
                     onAssignSelection={handleOpenGridAssignment}
+                    onDeleteSelectionAssignments={handleOpenGridAssignmentDeletion}
                   />
                 ) : null}
                 issuePanel={(
@@ -2334,6 +2514,14 @@ function App() {
             )}
             onSubmit={handleSubmitGridAssignment}
           />
+      )}
+      {activeGridAssignmentDeletion && (
+        <TimetableGridAssignmentDeletionDialog
+          items={activeGridAssignmentDeletion.items}
+          includesOutsideSelection={activeGridAssignmentDeletion.includesOutsideSelection}
+          onConfirm={handleConfirmGridAssignmentDeletion}
+          onCancel={() => setGridAssignmentDeletion(null)}
+        />
       )}
     </AppShell>
   )

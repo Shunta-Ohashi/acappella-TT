@@ -1,30 +1,38 @@
 import type {
   DutyAssignment,
+  DutyAssignmentId,
   DutyType,
   Event,
   EventBand,
   EventDay,
+  EventDayId,
   EventMember,
   EventMemberDay,
   Member,
   PaAssignment,
+  PaAssignmentId,
   Section,
   Stage,
+  StageId,
 } from '../domain/models'
 import type { CalculatedScheduleItem } from '../domain/timeline'
+import type { TimetableWorkspaceRow } from './timetableWorkspaceRows.ts'
 import {
   createPaAssignmentsDraft,
   createPaAssignmentsUpdate,
   getPaMemberCandidates,
+  resolvePaAssignmentInterval,
   type PaAssignmentsValidationErrors,
 } from '../domain/paAssignments.ts'
 import {
   createDutySettingsDraft,
   createDutySettingsUpdate,
   getDutyMemberCandidates,
+  resolveDutyAssignmentInterval,
   type DutySettingsValidationErrors,
 } from '../domain/dutyAssignments.ts'
 import { detectScheduleIssues } from '../domain/issues.ts'
+import { getMemberDisplayName } from './eventBandPresentation.ts'
 import {
   getTimetableGridAssignmentTargetLabel,
   type ResolvedTimetableGridRangeSelection,
@@ -76,6 +84,54 @@ export type TimetableGridAssignmentResult =
       memberName: string
       targetLabel: string
       warnings: string[]
+    }
+  | { ok: false; errors: string[] }
+
+export type TimetableGridAssignmentDeletionTarget =
+  | { kind: 'pa'; assignmentId: PaAssignmentId }
+  | { kind: 'duty'; assignmentId: DutyAssignmentId }
+
+export type TimetableGridAssignmentDeletionResult =
+  | {
+      ok: true
+      kind: 'pa'
+      paAssignments: PaAssignment[]
+      targetLabel: string
+      memberName: string
+      fromMinute: number
+      untilMinute: number
+    }
+  | {
+      ok: true
+      kind: 'duty'
+      dutyAssignments: DutyAssignment[]
+      targetLabel: string
+      memberName: string
+      fromMinute: number
+      untilMinute: number
+    }
+  | { ok: false; errors: string[] }
+
+export interface TimetableGridAssignmentDeletionPresentation {
+  target: TimetableGridAssignmentDeletionTarget
+  targetLabel: string
+  memberName: string
+  fromMinute: number
+  untilMinute: number
+}
+
+export type TimetableGridAssignmentsDeletionResult =
+  | {
+      ok: true
+      kind: 'pa'
+      paAssignments: PaAssignment[]
+      deleted: TimetableGridAssignmentDeletionPresentation[]
+    }
+  | {
+      ok: true
+      kind: 'duty'
+      dutyAssignments: DutyAssignment[]
+      deleted: TimetableGridAssignmentDeletionPresentation[]
     }
   | { ok: false; errors: string[] }
 
@@ -323,5 +379,210 @@ export const createTimetableGridAssignment = ({
         .filter((issue) => issue.severity !== 'ERROR')
         .map((issue) => issue.message),
     ]),
+  }
+}
+
+const getDeletionScopeError = (
+  context: TimetableGridAssignmentContext,
+  eventDayId: EventDayId,
+  stageId: StageId,
+): string | undefined => {
+  const eventDays = context.eventDays.filter((eventDay) =>
+    eventDay.id === eventDayId,
+  )
+  if (eventDays.length !== 1 || eventDays[0].eventId !== context.event.id) {
+    return '削除対象の開催日を現在のイベントで確認できません。'
+  }
+  const stages = context.stages.filter((stage) => stage.id === stageId)
+  if (stages.length !== 1 || stages[0].eventDayId !== eventDayId) {
+    return '削除対象のStageを現在の開催日で確認できません。'
+  }
+  return undefined
+}
+
+export const deleteTimetableGridAssignment = ({
+  context,
+  target,
+  eventDayId,
+  stageId,
+}: {
+  context: TimetableGridAssignmentContext
+  target: TimetableGridAssignmentDeletionTarget
+  eventDayId: EventDayId
+  stageId: StageId
+}): TimetableGridAssignmentDeletionResult => {
+  const scopeError = getDeletionScopeError(context, eventDayId, stageId)
+  if (scopeError) return { ok: false, errors: [scopeError] }
+
+  if (target.kind === 'pa') {
+    const assignments = context.paAssignments.filter((assignment) =>
+      assignment.id === target.assignmentId,
+    )
+    const assignment = assignments[0]
+    if (assignments.length !== 1 || !assignment) {
+      return { ok: false, errors: ['削除するPA担当を一意に確認できません。'] }
+    }
+    if (
+      assignment.eventId !== context.event.id ||
+      assignment.eventDayId !== eventDayId ||
+      assignment.stageId !== stageId
+    ) {
+      return { ok: false, errors: ['削除するPA担当は現在のEvent・開催日・Stageに属していません。'] }
+    }
+    const interval = resolvePaAssignmentInterval(
+      assignment,
+      context.calculatedItems,
+      { stages: context.stages, sections: context.sections },
+    )
+    if (!interval.ok) return { ok: false, errors: [interval.reason] }
+    const member = context.members.find((candidate) =>
+      candidate.id === assignment.memberId,
+    )
+    return {
+      ok: true,
+      kind: 'pa',
+      paAssignments: context.paAssignments.filter((candidate) =>
+        candidate.id !== assignment.id,
+      ),
+      targetLabel: assignment.role === 'main' ? 'Main PA' : 'Sub PA',
+      memberName: member ? getMemberDisplayName(member) : '不明なメンバー',
+      fromMinute: interval.interval.fromMinute,
+      untilMinute: interval.interval.untilMinute,
+    }
+  }
+
+  const assignments = context.dutyAssignments.filter((assignment) =>
+    assignment.id === target.assignmentId,
+  )
+  const assignment = assignments[0]
+  if (assignments.length !== 1 || !assignment) {
+    return { ok: false, errors: ['削除する当日運営担当を一意に確認できません。'] }
+  }
+  const dutyTypes = context.dutyTypes.filter((dutyType) =>
+    dutyType.id === assignment.dutyTypeId,
+  )
+  const dutyType = dutyTypes[0]
+  if (
+    dutyTypes.length !== 1 || !dutyType ||
+    dutyType.eventId !== context.event.id
+  ) {
+    return { ok: false, errors: ['削除する担当の仕事が見つからないか、別Eventに属しています。'] }
+  }
+  if (
+    assignment.eventDayId !== eventDayId ||
+    assignment.stageId !== stageId
+  ) {
+    return { ok: false, errors: ['削除する当日運営担当は現在の開催日・Stageに属していません。'] }
+  }
+  const interval = resolveDutyAssignmentInterval(
+    assignment,
+    context.calculatedItems,
+    { stages: context.stages, sections: context.sections },
+  )
+  if (!interval.ok) return { ok: false, errors: [interval.reason] }
+  const member = context.members.find((candidate) =>
+    candidate.id === assignment.memberId,
+  )
+  return {
+    ok: true,
+    kind: 'duty',
+    dutyAssignments: context.dutyAssignments.filter((candidate) =>
+      candidate.id !== assignment.id,
+    ),
+    targetLabel: dutyType.name,
+    memberName: member ? getMemberDisplayName(member) : '不明なメンバー',
+    fromMinute: interval.interval.fromMinute,
+    untilMinute: interval.interval.untilMinute,
+  }
+}
+
+export const getTimetableGridSelectionAssignmentTargets = (
+  selection: ResolvedTimetableGridRangeSelection,
+  rows: readonly TimetableWorkspaceRow[],
+): TimetableGridAssignmentDeletionTarget[] => {
+  const rowByScheduleItemId = new Map<string, TimetableWorkspaceRow>()
+  for (const row of rows) {
+    const scheduleItemId = row.scheduleItem.id
+    if (rowByScheduleItemId.has(scheduleItemId)) return []
+    rowByScheduleItemId.set(scheduleItemId, row)
+  }
+
+  const targets: TimetableGridAssignmentDeletionTarget[] = []
+  const seenAssignmentIds = new Set<string>()
+  for (const scheduleItemId of selection.scheduleItemIds) {
+    const row = rowByScheduleItemId.get(scheduleItemId)
+    if (!row) return []
+    const coverage = selection.target.kind === 'pa'
+      ? row.paCoverage[selection.target.role]
+      : row.dutyCoverage[selection.target.dutyTypeId] ?? []
+    for (const item of coverage) {
+      if (seenAssignmentIds.has(item.assignmentId)) continue
+      seenAssignmentIds.add(item.assignmentId)
+      targets.push(selection.target.kind === 'pa'
+        ? { kind: 'pa', assignmentId: item.assignmentId }
+        : { kind: 'duty', assignmentId: item.assignmentId })
+    }
+  }
+  return targets
+}
+
+export const deleteTimetableGridAssignments = ({
+  context,
+  targets,
+  eventDayId,
+  stageId,
+}: {
+  context: TimetableGridAssignmentContext
+  targets: readonly TimetableGridAssignmentDeletionTarget[]
+  eventDayId: EventDayId
+  stageId: StageId
+}): TimetableGridAssignmentsDeletionResult => {
+  const uniqueTargets = targets.filter((target, index) =>
+    targets.findIndex((candidate) =>
+      candidate.kind === target.kind &&
+      candidate.assignmentId === target.assignmentId,
+    ) === index,
+  )
+  const kind = uniqueTargets[0]?.kind
+  if (!kind || uniqueTargets.some((target) => target.kind !== kind)) {
+    return { ok: false, errors: ['削除する担当を同じ列から確認できません。'] }
+  }
+
+  const deleted: TimetableGridAssignmentDeletionPresentation[] = []
+  for (const target of uniqueTargets) {
+    const result = deleteTimetableGridAssignment({
+      context,
+      target,
+      eventDayId,
+      stageId,
+    })
+    if (!result.ok) return result
+    deleted.push({
+      target,
+      targetLabel: result.targetLabel,
+      memberName: result.memberName,
+      fromMinute: result.fromMinute,
+      untilMinute: result.untilMinute,
+    })
+  }
+
+  const assignmentIds = new Set(uniqueTargets.map((target) => target.assignmentId))
+  if (kind === 'pa') {
+    return {
+      ok: true,
+      kind,
+      paAssignments: context.paAssignments.filter((assignment) =>
+        !assignmentIds.has(assignment.id),
+      ),
+      deleted,
+    }
+  }
+  return {
+    ok: true,
+    kind,
+    dutyAssignments: context.dutyAssignments.filter((assignment) =>
+      !assignmentIds.has(assignment.id),
+    ),
+    deleted,
   }
 }

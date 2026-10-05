@@ -3567,7 +3567,8 @@
   font-weight: 700;
 }
 
-.pa-settings .danger-button {
+.pa-settings .danger-button,
+.duty-settings .danger-button {
   padding: 8px 12px;
   border: 1px solid #f0b4ae;
   border-radius: 8px;
@@ -3575,6 +3576,13 @@
   color: #9f2017;
   cursor: pointer;
   font: inherit;
+}
+
+.pa-settings .danger-button:hover,
+.duty-settings .danger-button:hover {
+  border-color: #d97870;
+  background: #fff5f4;
+  color: #821b14;
 }
 
 .pa-assignment-dialog {
@@ -4308,6 +4316,17 @@
   font-weight: 750;
 }
 
+.timetable-grid__selection-summary .danger-button {
+  color: #9f2017;
+  border-color: #d9a39e;
+}
+
+.timetable-grid__selection-summary .danger-button:hover {
+  color: #821b14;
+  background: #fff5f4;
+  border-color: #c9675f;
+}
+
 .timetable-grid__selection-actions {
   display: flex;
   gap: 6px;
@@ -4999,6 +5018,32 @@
   cursor: pointer;
   font-size: 9px;
   font-weight: 750;
+}
+
+.duty-type-list .danger-button {
+  border-color: #f0b4ae;
+  color: #9f2017;
+}
+
+.timetable-grid-assignment-deletion-dialog__description {
+  display: grid;
+  gap: 8px;
+}
+
+.timetable-grid-assignment-deletion-dialog__description p {
+  margin: 0;
+}
+
+.timetable-grid-assignment-deletion-dialog__description ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.timetable-grid-assignment-deletion-dialog__warning {
+  color: #9f2017;
+  font-weight: 700;
 }
 
 .duty-type-list button:disabled {
