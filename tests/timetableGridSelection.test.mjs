@@ -5,6 +5,7 @@ import {
   getTimetableGridAssignmentTargetLabel,
   resolveTimetableGridSelection,
   selectTimetableGridCell,
+  updateTimetableGridDragFocus,
 } from '../src/ui/timetableGridSelection.ts'
 
 const makeRow = ({
@@ -220,6 +221,22 @@ test('別列のclickまたはShift clickは新しいsingle selectionを始める
   })
 })
 
+test('pointer dragは別assignment列を通過しても開始targetのままfocus rowを更新する', () => {
+  const mainPaDrag = createSelection()
+  const moved = updateTimetableGridDragFocus(
+    mainPaDrag,
+    'performance-b',
+  )
+
+  assert.deepEqual(moved, {
+    eventDayId: 'day-1',
+    stageId: 'stage-1',
+    target: { kind: 'pa', role: 'main' },
+    anchorScheduleItemId: 'performance-a',
+    focusScheduleItemId: 'performance-b',
+  })
+})
+
 test('Duty列は表示名ではなくDutyType IDをidentityに使う', () => {
   const initial = createSelection({
     target: { kind: 'duty', dutyTypeId: 'duty-a' },
@@ -268,6 +285,50 @@ test('選択range内のStage/EventDay scope不一致をfail closedにする', ()
 
   assert.equal(resolveTimetableGridSelection(range, wrongStageRows), undefined)
   assert.equal(resolveTimetableGridSelection(range, wrongDayRows), undefined)
+})
+
+test('Grid row順のBoundaryが正のintervalを作れないcross-Section rangeをfail closedにする', () => {
+  const normalRows = [
+    makeRow({ id: 'normal-first', fromMinute: 600, untilMinute: 610,
+      sectionId: 'section-1' }),
+    makeRow({ id: 'normal-last', fromMinute: 660, untilMinute: 667,
+      sectionId: 'section-2' }),
+  ]
+  const equalRows = [
+    makeRow({ id: 'equal-first', fromMinute: 660, untilMinute: 670,
+      sectionId: 'section-1' }),
+    makeRow({ id: 'equal-last', fromMinute: 653, untilMinute: 660,
+      sectionId: 'section-2' }),
+  ]
+  const reversedRows = [
+    makeRow({ id: 'reversed-first', fromMinute: 670, untilMinute: 680,
+      sectionId: 'section-1' }),
+    makeRow({ id: 'reversed-last', fromMinute: 660, untilMinute: 667,
+      sectionId: 'section-2' }),
+  ]
+  const equalBefore = structuredClone(equalRows)
+  const reversedBefore = structuredClone(reversedRows)
+
+  const normal = resolveTimetableGridSelection(createSelection({
+    anchorScheduleItemId: 'normal-first',
+    focusScheduleItemId: 'normal-last',
+  }), normalRows)
+  const equal = resolveTimetableGridSelection(createSelection({
+    anchorScheduleItemId: 'equal-first',
+    focusScheduleItemId: 'equal-last',
+  }), equalRows)
+  const reversed = resolveTimetableGridSelection(createSelection({
+    anchorScheduleItemId: 'reversed-first',
+    focusScheduleItemId: 'reversed-last',
+  }), reversedRows)
+
+  assert.ok(normal)
+  assert.equal(normal.fromMinute, 600)
+  assert.equal(normal.untilMinute, 667)
+  assert.equal(equal, undefined)
+  assert.equal(reversed, undefined)
+  assert.deepEqual(equalRows, equalBefore)
+  assert.deepEqual(reversedRows, reversedBefore)
 })
 
 test('DutyType labelは名前を解決しmissing時も安全な文言を返す', () => {

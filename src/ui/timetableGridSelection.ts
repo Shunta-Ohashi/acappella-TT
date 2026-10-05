@@ -77,6 +77,14 @@ export const selectTimetableGridCell = ({
   }
 }
 
+export const updateTimetableGridDragFocus = (
+  selection: TimetableGridRangeSelection,
+  focusScheduleItemId: ScheduleItemId,
+): TimetableGridRangeSelection => ({
+  ...selection,
+  focusScheduleItemId,
+})
+
 export const resolveTimetableGridSelection = (
   selection: TimetableGridRangeSelection,
   rows: readonly TimetableWorkspaceRow[],
@@ -108,6 +116,10 @@ export const resolveTimetableGridSelection = (
   const lastRow = selectedRows.at(-1)
   if (!firstRow || !lastRow) return undefined
 
+  const fromMinute = firstRow.calculatedItem.plannedStartMinute
+  const untilMinute = lastRow.calculatedItem.plannedEndMinute
+  if (fromMinute >= untilMinute) return undefined
+
   return {
     eventDayId: selection.eventDayId,
     stageId: selection.stageId,
@@ -116,8 +128,8 @@ export const resolveTimetableGridSelection = (
     lastRow,
     scheduleItemIds: selectedRows.map((row) => row.scheduleItem.id),
     rowCount: selectedRows.length,
-    fromMinute: firstRow.calculatedItem.plannedStartMinute,
-    untilMinute: lastRow.calculatedItem.plannedEndMinute,
+    fromMinute,
+    untilMinute,
     fromBoundary: {
       kind: 'schedule-item',
       scheduleItemId: firstRow.scheduleItem.id,

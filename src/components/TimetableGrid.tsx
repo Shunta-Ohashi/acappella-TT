@@ -55,6 +55,7 @@ import {
   getTimetableGridAssignmentTargetLabel,
   resolveTimetableGridSelection,
   selectTimetableGridCell,
+  updateTimetableGridDragFocus,
   type TimetableGridAssignmentTarget,
   type TimetableGridRangeSelection,
 } from '../ui/timetableGridSelection'
@@ -157,7 +158,6 @@ interface AssignmentCellInteractionProps {
   onPointerEnter: (
     event: PointerEvent<HTMLDivElement>,
     row: TimetableWorkspaceRow,
-    target: TimetableGridAssignmentTarget,
   ) => void
   onPointerUp: () => void
   onKeyDown: (
@@ -184,7 +184,7 @@ const getAssignmentCellProps = (
   onPointerDown: (event: PointerEvent<HTMLDivElement>) =>
     interaction.onPointerDown(event, interaction.row, interaction.target),
   onPointerEnter: (event: PointerEvent<HTMLDivElement>) =>
-    interaction.onPointerEnter(event, interaction.row, interaction.target),
+    interaction.onPointerEnter(event, interaction.row),
   onPointerUp: interaction.onPointerUp,
   onKeyDown: (event: KeyboardEvent<HTMLDivElement>) =>
     interaction.onKeyDown(event, interaction.row, interaction.target),
@@ -551,10 +551,7 @@ export function TimetableGrid({
     : undefined
   const hasInvalidSelection = selection !== null &&
     resolvedSelection === undefined
-  const pointerSelectionRef = useRef<{
-    target: TimetableGridAssignmentTarget
-    anchorScheduleItemId: ScheduleItemId
-  } | null>(null)
+  const pointerSelectionRef = useRef<TimetableGridRangeSelection | null>(null)
 
   useEffect(() => {
     const finishPointerSelection = () => {
@@ -603,30 +600,20 @@ export function TimetableGrid({
       scheduleItemId: row.scheduleItem.id,
       extend: event.shiftKey,
     })
-    pointerSelectionRef.current = {
-      target,
-      anchorScheduleItemId: nextSelection.anchorScheduleItemId,
-    }
+    pointerSelectionRef.current = nextSelection
     onSelectionChange(nextSelection)
   }
 
   const handleAssignmentPointerEnter = (
     event: PointerEvent<HTMLDivElement>,
     row: TimetableWorkspaceRow,
-    target: TimetableGridAssignmentTarget,
   ) => {
     const pointerSelection = pointerSelectionRef.current
     if (!pointerSelection || (event.buttons & 1) === 0) return
-    if (!areTimetableGridAssignmentTargetsEqual(pointerSelection.target, target)) {
-      return
-    }
-    onSelectionChange({
-      eventDayId: row.calculatedItem.eventDayId,
-      stageId: row.calculatedItem.stageId,
-      target: pointerSelection.target,
-      anchorScheduleItemId: pointerSelection.anchorScheduleItemId,
-      focusScheduleItemId: row.scheduleItem.id,
-    })
+    onSelectionChange(updateTimetableGridDragFocus(
+      pointerSelection,
+      row.scheduleItem.id,
+    ))
   }
 
   const handleAssignmentKeyDown = (
