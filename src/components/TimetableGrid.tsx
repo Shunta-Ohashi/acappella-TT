@@ -87,6 +87,8 @@ interface TimetableGridProps {
   onUnlockAllTimetableLocks: () => void
   selection: TimetableGridRangeSelection | null
   onSelectionChange: (selection: TimetableGridRangeSelection | null) => void
+  assignmentFeedback: { kind: 'success' | 'error'; message: string } | null
+  onAssignSelection: () => void
 }
 
 export function TimetableLockRepairPanel({
@@ -529,6 +531,8 @@ export function TimetableGrid({
   onUnlockAllTimetableLocks,
   selection,
   onSelectionChange,
+  assignmentFeedback,
+  onAssignSelection,
 }: TimetableGridProps) {
   const timetableGridColumns = createTimetableGridColumns(dutyTypes)
   const gridTemplateColumns = timetableGridColumns
@@ -905,6 +909,16 @@ export function TimetableGrid({
         PA・当日運営のセルをドラッグ、またはShift+クリックすると担当範囲を選択できます。
       </p>
 
+      {assignmentFeedback && (
+        <p
+          className={`timetable-grid__assignment-feedback timetable-grid__assignment-feedback--${assignmentFeedback.kind}`}
+          role={assignmentFeedback.kind === 'error' ? 'alert' : 'status'}
+          aria-live="polite"
+        >
+          {assignmentFeedback.message}
+        </p>
+      )}
+
       {resolvedSelection && (
         <div
           className="timetable-grid__selection-summary"
@@ -921,9 +935,18 @@ export function TimetableGrid({
             {formatMinuteAsLocalTime(resolvedSelection.untilMinute)}{' / '}
             {resolvedSelection.rowCount}枠
           </span>
-          <button type="button" onClick={() => onSelectionChange(null)}>
-            選択解除
-          </button>
+          <div className="timetable-grid__selection-actions">
+            <button
+              type="button"
+              className="primary-button"
+              onClick={onAssignSelection}
+            >
+              担当を設定
+            </button>
+            <button type="button" onClick={() => onSelectionChange(null)}>
+              選択解除
+            </button>
+          </div>
         </div>
       )}
 
