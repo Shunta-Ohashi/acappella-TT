@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import type { EventDay, EventDayId, Stage, StageId } from '../domain/models'
 import type { IssueSeverityCounts } from '../ui/issuePresentation'
 
-type OperationsPanel = 'issues' | 'pa' | 'operations'
+type OperationsPanel = 'issues' | 'order' | 'pa' | 'operations'
 
 interface TimetableOperationsWorkspaceProps {
   eventDays: EventDay[]
@@ -19,6 +19,7 @@ interface TimetableOperationsWorkspaceProps {
   pool: ReactNode
   timetable: ReactNode
   issuePanel: ReactNode
+  orderPanel: ReactNode
   renderPaPanel: (onValidationFailed: () => void) => ReactNode
   renderOperationsPanel: (onValidationFailed: () => void) => ReactNode
   footer: ReactNode
@@ -26,6 +27,7 @@ interface TimetableOperationsWorkspaceProps {
 
 const panelLabels: Record<OperationsPanel, string> = {
   issues: '問題',
+  order: '出演順',
   pa: 'PA',
   operations: '当日運営',
 }
@@ -51,6 +53,7 @@ export function TimetableOperationsWorkspace({
   pool,
   timetable,
   issuePanel,
+  orderPanel,
   renderPaPanel,
   renderOperationsPanel,
   footer,
@@ -189,6 +192,9 @@ export function TimetableOperationsWorkspace({
 
               <div className="operations-panel-content" hidden={activePanel !== 'issues'}>
                 {issuePanel}
+              </div>
+              <div className="operations-panel-content" hidden={activePanel !== 'order'}>
+                {orderPanel}
               </div>
               <div className="operations-panel-content" hidden={activePanel !== 'pa'}>
                 {renderPaPanel(() => openPanel('pa'))}

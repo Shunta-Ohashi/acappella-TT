@@ -78,6 +78,7 @@ import { TimetableGridAssignmentDialog } from './components/TimetableGridAssignm
 import { TimetableGridAssignmentDeletionDialog } from './components/TimetableGridAssignmentDeletionDialog'
 import { TimetableDutyAutoAssignmentDialog } from './components/TimetableDutyAutoAssignmentDialog'
 import { TimetableOperationsWorkspace } from './components/TimetableOperationsWorkspace'
+import { TimetableOrderConstraintSettings } from './components/TimetableOrderConstraintSettings'
 import {
   areTimetableGridAssignmentTargetsEqual,
   resolveTimetableGridSelection,
@@ -2609,6 +2610,22 @@ function App() {
                     calculatedItems={calculatedItems}
                   />
                 )}
+                orderPanel={currentStage && timetableEventDay ? (
+                  <TimetableOrderConstraintSettings
+                    key={`${selectedEvent.id}:${timetableEventDay.id}:${currentStage.id}`}
+                    event={selectedEvent}
+                    eventDay={timetableEventDay}
+                    stage={currentStage}
+                    eventDays={selectedEventDays}
+                    stages={selectedStages}
+                    sections={selectedSections}
+                    eventBands={selectedEventBands}
+                    scheduleItems={selectedScheduleItems}
+                    timetableOrderConstraints={timetableOrderConstraints}
+                    createConstraintId={() => createId('timetable-order-constraint')}
+                    onCommit={setTimetableOrderConstraints}
+                  />
+                ) : null}
                 renderPaPanel={(onValidationFailed) => currentStage ? (
                   <PaSettings
                     ref={paSettingsRef}

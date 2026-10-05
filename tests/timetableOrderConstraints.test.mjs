@@ -2,13 +2,17 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  createTimetableOrderConstraintUpdate,
+  deleteTimetableOrderConstraint,
   evaluateTimetableOrderConstraints,
   evaluateScheduledTimetableOrderConstraints,
   getTargetTimetableOrderConstraints,
   isTimetableOrderConstraint,
   mergeTimetableOrderConstraintBlocks,
   scopeTimetableOrderConstraintsForTarget,
+  updateTimetableOrderConstraint,
 } from '../src/domain/timetableOrderConstraints.ts'
+import { getTimetableOrderConstraintScheduleStatus } from '../src/ui/timetableOrderConstraintPresentation.ts'
 
 const eventDays = [
   { id: 'day-1', eventId: 'event-1', date: '2027-01-01', order: 0 },
@@ -371,4 +375,213 @@ test('評価はinputを変更せず、同じinputでviolation順も安定する'
   const second = evaluate(input)
   assert.deepEqual(first, second)
   assert.deepEqual({ input, eventDays, stages, sections, eventBands }, before)
+})
+
+const mutationReferences = { eventDays, stages, sections, eventBands }
+const createConstraint = (overrides = {}) => createTimetableOrderConstraintUpdate({
+  timetableOrderConstraints: [],
+  constraintId: 'new-order',
+  event: { id: 'event-1' },
+  eventDay: { id: 'day-1' },
+  stage: { id: 'stage-1' },
+  draft: { sectionId: 'section-1', eventBandIds: ['band-a', 'band-b'] },
+  ...mutationReferences,
+  ...overrides,
+})
+
+test('出演順制約をauthoritative scopeから作成しforeign Eventを保持する', () => {
+  const foreign = constraint({
+    id: 'foreign-order', eventId: 'event-2', eventDayId: 'foreign-day',
+    stageId: 'foreign-stage', sectionId: undefined,
+    eventBandIds: ['foreign-band', 'foreign-band-2'],
+  })
+  const input = [foreign]
+  const original = structuredClone(input)
+  const result = createConstraint({ timetableOrderConstraints: input })
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.timetableOrderConstraints[0], foreign)
+  assert.deepEqual(result.timetableOrderConstraints[1], {
+    id: 'new-order', eventId: 'event-1', eventDayId: 'day-1', stageId: 'stage-1',
+    sectionId: 'section-1', eventBandIds: ['band-a', 'band-b'],
+  })
+  assert.deepEqual(input, original)
+})
+
+test('出演順制約の編集はIDとscopeを維持しeditable fieldsだけを更新する', () => {
+  const input = [constraint({ eventBandIds: ['band-a', 'band-b'] })]
+  const original = structuredClone(input)
+  const result = updateTimetableOrderConstraint({
+    timetableOrderConstraints: input,
+    constraintId: 'order-1',
+    eventId: 'event-1', eventDayId: 'day-1', stageId: 'stage-1',
+    draft: { sectionId: 'section-2', eventBandIds: ['band-c', 'band-d'] },
+    ...mutationReferences,
+  })
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.timetableOrderConstraints[0], {
+    id: 'order-1', eventId: 'event-1', eventDayId: 'day-1', stageId: 'stage-1',
+    sectionId: 'section-2', eventBandIds: ['band-c', 'band-d'],
+  })
+  assert.deepEqual(input, original)
+})
+
+test('出演順制約の編集もproposed current Event全体を再検証してatomicに失敗する', () => {
+  const input = [constraint({ eventBandIds: ['band-a', 'band-b'] })]
+  const original = structuredClone(input)
+  const result = updateTimetableOrderConstraint({
+    timetableOrderConstraints: input,
+    constraintId: 'order-1',
+    eventId: 'event-1', eventDayId: 'day-1', stageId: 'stage-1',
+    draft: { sectionId: 'section-1', eventBandIds: ['band-a', 'band-a'] },
+    ...mutationReferences,
+  })
+
+  assert.equal(result.ok, false)
+  assert.deepEqual(input, original)
+})
+
+test('出演順制約の削除は対象だけを削除し壊れた制約の修復にも使える', () => {
+  const broken = constraint({ id: 'broken', eventBandIds: ['band-a'] })
+  const kept = constraint({ id: 'kept', eventBandIds: ['band-b', 'band-c'] })
+  const input = [broken, kept]
+  const original = structuredClone(input)
+  const result = deleteTimetableOrderConstraint({
+    timetableOrderConstraints: input,
+    constraintId: 'broken',
+  })
+
+  assert.deepEqual(result, { ok: true, timetableOrderConstraints: [kept] })
+  assert.deepEqual(input, original)
+})
+
+test('出演順制約の新規ID collisionと曖昧な編集・削除を拒否する', () => {
+  assert.equal(createConstraint({
+    timetableOrderConstraints: [constraint({ id: 'new-order' })],
+  }).ok, false)
+  const duplicateIds = [constraint(), constraint({ eventBandIds: ['band-c', 'band-d'] })]
+  assert.equal(updateTimetableOrderConstraint({
+    timetableOrderConstraints: duplicateIds,
+    constraintId: 'order-1', eventId: 'event-1', eventDayId: 'day-1', stageId: 'stage-1',
+    draft: { sectionId: 'section-1', eventBandIds: ['band-a', 'band-b'] },
+    ...mutationReferences,
+  }).ok, false)
+  assert.equal(deleteTimetableOrderConstraint({
+    timetableOrderConstraints: duplicateIds, constraintId: 'order-1',
+  }).ok, false)
+})
+
+test('作成helperはBand数・重複・日付ownership違反をevaluatorで拒否する', () => {
+  for (const eventBandIds of [
+    ['band-a'],
+    ['band-a', 'band-a'],
+    ['band-a', 'band-day-2'],
+  ]) {
+    const result = createConstraint({
+      draft: { sectionId: 'section-1', eventBandIds },
+    })
+    assert.equal(result.ok, false, eventBandIds.join(','))
+  }
+})
+
+test('作成helperはSection必須・禁止・ownershipをevaluatorで拒否する', () => {
+  assert.equal(createConstraint({
+    draft: { eventBandIds: ['band-a', 'band-b'] },
+  }).ok, false)
+  assert.equal(createConstraint({
+    stage: { id: 'stage-plain' },
+    draft: { sectionId: 'section-1', eventBandIds: ['band-a', 'band-b'] },
+  }).ok, false)
+  assert.equal(createConstraint({
+    draft: { sectionId: 'section-day-2', eventBandIds: ['band-a', 'band-b'] },
+  }).ok, false)
+  assert.equal(createConstraint({
+    stage: { id: 'stage-plain' },
+    draft: { eventBandIds: ['band-a', 'band-b'] },
+  }).ok, true)
+  assert.equal(createConstraint({
+    stage: { id: 'missing-stage' },
+    draft: { eventBandIds: ['band-a', 'band-b'] },
+  }).ok, false)
+})
+
+test('作成helperはFixedPlacement conflictを拒否する', () => {
+  const conflictingBands = eventBands.map(band => band.id === 'band-a'
+    ? { ...band, fixedPlacement: { stageId: 'stage-plain' } }
+    : band)
+  assert.equal(createConstraint({ eventBands: conflictingBands }).ok, false)
+})
+
+test('作成helperはlane conflictとblock branch conflictを拒否する', () => {
+  const laneConflict = createConstraint({
+    timetableOrderConstraints: [constraint({
+      id: 'existing', sectionId: 'section-2', eventBandIds: ['band-a', 'band-c'],
+    })],
+  })
+  assert.equal(laneConflict.ok, false)
+
+  const branchConflict = createConstraint({
+    timetableOrderConstraints: [constraint({
+      id: 'existing', eventBandIds: ['band-a', 'band-c'],
+    })],
+  })
+  assert.equal(branchConflict.ok, false)
+})
+
+test('作成helperはcycleを拒否しcompatible fragmentを許可する', () => {
+  const existing = [
+    constraint({ id: 'ab', eventBandIds: ['band-a', 'band-b'] }),
+    constraint({ id: 'bc', eventBandIds: ['band-b', 'band-c'] }),
+  ]
+  assert.equal(createConstraint({
+    timetableOrderConstraints: existing,
+    draft: { sectionId: 'section-1', eventBandIds: ['band-c', 'band-a'] },
+  }).ok, false)
+  assert.equal(createConstraint({
+    timetableOrderConstraints: [existing[0]],
+    draft: { sectionId: 'section-1', eventBandIds: ['band-b', 'band-c'] },
+  }).ok, true)
+})
+
+test('current TT statusを条件どおり・未配置あり・条件未達へ表示する', () => {
+  const target = constraint({ eventBandIds: ['band-a', 'band-b'] })
+  const performance = (id, eventBandId, order) => ({
+    id, kind: 'performance', eventBandId,
+    stageId: 'stage-1', sectionId: 'section-1', order,
+  })
+  assert.deepEqual(getTimetableOrderConstraintScheduleStatus({
+    constraint: target,
+    scheduleItems: [performance('a', 'band-a', 0), performance('b', 'band-b', 1)],
+  }), { kind: 'satisfied', label: '現在のTT：条件どおり' })
+  assert.deepEqual(getTimetableOrderConstraintScheduleStatus({
+    constraint: target,
+    scheduleItems: [performance('a', 'band-a', 0)],
+  }), { kind: 'missing', label: '現在のTT：未配置あり' })
+  assert.deepEqual(getTimetableOrderConstraintScheduleStatus({
+    constraint: target,
+    scheduleItems: [performance('a', 'band-a', 0), performance('x', 'band-c', 1),
+      performance('b', 'band-b', 2)],
+  }), { kind: 'unmet', label: '現在のTT：条件未達' })
+  assert.deepEqual(getTimetableOrderConstraintScheduleStatus({
+    constraint: target,
+    scheduleItems: [performance('a', 'band-a', 0), {
+      ...performance('b', 'band-b', 1), sectionId: 'section-2',
+    }],
+  }), { kind: 'unmet', label: '現在のTT：条件未達' })
+})
+
+test('current TT statusはBreakをPerformance adjacencyへ数えない', () => {
+  const target = constraint({ eventBandIds: ['band-a', 'band-b'] })
+  const scheduleItems = [
+    { id: 'a', kind: 'performance', eventBandId: 'band-a',
+      stageId: 'stage-1', sectionId: 'section-1', order: 0 },
+    { id: 'break', kind: 'break', title: '休憩', durationMinutes: 5,
+      stageId: 'stage-1', sectionId: 'section-1', order: 1 },
+    { id: 'b', kind: 'performance', eventBandId: 'band-b',
+      stageId: 'stage-1', sectionId: 'section-1', order: 2 },
+  ]
+  assert.equal(getTimetableOrderConstraintScheduleStatus({
+    constraint: target, scheduleItems,
+  }).kind, 'satisfied')
 })
