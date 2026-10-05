@@ -107,8 +107,10 @@ const hasDirectOwnershipConflict = (
   (owner === targetEventId || referencedOwner === targetEventId),
 )
 
-const resolveEventDeletionOwnership = ({
-  eventId,
+const hasUniqueIds = (items: readonly { id: string }[]): boolean =>
+  new Set(items.map((item) => item.id)).size === items.length
+
+const hasUniqueEventDeletionIds = ({
   events,
   eventDays,
   stages,
@@ -122,9 +124,44 @@ const resolveEventDeletionOwnership = ({
   dutyAssignments,
   timetableLocks,
   timetableOrderConstraints,
-}: EventDeletionInput): OwnershipResolution => {
+}: EventDeletionInput): boolean => [
+  events,
+  eventDays,
+  stages,
+  sections,
+  eventMembers,
+  eventMemberDays,
+  eventBands,
+  scheduleItems,
+  paAssignments,
+  dutyTypes,
+  dutyAssignments,
+  timetableLocks,
+  timetableOrderConstraints,
+].every(hasUniqueIds)
+
+const resolveEventDeletionOwnership = (input: EventDeletionInput): OwnershipResolution => {
+  const {
+    eventId,
+    events,
+    eventDays,
+    stages,
+    sections,
+    eventMembers,
+    eventMemberDays,
+    eventBands,
+    scheduleItems,
+    paAssignments,
+    dutyTypes,
+    dutyAssignments,
+    timetableLocks,
+    timetableOrderConstraints,
+  } = input
   if (!events.some((event) => event.id === eventId)) {
     return { ok: false, reason: 'EVENT_NOT_FOUND' }
+  }
+  if (!hasUniqueEventDeletionIds(input)) {
+    return { ok: false, reason: 'EVENT_RELATIONSHIP_CONFLICT' }
   }
 
   const eventByDayId = new Map(eventDays.map((day) => [day.id, day.eventId]))

@@ -304,6 +304,56 @@ test('missing ScheduleItemを参照するtarget Lockはbroken referenceとして
   assert.deepEqual(result.timetableLocks, [])
 })
 
+test('全Event固有collectionのduplicate IDをownership解決前にfail closedにする', () => {
+  const duplicateCases = [
+    ['Event', 'events'],
+    ['EventDay', 'eventDays'],
+    ['Stage', 'stages'],
+    ['Section', 'sections'],
+    ['EventMember', 'eventMembers'],
+    ['EventMemberDay', 'eventMemberDays'],
+    ['EventBand', 'eventBands'],
+    ['ScheduleItem', 'scheduleItems'],
+    ['PA', 'paAssignments'],
+    ['DutyType', 'dutyTypes'],
+    ['DutyAssignment', 'dutyAssignments'],
+    ['TimetableLock', 'timetableLocks'],
+    ['TimetableOrderConstraint', 'timetableOrderConstraints'],
+  ]
+
+  for (const [label, key] of duplicateCases) {
+    const base = createInput()
+    const targetRecord = base[key][0]
+    const foreignRecord = base[key][1]
+    const input = createInput({
+      [key]: [
+        ...base[key],
+        { ...foreignRecord, id: targetRecord.id },
+      ],
+    })
+    const before = structuredClone(input)
+    const expected = {
+      ok: false,
+      reason: 'EVENT_RELATIONSHIP_CONFLICT',
+    }
+
+    assert.deepEqual(checkEventDeletion(input), expected, label)
+    assert.deepEqual(createEventDeletion(input), expected, label)
+    assert.deepEqual(input, before, label)
+  }
+})
+
+test('targetと無関係なduplicate IDも削除scopeを曖昧にするためfail closedにする', () => {
+  const base = createInput()
+  const input = createInput({
+    eventDays: [...base.eventDays, { ...base.eventDays[1] }],
+  })
+  assert.deepEqual(createEventDeletion(input), {
+    ok: false,
+    reason: 'EVENT_RELATIONSHIP_CONFLICT',
+  })
+})
+
 test('共通Member・Bandを保持した削除後snapshotをPersistence V4でround-tripする', () => {
   const input = createInput({ timetableOrderConstraints: [] })
   const result = createEventDeletion(input)
