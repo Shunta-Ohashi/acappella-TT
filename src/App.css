@@ -5035,6 +5035,28 @@
   line-height: 1.45;
 }
 
+.timetable-order-settings__repair {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.timetable-order-settings__repair h3 {
+  margin: 0;
+  color: #9b2c2c;
+  font-size: 13px;
+}
+
+.timetable-order-settings__constraint-id {
+  display: block;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+  color: #64748b;
+  font-size: 10px;
+}
+
 .timetable-order-settings__actions {
   display: flex;
   gap: 6px;

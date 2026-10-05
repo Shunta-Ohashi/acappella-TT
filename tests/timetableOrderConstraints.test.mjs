@@ -12,7 +12,11 @@ import {
   scopeTimetableOrderConstraintsForTarget,
   updateTimetableOrderConstraint,
 } from '../src/domain/timetableOrderConstraints.ts'
-import { getTimetableOrderConstraintScheduleStatus } from '../src/ui/timetableOrderConstraintPresentation.ts'
+import {
+  getInitialTimetableOrderConstraintSectionId,
+  getTimetableOrderConstraintScheduleStatus,
+  isTimetableOrderConstraintScopeReachable,
+} from '../src/ui/timetableOrderConstraintPresentation.ts'
 
 const eventDays = [
   { id: 'day-1', eventId: 'event-1', date: '2027-01-01', order: 0 },
@@ -237,6 +241,30 @@ test('Event・EventDay・Stage・EventBandのownership不整合を拒否する',
   for (const [value, code] of cases) assert.ok(codes(evaluate([value])).includes(code), code)
 })
 
+test('出演順制約の通常UI scope到達可能性はEventDayとStageだけで判定する', () => {
+  const isReachable = (value) => isTimetableOrderConstraintScopeReachable({
+    constraint: value,
+    eventId: 'event-1',
+    eventDays,
+    stages,
+  })
+
+  assert.equal(isReachable(constraint()), true)
+  assert.equal(isReachable(constraint({ eventDayId: 'missing-day' })), false)
+  assert.equal(isReachable(constraint({
+    eventDayId: 'foreign-day',
+    stageId: 'foreign-stage',
+    sectionId: undefined,
+  })), false)
+  assert.equal(isReachable(constraint({ stageId: 'missing-stage' })), false)
+  assert.equal(isReachable(constraint({
+    stageId: 'stage-day-2',
+    sectionId: 'section-day-2',
+  })), false)
+  assert.equal(isReachable(constraint({ sectionId: 'missing-section' })), true)
+  assert.equal(isReachable(constraint({ sectionId: 'section-day-2' })), true)
+})
+
 test('constraint ID・内部Band ID・runtime shapeをfail closedで検証する', () => {
   assert.ok(codes(evaluate([constraint(), constraint()])).includes('DUPLICATE_CONSTRAINT_ID'))
   assert.ok(codes(evaluate([constraint({ eventBandIds: ['band-a', 'band-a'] })]))
@@ -427,6 +455,39 @@ test('出演順制約の編集はIDとscopeを維持しeditable fieldsだけを�
   assert.deepEqual(input, original)
 })
 
+test('SectionなしStageの編集draftはstale sectionIdをclearして修復できる', () => {
+  const stale = constraint({
+    stageId: 'stage-plain',
+    sectionId: 'deleted-section',
+    eventBandIds: ['band-a', 'band-b'],
+  })
+  const initialSectionId = getInitialTimetableOrderConstraintSectionId({
+    constraint: stale,
+    sections: [],
+  })
+  assert.equal(initialSectionId, '')
+  assert.equal(getInitialTimetableOrderConstraintSectionId({
+    constraint: constraint({ sectionId: 'deleted-section' }),
+    sections: sections.filter(section => section.stageId === 'stage-1'),
+  }), 'deleted-section')
+
+  const result = updateTimetableOrderConstraint({
+    timetableOrderConstraints: [stale],
+    constraintId: stale.id,
+    eventId: 'event-1',
+    eventDayId: 'day-1',
+    stageId: 'stage-plain',
+    draft: {
+      ...(initialSectionId ? { sectionId: initialSectionId } : {}),
+      eventBandIds: ['band-a', 'band-b'],
+    },
+    ...mutationReferences,
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.timetableOrderConstraints[0].sectionId, undefined)
+})
+
 test('出演順制約の編集もproposed current Event全体を再検証してatomicに失敗する', () => {
   const input = [constraint({ eventBandIds: ['band-a', 'band-b'] })]
   const original = structuredClone(input)
@@ -454,6 +515,21 @@ test('出演順制約の削除は対象だけを削除し壊れた制約の修�
 
   assert.deepEqual(result, { ok: true, timetableOrderConstraints: [kept] })
   assert.deepEqual(input, original)
+})
+
+test('通常UIから到達不能な出演順制約も一意なIDなら既存helperで削除できる', () => {
+  const unreachable = constraint({
+    id: 'unreachable',
+    eventDayId: 'missing-day',
+    stageId: 'missing-stage',
+    sectionId: undefined,
+  })
+  const kept = constraint({ id: 'kept', eventBandIds: ['band-b', 'band-c'] })
+
+  assert.deepEqual(deleteTimetableOrderConstraint({
+    timetableOrderConstraints: [unreachable, kept],
+    constraintId: unreachable.id,
+  }), { ok: true, timetableOrderConstraints: [kept] })
 })
 
 test('出演順制約の新規ID collisionと曖昧な編集・削除を拒否する', () => {

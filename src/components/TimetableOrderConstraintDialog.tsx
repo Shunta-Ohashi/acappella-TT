@@ -11,6 +11,7 @@ import type {
   TimetableOrderConstraintDraft,
   TimetableOrderConstraintMutationResult,
 } from '../domain/timetableOrderConstraints'
+import { getInitialTimetableOrderConstraintSectionId } from '../ui/timetableOrderConstraintPresentation'
 
 interface TimetableOrderConstraintDialogProps {
   event: Event
@@ -46,7 +47,8 @@ export function TimetableOrderConstraintDialog({
     left.order - right.order || left.id.localeCompare(right.id))
   const orderedBands = [...eventBands].sort((left, right) =>
     left.name.localeCompare(right.name, 'ja') || left.id.localeCompare(right.id))
-  const [sectionId, setSectionId] = useState(constraint?.sectionId ?? '')
+  const [sectionId, setSectionId] = useState(() =>
+    getInitialTimetableOrderConstraintSectionId({ constraint, sections: orderedSections }))
   const initialEventBandIds = constraint ? constraint.eventBandIds : ['', '']
   const nextRowSequence = useRef(initialEventBandIds.length)
   const [bandRows, setBandRows] = useState<BandDraftRow[]>(

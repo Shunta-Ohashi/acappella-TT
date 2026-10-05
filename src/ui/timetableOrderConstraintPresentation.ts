@@ -1,4 +1,10 @@
-import type { ScheduleItem, TimetableOrderConstraint } from '../domain/models'
+import type {
+  EventDay,
+  ScheduleItem,
+  Section,
+  Stage,
+  TimetableOrderConstraint,
+} from '../domain/models'
 import {
   evaluateScheduledTimetableOrderConstraints,
   type TimetableOrderConstraintViolation,
@@ -9,6 +15,32 @@ export type TimetableOrderConstraintScheduleStatus =
   | { kind: 'satisfied'; label: '現在のTT：条件どおり' }
   | { kind: 'missing'; label: '現在のTT：未配置あり' }
   | { kind: 'unmet'; label: '現在のTT：条件未達' }
+
+export const getInitialTimetableOrderConstraintSectionId = ({
+  constraint,
+  sections,
+}: {
+  constraint?: TimetableOrderConstraint
+  sections: Section[]
+}): string => sections.length > 0 ? constraint?.sectionId ?? '' : ''
+
+export const isTimetableOrderConstraintScopeReachable = ({
+  constraint,
+  eventId,
+  eventDays,
+  stages,
+}: {
+  constraint: TimetableOrderConstraint
+  eventId: string
+  eventDays: EventDay[]
+  stages: Stage[]
+}): boolean => {
+  if (constraint.eventId !== eventId) return false
+  const eventDay = eventDays.find(candidate => candidate.id === constraint.eventDayId)
+  if (!eventDay || eventDay.eventId !== eventId) return false
+  const stage = stages.find(candidate => candidate.id === constraint.stageId)
+  return stage?.eventDayId === constraint.eventDayId
+}
 
 export const getTimetableOrderConstraintScheduleStatus = ({
   constraint,
