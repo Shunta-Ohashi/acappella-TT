@@ -184,7 +184,69 @@ test('participatingをundecidedより優先し、undecidedだけならwarning付
   const undecided = planDutyAutoAssignments(undecidedOnlyContext, request())
   assert.equal(undecided.ok, true)
   assert.deepEqual(undecided.plan.selectedMemberIds, ['member-a'])
-  assert.match(undecided.plan.warnings.join(' '), /Aさん.*未定/)
+  assert.deepEqual(undecided.plan.warnings, [
+    'Aさんはこの開催日の参加状況が未定です。',
+  ])
+  assert.equal(undecided.plan.warnings.join(' ').includes('さんさん'), false)
+})
+
+test('別Event由来でcurrent day IDを持つDutyを評価対象へ混入させない', () => {
+  const foreignEvent = {
+    ...event,
+    id: 'event-foreign',
+    name: '別イベント',
+  }
+  const foreignDay = {
+    id: 'day-foreign', eventId: foreignEvent.id, date: '2027-11-07', order: 0,
+  }
+  const foreignStage = {
+    ...stage,
+    id: 'stage-foreign',
+    eventDayId: foreignDay.id,
+  }
+  const foreignDutyType = {
+    id: 'duty-foreign', eventId: foreignEvent.id, name: '別イベント業務', order: 0,
+  }
+  const foreignAssignment = duty(
+    'foreign-stale-duty',
+    'member-a',
+    '13:00',
+    '14:00',
+    {
+      dutyTypeId: foreignDutyType.id,
+      eventDayId: eventDay.id,
+      stageId: foreignStage.id,
+    },
+  )
+  const foreignPa = pa('foreign-stale-pa', 'member-a', '13:00', '14:00', {
+    eventId: foreignEvent.id,
+    eventDayId: eventDay.id,
+    stageId: foreignStage.id,
+  })
+  const input = context({
+    eventDays: [eventDay, foreignDay],
+    stages: [stage, foreignStage],
+    dutyTypes: [...dutyTypes, foreignDutyType],
+    dutyAssignments: [foreignAssignment],
+    paAssignments: [foreignPa],
+  })
+  const before = structuredClone(input)
+  const planned = planDutyAutoAssignments(input, request())
+
+  assert.equal(planned.ok, true)
+  assert.deepEqual(planned.plan.selectedMemberIds, ['member-a'])
+  assert.equal(planned.plan.candidateMetrics[0].existingDutyMinutes, 0)
+  assert.equal(planned.plan.candidateMetrics[0].existingDutyAssignmentCount, 0)
+
+  const applied = createDutyAutoAssignments({
+    context: input,
+    plan: planned.plan,
+    newDutyAssignmentIds: ['auto-current-event'],
+  })
+  assert.equal(applied.ok, true)
+  assert.deepEqual(applied.dutyAssignments[0], foreignAssignment)
+  assert.equal(applied.dutyAssignments.at(-1)?.id, 'auto-current-event')
+  assert.deepEqual(input, before)
 })
 
 test('当日Duty時間、件数、氏名、IDの順で公平かつ安定してrankingする', () => {
@@ -329,8 +391,47 @@ test('stable planKeyは同じinputで一致しcount・Boundary・selected Member
 })
 
 test('applyは1名・複数名を追加し既存のEvent・Day・Stage・DutyType担当を保持する', () => {
-  const existing = duty('existing', 'member-e', '09:00', '09:30')
-  const input = context({ dutyAssignments: [existing] })
+  const otherEvent = { ...event, id: 'event-2', name: '別イベント' }
+  const otherDay = { id: 'day-2', eventId: event.id, date: '2027-11-07', order: 1 }
+  const otherEventDay = {
+    id: 'day-event-2', eventId: otherEvent.id, date: '2027-12-01', order: 0,
+  }
+  const otherStage = { ...stage, id: 'stage-2' }
+  const otherDayStage = { ...stage, id: 'stage-day-2', eventDayId: otherDay.id }
+  const otherEventStage = {
+    ...stage, id: 'stage-event-2', eventDayId: otherEventDay.id,
+  }
+  const otherDutyType = {
+    id: 'duty-reception', eventId: event.id, name: '受付', order: 1,
+  }
+  const otherEventDutyType = {
+    id: 'duty-event-2', eventId: otherEvent.id, name: '別イベント業務', order: 0,
+  }
+  const existingAssignments = [
+    duty('existing-same', 'member-e', '09:00', '09:30'),
+    duty('existing-other-event', 'member-e', '09:00', '09:30', {
+      dutyTypeId: otherEventDutyType.id,
+      eventDayId: otherEventDay.id,
+      stageId: otherEventStage.id,
+    }),
+    duty('existing-other-day', 'member-e', '09:30', '10:00', {
+      eventDayId: otherDay.id,
+      stageId: otherDayStage.id,
+    }),
+    duty('existing-other-stage', 'member-e', '10:00', '10:30', {
+      stageId: otherStage.id,
+    }),
+    duty('existing-other-type', 'member-e', '10:30', '11:00', {
+      dutyTypeId: otherDutyType.id,
+    }),
+  ]
+  const input = context({
+    eventDays: [eventDay, otherDay, otherEventDay],
+    stages: [stage, otherStage, otherDayStage, otherEventStage],
+    dutyTypes: [...dutyTypes, otherDutyType, otherEventDutyType],
+    dutyAssignments: existingAssignments,
+  })
+  const before = structuredClone(input)
   const planned = planDutyAutoAssignments(input, request({ additionalCount: 2 }))
   assert.equal(planned.ok, true)
 
@@ -340,12 +441,14 @@ test('applyは1名・複数名を追加し既存のEvent・Day・Stage・DutyTyp
     newDutyAssignmentIds: ['auto-a', 'auto-b'],
   })
   assert.equal(applied.ok, true)
-  assert.deepEqual(applied.dutyAssignments[0], existing)
+  assert.deepEqual(applied.dutyAssignments.slice(0, existingAssignments.length),
+    existingAssignments)
   assert.deepEqual(applied.dutyAssignments.slice(-2).map((item) => item.id), [
     'auto-a', 'auto-b',
   ])
   assert.deepEqual(applied.dutyAssignments.slice(-2).map((item) => item.memberId),
     planned.plan.selectedMemberIds)
+  assert.deepEqual(input, before)
 })
 
 test('applyはID不足・空・重複・既存collisionを全件atomicに拒否する', () => {

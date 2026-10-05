@@ -28,6 +28,7 @@ import {
 import {
   createDutyAssignmentAddition,
   createDutySettingsDraft,
+  getDutyAssignmentsForEvent,
   getDutyMemberCandidates,
   resolveDutyAssignmentInterval,
   validateDutyTypeDrafts,
@@ -166,6 +167,29 @@ const hasValidScope = (context: DutyAutoAssignmentContext): boolean => {
     matchingStages.length === 1 &&
     matchingStages[0].eventDayId === context.eventDay.id &&
     context.stage.eventDayId === context.eventDay.id
+}
+
+const getEventStages = (context: DutyAutoAssignmentContext): Stage[] => {
+  const eventDayIds = new Set(
+    context.eventDays
+      .filter((day) => day.eventId === context.event.id)
+      .map((day) => day.id),
+  )
+  return context.stages.filter((candidate) =>
+    eventDayIds.has(candidate.eventDayId),
+  )
+}
+
+const getEventDutyAssignments = (
+  context: DutyAutoAssignmentContext,
+  dutyAssignments: DutyAssignment[],
+): DutyAssignment[] => {
+  return getDutyAssignmentsForEvent({
+    event: context.event,
+    stages: getEventStages(context),
+    dutyTypes: context.dutyTypes,
+    dutyAssignments,
+  })
 }
 
 const getMemberDay = (
@@ -315,12 +339,16 @@ export const planDutyAutoAssignments = (
     }
   }
 
-  const dayPaAssignments = context.paAssignments.filter((assignment) =>
-    assignment.eventDayId === context.eventDay.id,
+  const eventStages = getEventStages(context)
+  const eventPaAssignments = context.paAssignments.filter((assignment) =>
+    assignment.eventId === context.event.id,
   )
-  const dayDutyAssignments = context.dutyAssignments.filter((assignment) =>
-    assignment.eventDayId === context.eventDay.id,
-  )
+  const dayPaAssignments = eventPaAssignments.filter((assignment) =>
+    assignment.eventDayId === context.eventDay.id)
+  const dayDutyAssignments = getEventDutyAssignments(
+    context,
+    context.dutyAssignments,
+  ).filter((assignment) => assignment.eventDayId === context.eventDay.id)
   const boundaryContext = { stages: context.stages, sections: context.sections }
   const paActivities = buildPaActivities(
     dayPaAssignments,
@@ -365,13 +393,13 @@ export const planDutyAutoAssignments = (
     const addition = createDutyAssignmentAddition({
       event: context.event,
       eventDays: context.eventDays,
-      stages: context.stages,
+      stages: eventStages,
       sections: context.sections,
       members: context.members,
       eventMembers: context.eventMembers,
       eventMemberDays: context.eventMemberDays,
       eventBands: context.eventBands,
-      paAssignments: context.paAssignments,
+      paAssignments: eventPaAssignments,
       calculatedItems: context.calculatedItems,
       dutyTypes: context.dutyTypes,
       dutyAssignments: context.dutyAssignments,
@@ -484,7 +512,7 @@ export const planDutyAutoAssignments = (
   const warnings = selectedMetrics.flatMap((metric) => {
     if (metric.participationStatus !== 'undecided') return []
     const name = memberById.get(metric.memberId)?.realName ?? metric.memberId
-    return [`${name}さんはこの開催日の参加状況が未定です。`]
+    return [`${name}はこの開催日の参加状況が未定です。`]
   })
   const plan: DutyAutoAssignmentPlan = {
     dutyTypeId: request.dutyTypeId,
@@ -539,18 +567,22 @@ export const createDutyAutoAssignments = ({
     }
   }
 
+  const eventStages = getEventStages(context)
+  const eventPaAssignments = context.paAssignments.filter((assignment) =>
+    assignment.eventId === context.event.id,
+  )
   let workingAssignments = [...context.dutyAssignments]
   for (let index = 0; index < plan.selectedMemberIds.length; index += 1) {
     const addition = createDutyAssignmentAddition({
       event: context.event,
       eventDays: context.eventDays,
-      stages: context.stages,
+      stages: eventStages,
       sections: context.sections,
       members: context.members,
       eventMembers: context.eventMembers,
       eventMemberDays: context.eventMemberDays,
       eventBands: context.eventBands,
-      paAssignments: context.paAssignments,
+      paAssignments: eventPaAssignments,
       calculatedItems: context.calculatedItems,
       dutyTypes: context.dutyTypes,
       dutyAssignments: workingAssignments,
@@ -590,13 +622,12 @@ export const createDutyAutoAssignments = ({
       eventBands: context.eventBands,
       stages: context.stages,
       sections: context.sections,
-      paAssignments: context.paAssignments.filter((assignment) =>
+      paAssignments: eventPaAssignments.filter((assignment) =>
         assignment.eventDayId === plan.eventDayId,
       ),
       dutyTypes: context.dutyTypes,
-      dutyAssignments: workingAssignments.filter((assignment) =>
-        assignment.eventDayId === plan.eventDayId,
-      ),
+      dutyAssignments: getEventDutyAssignments(context, workingAssignments)
+        .filter((assignment) => assignment.eventDayId === plan.eventDayId),
       calculatedItems,
     }).filter((issue) =>
       issue.severity === 'ERROR' && issue.dutyAssignmentIds?.some((id) => newIds.has(id)),
