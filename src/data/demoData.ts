@@ -44,17 +44,15 @@ const events: Event[] = [
     name: '2026 デモライブ',
     description: '複数日・複数Stageの動作確認用イベントです。',
     timeZone: 'Asia/Tokyo',
-    defaultTransitionMinutes: 2,
     validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 10 },
-    performanceSlotMinutes: [5, 7, 10, 15],
+    performanceSlotMinutes: [7, 9, 12, 17],
   },
   {
     id: 'event-demo-festival',
     name: '2026 学祭デモ',
     timeZone: 'Asia/Tokyo',
-    defaultTransitionMinutes: 2,
     validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 10 },
-    performanceSlotMinutes: [5, 10, 15],
+    performanceSlotMinutes: [7, 12, 17],
   },
 ]
 
@@ -90,7 +88,6 @@ const stages: Stage[] = [
     order: 0,
     plannedStartTime: '10:00',
     plannedEndTime: '18:00',
-    transitionMinutes: 2,
   },
   {
     id: 'stage-demo-sub-day1',
@@ -100,7 +97,6 @@ const stages: Stage[] = [
     order: 1,
     plannedStartTime: '11:00',
     plannedEndTime: '17:00',
-    transitionMinutes: 2,
   },
   {
     id: 'stage-demo-main-day2',
@@ -110,7 +106,6 @@ const stages: Stage[] = [
     order: 0,
     plannedStartTime: '10:00',
     plannedEndTime: '18:00',
-    transitionMinutes: 2,
   },
   {
     id: 'stage-demo-sub-day2',
@@ -120,7 +115,6 @@ const stages: Stage[] = [
     order: 1,
     plannedStartTime: '11:00',
     plannedEndTime: '17:00',
-    transitionMinutes: 2,
   },
   {
     id: 'stage-demo-festival',
@@ -426,7 +420,7 @@ const eventBands: EventBand[] = [
       'member-demo-03',
       'member-demo-04',
     ],
-    durationMinutes: 15,
+    durationMinutes: 17,
   },
   {
     id: 'event-band-demo-main-02',
@@ -440,7 +434,7 @@ const eventBands: EventBand[] = [
       'member-demo-05',
       'member-demo-06',
     ],
-    durationMinutes: 10,
+    durationMinutes: 12,
   },
   {
     id: 'event-band-demo-main-03',
@@ -448,7 +442,7 @@ const eventBands: EventBand[] = [
     eventDayId: 'event-day-demo-main-01',
     name: 'Availability Trio',
     memberIds: ['member-demo-05', 'member-demo-06', 'member-demo-07'],
-    durationMinutes: 10,
+    durationMinutes: 12,
     availableTimeRange: { from: '15:00' },
     fixedPlacement: { stageId: 'stage-demo-sub-day1' },
   },
@@ -458,7 +452,7 @@ const eventBands: EventBand[] = [
     eventDayId: 'event-day-demo-main-01',
     name: 'Window Duo',
     memberIds: ['member-demo-04', 'member-demo-09'],
-    durationMinutes: 7,
+    durationMinutes: 9,
     availableTimeRange: { from: '11:00', until: '16:00' },
     preferredTimeRange: { from: '15:00', until: '16:00' },
   },
@@ -469,7 +463,7 @@ const eventBands: EventBand[] = [
     bandId: 'band-demo-01',
     name: 'Aurora（2日目）',
     memberIds: ['member-demo-01', 'member-demo-03', 'member-demo-04'],
-    durationMinutes: 15,
+    durationMinutes: 17,
   },
   {
     id: 'event-band-demo-main-06',
@@ -478,7 +472,7 @@ const eventBands: EventBand[] = [
     bandId: 'band-demo-03',
     name: 'Ciel Special',
     memberIds: ['member-demo-02', 'member-demo-06', 'member-demo-08'],
-    durationMinutes: 10,
+    durationMinutes: 12,
     preferredTimeRange: { from: '15:00', until: '17:00' },
   },
   {
@@ -488,7 +482,7 @@ const eventBands: EventBand[] = [
     bandId: 'band-demo-04',
     name: 'Drop Chord',
     memberIds: ['member-demo-07', 'member-demo-08', 'member-demo-09'],
-    durationMinutes: 5,
+    durationMinutes: 7,
     fixedPlacement: {
       stageId: 'stage-demo-main-day2',
       sectionId: 'section-demo-day2-02',
@@ -501,7 +495,7 @@ const eventBands: EventBand[] = [
     eventDayId: 'event-day-demo-main-02',
     name: '時刻固定ユニット',
     memberIds: ['member-demo-03', 'member-demo-09'],
-    durationMinutes: 7,
+    durationMinutes: 9,
     fixedPlacement: {
       stageId: 'stage-demo-sub-day2',
       plannedStartTime: '14:00',
@@ -514,7 +508,7 @@ const eventBands: EventBand[] = [
     bandId: 'band-demo-02',
     name: 'Blend Note（学祭）',
     memberIds: ['member-demo-01', 'member-demo-02'],
-    durationMinutes: 10,
+    durationMinutes: 12,
   },
   {
     id: 'event-band-demo-festival-02',
@@ -522,7 +516,7 @@ const eventBands: EventBand[] = [
     eventDayId: 'event-day-demo-festival-01',
     name: '学祭限定カルテット',
     memberIds: ['member-demo-03', 'member-demo-04'],
-    durationMinutes: 5,
+    durationMinutes: 7,
   },
 ]
 
@@ -565,7 +559,7 @@ const scheduleItems: ScheduleItem[] = [
     sectionId: 'section-demo-day2-01',
     order: 1,
     kind: 'break',
-    title: '転換調整',
+    title: '進行調整',
     durationMinutes: 10,
   },
   {

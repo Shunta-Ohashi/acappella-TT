@@ -8,7 +8,6 @@ import type {
   EventMember,
   EventMemberDay,
   Member,
-  PaCapabilities,
   PaAssignment,
   ScheduleItem,
   Section,
@@ -27,10 +26,6 @@ import {
   isEventDay,
   isEventMember,
   isEventMemberDay,
-  isLegacyDutyAssignment,
-  isLegacyEventMemberV1,
-  isLegacyMemberV1,
-  isLegacyPaAssignment,
   isMember,
   isPaAssignment,
   isPersistedCollection,
@@ -41,7 +36,7 @@ import {
   isTimetableLock,
 } from './persistenceValidation.ts'
 
-export const CURRENT_STORAGE_VERSION = 4 as const
+export const CURRENT_STORAGE_VERSION = 5 as const
 export const STORAGE_KEY = 'acappella-tt:app-state'
 
 export interface PersistedDomainState {
@@ -62,51 +57,8 @@ export interface PersistedDomainState {
   timetableOrderConstraints: TimetableOrderConstraint[]
 }
 
-export interface PersistedAppStateV4 extends PersistedDomainState {
+export interface PersistedAppStateV5 extends PersistedDomainState {
   version: typeof CURRENT_STORAGE_VERSION
-}
-
-interface LegacyScheduleBoundary {
-  scheduleItemId: string
-  edge: 'start' | 'end'
-}
-
-type LegacyPaAssignment = Omit<PaAssignment, 'from' | 'until'> & {
-  from: LegacyScheduleBoundary
-  until: LegacyScheduleBoundary
-}
-
-type LegacyDutyAssignment = Omit<DutyAssignment, 'from' | 'until'> & {
-  from: LegacyScheduleBoundary
-  until: LegacyScheduleBoundary
-}
-
-interface PersistedLegacyBoundaryState extends Omit<
-  PersistedDomainState,
-  'paAssignments' | 'dutyAssignments'
-> {
-  paAssignments: LegacyPaAssignment[]
-  dutyAssignments: LegacyDutyAssignment[]
-}
-
-interface PersistedAppStateV3 extends PersistedLegacyBoundaryState {
-  version: 3
-}
-
-interface PersistedAppStateV2 extends Omit<
-  PersistedLegacyBoundaryState, 'timetableOrderConstraints'
-> {
-  version: 2
-}
-
-interface PersistedAppStateV1 extends Omit<
-  PersistedLegacyBoundaryState,
-  'members' | 'eventMembers' | 'timetableLocks' | 'timetableOrderConstraints'
-> {
-  version: 1
-  members: Array<Member & { paCapabilities?: PaCapabilities }>
-  eventMembers: Array<Omit<EventMember, 'paCapabilities'>>
-  timetableLocks?: TimetableLock[]
 }
 
 export interface StorageLike {
@@ -162,10 +114,6 @@ const hasValidSnapshotRelationships = (
 
 const hasValidSharedCollections = (
   value: Record<string, unknown>,
-  assignmentValidators: {
-    pa: (value: unknown) => value is PaAssignment | Record<string, unknown>
-    duty: (value: unknown) => value is DutyAssignment | Record<string, unknown>
-  },
 ): boolean =>
   isPersistedCollection(value.bands, isBand) &&
   isPersistedCollection(value.events, isEvent) &&
@@ -175,18 +123,18 @@ const hasValidSharedCollections = (
   isPersistedCollection(value.eventMemberDays, isEventMemberDay) &&
   isPersistedCollection(value.eventBands, isEventBand) &&
   isPersistedCollection(value.scheduleItems, isScheduleItem) &&
-  isPersistedCollection(value.paAssignments, assignmentValidators.pa) &&
+  isPersistedCollection(value.paAssignments, isPaAssignment) &&
   isPersistedCollection(value.dutyTypes, isDutyType) &&
-  isPersistedCollection(value.dutyAssignments, assignmentValidators.duty)
+  isPersistedCollection(value.dutyAssignments, isDutyAssignment)
 
-export const isPersistedAppStateV4 = (
+export const isPersistedAppStateV5 = (
   value: unknown,
 ): boolean =>
   isRecord(value) &&
   value.version === CURRENT_STORAGE_VERSION &&
   isPersistedCollection(value.members, isMember) &&
   isPersistedCollection(value.eventMembers, isEventMember) &&
-  hasValidSharedCollections(value, { pa: isPaAssignment, duty: isDutyAssignment }) &&
+  hasValidSharedCollections(value) &&
   isPersistedCollection(value.timetableLocks, isTimetableLock) &&
   isPersistedCollection(
     value.timetableOrderConstraints,
@@ -194,107 +142,9 @@ export const isPersistedAppStateV4 = (
   ) &&
   hasValidSnapshotRelationships(value as unknown as PersistedDomainState)
 
-const isPersistedAppStateV2 = (value: unknown): boolean =>
-  isRecord(value) &&
-  value.version === 2 &&
-  isPersistedCollection(value.members, isMember) &&
-  isPersistedCollection(value.eventMembers, isEventMember) &&
-  hasValidSharedCollections(value, {
-    pa: isLegacyPaAssignment,
-    duty: isLegacyDutyAssignment,
-  }) &&
-  isPersistedCollection(value.timetableLocks, isTimetableLock) &&
-  hasValidSnapshotRelationships(value as unknown as PersistedDomainState)
-
-const isPersistedAppStateV1 = (value: unknown): boolean =>
-  isRecord(value) &&
-  value.version === 1 &&
-  isPersistedCollection(value.members, isLegacyMemberV1) &&
-  isPersistedCollection(value.eventMembers, isLegacyEventMemberV1) &&
-  hasValidSharedCollections(value, {
-    pa: isLegacyPaAssignment,
-    duty: isLegacyDutyAssignment,
-  }) &&
-  (value.timetableLocks === undefined ||
-    isPersistedCollection(value.timetableLocks, isTimetableLock)) &&
-  hasValidSnapshotRelationships(value as unknown as PersistedDomainState)
-
-const isPersistedAppStateV3 = (value: unknown): boolean =>
-  isRecord(value) &&
-  value.version === 3 &&
-  isPersistedCollection(value.members, isMember) &&
-  isPersistedCollection(value.eventMembers, isEventMember) &&
-  hasValidSharedCollections(value, {
-    pa: isLegacyPaAssignment,
-    duty: isLegacyDutyAssignment,
-  }) &&
-  isPersistedCollection(value.timetableLocks, isTimetableLock) &&
-  isPersistedCollection(value.timetableOrderConstraints, isTimetableOrderConstraint) &&
-  hasValidSnapshotRelationships(value as unknown as PersistedDomainState)
-
-const migrateBoundary = (boundary: LegacyScheduleBoundary): PaAssignment['from'] => ({
-  ...boundary,
-  kind: 'schedule-item',
-})
-
-const migrateLegacyBoundaries = <T extends {
-  paAssignments: LegacyPaAssignment[]
-  dutyAssignments: LegacyDutyAssignment[]
-}>(
-  legacy: T,
-) => ({
-  ...legacy,
-  paAssignments: legacy.paAssignments.map((assignment) => ({
-    ...assignment,
-    from: migrateBoundary(assignment.from),
-    until: migrateBoundary(assignment.until),
-  })),
-  dutyAssignments: legacy.dutyAssignments.map((assignment) => ({
-    ...assignment,
-    from: migrateBoundary(assignment.from),
-    until: migrateBoundary(assignment.until),
-  })),
-})
-
-const migrateV1ToV4 = (legacy: PersistedAppStateV1): PersistedAppStateV4 => {
-  const capabilitiesByMemberId = new Map(legacy.members.map((member) => [
-    member.id,
-    member.paCapabilities,
-  ]))
-  return {
-    ...migrateLegacyBoundaries(legacy),
-    version: CURRENT_STORAGE_VERSION,
-    members: legacy.members.map((member) => {
-      const migratedMember = { ...member }
-      delete migratedMember.paCapabilities
-      return migratedMember
-    }),
-    eventMembers: legacy.eventMembers.map((eventMember) => ({
-      ...eventMember,
-      paCapabilities: {
-        main: capabilitiesByMemberId.get(eventMember.memberId)?.main ?? false,
-        sub: capabilitiesByMemberId.get(eventMember.memberId)?.sub ?? false,
-      },
-    })),
-    timetableLocks: legacy.timetableLocks ?? [],
-    timetableOrderConstraints: [],
-  }
-}
-
-const migrateV2ToV4 = (legacy: PersistedAppStateV2): PersistedAppStateV4 => ({
-  ...migrateLegacyBoundaries(legacy),
-  version: CURRENT_STORAGE_VERSION,
-  timetableOrderConstraints: [],
-})
-
-const migrateV3ToV4 = (legacy: PersistedAppStateV3): PersistedAppStateV4 => ({
-  ...migrateLegacyBoundaries(legacy),
-  version: CURRENT_STORAGE_VERSION,
-})
-
 export const createPersistedAppState = (
   state: PersistedDomainState,
-): PersistedAppStateV4 => ({
+): PersistedAppStateV5 => ({
   version: CURRENT_STORAGE_VERSION,
   members: state.members,
   bands: state.bands,
@@ -319,22 +169,10 @@ export const serializePersistedState = (
 
 export const parsePersistedState = (
   serialized: string,
-): PersistedAppStateV4 | undefined => {
+): PersistedAppStateV5 | undefined => {
   try {
     const parsed: unknown = JSON.parse(serialized)
-    if (isPersistedAppStateV4(parsed)) return parsed as PersistedAppStateV4
-    if (isPersistedAppStateV3(parsed)) {
-      const migrated = migrateV3ToV4(parsed as PersistedAppStateV3)
-      return isPersistedAppStateV4(migrated) ? migrated : undefined
-    }
-    if (isPersistedAppStateV2(parsed)) {
-      const migrated = migrateV2ToV4(parsed as PersistedAppStateV2)
-      return isPersistedAppStateV4(migrated) ? migrated : undefined
-    }
-    if (isPersistedAppStateV1(parsed)) {
-      const migrated = migrateV1ToV4(parsed as PersistedAppStateV1)
-      return isPersistedAppStateV4(migrated) ? migrated : undefined
-    }
+    if (isPersistedAppStateV5(parsed)) return parsed as PersistedAppStateV5
     return undefined
   } catch {
     return undefined
@@ -352,7 +190,7 @@ const getBrowserStorage = (): StorageLike | undefined => {
 
 export const loadPersistedState = (
   storage: StorageLike | undefined = getBrowserStorage(),
-): PersistedAppStateV4 | undefined => {
+): PersistedAppStateV5 | undefined => {
   if (!storage) return undefined
 
   try {
@@ -372,7 +210,7 @@ export const loadPersistedState = (
 export const loadPersistedStateOrFallback = (
   createFallback: () => PersistedDomainState,
   storage: StorageLike | undefined = getBrowserStorage(),
-): PersistedAppStateV4 =>
+): PersistedAppStateV5 =>
   loadPersistedState(storage) ?? createPersistedAppState(createFallback())
 
 export const savePersistedState = (

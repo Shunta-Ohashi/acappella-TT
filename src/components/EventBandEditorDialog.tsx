@@ -508,7 +508,7 @@ export function EventBandEditorDialog({
                 </div>
               )}
               <div>
-                <label htmlFor="event-band-duration">出演枠 *</label>
+                <label htmlFor="event-band-duration">出演枠（転換時間を含む） *</label>
                 <select
                     id="event-band-duration"
                     required
@@ -528,6 +528,7 @@ export function EventBandEditorDialog({
                   ))}
                 </select>
                 <p className="event-band-form__help">
+                  演奏時間に、次の出演へ切り替える時間を含めた枠を選択してください。
                   必要な出演枠がない場合はStep 2で追加してください。
                 </p>
                 {errors.durationMinutes && (

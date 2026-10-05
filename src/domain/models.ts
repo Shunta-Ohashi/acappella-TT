@@ -82,7 +82,6 @@ export interface Event {
   name: string
   description?: string
   timeZone: string
-  defaultTransitionMinutes: number
   validationPolicy: {
     minimumGapBands: number
     minimumRestMinutes: number
@@ -107,7 +106,6 @@ export interface Stage {
   order: number
   plannedStartTime: LocalTime
   plannedEndTime?: LocalTime
-  transitionMinutes?: number
   notes?: string
 }
 

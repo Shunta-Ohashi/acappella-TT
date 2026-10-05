@@ -48,7 +48,7 @@ test('ScheduleItem境界は既存のstart/end時刻を解決する', () => {
   ), { ok: true, interval: { fromMinute: 600, untilMinute: 610 } })
 })
 
-test('Section境界はplanned anchorを優先し、未指定時はitemとcross-section transitionへfallbackする', () => {
+test('Section境界はplanned anchorを優先し、未指定時はSection内itemへfallbackする', () => {
   const anchored = {
     ...sections[0], plannedStartTime: '10:30', plannedEndTime: '11:30',
   }
@@ -58,7 +58,7 @@ test('Section境界はplanned anchorを優先し、未指定時はitemとcross-s
 
   assert.deepEqual(resolveEffectiveSectionInterval({
     section: sections[0], stage, sections, calculatedItems: items,
-  }), { ok: true, interval: { fromMinute: 600, untilMinute: 615 } })
+  }), { ok: true, interval: { fromMinute: 600, untilMinute: 610 } })
 
   const emptyMiddle = {
     id: 'section-empty', stageId: stage.id, name: '空の部', order: 1,
@@ -68,7 +68,7 @@ test('Section境界はplanned anchorを優先し、未指定時はitemとcross-s
     section: sections[0], stage,
     sections: [sections[0], emptyMiddle, lastSection],
     calculatedItems: items,
-  }), { ok: true, interval: { fromMinute: 600, untilMinute: 615 } })
+  }), { ok: true, interval: { fromMinute: 600, untilMinute: 610 } })
 
   const betweenBreak = {
     scheduleItemId: 'between-break', eventDayId: 'day-1', stageId: stage.id,
@@ -164,7 +164,7 @@ test('Section offsetはstartへ加算、endから減算し、Section外を拒否
   assert.deepEqual(resolve(
     { kind: 'section', sectionId: 'section-1', edge: 'start', offsetMinutes: 5 },
     { kind: 'section', sectionId: 'section-1', edge: 'end', offsetMinutes: 2 },
-  ), { ok: true, interval: { fromMinute: 605, untilMinute: 613 } })
+  ), { ok: true, interval: { fromMinute: 605, untilMinute: 608 } })
   assert.equal(resolve(
     { kind: 'section', sectionId: 'section-1', edge: 'start', offsetMinutes: 16 },
     { kind: 'time', time: '17:00' },

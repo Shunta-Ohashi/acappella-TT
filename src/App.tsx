@@ -194,7 +194,7 @@ import { createDemoData } from './data/demoData'
 import {
   loadPersistedStateOrFallback,
   savePersistedState,
-  type PersistedAppStateV4,
+  type PersistedAppStateV5,
   type PersistedDomainState,
 } from './persistence/localPersistence'
 import {
@@ -234,14 +234,13 @@ const replaceEventBandsForEventDay = (
 
 const DEFAULT_EVENT_SETTINGS = {
   timeZone: 'Asia/Tokyo',
-  defaultTransitionMinutes: 2,
   validationPolicy: {
     minimumGapBands: 1,
     minimumRestMinutes: 10,
   },
 } satisfies Pick<
   TimetableEvent,
-  'timeZone' | 'defaultTransitionMinutes' | 'validationPolicy'
+  'timeZone' | 'validationPolicy'
 >
 
 function App() {
@@ -415,7 +414,7 @@ function App() {
     savePersistedState(domainState)
   }, [domainState])
 
-  const applyPersistedSnapshot = (snapshot: PersistedAppStateV4) => {
+  const applyPersistedSnapshot = (snapshot: PersistedAppStateV5) => {
     setGenerationOptionsScope(null)
     setResetConfirmation(null)
     setGenerationPreview(null)
@@ -535,7 +534,6 @@ function App() {
     : []
   const selectedEventCalculatedItems = selectedEvent
     ? selectedEventDays.flatMap((eventDay) => calculateEventDayTimelines({
-        event: selectedEvent,
         eventDayId: eventDay.id,
         stages: selectedStages,
         sections: selectedSections,
@@ -544,9 +542,6 @@ function App() {
       }).calculatedItems)
     : []
   const startTime = currentStage?.plannedStartTime ?? ''
-  const intervalTime = currentStage?.transitionMinutes ??
-    selectedEvent?.defaultTransitionMinutes ??
-    DEFAULT_EVENT_SETTINGS.defaultTransitionMinutes
   const currentStageScheduleItems = currentStage
     ? getStageScheduleItems(selectedScheduleItems, currentStage.id)
     : []
@@ -591,21 +586,6 @@ function App() {
         ? { ...stage, plannedStartTime: value }
         : stage
     )))
-  }
-
-  const handleStageTransitionMinutesChange = (value: string) => {
-    const transitionMinutes = Number(value)
-    if (
-      !currentStage ||
-      !Number.isSafeInteger(transitionMinutes) ||
-      transitionMinutes < 0
-    ) return
-
-    setStages(previous => previous.map(stage =>
-      stage.id === currentStage.id
-        ? { ...stage, transitionMinutes }
-        : stage,
-    ))
   }
 
   const handleOpenEvent = (eventId: EventId) => {
@@ -1193,7 +1173,6 @@ function App() {
   }
 
   const handleSaveEventStageSettings = (
-    defaultTransitionMinutes: string,
     performanceSlotMinutes: number[],
     stageDrafts: StageSettingsDraft[],
     sectionDrafts: SectionSettingsDraft[],
@@ -1215,7 +1194,6 @@ function App() {
       stages: selectedStages,
       sections: selectedSections,
       draft: {
-        defaultTransitionMinutes,
         performanceSlotMinutes,
         stages: stageDrafts,
         sections: sectionDrafts,
@@ -1599,7 +1577,6 @@ function App() {
   // 選択日の全StageをIssue判定へ渡し、表示は選択中Stageだけに絞る
   const eventDayTimelines = selectedEvent && timetableSelection.eventDayId
     ? calculateEventDayTimelines({
-        event: selectedEvent,
         eventDayId: timetableSelection.eventDayId,
         stages: timetableStages,
         sections: timetableSections,
@@ -1834,16 +1811,6 @@ function App() {
                         onChange={(event) => handleStageStartTimeChange(event.target.value)}
                       />
                     </label>
-                    <label>
-                      転換
-                      <input
-                        type="number"
-                        min="0"
-                        value={intervalTime}
-                        onChange={(event) => handleStageTransitionMinutesChange(event.target.value)}
-                      />
-                      <span>分</span>
-                    </label>
                   </div>
                 ) : null}
                 unavailableContent={!timetableEventDay ? (
@@ -1938,7 +1905,6 @@ function App() {
                     dutyTypes={selectedEventDutyTypes}
                     unresolvedDutyAssignments={timetableWorkspaceRows.unresolvedDutyAssignments}
                     offGridDutyAssignments={timetableWorkspaceRows.offGridDutyAssignments}
-                    transitionMinutes={intervalTime}
                     breakDuration={breakDuration}
                     onBreakDurationChange={setBreakDuration}
                     onAddBreak={handleAddBreak}

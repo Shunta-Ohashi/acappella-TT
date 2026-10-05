@@ -123,7 +123,6 @@ export const isEvent = (value: unknown): value is Event =>
   isString(value.name) &&
   isOptional(value.description, isString) &&
   isString(value.timeZone) &&
-  isNonNegativeInteger(value.defaultTransitionMinutes) &&
   isRecord(value.validationPolicy) &&
   isNonNegativeInteger(value.validationPolicy.minimumGapBands) &&
   isNonNegativeInteger(value.validationPolicy.minimumRestMinutes) &&
@@ -149,7 +148,6 @@ export const isStage = (value: unknown): value is Stage =>
   isLocalTime(value.plannedStartTime) &&
   isOptional(value.plannedEndTime, isLocalTime) &&
   isValidStageTimeRange(value.plannedStartTime, value.plannedEndTime) &&
-  isOptional(value.transitionMinutes, isNonNegativeInteger) &&
   isOptional(value.notes, isString)
 
 export const isSection = (value: unknown): value is Section =>

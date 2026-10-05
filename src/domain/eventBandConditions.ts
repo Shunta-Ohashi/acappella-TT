@@ -311,7 +311,7 @@ export const getEventBandConditionFeasibility = ({
       )
     if (!meetsPreference) {
       warnings.push(
-        `希望時間内に出演時間${eventBand.durationMinutes}分を確保できません。`,
+        `希望時間内に出演枠${eventBand.durationMinutes}分を確保できません。`,
       )
     }
   }

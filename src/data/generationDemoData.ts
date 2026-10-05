@@ -47,7 +47,7 @@ export const createGenerationDemoData = (): Omit<DemoData,
     bands.map((band, index) => ({
       id: `eb-demo-generation-${dayIndex + 1}-${index + 1}`,
       eventId, eventDayId, bandId: band.id, name: `${band.name}（${dayIndex + 1}日目）`,
-      memberIds: [...band.defaultMemberIds], durationMinutes: [10, 15, 7, 10][index],
+      memberIds: [...band.defaultMemberIds], durationMinutes: [12, 17, 9, 12][index],
       fixedPlacement: dayIndex === 0
         ? index < 3 ? { stageId: main1, sectionId: sections[index].id }
           : { stageId: sub1 }
@@ -74,9 +74,9 @@ export const createGenerationDemoData = (): Omit<DemoData,
   return {
     events: [{ id: eventId, name: '自動生成お試しライブ（2日開催）',
       description: '両日とも自動生成可能。部内／部間休憩、TT固定、PA、撮影3名を確認できます。',
-      timeZone: 'Asia/Tokyo', defaultTransitionMinutes: 2,
+      timeZone: 'Asia/Tokyo',
       validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 10 },
-      performanceSlotMinutes: [5, 7, 10, 15] }],
+      performanceSlotMinutes: [7, 9, 12, 17] }],
     eventDays: [{ id: day1, eventId, date: '2026-12-05', label: 'お試し1日目', order: 0 },
       { id: day2, eventId, date: '2026-12-06', label: 'お試し2日目', order: 1 }],
     stages: [

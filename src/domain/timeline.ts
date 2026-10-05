@@ -1,5 +1,4 @@
 import type {
-  Event,
   EventBand,
   EventBandId,
   EventDayId,
@@ -28,43 +27,10 @@ export interface CalculatedScheduleItem {
 }
 
 export interface CalculateStageTimelineInput {
-  event: Event
   stage: Stage
   sections: Section[]
   scheduleItems: ScheduleItem[]
   eventBands: EventBand[]
-}
-
-/** Cross-Section transitions belong to the preceding Section, not idle time. */
-export const getCrossSectionTransitions = (
-  sections: Section[],
-  calculatedItems: CalculatedScheduleItem[],
-): Map<SectionId, { durationMinutes: number; untilItem: CalculatedScheduleItem }> => {
-  const transitions = new Map<SectionId, {
-    durationMinutes: number; untilItem: CalculatedScheduleItem
-  }>()
-  for (const stageId of new Set(calculatedItems.map((item) => item.stageId))) {
-    const stageSections = sections.filter((section) => section.stageId === stageId)
-      .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
-    // Preserve Timeline traversal order, including explicit Break items.
-    const stageItems = calculatedItems.filter((item) => item.stageId === stageId)
-    for (let index = 1; index < stageItems.length; index += 1) {
-      const previous = stageItems[index - 1]
-      const next = stageItems[index]
-      if (previous.kind !== 'performance' || next.kind !== 'performance' ||
-        previous.sectionId === undefined || next.sectionId === undefined ||
-        previous.sectionId === next.sectionId) continue
-      const previousIndex = stageSections.findIndex((section) => section.id === previous.sectionId)
-      const nextIndex = stageSections.findIndex((section) => section.id === next.sectionId)
-      if (previousIndex < 0 || nextIndex <= previousIndex ||
-        stageSections.slice(previousIndex + 1, nextIndex + 1)
-          .some((section) => section.plannedStartTime !== undefined)) continue
-      const durationMinutes = next.plannedStartMinute - previous.plannedEndMinute
-      if (durationMinutes < 0) continue
-      transitions.set(previous.sectionId, { durationMinutes, untilItem: next })
-    }
-  }
-  return transitions
 }
 
 const getLocalTimeParts = (time: string): { hour: number; minute: number } | undefined => {
@@ -96,13 +62,11 @@ export const formatMinuteAsLocalTime = (totalMinutes: number): string => {
 }
 
 export const calculateStageTimeline = ({
-  event,
   stage,
   sections,
   scheduleItems,
   eventBands,
 }: CalculateStageTimelineInput): CalculatedScheduleItem[] => {
-  const transitionMinutes = stage.transitionMinutes ?? event.defaultTransitionMinutes
   const eventBandsById = new Map(eventBands.map(eventBand => [eventBand.id, eventBand]))
   const stageScheduleItems = scheduleItems.filter(item => item.stageId === stage.id)
   const stageSections = sections
@@ -112,21 +76,11 @@ export const calculateStageTimeline = ({
     )
   const calculatedItems: CalculatedScheduleItem[] = []
   let currentMinute = parseLocalTimeToMinute(stage.plannedStartTime)
-  let previousItemKind: ScheduleItem['kind'] | undefined
-  let hasExplicitAnchorSincePreviousItem = false
 
   const calculateItems = (items: ScheduleItem[]) => {
     const orderedItems = [...items].sort(compareScheduleItemOrder)
 
     for (const scheduleItem of orderedItems) {
-      if (
-        previousItemKind === 'performance' &&
-        scheduleItem.kind === 'performance' &&
-        !hasExplicitAnchorSincePreviousItem
-      ) {
-        currentMinute += transitionMinutes
-      }
-
       let durationMinutes: number
       if (scheduleItem.kind === 'break') {
         durationMinutes = scheduleItem.durationMinutes
@@ -157,8 +111,6 @@ export const calculateStageTimeline = ({
       })
 
       currentMinute = plannedEndMinute
-      previousItemKind = scheduleItem.kind
-      hasExplicitAnchorSincePreviousItem = false
     }
   }
 
@@ -202,7 +154,6 @@ export const calculateStageTimeline = ({
   for (const [sectionIndex, section] of stageSections.entries()) {
     if (section.plannedStartTime) {
       currentMinute = parseLocalTimeToMinute(section.plannedStartTime)
-      hasExplicitAnchorSincePreviousItem = true
     }
 
     calculateItems(

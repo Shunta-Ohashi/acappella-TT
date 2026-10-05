@@ -39,7 +39,6 @@ interface EventStageSettingsProps {
   canDeleteStage: (stageId: StageId) => boolean
   canDeleteSection: (sectionId: SectionId) => boolean
   onSave: (
-    defaultTransitionMinutes: string,
     performanceSlotMinutes: number[],
     stages: StageSettingsDraft[],
     sections: SectionSettingsDraft[],
@@ -79,9 +78,6 @@ export function EventStageSettings({
   )
   const [selectedEventDayIdState, setSelectedEventDayId] =
     useState<EventDayId | undefined>(orderedEventDays[0]?.id)
-  const [defaultTransitionMinutes, setDefaultTransitionMinutes] = useState(
-    initialDraft.defaultTransitionMinutes,
-  )
   const [performanceSlotMinutes, setPerformanceSlotMinutes] = useState(
     initialDraft.performanceSlotMinutes,
   )
@@ -113,7 +109,6 @@ export function EventStageSettings({
   const errorEventDayIds = new Set(
     getEventStageSettingsErrorEventDayIds(
       {
-        defaultTransitionMinutes,
         performanceSlotMinutes,
         stages: stageDrafts,
         sections: sectionDrafts,
@@ -188,8 +183,6 @@ export function EventStageSettings({
         plannedStartTime: '',
         endMode: 'automatic',
         plannedEndTime: '',
-        transitionMode: 'event-default',
-        transitionMinutes: '',
       },
     ])
     setNextStageDraftKey((previous) => previous + 1)
@@ -333,7 +326,6 @@ export function EventStageSettings({
 
   const save = (moveToNext: boolean) => {
     const draft = {
-      defaultTransitionMinutes,
       performanceSlotMinutes,
       stages: stageDrafts,
       sections: sectionDrafts,
@@ -354,7 +346,6 @@ export function EventStageSettings({
     }
 
     const result = onSave(
-      defaultTransitionMinutes,
       performanceSlotMinutes,
       stageDrafts,
       sectionDrafts,
@@ -377,7 +368,6 @@ export function EventStageSettings({
       result.stages,
       result.sections,
     )
-    setDefaultTransitionMinutes(savedDraft.defaultTransitionMinutes)
     setPerformanceSlotMinutes(savedDraft.performanceSlotMinutes)
     setStageDrafts(savedDraft.stages)
     setSectionDrafts(savedDraft.sections)
@@ -430,49 +420,11 @@ export function EventStageSettings({
             </div>
           </div>
 
-          <div className="event-stage-settings__common-transition">
-            <label htmlFor="event-default-transition-minutes">
-              イベント共通の転換時間
-            </label>
-            <div>
-              <input
-                id="event-default-transition-minutes"
-                type="number"
-                min="0"
-                step="1"
-                required
-                value={defaultTransitionMinutes}
-                aria-invalid={errors.defaultTransitionMinutes
-                  ? 'true'
-                  : undefined}
-                aria-describedby={errors.defaultTransitionMinutes
-                  ? 'event-default-transition-error'
-                  : undefined}
-                onChange={(changeEvent) => {
-                  setDefaultTransitionMinutes(changeEvent.target.value)
-                  setErrors((previous) => ({
-                    ...previous,
-                    defaultTransitionMinutes: undefined,
-                    form: undefined,
-                  }))
-                  setSaveMessage('')
-                }}
-              />
-              <span>分</span>
-            </div>
-            {errors.defaultTransitionMinutes && (
-              <p
-                id="event-default-transition-error"
-                className="form-error"
-                role="alert"
-              >
-                {errors.defaultTransitionMinutes}
-              </p>
-            )}
-          </div>
-
           <div className="event-stage-settings__common-slots">
-            <p>このイベントで使用する出演枠</p>
+            <p>このイベントで使用する出演枠（転換時間を含む）</p>
+            <p className="event-stage-settings__help">
+              出演枠には、演奏時間だけでなく、次の出演へ切り替えるための時間も含めて設定してください。
+            </p>
             <div className="event-stage-settings__slot-list" aria-label="設定済みの出演枠">
               {performanceSlotMinutes.map((minutes) => (
                 <span key={minutes}>{minutes}分枠</span>
@@ -756,80 +708,6 @@ export function EventStageSettings({
                         )}
                       </fieldset>
                     </div>
-
-                    <fieldset className="stage-settings-choice">
-                      <legend>転換時間</legend>
-                      <label>
-                        <input
-                          type="radio"
-                          name={`${idPrefix}-transition-mode`}
-                          checked={stage.transitionMode === 'event-default'}
-                          onChange={() => updateStage(
-                            stage.draftId,
-                            (current) => ({
-                              ...current,
-                              transitionMode: 'event-default',
-                            }),
-                          )}
-                        />
-                        イベント共通（{defaultTransitionMinutes
-                          ? `${defaultTransitionMinutes}分`
-                          : '未設定'}）
-                      </label>
-                      <label>
-                        <input
-                          type="radio"
-                          name={`${idPrefix}-transition-mode`}
-                          checked={stage.transitionMode === 'stage-specific'}
-                          onChange={() => updateStage(
-                            stage.draftId,
-                            (current) => ({
-                              ...current,
-                              transitionMode: 'stage-specific',
-                            }),
-                          )}
-                        />
-                        このStageのみ
-                      </label>
-                      {stage.transitionMode === 'stage-specific' && (
-                        <div className="stage-settings-choice__value stage-settings-choice__value--minutes">
-                          <label className="visually-hidden" htmlFor={`${idPrefix}-transition-minutes`}>
-                            Stage固有の転換時間
-                          </label>
-                          <input
-                            id={`${idPrefix}-transition-minutes`}
-                            type="number"
-                            min="0"
-                            step="1"
-                            required
-                            value={stage.transitionMinutes}
-                            aria-invalid={stageErrors.transitionMinutes
-                              ? 'true'
-                              : undefined}
-                            aria-describedby={stageErrors.transitionMinutes
-                              ? `${idPrefix}-transition-error`
-                              : undefined}
-                            onChange={(changeEvent) => updateStage(
-                              stage.draftId,
-                              (current) => ({
-                                ...current,
-                                transitionMinutes: changeEvent.target.value,
-                              }),
-                            )}
-                          />
-                          <span>分</span>
-                          {stageErrors.transitionMinutes && (
-                            <p
-                              id={`${idPrefix}-transition-error`}
-                              className="form-error"
-                              role="alert"
-                            >
-                              {stageErrors.transitionMinutes}
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </fieldset>
 
                     <StageSectionSettings
                       stageName={stage.name}

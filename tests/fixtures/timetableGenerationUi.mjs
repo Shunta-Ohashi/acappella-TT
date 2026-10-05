@@ -1,5 +1,5 @@
 export const createGenerationUiInput = () => {
-  const event = { id: 'event-a', name: '学園祭', timeZone: 'Asia/Tokyo', defaultTransitionMinutes: 0,
+  const event = { id: 'event-a', name: '学園祭', timeZone: 'Asia/Tokyo',
     performanceSlotMinutes: [10], validationPolicy: { minimumGapBands: 0, minimumRestMinutes: 0 } }
   const eventDay = { id: 'day-a1', eventId: event.id, date: '2027-11-06', order: 0 }
   const eventDays = [eventDay, { ...eventDay, id: 'day-a2', date: '2027-11-07', order: 1 },

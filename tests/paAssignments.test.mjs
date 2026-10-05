@@ -18,7 +18,6 @@ const event = {
   id: 'event-1',
   name: 'PAテスト',
   timeZone: 'Asia/Tokyo',
-  defaultTransitionMinutes: 0,
   validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 0 },
   performanceSlotMinutes: [10],
 }
@@ -515,8 +514,7 @@ test('Timeline更新により同じScheduleBoundaryから導出するPA実時間
 
 test('Section間Breakのstart/end ScheduleBoundaryをPA実時間へ解決する', () => {
   const timeline = calculateStageTimeline({
-    event,
-    stage: { ...stages[0], transitionMinutes: 2 },
+    stage: stages[0],
     sections: [
       { id: 'section-1', stageId: 'stage-a', name: '1部', order: 0 },
       { id: 'section-2', stageId: 'stage-a', name: '2部', order: 1 },

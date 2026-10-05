@@ -9,14 +9,12 @@ test('EventDay・Stage・EventBandからイベント一覧の表示値を算出�
       id: 'event-1',
       name: '2027 学園祭',
       timeZone: 'Asia/Tokyo',
-      defaultTransitionMinutes: 2,
       validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 10 },
     },
     {
       id: 'event-2',
       name: '日程未定イベント',
       timeZone: 'Asia/Tokyo',
-      defaultTransitionMinutes: 2,
       validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 10 },
     },
   ]

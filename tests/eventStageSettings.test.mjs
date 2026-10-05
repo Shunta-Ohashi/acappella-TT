@@ -17,7 +17,6 @@ const event = {
   id: 'event-1',
   name: '学園祭',
   timeZone: 'Asia/Tokyo',
-  defaultTransitionMinutes: 2,
   validationPolicy: {
     minimumGapBands: 1,
     minimumRestMinutes: 10,
@@ -38,7 +37,6 @@ const existingStage = {
   order: 0,
   plannedStartTime: '10:00',
   plannedEndTime: '17:00',
-  transitionMinutes: 3,
 }
 
 const secondStage = {
@@ -67,8 +65,6 @@ const validStageDraft = (overrides = {}) => ({
   plannedStartTime: '10:00',
   endMode: 'automatic',
   plannedEndTime: '',
-  transitionMode: 'event-default',
-  transitionMinutes: '',
   ...overrides,
 })
 
@@ -84,12 +80,10 @@ const validSectionDraft = (overrides = {}) => ({
 })
 
 const settingsDraft = ({
-  defaultTransitionMinutes = '2',
   performanceSlotMinutes = event.performanceSlotMinutes,
   stages = [validStageDraft()],
   sections = [],
 } = {}) => ({
-  defaultTransitionMinutes,
   performanceSlotMinutes,
   stages,
   sections,
@@ -194,7 +188,6 @@ test('既存Stage IDを維持し、新規Stageを対応するEventDayへ生成�
     eventDays,
     stages: [existingStage],
     draft: settingsDraft({
-      defaultTransitionMinutes: '4',
       stages: [
         validStageDraft({
           draftId: 'existing-stage-draft',
@@ -204,8 +197,6 @@ test('既存Stage IDを維持し、新規Stageを対応するEventDayへ生成�
           plannedStartTime: '09:30',
           endMode: 'fixed',
           plannedEndTime: '18:00',
-          transitionMode: 'stage-specific',
-          transitionMinutes: '5',
         }),
         validStageDraft({
           draftId: 'new-stage-draft',
@@ -222,7 +213,6 @@ test('既存Stage IDを維持し、新規Stageを対応するEventDayへ生成�
   assert.equal(result.ok, true)
   if (!result.ok) return
 
-  assert.equal(result.event.defaultTransitionMinutes, 4)
   assert.deepEqual(result.event.performanceSlotMinutes, [5, 10, 15])
   assert.deepEqual(result.stages, [
     {
@@ -231,7 +221,6 @@ test('既存Stage IDを維持し、新規Stageを対応するEventDayへ生成�
       location: '体育館',
       plannedStartTime: '09:30',
       plannedEndTime: '18:00',
-      transitionMinutes: 5,
     },
     {
       id: 'stage-new',
@@ -241,7 +230,6 @@ test('既存Stage IDを維持し、新規Stageを対応するEventDayへ生成�
       order: 0,
       plannedStartTime: '10:00',
       plannedEndTime: undefined,
-      transitionMinutes: undefined,
     },
   ])
   assert.deepEqual(result.sections, [])
@@ -333,39 +321,6 @@ test('終了時刻を自動にすると既存の固定終了時刻を削除す�
   assert.equal(result.ok, true)
   if (!result.ok) return
   assert.equal(result.stages[0].plannedEndTime, undefined)
-})
-
-test('Event共通とStage固有の転換時間は0以上の整数だけ許可する', () => {
-  const commonErrors = validateEventStageSettingsDraft(settingsDraft({
-    defaultTransitionMinutes: '-1',
-    stages: [],
-  }))
-  assert.equal(
-    commonErrors.defaultTransitionMinutes,
-    '0以上の整数を入力してください。',
-  )
-
-  const stageErrors = validateEventStageSettingsDraft(settingsDraft({
-    defaultTransitionMinutes: '0',
-    stages: [validStageDraft({
-      transitionMode: 'stage-specific',
-      transitionMinutes: '1.5',
-    })],
-  }))
-  assert.equal(
-    stageErrors.stages['draft-stage'].transitionMinutes,
-    '0以上の整数を入力してください。',
-  )
-
-  const validErrors = validateEventStageSettingsDraft(settingsDraft({
-    defaultTransitionMinutes: '0',
-    stages: [validStageDraft({
-      transitionMode: 'stage-specific',
-      transitionMinutes: '0',
-    })],
-  }))
-  assert.equal(validErrors.defaultTransitionMinutes, undefined)
-  assert.equal(validErrors.stages['draft-stage'], undefined)
 })
 
 test('ScheduleItem、Section、固定配置、TT固定、PA担当、一般業務担当から参照されるStageは削除不可にする', () => {

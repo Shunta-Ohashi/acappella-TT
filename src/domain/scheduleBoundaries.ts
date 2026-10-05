@@ -9,7 +9,6 @@ import type {
 } from './models'
 import type { CalculatedScheduleItem } from './timeline'
 import {
-  getCrossSectionTransitions,
   isValidLocalTime,
   parseLocalTimeToMinute,
 } from './timeline.ts'
@@ -129,12 +128,10 @@ const getSectionItems = (
 const getEffectiveSectionEdges = ({
   section,
   stage,
-  sections,
   calculatedItems,
 }: {
   section: Section
   stage: Stage
-  sections: Section[]
   calculatedItems: CalculatedScheduleItem[]
 }): EffectiveSectionEdges | { reason: string } => {
   if (section.stageId !== stage.id) {
@@ -156,13 +153,9 @@ const getEffectiveSectionEdges = ({
   const fromMinute = section.plannedStartTime
     ? parseLocalTimeToMinute(section.plannedStartTime)
     : firstItem?.plannedStartMinute
-  let untilMinute = section.plannedEndTime
+  const untilMinute = section.plannedEndTime
     ? parseLocalTimeToMinute(section.plannedEndTime)
     : lastItem?.plannedEndMinute
-  if (!section.plannedEndTime && lastItem?.kind === 'performance') {
-    const transition = getCrossSectionTransitions(sections, calculatedItems).get(section.id)
-    if (transition) untilMinute = transition.untilItem.plannedStartMinute
-  }
 
   if (!isMinuteRangeWithinStageTimeRange(stage, fromMinute, untilMinute)) {
     return { reason: 'Sectionの有効時間は担当Stageの時間内にしてください。' }
@@ -177,7 +170,11 @@ export const resolveEffectiveSectionInterval = (input: {
   sections: Section[]
   calculatedItems: CalculatedScheduleItem[]
 }): ResolveScheduleIntervalResult => {
-  const edges = getEffectiveSectionEdges(input)
+  const edges = getEffectiveSectionEdges({
+    section: input.section,
+    stage: input.stage,
+    calculatedItems: input.calculatedItems,
+  })
   if ('reason' in edges) return { ok: false, reason: edges.reason }
   if (edges.fromMinute === undefined) {
     return { ok: false, reason: 'Section開始時刻を解決できません。' }
@@ -273,7 +270,6 @@ const resolveBoundaryMinute = ({
   const sectionEdges = getEffectiveSectionEdges({
     section,
     stage,
-    sections: context.sections,
     calculatedItems,
   })
   if ('reason' in sectionEdges) return { ok: false, reason: sectionEdges.reason }

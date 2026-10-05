@@ -8,7 +8,6 @@ import {
 
 const defaults = {
   timeZone: 'Asia/Tokyo',
-  defaultTransitionMinutes: 2,
   validationPolicy: {
     minimumGapBands: 1,
     minimumRestMinutes: 10,
@@ -30,7 +29,7 @@ test('非連続の複数開催日を日付昇順に並べてorderを付ける', 
     id: 'event-new',
     name: '2027 学園祭',
     ...defaults,
-    performanceSlotMinutes: [5, 10, 15],
+    performanceSlotMinutes: [7, 12, 17],
   })
   assert.deepEqual(created.eventDays, [
     {

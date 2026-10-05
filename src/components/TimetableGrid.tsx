@@ -51,7 +51,6 @@ interface TimetableGridProps {
   dutyTypes: DutyType[]
   unresolvedDutyAssignments: UnresolvedDutyAssignment[]
   offGridDutyAssignments: OffGridDutyAssignment[]
-  transitionMinutes: number
   breakDuration: number
   onBreakDurationChange: (durationMinutes: number) => void
   onAddBreak: (sectionId?: SectionId) => void
@@ -456,7 +455,6 @@ export function TimetableGrid({
   dutyTypes,
   unresolvedDutyAssignments,
   offGridDutyAssignments,
-  transitionMinutes,
   breakDuration,
   onBreakDurationChange,
   onAddBreak,
@@ -612,7 +610,6 @@ export function TimetableGrid({
       <header className="timetable-grid-titlebar">
         <div>
           <h3 id="timetable-grid-title">{stage.name}</h3>
-          <span>転換 {transitionMinutes}分</span>
         </div>
         {orderedSections.length === 0 && renderBreakForm(stage.name)}
         {timetableLocks.length > 0 && (
