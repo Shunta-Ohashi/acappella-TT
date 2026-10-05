@@ -192,19 +192,6 @@ const getEventDutyAssignments = (
   })
 }
 
-const getMemberDay = (
-  context: DutyAutoAssignmentContext,
-  memberId: MemberId,
-): EventMemberDay | undefined => {
-  const eventMember = context.eventMembers.find((candidate) =>
-    candidate.eventId === context.event.id && candidate.memberId === memberId,
-  )
-  return eventMember && context.eventMemberDays.find((candidate) =>
-    candidate.eventMemberId === eventMember.id &&
-    candidate.eventDayId === context.eventDay.id,
-  )
-}
-
 const getSyntheticId = (
   memberId: MemberId,
   assignments: readonly DutyAssignment[],
@@ -375,9 +362,8 @@ export const planDutyAutoAssignments = (
   })) {
     if (evaluatedMemberIds.has(candidate.member.id)) continue
     evaluatedMemberIds.add(candidate.member.id)
-    const memberDay = getMemberDay(context, candidate.member.id)
-    if (!memberDay || !isIntervalWithinAvailabilityWindows(
-      memberDay.availabilityWindows,
+    if (!isIntervalWithinAvailabilityWindows(
+      candidate.eventMemberDay.availabilityWindows,
       request.fromMinute,
       request.untilMinute,
     )) continue
@@ -390,14 +376,32 @@ export const planDutyAutoAssignments = (
     )) continue
 
     const syntheticId = getSyntheticId(candidate.member.id, context.dutyAssignments)
+    const duplicateEventMemberIds = new Set(
+      context.eventMembers
+        .filter((item) =>
+          item.eventId === context.event.id &&
+          item.memberId === candidate.member.id,
+        )
+        .map((item) => item.id),
+    )
+    const candidateEventMembers = [
+      ...context.eventMembers.filter((item) => item.id === candidate.eventMemberId),
+      ...context.eventMembers.filter((item) => !duplicateEventMemberIds.has(item.id)),
+    ]
+    const candidateEventMemberDays = [
+      candidate.eventMemberDay,
+      ...context.eventMemberDays.filter((item) =>
+        !duplicateEventMemberIds.has(item.eventMemberId),
+      ),
+    ]
     const addition = createDutyAssignmentAddition({
       event: context.event,
       eventDays: context.eventDays,
       stages: eventStages,
       sections: context.sections,
       members: context.members,
-      eventMembers: context.eventMembers,
-      eventMemberDays: context.eventMemberDays,
+      eventMembers: candidateEventMembers,
+      eventMemberDays: candidateEventMemberDays,
       eventBands: context.eventBands,
       paAssignments: eventPaAssignments,
       calculatedItems: context.calculatedItems,
@@ -420,8 +424,8 @@ export const planDutyAutoAssignments = (
       relatedErrors = detectScheduleIssues({
         event: context.event,
         members: context.members,
-        eventMembers: context.eventMembers,
-        eventMemberDays: context.eventMemberDays,
+        eventMembers: candidateEventMembers,
+        eventMemberDays: candidateEventMemberDays,
         eventBands: context.eventBands,
         stages: context.stages,
         sections: context.sections,

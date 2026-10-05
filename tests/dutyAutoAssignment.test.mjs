@@ -114,8 +114,38 @@ test('重複EventMemberがあっても同じMemberを複数回選出しない', 
     ],
   }), request({ additionalCount: 5 }))
 
-  assert.equal(result.ok, true)
+  assert.equal(result.ok, true, JSON.stringify(result))
   assert.equal(new Set(result.plan.selectedMemberIds).size, 5)
+})
+
+test('重複EventMemberではcandidate生成時のEventMemberDay identityを維持する', () => {
+  const duplicateEventMember = {
+    ...eventMembers[0],
+    id: 'event-member-member-a-available',
+  }
+  const result = planDutyAutoAssignments(context({
+    eventMembers: [eventMembers[0], duplicateEventMember],
+    eventMemberDays: [
+      memberDay('member-a', {
+        participationStatus: 'absent',
+        availabilityWindows: [{ until: '12:00' }],
+      }),
+      {
+        ...memberDay('member-a'),
+        id: 'member-day-a-available',
+        eventMemberId: duplicateEventMember.id,
+        participationStatus: 'undecided',
+        availabilityWindows: [{ from: '13:00', until: '14:00' }],
+      },
+    ],
+  }), request())
+
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.deepEqual(result.plan.selectedMemberIds, ['member-a'])
+  assert.equal(result.plan.candidateMetrics[0].participationStatus, 'undecided')
+  assert.deepEqual(result.plan.warnings, [
+    'Aさんはこの開催日の参加状況が未定です。',
+  ])
 })
 
 test('absent・日別設定なし・範囲全体がavailability外のMemberを除外する', () => {
