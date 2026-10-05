@@ -501,6 +501,11 @@ test('Section境界・部間Breakを含むScheduleItem境界を保持しinputを
   assert.equal(result.ok, true)
   assert.deepEqual(result.plan.fromBoundary, sectionRequest.fromBoundary)
   assert.deepEqual(result.plan.untilBoundary, sectionRequest.untilBoundary)
+  assert.equal(createDutyAutoAssignments({
+    context: sectionContext,
+    plan: result.plan,
+    newDutyAssignmentIds: ['auto-section-boundary'],
+  }).ok, true)
   assert.deepEqual({ sectionContext, sectionRequest }, before)
 
   const breakItem = {
@@ -508,13 +513,19 @@ test('Section境界・部間Breakを含むScheduleItem境界を保持しinputを
     kind: 'break', afterSectionId: section.id,
     plannedStartMinute: 780, plannedEndMinute: 840,
   }
-  const breakResult = planDutyAutoAssignments(context({
+  const breakContext = context({
     sections: [section], calculatedItems: [breakItem],
-  }), request({
+  })
+  const breakResult = planDutyAutoAssignments(breakContext, request({
     fromBoundary: { kind: 'schedule-item', scheduleItemId: 'inter-break', edge: 'start' },
     untilBoundary: { kind: 'schedule-item', scheduleItemId: 'inter-break', edge: 'end' },
   }))
   assert.equal(breakResult.ok, true)
+  assert.equal(createDutyAutoAssignments({
+    context: breakContext,
+    plan: breakResult.plan,
+    newDutyAssignmentIds: ['auto-break-boundary'],
+  }).ok, true)
 })
 
 test('stable planKeyは同じinputで一致しcount・Boundary・selected Memberで変わる', () => {
@@ -529,6 +540,51 @@ test('stable planKeyは同じinputで一致しcount・Boundary・selected Member
   assert.equal(base.plan.planKey, same.plan.planKey)
   assert.notEqual(base.plan.planKey, count.plan.planKey)
   assert.notEqual(base.plan.planKey, range.plan.planKey)
+})
+
+test('custom ActivitySpacingPolicyをsnapshot化してapplyし改変planを拒否する', () => {
+  const customPolicy = {
+    'performance-to-performance': {
+      minimumMinutes: 1, preferredMinutes: 2, sufficientMinutes: 3,
+    },
+    'work-to-performance': {
+      minimumMinutes: 1, preferredMinutes: 2, sufficientMinutes: 4,
+    },
+    'performance-to-work': {
+      minimumMinutes: 1, preferredMinutes: 3, sufficientMinutes: 5,
+    },
+    'work-to-work': {
+      minimumMinutes: 2, preferredMinutes: 4, sufficientMinutes: 6,
+    },
+  }
+  const input = context()
+  const planned = planDutyAutoAssignments(input, request({ activitySpacingPolicy: customPolicy }))
+  assert.equal(planned.ok, true)
+  assert.deepEqual(planned.plan.activitySpacingPolicy, customPolicy)
+  assert.notEqual(planned.plan.activitySpacingPolicy, customPolicy)
+  assert.equal(createDutyAutoAssignments({
+    context: input,
+    plan: planned.plan,
+    newDutyAssignmentIds: ['auto-custom-policy'],
+  }).ok, true)
+
+  const tamperedPlan = {
+    ...planned.plan,
+    activitySpacingPolicy: {
+      ...planned.plan.activitySpacingPolicy,
+      'work-to-work': {
+        ...planned.plan.activitySpacingPolicy['work-to-work'],
+        sufficientMinutes: 7,
+      },
+    },
+  }
+  const rejected = createDutyAutoAssignments({
+    context: input,
+    plan: tamperedPlan,
+    newDutyAssignmentIds: ['auto-tampered-policy'],
+  })
+  assert.equal(rejected.ok, false)
+  assert.equal(rejected.code, 'INVALID_PLAN')
 })
 
 test('applyは1名・複数名を追加し既存のEvent・Day・Stage・DutyType担当を保持する', () => {
@@ -642,6 +698,48 @@ test('applyはselectedMemberIdsとcandidateMetricsの対応が壊れたplanを�
   assert.deepEqual(input.dutyAssignments, [])
 })
 
+test('applyはDutyType・Boundary・minute・planKeyの改変を全件atomicに拒否する', () => {
+  const otherDutyType = {
+    id: 'duty-reception', eventId: event.id, name: '受付', order: 1,
+  }
+  const input = context({ dutyTypes: [...dutyTypes, otherDutyType] })
+  const planned = planDutyAutoAssignments(input, request())
+  assert.equal(planned.ok, true)
+  const before = structuredClone({ input, plan: planned.plan })
+  const changedRange = {
+    fromBoundary: timeBoundary('15:00'),
+    untilBoundary: timeBoundary('16:00'),
+    fromMinute: 900,
+    untilMinute: 960,
+  }
+  const tamperedPlans = [
+    { ...planned.plan, dutyTypeId: otherDutyType.id },
+    { ...planned.plan, ...changedRange },
+    {
+      ...planned.plan,
+      fromBoundary: changedRange.fromBoundary,
+      untilBoundary: changedRange.untilBoundary,
+    },
+    {
+      ...planned.plan,
+      fromMinute: changedRange.fromMinute,
+      untilMinute: changedRange.untilMinute,
+    },
+    { ...planned.plan, planKey: 'tampered' },
+  ]
+
+  for (const plan of tamperedPlans) {
+    const result = createDutyAutoAssignments({
+      context: input,
+      plan,
+      newDutyAssignmentIds: ['auto-tampered'],
+    })
+    assert.equal(result.ok, false)
+    assert.equal(result.code, 'INVALID_PLAN')
+  }
+  assert.deepEqual({ input, plan: planned.plan }, before)
+})
+
 test('applyは0・負数・小数・非有限のadditionalCountをINVALID_PLANにする', () => {
   const input = context()
   const planned = planDutyAutoAssignments(input, request())
@@ -684,7 +782,7 @@ test('apply途中の2人目validation失敗でも部分適用せず、unrelated 
     newDutyAssignmentIds: ['auto-first', 'auto-second'],
   })
   assert.equal(rejected.ok, false)
-  assert.equal(rejected.code, 'ASSIGNMENT_INVALID')
+  assert.equal(rejected.code, 'INVALID_PLAN')
   assert.deepEqual(applyContext, before)
 
   const unrelatedStale = duty('stale-other', 'member-e', '09:00', '09:30', {

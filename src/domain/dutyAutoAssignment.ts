@@ -83,6 +83,7 @@ export interface DutyAutoAssignmentPlan {
   fromMinute: number
   untilMinute: number
   additionalCount: number
+  activitySpacingPolicy: ActivitySpacingPolicy
   selectedMemberIds: MemberId[]
   candidateMetrics: DutyAutoAssignmentCandidateMetric[]
   warnings: string[]
@@ -118,6 +119,22 @@ export type DutyAutoAssignmentApplyResult =
 
 const cloneBoundary = (boundary: ScheduleBoundary): ScheduleBoundary => ({ ...boundary })
 
+const activitySpacingCategories = [
+  'performance-to-performance',
+  'work-to-performance',
+  'performance-to-work',
+  'work-to-work',
+] as const
+
+const cloneActivitySpacingPolicy = (
+  policy: Readonly<ActivitySpacingPolicy>,
+): ActivitySpacingPolicy => ({
+  'performance-to-performance': { ...policy['performance-to-performance'] },
+  'work-to-performance': { ...policy['work-to-performance'] },
+  'performance-to-work': { ...policy['performance-to-work'] },
+  'work-to-work': { ...policy['work-to-work'] },
+})
+
 const boundaryKey = (boundary: ScheduleBoundary): string => {
   if (boundary.kind === 'schedule-item') {
     return `item:${encodeURIComponent(boundary.scheduleItemId)}:${boundary.edge}`
@@ -132,9 +149,10 @@ const boundaryKey = (boundary: ScheduleBoundary): string => {
 const createPlanKey = (
   context: DutyAutoAssignmentContext,
   request: DutyAutoAssignmentRequest,
+  activitySpacingPolicy: ActivitySpacingPolicy,
   selectedMetrics: readonly DutyAutoAssignmentCandidateMetric[],
 ): string => [
-  'duty-auto-v2',
+  'duty-auto-v3',
   context.event.id,
   context.eventDay.id,
   context.stage.id,
@@ -144,6 +162,15 @@ const createPlanKey = (
   request.fromMinute,
   request.untilMinute,
   request.additionalCount,
+  ...activitySpacingCategories.map((category) => {
+    const thresholds = activitySpacingPolicy[category]
+    return [
+      category,
+      thresholds.minimumMinutes,
+      thresholds.preferredMinutes,
+      thresholds.sufficientMinutes,
+    ].join(':')
+  }),
   ...selectedMetrics.map((metric) => [
     metric.memberId,
     metric.eventMemberId,
@@ -420,6 +447,9 @@ export const planDutyAutoAssignments = (
   const unresolvedPaIds = new Set(paActivities.unresolved.map((source) => source.id))
   const unresolvedDutyIds = new Set(dutyActivities.unresolved.map((source) => source.id))
   const memberById = new Map(context.members.map((member) => [member.id, member]))
+  const activitySpacingPolicy = cloneActivitySpacingPolicy(
+    request.activitySpacingPolicy ?? DEFAULT_ACTIVITY_SPACING_POLICY,
+  )
   const viableMetrics: DutyAutoAssignmentCandidateMetric[] = []
 
   for (const candidate of getDutyMemberCandidates({
@@ -533,7 +563,7 @@ export const planDutyAutoAssignments = (
     try {
       spacing = evaluateMemberActivitySpacing({
         activities,
-        policy: request.activitySpacingPolicy ?? DEFAULT_ACTIVITY_SPACING_POLICY,
+        policy: activitySpacingPolicy,
         stageItems: calculatedItems,
       })
     } catch {
@@ -595,12 +625,13 @@ export const planDutyAutoAssignments = (
     fromMinute: request.fromMinute,
     untilMinute: request.untilMinute,
     additionalCount: request.additionalCount,
+    activitySpacingPolicy: cloneActivitySpacingPolicy(activitySpacingPolicy),
     selectedMemberIds: selectedMetrics.map((metric) => metric.memberId),
     candidateMetrics: selectedMetrics.map((metric) => ({ ...metric })),
     warnings,
     planKey: '',
   }
-  plan.planKey = createPlanKey(context, request, selectedMetrics)
+  plan.planKey = createPlanKey(context, request, activitySpacingPolicy, selectedMetrics)
   return { ok: true, plan }
 }
 
@@ -614,6 +645,7 @@ export const createDutyAutoAssignments = ({
   newDutyAssignmentIds: DutyAssignmentId[]
 }): DutyAutoAssignmentApplyResult => {
   if (
+    !hasValidScope(context) ||
     plan.eventDayId !== context.eventDay.id ||
     plan.stageId !== context.stage.id ||
     !Number.isSafeInteger(plan.additionalCount) ||
@@ -633,9 +665,47 @@ export const createDutyAutoAssignments = ({
       message: '自動割り当てplanが現在の選択範囲と一致しません。',
     }
   }
+  let authorizedPlan: DutyAutoAssignmentPlan
+  try {
+    const activitySpacingPolicy = cloneActivitySpacingPolicy(plan.activitySpacingPolicy)
+    const request: DutyAutoAssignmentRequest = {
+      dutyTypeId: plan.dutyTypeId,
+      fromBoundary: cloneBoundary(plan.fromBoundary),
+      untilBoundary: cloneBoundary(plan.untilBoundary),
+      fromMinute: plan.fromMinute,
+      untilMinute: plan.untilMinute,
+      additionalCount: plan.additionalCount,
+      activitySpacingPolicy,
+    }
+    if (
+      createPlanKey(context, request, activitySpacingPolicy, plan.candidateMetrics) !==
+        plan.planKey
+    ) {
+      return {
+        ok: false,
+        code: 'INVALID_PLAN',
+        message: '自動割り当てplanの内容を確認できません。候補を更新してください。',
+      }
+    }
+    const latest = planDutyAutoAssignments(context, request)
+    if (!latest.ok || latest.plan.planKey !== plan.planKey) {
+      return {
+        ok: false,
+        code: 'INVALID_PLAN',
+        message: '担当状況が変わったため、自動割り当て候補を更新してください。',
+      }
+    }
+    authorizedPlan = latest.plan
+  } catch {
+    return {
+      ok: false,
+      code: 'INVALID_PLAN',
+      message: '自動割り当てplanの内容を確認できません。候補を更新してください。',
+    }
+  }
   const existingIds = new Set(context.dutyAssignments.map((assignment) => assignment.id))
   if (
-    newDutyAssignmentIds.length !== plan.selectedMemberIds.length ||
+    newDutyAssignmentIds.length !== authorizedPlan.selectedMemberIds.length ||
     newDutyAssignmentIds.some((id) => typeof id !== 'string' || !id.trim()) ||
     new Set(newDutyAssignmentIds).size !== newDutyAssignmentIds.length ||
     newDutyAssignmentIds.some((id) => existingIds.has(id))
@@ -654,10 +724,10 @@ export const createDutyAutoAssignments = ({
   const identityScopes: DutyCandidateIdentityScope[] = []
   let scopedEventMembers = context.eventMembers
   let scopedEventMemberDays = context.eventMemberDays
-  for (const metric of plan.candidateMetrics) {
+  for (const metric of authorizedPlan.candidateMetrics) {
     const identityScope = createDutyCandidateIdentityScope({
       event: context.event,
-      eventDayId: plan.eventDayId,
+      eventDayId: authorizedPlan.eventDayId,
       memberId: metric.memberId,
       eventMemberId: metric.eventMemberId,
       eventMemberDayId: metric.eventMemberDayId,
@@ -676,7 +746,7 @@ export const createDutyAutoAssignments = ({
     scopedEventMemberDays = identityScope.eventMemberDays
   }
   let workingAssignments = [...context.dutyAssignments]
-  for (let index = 0; index < plan.selectedMemberIds.length; index += 1) {
+  for (let index = 0; index < authorizedPlan.selectedMemberIds.length; index += 1) {
     const addition = createDutyAssignmentAddition({
       event: context.event,
       eventDays: context.eventDays,
@@ -691,12 +761,12 @@ export const createDutyAutoAssignments = ({
       dutyTypes: context.dutyTypes,
       dutyAssignments: workingAssignments,
       item: {
-        dutyTypeId: plan.dutyTypeId,
-        eventDayId: plan.eventDayId,
-        stageId: plan.stageId,
-        memberId: plan.selectedMemberIds[index],
-        from: cloneBoundary(plan.fromBoundary),
-        until: cloneBoundary(plan.untilBoundary),
+        dutyTypeId: authorizedPlan.dutyTypeId,
+        eventDayId: authorizedPlan.eventDayId,
+        stageId: authorizedPlan.stageId,
+        memberId: authorizedPlan.selectedMemberIds[index],
+        from: cloneBoundary(authorizedPlan.fromBoundary),
+        until: cloneBoundary(authorizedPlan.untilBoundary),
       },
       newDutyAssignmentId: newDutyAssignmentIds[index],
     })
@@ -716,7 +786,7 @@ export const createDutyAutoAssignments = ({
   try {
     const newIds = new Set(newDutyAssignmentIds)
     const calculatedItems = context.calculatedItems.filter((item) =>
-      item.eventDayId === plan.eventDayId,
+      item.eventDayId === authorizedPlan.eventDayId,
     )
     issueErrors = uniqueMessages(detectScheduleIssues({
       event: context.event,
@@ -727,11 +797,11 @@ export const createDutyAutoAssignments = ({
       stages: context.stages,
       sections: context.sections,
       paAssignments: eventPaAssignments.filter((assignment) =>
-        assignment.eventDayId === plan.eventDayId,
+        assignment.eventDayId === authorizedPlan.eventDayId,
       ),
       dutyTypes: context.dutyTypes,
       dutyAssignments: getEventDutyAssignments(context, workingAssignments)
-        .filter((assignment) => assignment.eventDayId === plan.eventDayId),
+        .filter((assignment) => assignment.eventDayId === authorizedPlan.eventDayId),
       calculatedItems,
     }).filter((issue) =>
       issue.severity === 'ERROR' && issue.dutyAssignmentIds?.some((id) => newIds.has(id)),
