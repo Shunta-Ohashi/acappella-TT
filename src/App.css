@@ -5023,6 +5023,17 @@
 .timetable-order-settings__status--satisfied { color: #28734d; }
 .timetable-order-settings__status--missing { color: #83510f; }
 .timetable-order-settings__status--unmet { color: #9b2c2c; }
+.timetable-order-settings__status--invalid { color: #9b2c2c; }
+
+.timetable-order-settings__validation-messages {
+  display: grid;
+  gap: 3px;
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: #9b2c2c;
+  font-size: 11px;
+  line-height: 1.45;
+}
 
 .timetable-order-settings__actions {
   display: flex;

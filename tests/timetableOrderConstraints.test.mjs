@@ -553,21 +553,25 @@ test('current TT statusを条件どおり・未配置あり・条件未達へ表
   assert.deepEqual(getTimetableOrderConstraintScheduleStatus({
     constraint: target,
     scheduleItems: [performance('a', 'band-a', 0), performance('b', 'band-b', 1)],
+    semanticViolations: [],
   }), { kind: 'satisfied', label: '現在のTT：条件どおり' })
   assert.deepEqual(getTimetableOrderConstraintScheduleStatus({
     constraint: target,
     scheduleItems: [performance('a', 'band-a', 0)],
+    semanticViolations: [],
   }), { kind: 'missing', label: '現在のTT：未配置あり' })
   assert.deepEqual(getTimetableOrderConstraintScheduleStatus({
     constraint: target,
     scheduleItems: [performance('a', 'band-a', 0), performance('x', 'band-c', 1),
       performance('b', 'band-b', 2)],
+    semanticViolations: [],
   }), { kind: 'unmet', label: '現在のTT：条件未達' })
   assert.deepEqual(getTimetableOrderConstraintScheduleStatus({
     constraint: target,
     scheduleItems: [performance('a', 'band-a', 0), {
       ...performance('b', 'band-b', 1), sectionId: 'section-2',
     }],
+    semanticViolations: [],
   }), { kind: 'unmet', label: '現在のTT：条件未達' })
 })
 
@@ -582,6 +586,53 @@ test('current TT statusはBreakをPerformance adjacencyへ数えない', () => {
       stageId: 'stage-1', sectionId: 'section-1', order: 2 },
   ]
   assert.equal(getTimetableOrderConstraintScheduleStatus({
-    constraint: target, scheduleItems,
+    constraint: target, scheduleItems, semanticViolations: [],
   }).kind, 'satisfied')
+})
+
+test('semantic invalidな出演順制約はschedule状態にかかわらず要修正と表示する', () => {
+  const fixedPlacementBands = eventBands.map(band => band.id === 'band-a'
+    ? { ...band, fixedPlacement: { stageId: 'stage-plain' } }
+    : band)
+  const fixtures = [
+    {
+      constraints: [constraint({ id: 'zero', eventBandIds: [] })],
+      targetId: 'zero',
+    },
+    {
+      constraints: [constraint({ id: 'one', eventBandIds: ['band-a'] })],
+      targetId: 'one',
+    },
+    {
+      constraints: [constraint({ id: 'wrong-day', eventBandIds: ['band-a', 'band-day-2'] })],
+      targetId: 'wrong-day',
+    },
+    {
+      constraints: [constraint({ id: 'fixed', eventBandIds: ['band-a', 'band-b'] })],
+      targetId: 'fixed',
+      eventBands: fixedPlacementBands,
+    },
+    {
+      constraints: [
+        constraint({ id: 'duplicate', eventBandIds: ['band-a', 'band-b'] }),
+        constraint({ id: 'duplicate', eventBandIds: ['band-c', 'band-d'] }),
+      ],
+      targetId: 'duplicate',
+    },
+  ]
+
+  for (const fixture of fixtures) {
+    const semanticEvaluation = evaluate(fixture.constraints, {
+      ...(fixture.eventBands ? { eventBands: fixture.eventBands } : {}),
+    })
+    const target = fixture.constraints.find(item => item.id === fixture.targetId)
+    const semanticViolations = semanticEvaluation.violations.filter(violation =>
+      violation.constraintIds.includes(fixture.targetId))
+    assert.ok(semanticViolations.length > 0, fixture.targetId)
+    assert.deepEqual(getTimetableOrderConstraintScheduleStatus({
+      constraint: target,
+      scheduleItems: [],
+      semanticViolations,
+    }), { kind: 'invalid', label: '出演順制約：要修正' })
+  }
 })

@@ -11,6 +11,7 @@ import type {
 import {
   createTimetableOrderConstraintUpdate,
   deleteTimetableOrderConstraint,
+  evaluateTimetableOrderConstraints,
   updateTimetableOrderConstraint,
   type TimetableOrderConstraintDraft,
   type TimetableOrderConstraintMutationResult,
@@ -63,7 +64,18 @@ export function TimetableOrderConstraintSettings({
     .sort((left, right) => left.name.localeCompare(right.name, 'ja') ||
       left.id.localeCompare(right.id))
   const bandById = new Map(currentDayBands.map(band => [band.id, band]))
-  const constraints = timetableOrderConstraints
+  const currentEventConstraints = timetableOrderConstraints.filter(
+    constraint => constraint.eventId === event.id,
+  )
+  const semanticEvaluation = evaluateTimetableOrderConstraints({
+    eventId: event.id,
+    timetableOrderConstraints: currentEventConstraints,
+    eventDays,
+    stages,
+    sections,
+    eventBands,
+  })
+  const constraints = currentEventConstraints
     .filter(constraint => constraint.eventId === event.id &&
       constraint.eventDayId === eventDay.id && constraint.stageId === stage.id)
     .sort((left, right) =>
@@ -159,24 +171,36 @@ export function TimetableOrderConstraintSettings({
         </p>
       ) : (
         <ul className="timetable-order-settings__list">
-          {constraints.map(constraint => {
+          {constraints.map((constraint, index) => {
             const bandOrder = formatBandOrder(constraint)
             const laneLabel = constraint.sectionId
               ? sectionById.get(constraint.sectionId)?.name ??
                 `不明なSection（${constraint.sectionId}）`
               : 'Stage全体'
+            const semanticViolations = semanticEvaluation.violations.filter(
+              violation => violation.constraintIds.includes(constraint.id),
+            )
+            const semanticMessages = [...new Set(
+              semanticViolations.map(violation => violation.message),
+            )]
             const status = getTimetableOrderConstraintScheduleStatus({
               constraint,
               scheduleItems,
+              semanticViolations,
             })
             return (
-              <li key={constraint.id} className="timetable-order-settings__item">
+              <li key={`${constraint.id}:${index}`} className="timetable-order-settings__item">
                 <div>
                   <strong>{laneLabel}</strong>
                   <p>{bandOrder}</p>
                   <small className={`timetable-order-settings__status timetable-order-settings__status--${status.kind}`}>
                     {status.label}
                   </small>
+                  {semanticMessages.length > 0 && (
+                    <ul className="timetable-order-settings__validation-messages">
+                      {semanticMessages.map(message => <li key={message}>{message}</li>)}
+                    </ul>
+                  )}
                 </div>
                 <div className="timetable-order-settings__actions">
                   <button
