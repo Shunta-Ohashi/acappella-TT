@@ -134,6 +134,7 @@ import {
 } from './ui/timetableGenerationPresentation'
 import { EventList } from './components/EventList'
 import { DataBackupSettings } from './components/DataBackupSettings'
+import { EventOutputPage } from './components/EventOutputPage'
 import { IssuePanel } from './components/IssuePanel'
 import {
   createEventData,
@@ -3086,6 +3087,21 @@ function App() {
                 )}
               />
             </DragDropContext>
+          ) : activeStep === 8 && selectedEvent ? (
+            <EventOutputPage
+              event={selectedEvent}
+              eventDays={selectedEventDays}
+              stages={selectedStages}
+              sections={selectedSections}
+              members={members}
+              eventMembers={selectedEventMembers}
+              eventMemberDays={selectedEventMemberDays}
+              eventBands={selectedEventBands}
+              scheduleItems={selectedScheduleItems}
+              paAssignments={selectedEventPaAssignments}
+              dutyTypes={selectedEventDutyTypes}
+              dutyAssignments={selectedEventDutyAssignments}
+            />
           ) : null}
         </EventEditorShell>
       ) : activeView === 'events' ? (
@@ -3107,6 +3123,10 @@ function App() {
           onDeleteMember={handleDeleteCommonMember}
           checkBandDeletion={getCommonBandDeletionCheck}
           onDeleteBand={handleDeleteCommonBand}
+          onImportMembers={setMembers}
+          onImportBands={setBands}
+          createMemberId={() => createId('member')}
+          createBandId={() => createId('band')}
         />
       ) : (
         <DataBackupSettings

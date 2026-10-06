@@ -21,6 +21,13 @@ import { getDeleteConfirmationCopy } from '../ui/deleteConfirmation'
 import { DeleteConfirmationDialog } from './DeleteConfirmationDialog'
 import { MemberEditorDialog } from './MemberEditorDialog'
 import { CommonBandList } from './CommonBandList'
+import { createCommonMemberCsv, planCommonMemberCsvImport } from '../csv/commonMemberCsv'
+import { downloadCsv } from '../csv/csvBrowser'
+import { CsvFileButton } from './CsvFileButton'
+import {
+  CsvImportPreviewDialog,
+  type CsvImportPreview,
+} from './CsvImportPreviewDialog'
 
 interface CommonDataPageProps {
   members: Member[]
@@ -37,6 +44,10 @@ interface CommonDataPageProps {
   onDeleteMember: (memberId: MemberId) => CommonMemberDeletionResult
   checkBandDeletion: (bandId: BandId) => CommonBandDeletionCheck
   onDeleteBand: (bandId: BandId) => CommonBandDeletionResult
+  onImportMembers: (members: Member[]) => void
+  onImportBands: (bands: Band[]) => void
+  createMemberId: () => MemberId
+  createBandId: () => BandId
 }
 
 type CommonDataSection = 'members' | 'bands'
@@ -65,6 +76,10 @@ export function CommonDataPage({
   onDeleteMember,
   checkBandDeletion,
   onDeleteBand,
+  onImportMembers,
+  onImportBands,
+  createMemberId,
+  createBandId,
 }: CommonDataPageProps) {
   const [activeSection, setActiveSection] =
     useState<CommonDataSection>('members')
@@ -74,6 +89,10 @@ export function CommonDataPage({
   const [memberEditor, setMemberEditor] = useState<MemberEditorState>()
   const [pendingDeletion, setPendingDeletion] = useState<PendingMemberDeletion>()
   const [deletionError, setDeletionError] = useState('')
+  const [memberCsvImport, setMemberCsvImport] = useState<{
+    preview: CsvImportPreview
+    candidate?: Member[]
+  }>()
   const displayedMembers = filterCommonMembers(
     members,
     searchText,
@@ -151,14 +170,39 @@ export function CommonDataPage({
               <h2 id="common-member-list-title">メンバー</h2>
               <p>イベントで使用する共通の人物情報を管理します。</p>
             </div>
-            <button
-              type="button"
-              className="primary-button"
-              onClick={() => setMemberEditor({ mode: 'create' })}
-            >
-              <span aria-hidden="true">＋</span> メンバーを追加
-            </button>
+            <div className="csv-action-buttons">
+              <CsvFileButton
+                onRead={(fileName, text) => {
+                  const plan = planCommonMemberCsvImport({
+                    csv: text, members, createMemberId,
+                  })
+                  setMemberCsvImport(plan.ok
+                    ? {
+                        candidate: plan.candidate,
+                        preview: { datasetName: '共通メンバー', fileName, errors: [], ...plan },
+                      }
+                    : { preview: { datasetName: '共通メンバー', fileName, errors: plan.errors } })
+                }}
+                onError={(fileName, errors) => setMemberCsvImport({
+                  preview: { datasetName: '共通メンバー', fileName, errors },
+                })}
+              />
+              <button type="button" className="secondary-button"
+                onClick={() => downloadCsv(createCommonMemberCsv(members), 'acappella-tt-members.csv')}>
+                CSV書き出し
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => setMemberEditor({ mode: 'create' })}
+              >
+                <span aria-hidden="true">＋</span> メンバーを追加
+              </button>
+            </div>
           </header>
+          <p className="csv-id-help">
+            ID列は既存データの更新とデータ間の参照に使用します。新規追加する行では空欄にできます。
+          </p>
 
           <div className="common-member-list__filters">
             <div>
@@ -278,6 +322,8 @@ export function CommonDataPage({
           onSaveBand={onSaveBand}
           checkBandDeletion={checkBandDeletion}
           onDeleteBand={onDeleteBand}
+          onImportBands={onImportBands}
+          createBandId={createBandId}
         />
       )}
 
@@ -289,6 +335,16 @@ export function CommonDataPage({
           member={editingMember}
           onCancel={() => setMemberEditor(undefined)}
           onSave={handleSaveMember}
+        />
+      )}
+      {memberCsvImport && (
+        <CsvImportPreviewDialog
+          preview={memberCsvImport.preview}
+          onCancel={() => setMemberCsvImport(undefined)}
+          onConfirm={memberCsvImport.candidate ? () => {
+            onImportMembers(memberCsvImport.candidate as Member[])
+            setMemberCsvImport(undefined)
+          } : undefined}
         />
       )}
       {pendingDeletion && (() => {

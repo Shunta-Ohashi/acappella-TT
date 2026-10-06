@@ -25,6 +25,10 @@ import {
 import { getDeleteConfirmationCopy } from '../ui/deleteConfirmation'
 import { DeleteConfirmationDialog } from './DeleteConfirmationDialog'
 import { EventBandEditorDialog } from './EventBandEditorDialog'
+import { createEventBandCsv, planEventBandCsvImport } from '../csv/eventBandCsv'
+import { downloadCsv } from '../csv/csvBrowser'
+import { CsvFileButton } from './CsvFileButton'
+import { CsvImportPreviewDialog, type CsvImportPreview } from './CsvImportPreviewDialog'
 
 interface EventBandSettingsProps {
   event: Event
@@ -89,6 +93,10 @@ export function EventBandSettings({
   )
   const [saveMessage, setSaveMessage] = useState('')
   const [pendingDeletion, setPendingDeletion] = useState<PendingBandDeletion>()
+  const [csvImport, setCsvImport] = useState<{
+    preview: CsvImportPreview
+    candidate?: EventBandSettingsDraft
+  }>()
   const memberById = new Map(members.map((member) => [member.id, member]))
   const selectedItems = selectedEventDayId
     ? draft.items.filter((item) => item.eventDayId === selectedEventDayId)
@@ -235,20 +243,53 @@ export function EventBandSettings({
               })}
             </div>
           </div>
-          {selectedEventDayId && (
-            <button
-              type="button"
-              className="primary-button"
-              aria-label={`${formatEventDay(orderedEventDays.find((day) => day.id === selectedEventDayId) ?? orderedEventDays[0])}に出演バンドを追加`}
-              onClick={() => {
-                clearFeedback()
-                setEditor({ mode: 'add', eventDayId: selectedEventDayId })
+          <div className="csv-action-buttons">
+            <CsvFileButton
+              onRead={(fileName, text) => {
+                const plan = planEventBandCsvImport({
+                  csv: text, event, eventDays, bands, members, eventMembers,
+                  eventMemberDays, eventBands, draft, createDraftId,
+                })
+                setCsvImport(plan.ok
+                  ? { candidate: plan.candidate, preview: {
+                      datasetName: '出演バンド', eventName: event.name,
+                      fileName, errors: [], draftOnly: true, ...plan,
+                    } }
+                  : { preview: {
+                      datasetName: '出演バンド', eventName: event.name,
+                      fileName, errors: plan.errors,
+                    } })
               }}
-            >
-              <span aria-hidden="true">＋</span> 出演バンドを追加
+              onError={(fileName, csvErrors) => setCsvImport({ preview: {
+                datasetName: '出演バンド', eventName: event.name,
+                fileName, errors: csvErrors,
+              } })}
+            />
+            <button type="button" className="secondary-button"
+              onClick={() => downloadCsv(
+                createEventBandCsv({ event, eventDays, members, draft }),
+                `acappella-tt-${event.id}-bands.csv`,
+              )}>
+              CSV書き出し
             </button>
-          )}
+            {selectedEventDayId && (
+              <button
+                type="button"
+                className="primary-button"
+                aria-label={`${formatEventDay(orderedEventDays.find((day) => day.id === selectedEventDayId) ?? orderedEventDays[0])}に出演バンドを追加`}
+                onClick={() => {
+                  clearFeedback()
+                  setEditor({ mode: 'add', eventDayId: selectedEventDayId })
+                }}
+              >
+                <span aria-hidden="true">＋</span> 出演バンドを追加
+              </button>
+            )}
+          </div>
         </div>
+        <p className="csv-id-help">
+          出演バンドIDは既存データの更新に使用します。新規追加する行では空欄にしてください。
+        </p>
 
         {selectedItems.length === 0 ? (
           <div className="event-band-settings__empty">
@@ -350,6 +391,20 @@ export function EventBandSettings({
           createDraftId={createDraftId}
           onCancel={() => setEditor(undefined)}
           onApply={handleApplyItems}
+        />
+      )}
+      {csvImport && (
+        <CsvImportPreviewDialog
+          preview={csvImport.preview}
+          onCancel={() => setCsvImport(undefined)}
+          onConfirm={csvImport.candidate ? () => {
+            const candidate = csvImport.candidate as EventBandSettingsDraft
+            setDraft(candidate)
+            setSelectedEventDayId(candidate.items[0]?.eventDayId ?? selectedEventDayId)
+            setErrors(emptyErrors())
+            setSaveMessage('CSVを下書きへ取り込みました。内容を確認して保存してください。')
+            setCsvImport(undefined)
+          } : undefined}
         />
       )}
       {pendingDeletion && (() => {

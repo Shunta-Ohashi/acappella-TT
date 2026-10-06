@@ -30,6 +30,10 @@ import { getDeleteConfirmationCopy } from '../ui/deleteConfirmation'
 import { AddEventMembersDialog } from './AddEventMembersDialog'
 import { DeleteConfirmationDialog } from './DeleteConfirmationDialog'
 import { EventMemberDayDetailsDialog } from './EventMemberDayDetailsDialog'
+import { createEventMemberCsv, planEventMemberCsvImport } from '../csv/eventMemberCsv'
+import { downloadCsv } from '../csv/csvBrowser'
+import { CsvFileButton } from './CsvFileButton'
+import { CsvImportPreviewDialog, type CsvImportPreview } from './CsvImportPreviewDialog'
 
 interface EventMemberSettingsProps {
   event: Event
@@ -109,6 +113,10 @@ export function EventMemberSettings({
   )
   const [saveMessage, setSaveMessage] = useState('')
   const [pendingDeletion, setPendingDeletion] = useState<PendingMemberDeletion>()
+  const [csvImport, setCsvImport] = useState<{
+    preview: CsvImportPreview
+    candidate?: EventMemberSettingsDraft
+  }>()
   const memberById = new Map(members.map((member) => [member.id, member]))
   const orderedEventDays = eventDays
     .filter((eventDay) => eventDay.eventId === event.id)
@@ -377,17 +385,50 @@ export function EventMemberSettings({
               onChange={(event) => setSearchText(event.target.value)}
             />
           </div>
-          <button
-            type="button"
-            className="primary-button"
-            onClick={() => {
-              clearFeedback()
-              setIsAddDialogOpen(true)
-            }}
-          >
-            <span aria-hidden="true">＋</span> メンバーを追加
-          </button>
+          <div className="csv-action-buttons">
+            <CsvFileButton
+              onRead={(fileName, text) => {
+                const plan = planEventMemberCsvImport({
+                  csv: text, event, eventDays, members, eventMembers, eventMemberDays,
+                  draft, createDraftId,
+                })
+                setCsvImport(plan.ok
+                  ? { candidate: plan.candidate, preview: {
+                      datasetName: 'イベントメンバー', eventName: event.name,
+                      fileName, errors: [], draftOnly: true, ...plan,
+                    } }
+                  : { preview: {
+                      datasetName: 'イベントメンバー', eventName: event.name,
+                      fileName, errors: plan.errors,
+                    } })
+              }}
+              onError={(fileName, csvErrors) => setCsvImport({ preview: {
+                datasetName: 'イベントメンバー', eventName: event.name,
+                fileName, errors: csvErrors,
+              } })}
+            />
+            <button type="button" className="secondary-button"
+              onClick={() => downloadCsv(
+                createEventMemberCsv({ event, eventDays, members, draft }),
+                `acappella-tt-${event.id}-members.csv`,
+              )}>
+              CSV書き出し
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => {
+                clearFeedback()
+                setIsAddDialogOpen(true)
+              }}
+            >
+              <span aria-hidden="true">＋</span> メンバーを追加
+            </button>
+          </div>
         </div>
+        <p className="csv-id-help">
+          ID列は既存データの特定に使用します。CSV取り込み後は内容を確認して保存してください。
+        </p>
 
         <div className="event-member-settings__table-card">
           <div className="event-member-settings__table-scroll">
@@ -631,6 +672,18 @@ export function EventMemberSettings({
             detailsMemberDraft.draftId,
             days,
           )}
+        />
+      )}
+      {csvImport && (
+        <CsvImportPreviewDialog
+          preview={csvImport.preview}
+          onCancel={() => setCsvImport(undefined)}
+          onConfirm={csvImport.candidate ? () => {
+            setDraft(csvImport.candidate as EventMemberSettingsDraft)
+            setErrors(emptyErrors())
+            setSaveMessage('CSVを下書きへ取り込みました。内容を確認して保存してください。')
+            setCsvImport(undefined)
+          } : undefined}
         />
       )}
       {pendingDeletion && (() => {

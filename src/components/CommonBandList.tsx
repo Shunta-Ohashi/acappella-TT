@@ -14,6 +14,10 @@ import type {
 import { getDeleteConfirmationCopy } from '../ui/deleteConfirmation'
 import { BandEditorDialog } from './BandEditorDialog'
 import { DeleteConfirmationDialog } from './DeleteConfirmationDialog'
+import { createCommonBandCsv, planCommonBandCsvImport } from '../csv/commonBandCsv'
+import { downloadCsv } from '../csv/csvBrowser'
+import { CsvFileButton } from './CsvFileButton'
+import { CsvImportPreviewDialog, type CsvImportPreview } from './CsvImportPreviewDialog'
 
 interface CommonBandListProps {
   bands: Band[]
@@ -24,6 +28,8 @@ interface CommonBandListProps {
   ) => CommonBandUpdateResult
   checkBandDeletion: (bandId: BandId) => CommonBandDeletionCheck
   onDeleteBand: (bandId: BandId) => CommonBandDeletionResult
+  onImportBands: (bands: Band[]) => void
+  createBandId: () => BandId
 }
 
 type BandEditorState =
@@ -61,6 +67,8 @@ export function CommonBandList({
   onSaveBand,
   checkBandDeletion,
   onDeleteBand,
+  onImportBands,
+  createBandId,
 }: CommonBandListProps) {
   const [searchText, setSearchText] = useState('')
   const [statusFilter, setStatusFilter] =
@@ -68,6 +76,10 @@ export function CommonBandList({
   const [bandEditor, setBandEditor] = useState<BandEditorState>()
   const [pendingDeletion, setPendingDeletion] = useState<PendingBandDeletion>()
   const [deletionError, setDeletionError] = useState('')
+  const [csvImport, setCsvImport] = useState<{
+    preview: CsvImportPreview
+    candidate?: Band[]
+  }>()
   const displayedBands = filterCommonBands(bands, searchText, statusFilter)
   const editingBand = bandEditor?.mode === 'edit'
     ? bands.find((band) => band.id === bandEditor.bandId)
@@ -113,14 +125,36 @@ export function CommonBandList({
           <h2 id="common-band-list-title">固定バンド</h2>
           <p>複数のイベントで利用する固定バンドを管理します。</p>
         </div>
-        <button
-          type="button"
-          className="primary-button"
-          onClick={() => setBandEditor({ mode: 'create' })}
-        >
-          <span aria-hidden="true">＋</span> 固定バンドを追加
-        </button>
+        <div className="csv-action-buttons">
+          <CsvFileButton
+            onRead={(fileName, text) => {
+              const plan = planCommonBandCsvImport({ csv: text, bands, members, createBandId })
+              setCsvImport(plan.ok
+                ? { candidate: plan.candidate, preview: {
+                    datasetName: '固定バンド', fileName, errors: [], ...plan,
+                  } }
+                : { preview: { datasetName: '固定バンド', fileName, errors: plan.errors } })
+            }}
+            onError={(fileName, errors) => setCsvImport({
+              preview: { datasetName: '固定バンド', fileName, errors },
+            })}
+          />
+          <button type="button" className="secondary-button"
+            onClick={() => downloadCsv(createCommonBandCsv(bands, members), 'acappella-tt-bands.csv')}>
+            CSV書き出し
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => setBandEditor({ mode: 'create' })}
+          >
+            <span aria-hidden="true">＋</span> 固定バンドを追加
+          </button>
+        </div>
       </header>
+      <p className="csv-id-help">
+        ID列は既存データの更新とメンバー参照に使用します。新規追加する行では空欄にできます。
+      </p>
 
       <div className="common-band-list__filters">
         <div>
@@ -234,6 +268,16 @@ export function CommonBandList({
           members={members}
           onCancel={() => setBandEditor(undefined)}
           onSave={handleSaveBand}
+        />
+      )}
+      {csvImport && (
+        <CsvImportPreviewDialog
+          preview={csvImport.preview}
+          onCancel={() => setCsvImport(undefined)}
+          onConfirm={csvImport.candidate ? () => {
+            onImportBands(csvImport.candidate as Band[])
+            setCsvImport(undefined)
+          } : undefined}
         />
       )}
       {pendingDeletion && (() => {
