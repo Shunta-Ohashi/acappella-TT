@@ -18,6 +18,8 @@ import { createCommonBandCsv, planCommonBandCsvImport } from '../csv/commonBandC
 import { downloadCsv } from '../csv/csvBrowser'
 import { CsvFileButton } from './CsvFileButton'
 import { CsvImportPreviewDialog, type CsvImportPreview } from './CsvImportPreviewDialog'
+import { COMMON_BAND_CSV_HELP } from '../csv/csvHelp'
+import { CsvImportHelpPopover } from './CsvImportHelpPopover'
 
 interface CommonBandListProps {
   bands: Band[]
@@ -126,19 +128,22 @@ export function CommonBandList({
           <p>複数のイベントで利用する固定バンドを管理します。</p>
         </div>
         <div className="csv-action-buttons">
-          <CsvFileButton
-            onRead={(fileName, text) => {
-              const plan = planCommonBandCsvImport({ csv: text, bands, members, createBandId })
-              setCsvImport(plan.ok
-                ? { candidate: plan.candidate, preview: {
-                    datasetName: '固定バンド', fileName, errors: [], ...plan,
-                  } }
-                : { preview: { datasetName: '固定バンド', fileName, errors: plan.errors } })
-            }}
-            onError={(fileName, errors) => setCsvImport({
-              preview: { datasetName: '固定バンド', fileName, errors },
-            })}
-          />
+          <div className="csv-import-control">
+            <CsvFileButton
+              onRead={(fileName, text) => {
+                const plan = planCommonBandCsvImport({ csv: text, bands, members, createBandId })
+                setCsvImport(plan.ok
+                  ? { candidate: plan.candidate, preview: {
+                      datasetName: '固定バンド', fileName, errors: [], ...plan,
+                    } }
+                  : { preview: { datasetName: '固定バンド', fileName, errors: plan.errors } })
+              }}
+              onError={(fileName, errors) => setCsvImport({
+                preview: { datasetName: '固定バンド', fileName, errors },
+              })}
+            />
+            <CsvImportHelpPopover content={COMMON_BAND_CSV_HELP} />
+          </div>
           <button type="button" className="secondary-button"
             onClick={() => downloadCsv(createCommonBandCsv(bands, members), 'acappella-tt-bands.csv')}>
             CSV書き出し

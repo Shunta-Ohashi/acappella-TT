@@ -85,6 +85,9 @@ export const resolveMemberList = (
     if (!result.ok) return result
     resolved.push(result.memberId)
   }
+  if (new Set(resolved).size !== resolved.length) {
+    return { ok: false, message: '同じメンバーが複数回指定されています。' }
+  }
   return { ok: true, memberIds: resolved }
 }
 

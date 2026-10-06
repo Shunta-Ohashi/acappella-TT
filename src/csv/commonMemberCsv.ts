@@ -11,8 +11,10 @@ import {
 } from './csv.ts'
 
 export const COMMON_MEMBER_CSV_HEADERS = [
-  'メンバーID', '本名', 'アカペラネーム', '入学年度', '状態', '備考',
+  '本名', 'アカペラネーム', '入学年度', '状態', '備考', 'メンバーID',
 ] as const
+
+const COMMON_MEMBER_REQUIRED_HEADERS = ['本名'] as const
 
 const parseStatus = (value: string): boolean | undefined => {
   const normalized = value.trim().toLocaleLowerCase()
@@ -24,12 +26,12 @@ const parseStatus = (value: string): boolean | undefined => {
 export const createCommonMemberCsv = (members: Member[]): string => serializeCsv([
   COMMON_MEMBER_CSV_HEADERS,
   ...members.map((member) => [
-    member.id,
     member.realName,
     member.acaName ?? '',
     member.entryAcademicYear?.toString() ?? '',
     member.active ? '在籍中' : '非在籍',
     member.notes ?? '',
+    member.id,
   ]),
 ])
 
@@ -42,7 +44,7 @@ export const planCommonMemberCsvImport = ({
   members: Member[]
   createMemberId: () => MemberId
 }): CsvImportPlan<Member[]> => {
-  const table = parseCsvTable(csv, COMMON_MEMBER_CSV_HEADERS)
+  const table = parseCsvTable(csv, COMMON_MEMBER_REQUIRED_HEADERS)
   if (!table.ok) return table
   const errors: CsvImportError[] = []
   const seenIds = new Set<string>()
@@ -52,14 +54,16 @@ export const planCommonMemberCsvImport = ({
   let updatedCount = 0
 
   for (const row of table.rows) {
-    const explicitId = row.values['メンバーID'].trim()
+    const explicitId = row.values['メンバーID']?.trim() ?? ''
     if (explicitId && seenIds.has(explicitId)) {
       errors.push({ rowNumber: row.rowNumber, column: 'メンバーID', message: 'CSV内でIDが重複しています。' })
       continue
     }
     if (explicitId) seenIds.add(explicitId)
-    const active = parseStatus(row.values['状態'])
-    if (active === undefined) {
+    const existingMember = explicitId ? existingById.get(explicitId) : undefined
+    const statusValue = row.values['状態']?.trim() ?? ''
+    const active = statusValue ? parseStatus(statusValue) : existingMember?.active ?? true
+    if (statusValue && active === undefined) {
       errors.push({ rowNumber: row.rowNumber, column: '状態', message: '在籍中または非在籍を入力してください。' })
       continue
     }
@@ -68,13 +72,18 @@ export const planCommonMemberCsvImport = ({
       errors.push({ rowNumber: row.rowNumber, column: 'メンバーID', message: '新しいメンバーIDを生成できませんでした。' })
       continue
     }
-    const existingMember = existingById.get(memberId)
     const draft: CommonMemberDraft = {
-      realName: row.values['本名'],
-      acaName: row.values['アカペラネーム'],
-      entryAcademicYear: row.values['入学年度'],
-      active,
-      notes: row.values['備考'],
+      realName: row.values['本名'] ?? '',
+      acaName: Object.hasOwn(row.values, 'アカペラネーム')
+        ? row.values['アカペラネーム']
+        : existingMember?.acaName ?? '',
+      entryAcademicYear: Object.hasOwn(row.values, '入学年度')
+        ? row.values['入学年度']
+        : existingMember?.entryAcademicYear?.toString() ?? '',
+      active: active as boolean,
+      notes: Object.hasOwn(row.values, '備考')
+        ? row.values['備考']
+        : existingMember?.notes ?? '',
     }
     const update = createCommonMemberUpdate({ memberId, existingMember, draft })
     if (!update.ok) {
@@ -87,7 +96,7 @@ export const planCommonMemberCsvImport = ({
       })
       continue
     }
-    updatedById.set(memberId, { ...update.member, active })
+    updatedById.set(memberId, { ...update.member, active: active as boolean })
     if (existingMember) updatedCount += 1
     else createdCount += 1
   }

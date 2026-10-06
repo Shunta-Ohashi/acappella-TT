@@ -6,35 +6,58 @@ import {
   type EventBandSettingsItemDraft,
 } from '../domain/eventBandSettings.ts'
 import {
-  parseCsvTable, serializeCsv, splitListCell, type CsvImportError, type CsvImportPlan,
+  parseCsv, parseCsvTable, serializeCsv, splitListCell, type CsvImportError, type CsvImportPlan,
 } from './csv.ts'
 import { getOrderedEventDays, resolveEventDayId } from './eventCsvShared.ts'
 import { resolveMemberList } from './memberResolution.ts'
+import {
+  createBandMemberHeaders,
+  getBandMemberHeaders,
+  getMemberNamesFromRow,
+  MEMBER_ID_LIST_HEADER,
+} from './bandMemberColumns.ts'
 
-export const EVENT_BAND_CSV_HEADERS = [
-  '出演バンドID', '開催日ID', '開催日', '開催日ラベル', '固定バンドID',
-  'バンド名', 'メンバーID一覧', 'メンバー名一覧', '出演枠',
-] as const
+export const createEventBandCsvHeaders = (memberCount = 0): string[] => [
+  'バンド名', '開催日', ...createBandMemberHeaders(memberCount), '出演枠', '固定バンド名',
+  '出演バンドID', '開催日ID', '固定バンドID', MEMBER_ID_LIST_HEADER,
+]
+
+export const EVENT_BAND_CSV_HEADERS = createEventBandCsvHeaders()
+
+const EVENT_BAND_REQUIRED_HEADERS = ['バンド名', '開催日', '出演枠'] as const
 
 export const createEventBandCsv = ({
-  event, eventDays, members, draft,
+  event, eventDays, bands, members, draft,
 }: {
   event: Event
   eventDays: EventDay[]
+  bands: Band[]
   members: Member[]
   draft: EventBandSettingsDraft
 }): string => {
   const dayById = new Map(getOrderedEventDays(event, eventDays).map((day) => [day.id, day]))
+  const bandById = new Map(bands.map((band) => [band.id, band]))
   const memberById = new Map(members.map((member) => [member.id, member]))
+  const memberColumnCount = Math.max(0, ...draft.items.map((item) => item.memberIds.length))
+  const headers = createEventBandCsvHeaders(memberColumnCount)
+  const memberHeaders = createBandMemberHeaders(memberColumnCount)
   return serializeCsv([
-    EVENT_BAND_CSV_HEADERS,
+    headers,
     ...draft.items.map((item) => {
       const day = dayById.get(item.eventDayId)
       return [
-        item.eventBandId ?? '', item.eventDayId, day?.date ?? '', day?.label ?? '',
-        item.bandId ?? '', item.name, item.memberIds.join('|'),
-        item.memberIds.map((id) => memberById.get(id)?.realName ?? '').join('|'),
+        item.name,
+        day?.date ?? '',
+        ...memberHeaders.map((_, index) => {
+          const member = memberById.get(item.memberIds[index])
+          return member?.acaName ?? member?.realName ?? ''
+        }),
         item.durationMinutes,
+        item.bandId ? bandById.get(item.bandId)?.name ?? '' : '',
+        item.eventBandId ?? '',
+        item.eventDayId,
+        item.bandId ?? '',
+        item.memberIds.join('|'),
       ]
     }),
   ])
@@ -55,8 +78,14 @@ export const planEventBandCsvImport = ({
   draft: EventBandSettingsDraft
   createDraftId: () => string
 }): CsvImportPlan<EventBandSettingsDraft> => {
-  const table = parseCsvTable(csv, EVENT_BAND_CSV_HEADERS)
+  const parsed = parseCsv(csv)
+  if (!parsed.ok) return parsed
+  const table = parseCsvTable(csv, EVENT_BAND_REQUIRED_HEADERS)
   if (!table.ok) return table
+  const memberHeaderResult = getBandMemberHeaders(
+    parsed.rows[0]?.cells.map((header) => header.trim()) ?? [],
+  )
+  if (!memberHeaderResult.ok) return memberHeaderResult
   const errors: CsvImportError[] = []
   const candidate = structuredClone(draft)
   const currentEventBands = eventBands.filter((item) => item.eventId === event.id)
@@ -70,7 +99,7 @@ export const planEventBandCsvImport = ({
   let updatedCount = 0
 
   for (const row of table.rows) {
-    const eventBandId = row.values['出演バンドID'].trim()
+    const eventBandId = row.values['出演バンドID']?.trim() ?? ''
     if (eventBandId && seenIds.has(eventBandId)) {
       errors.push({ rowNumber: row.rowNumber, column: '出演バンドID', message: 'CSV内でIDが重複しています。' })
       continue
@@ -81,23 +110,44 @@ export const planEventBandCsvImport = ({
       errors.push({ rowNumber: row.rowNumber, column: '出演バンドID', message: '現在のイベントに存在しない出演バンドIDです。新規行では空欄にしてください。' })
       continue
     }
-    const day = resolveEventDayId(event, eventDays, row.values['開催日ID'], row.values['開催日'])
+    const day = resolveEventDayId(
+      event,
+      eventDays,
+      row.values['開催日ID'] ?? '',
+      row.values['開催日'] ?? '',
+    )
     if (!day.ok) {
       errors.push({ rowNumber: row.rowNumber, column: '開催日ID', message: day.message })
       continue
     }
-    const bandId = row.values['固定バンドID'].trim() || undefined
+    const explicitBandId = row.values['固定バンドID']?.trim() ?? ''
+    const bandName = row.values['固定バンド名']?.trim() ?? ''
+    let bandId = explicitBandId || undefined
     if (bandId && !bands.some((band) => band.id === bandId)) {
       errors.push({ rowNumber: row.rowNumber, column: '固定バンドID', message: '固定バンドが見つかりません。' })
       continue
+    }
+    if (!bandId && bandName) {
+      const matches = bands.filter((band) => band.name.trim() === bandName)
+      if (matches.length !== 1) {
+        errors.push({
+          rowNumber: row.rowNumber,
+          column: '固定バンド名',
+          message: matches.length === 0
+            ? `固定バンド「${bandName}」が見つかりません。`
+            : `固定バンド名「${bandName}」に一致するバンドが複数あります。`,
+        })
+        continue
+      }
+      bandId = matches[0].id
     }
     if (existing && existing.bandId !== bandId) {
       errors.push({ rowNumber: row.rowNumber, column: '固定バンドID', message: '既存出演バンドの作成元は変更できません。' })
       continue
     }
     const memberResult = resolveMemberList(
-      splitListCell(row.values['メンバーID一覧']),
-      splitListCell(row.values['メンバー名一覧']),
+      splitListCell(row.values[MEMBER_ID_LIST_HEADER] ?? ''),
+      getMemberNamesFromRow(row, memberHeaderResult.headers),
       members,
     )
     if (!memberResult.ok) {
@@ -112,9 +162,9 @@ export const planEventBandCsvImport = ({
       eventId: event.id,
       eventDayId: day.eventDayId,
       ...(bandId ? { bandId } : {}),
-      name: row.values['バンド名'],
+      name: row.values['バンド名'] ?? '',
       memberIds: memberResult.memberIds,
-      durationMinutes: row.values['出演枠'].trim(),
+      durationMinutes: row.values['出演枠']?.trim() ?? '',
     }
     rowByDraftId.set(item.draftId, row.rowNumber)
     if (eventBandId) {

@@ -28,6 +28,8 @@ import {
   CsvImportPreviewDialog,
   type CsvImportPreview,
 } from './CsvImportPreviewDialog'
+import { COMMON_MEMBER_CSV_HELP } from '../csv/csvHelp'
+import { CsvImportHelpPopover } from './CsvImportHelpPopover'
 
 interface CommonDataPageProps {
   members: Member[]
@@ -171,22 +173,25 @@ export function CommonDataPage({
               <p>イベントで使用する共通の人物情報を管理します。</p>
             </div>
             <div className="csv-action-buttons">
-              <CsvFileButton
-                onRead={(fileName, text) => {
-                  const plan = planCommonMemberCsvImport({
-                    csv: text, members, createMemberId,
-                  })
-                  setMemberCsvImport(plan.ok
-                    ? {
-                        candidate: plan.candidate,
-                        preview: { datasetName: '共通メンバー', fileName, errors: [], ...plan },
-                      }
-                    : { preview: { datasetName: '共通メンバー', fileName, errors: plan.errors } })
-                }}
-                onError={(fileName, errors) => setMemberCsvImport({
-                  preview: { datasetName: '共通メンバー', fileName, errors },
-                })}
-              />
+              <div className="csv-import-control">
+                <CsvFileButton
+                  onRead={(fileName, text) => {
+                    const plan = planCommonMemberCsvImport({
+                      csv: text, members, createMemberId,
+                    })
+                    setMemberCsvImport(plan.ok
+                      ? {
+                          candidate: plan.candidate,
+                          preview: { datasetName: '共通メンバー', fileName, errors: [], ...plan },
+                        }
+                      : { preview: { datasetName: '共通メンバー', fileName, errors: plan.errors } })
+                  }}
+                  onError={(fileName, errors) => setMemberCsvImport({
+                    preview: { datasetName: '共通メンバー', fileName, errors },
+                  })}
+                />
+                <CsvImportHelpPopover content={COMMON_MEMBER_CSV_HELP} />
+              </div>
               <button type="button" className="secondary-button"
                 onClick={() => downloadCsv(createCommonMemberCsv(members), 'acappella-tt-members.csv')}>
                 CSV書き出し

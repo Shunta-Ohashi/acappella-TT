@@ -34,6 +34,8 @@ import { createEventMemberCsv, planEventMemberCsvImport } from '../csv/eventMemb
 import { downloadCsv } from '../csv/csvBrowser'
 import { CsvFileButton } from './CsvFileButton'
 import { CsvImportPreviewDialog, type CsvImportPreview } from './CsvImportPreviewDialog'
+import { EVENT_MEMBER_CSV_HELP } from '../csv/csvHelp'
+import { CsvImportHelpPopover } from './CsvImportHelpPopover'
 
 interface EventMemberSettingsProps {
   event: Event
@@ -386,27 +388,30 @@ export function EventMemberSettings({
             />
           </div>
           <div className="csv-action-buttons">
-            <CsvFileButton
-              onRead={(fileName, text) => {
-                const plan = planEventMemberCsvImport({
-                  csv: text, event, eventDays, members, eventMembers, eventMemberDays,
-                  draft, createDraftId,
-                })
-                setCsvImport(plan.ok
-                  ? { candidate: plan.candidate, preview: {
-                      datasetName: 'イベントメンバー', eventName: event.name,
-                      fileName, errors: [], draftOnly: true, ...plan,
-                    } }
-                  : { preview: {
-                      datasetName: 'イベントメンバー', eventName: event.name,
-                      fileName, errors: plan.errors,
-                    } })
-              }}
-              onError={(fileName, csvErrors) => setCsvImport({ preview: {
-                datasetName: 'イベントメンバー', eventName: event.name,
-                fileName, errors: csvErrors,
-              } })}
-            />
+            <div className="csv-import-control">
+              <CsvFileButton
+                onRead={(fileName, text) => {
+                  const plan = planEventMemberCsvImport({
+                    csv: text, event, eventDays, members, eventMembers, eventMemberDays,
+                    draft, createDraftId,
+                  })
+                  setCsvImport(plan.ok
+                    ? { candidate: plan.candidate, preview: {
+                        datasetName: 'イベントメンバー', eventName: event.name,
+                        fileName, errors: [], draftOnly: true, ...plan,
+                      } }
+                    : { preview: {
+                        datasetName: 'イベントメンバー', eventName: event.name,
+                        fileName, errors: plan.errors,
+                      } })
+                }}
+                onError={(fileName, csvErrors) => setCsvImport({ preview: {
+                  datasetName: 'イベントメンバー', eventName: event.name,
+                  fileName, errors: csvErrors,
+                } })}
+              />
+              <CsvImportHelpPopover content={EVENT_MEMBER_CSV_HELP} />
+            </div>
             <button type="button" className="secondary-button"
               onClick={() => downloadCsv(
                 createEventMemberCsv({ event, eventDays, members, draft }),

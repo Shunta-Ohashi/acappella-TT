@@ -17,12 +17,14 @@ import {
   parsePreferredTimeRangeCell,
   resolveEventDayId,
 } from './eventCsvShared.ts'
-import { resolveMemberFromColumns } from './memberResolution.ts'
+import { resolveMemberId } from './memberResolution.ts'
 
 export const EVENT_MEMBER_CSV_HEADERS = [
-  'メンバーID', '本名', 'アカペラネーム', '開催日ID', '開催日', '開催日ラベル',
-  '参加状態', 'Main PA', 'Sub PA', '出演可能時間帯', '希望時間帯', '備考',
+  'メンバー', '開催日', '参加状態', 'Main PA', 'Sub PA', '出演可能時間帯',
+  '希望時間帯', '備考', 'メンバーID', '開催日ID',
 ] as const
+
+const EVENT_MEMBER_REQUIRED_HEADERS = ['メンバー', '開催日', '参加状態'] as const
 
 const parseParticipation = (value: string): ParticipationStatus | undefined => {
   const normalized = value.trim().toLocaleLowerCase()
@@ -56,12 +58,8 @@ export const createEventMemberCsv = ({
       return memberDraft.days.map((dayDraft) => {
         const day = dayById.get(dayDraft.eventDayId)
         return [
-          memberDraft.memberId,
-          member?.realName ?? '',
-          member?.acaName ?? '',
-          dayDraft.eventDayId,
+          member?.acaName ?? member?.realName ?? '',
           day?.date ?? '',
-          day?.label ?? '',
           dayDraft.participationStatus === 'participating' ? '参加'
             : dayDraft.participationStatus === 'absent' ? '不参加' : '未定',
           memberDraft.paCapabilities.main ? '可' : '不可',
@@ -69,6 +67,8 @@ export const createEventMemberCsv = ({
           dayDraft.availabilityWindows?.map(formatTimeRange).join('|') ?? '',
           dayDraft.preferredTimeRange ? formatTimeRange(dayDraft.preferredTimeRange) : '',
           dayDraft.notes ?? '',
+          memberDraft.memberId,
+          dayDraft.eventDayId,
         ]
       })
     }),
@@ -87,7 +87,7 @@ export const planEventMemberCsvImport = ({
   draft: EventMemberSettingsDraft
   createDraftId: () => string
 }): CsvImportPlan<EventMemberSettingsDraft> => {
-  const table = parseCsvTable(csv, EVENT_MEMBER_CSV_HEADERS)
+  const table = parseCsvTable(csv, EVENT_MEMBER_REQUIRED_HEADERS)
   if (!table.ok) return table
   const errors: CsvImportError[] = []
   const candidate = structuredClone(draft)
@@ -101,17 +101,21 @@ export const planEventMemberCsvImport = ({
   const orderedDays = getOrderedEventDays(event, eventDays)
 
   for (const row of table.rows) {
-    const memberResult = resolveMemberFromColumns(
-      row.values['メンバーID'],
-      row.values['本名'],
-      row.values['アカペラネーム'],
+    const memberResult = resolveMemberId(
+      row.values['メンバーID'] ?? '',
+      row.values['メンバー'] ?? '',
       members,
     )
     if (!memberResult.ok) {
       errors.push({ rowNumber: row.rowNumber, column: 'メンバーID', message: memberResult.message })
       continue
     }
-    const dayResult = resolveEventDayId(event, eventDays, row.values['開催日ID'], row.values['開催日'])
+    const dayResult = resolveEventDayId(
+      event,
+      eventDays,
+      row.values['開催日ID'] ?? '',
+      row.values['開催日'] ?? '',
+    )
     if (!dayResult.ok) {
       errors.push({ rowNumber: row.rowNumber, column: '開催日ID', message: dayResult.message })
       continue
@@ -122,14 +126,23 @@ export const planEventMemberCsvImport = ({
       continue
     }
     pairKeys.add(pairKey)
-    const participationStatus = parseParticipation(row.values['参加状態'])
-    const main = parseCapability(row.values['Main PA'])
-    const sub = parseCapability(row.values['Sub PA'])
-    const availability = parseAvailabilityCell(row.values['出演可能時間帯'])
-    const preferred = parsePreferredTimeRangeCell(row.values['希望時間帯'])
+    const existingDraft = draftByMemberId.get(memberResult.memberId)
+    const mainValue = row.values['Main PA']?.trim() ?? ''
+    const subValue = row.values['Sub PA']?.trim() ?? ''
+    const participationStatus = parseParticipation(row.values['参加状態'] ?? '')
+    const main = mainValue ? parseCapability(mainValue) : existingDraft?.paCapabilities.main ?? false
+    const sub = subValue ? parseCapability(subValue) : existingDraft?.paCapabilities.sub ?? false
+    const hasAvailability = Object.hasOwn(row.values, '出演可能時間帯')
+    const hasPreferred = Object.hasOwn(row.values, '希望時間帯')
+    const availability = hasAvailability
+      ? parseAvailabilityCell(row.values['出演可能時間帯'])
+      : { ok: true as const }
+    const preferred = hasPreferred
+      ? parsePreferredTimeRangeCell(row.values['希望時間帯'])
+      : { ok: true as const }
     if (!participationStatus) errors.push({ rowNumber: row.rowNumber, column: '参加状態', message: '参加・不参加・未定のいずれかを入力してください。' })
-    if (main === undefined) errors.push({ rowNumber: row.rowNumber, column: 'Main PA', message: '可または不可を入力してください。' })
-    if (sub === undefined) errors.push({ rowNumber: row.rowNumber, column: 'Sub PA', message: '可または不可を入力してください。' })
+    if (mainValue && main === undefined) errors.push({ rowNumber: row.rowNumber, column: 'Main PA', message: '可または不可を入力してください。' })
+    if (subValue && sub === undefined) errors.push({ rowNumber: row.rowNumber, column: 'Sub PA', message: '可または不可を入力してください。' })
     if (!availability.ok) errors.push({ rowNumber: row.rowNumber, column: '出演可能時間帯', message: availability.message })
     if (!preferred.ok) errors.push({ rowNumber: row.rowNumber, column: '希望時間帯', message: preferred.message })
     if (!participationStatus || main === undefined || sub === undefined || !availability.ok || !preferred.ok) continue
@@ -169,13 +182,19 @@ export const planEventMemberCsvImport = ({
     const dayDraft = memberDraft.days.find((day) => day.eventDayId === dayResult.eventDayId)
     if (!dayDraft) continue
     dayDraft.participationStatus = participationStatus
-    if (availability.value === undefined) delete dayDraft.availabilityWindows
-    else dayDraft.availabilityWindows = availability.value
-    if (preferred.value === undefined) delete dayDraft.preferredTimeRange
-    else dayDraft.preferredTimeRange = preferred.value
-    const notes = row.values['備考'].trim()
-    if (notes) dayDraft.notes = notes
-    else delete dayDraft.notes
+    if (hasAvailability) {
+      if (availability.value === undefined) delete dayDraft.availabilityWindows
+      else dayDraft.availabilityWindows = availability.value
+    }
+    if (hasPreferred) {
+      if (preferred.value === undefined) delete dayDraft.preferredTimeRange
+      else dayDraft.preferredTimeRange = preferred.value
+    }
+    if (Object.hasOwn(row.values, '備考')) {
+      const notes = row.values['備考'].trim()
+      if (notes) dayDraft.notes = notes
+      else delete dayDraft.notes
+    }
   }
   if (errors.length > 0) return { ok: false, errors }
   const validation = validateEventMemberSettingsDraft({
