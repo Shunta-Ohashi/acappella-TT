@@ -60,6 +60,11 @@ import {
   type TimetableGridRangeSelection,
 } from '../ui/timetableGridSelection'
 import { getTimetableGridSelectionAssignmentTargets } from '../ui/timetableGridAssignment'
+import {
+  getTimetableOrderConstraintBlockMember,
+  type TimetableOrderConstraintBlockMemberPresentation,
+  type TimetableOrderConstraintBlockPresentation,
+} from '../ui/timetableOrderConstraintLinkPresentation'
 
 interface TimetableGridProps {
   stage: Stage
@@ -80,6 +85,10 @@ interface TimetableGridProps {
   eventBands: EventBand[]
   lockViolations: TimetableLockViolation[]
   lockFeedback: string
+  orderConstraintFeedback: string
+  orderConstraintBlocks: TimetableOrderConstraintBlockPresentation[]
+  activeOrderConstraintBlockKey: string | null
+  onOrderConstraintBlockHighlightChange: (blockKey: string | null) => void
   onSetTimetableLock: (
     scheduleItemId: ScheduleItemId,
     mode: TimetableLockMode,
@@ -272,6 +281,9 @@ const TimetableRow = ({
   onRemoveScheduleItem,
   assignmentCells,
   timetableLock,
+  orderConstraintMember,
+  activeOrderConstraintBlockKey,
+  onOrderConstraintBlockHighlightChange,
   onSetTimetableLock,
   onUnlockTimetableLock,
 }: {
@@ -280,6 +292,9 @@ const TimetableRow = ({
   onRemoveScheduleItem: (scheduleItemId: ScheduleItemId) => void
   assignmentCells: ReactNode
   timetableLock?: TimetableLock
+  orderConstraintMember?: TimetableOrderConstraintBlockMemberPresentation
+  activeOrderConstraintBlockKey: string | null
+  onOrderConstraintBlockHighlightChange: (blockKey: string | null) => void
   onSetTimetableLock: (
     scheduleItemId: ScheduleItemId,
     mode: TimetableLockMode,
@@ -309,6 +324,9 @@ const TimetableRow = ({
             row.issueCounts.ERROR === 0 && row.issueCounts.WARNING > 0
               ? 'timetable-grid__row--warning'
               : '',
+            orderConstraintMember?.blockKey === activeOrderConstraintBlockKey
+              ? 'timetable-grid__row--order-highlight'
+              : '',
           ].filter(Boolean).join(' ')}
           role="row"
           style={provided.draggableProps.style}
@@ -334,6 +352,23 @@ const TimetableRow = ({
                 {timetableLock ? '🔒' : '⠿'}
               </span>
               <strong>{isBreak ? '休憩' : itemLabel}</strong>
+              {orderConstraintMember && (
+                <span
+                  className="timetable-order-block-badge"
+                  title={orderConstraintMember.title}
+                  tabIndex={0}
+                  onMouseEnter={() => onOrderConstraintBlockHighlightChange(
+                    orderConstraintMember.blockKey,
+                  )}
+                  onMouseLeave={() => onOrderConstraintBlockHighlightChange(null)}
+                  onFocus={() => onOrderConstraintBlockHighlightChange(
+                    orderConstraintMember.blockKey,
+                  )}
+                  onBlur={() => onOrderConstraintBlockHighlightChange(null)}
+                >
+                  🔗 {orderConstraintMember.badgeLabel}
+                </span>
+              )}
               {labels.map((label) => (
                 <span
                   key={label}
@@ -529,6 +564,10 @@ export function TimetableGrid({
   eventBands,
   lockViolations,
   lockFeedback,
+  orderConstraintFeedback,
+  orderConstraintBlocks,
+  activeOrderConstraintBlockKey,
+  onOrderConstraintBlockHighlightChange,
   onSetTimetableLock,
   onUnlockTimetableLock,
   onUnlockAllTimetableLocks,
@@ -795,6 +834,14 @@ export function TimetableGrid({
               onRemoveScheduleItem={onRemoveScheduleItem}
               assignmentCells={renderAssignmentCells(row)}
               timetableLock={timetableLockByScheduleItemId.get(row.scheduleItem.id)}
+              orderConstraintMember={row.scheduleItem.kind === 'performance'
+                ? getTimetableOrderConstraintBlockMember(
+                    orderConstraintBlocks,
+                    row.scheduleItem.eventBandId,
+                  )
+                : undefined}
+              activeOrderConstraintBlockKey={activeOrderConstraintBlockKey}
+              onOrderConstraintBlockHighlightChange={onOrderConstraintBlockHighlightChange}
               onSetTimetableLock={onSetTimetableLock}
               onUnlockTimetableLock={onUnlockTimetableLock}
             />
@@ -843,6 +890,16 @@ export function TimetableGrid({
       {lockFeedback && (
         <p className="timetable-grid__lock-feedback" role="status">
           {lockFeedback}
+        </p>
+      )}
+
+      {orderConstraintFeedback && (
+        <p
+          className="timetable-grid__order-constraint-feedback"
+          role="alert"
+          aria-live="polite"
+        >
+          {orderConstraintFeedback}
         </p>
       )}
 

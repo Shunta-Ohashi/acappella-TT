@@ -218,6 +218,11 @@ import {
   removeTimetableLocksForEvent,
   type TimetableLockMode,
 } from './domain/timetableLocks'
+import { evaluateTimetableOrderConstraintManualTransition } from './domain/timetableOrderConstraintManualPlacement'
+import {
+  createTimetableOrderConstraintBlockPresentations,
+  getTimetableOrderConstraintBlockMember,
+} from './ui/timetableOrderConstraintLinkPresentation'
 import { createDemoData } from './data/demoData'
 import {
   loadPersistedStateOrFallback,
@@ -233,6 +238,13 @@ import {
 import './App.css'
 
 type AppView = 'event-editor' | AppSection
+
+interface TimetableOrderConstraintFeedback {
+  eventId: EventId
+  eventDayId: EventDayId
+  stageId: StageId
+  message: string
+}
 
 interface GenerationPreviewState {
   eventId: EventId
@@ -372,6 +384,12 @@ function App() {
   >(initialAppState.timetableOrderConstraints)
   const [timetableLockFeedback, setTimetableLockFeedback] = useState<
     TimetableLockFeedback | null
+  >(null)
+  const [timetableOrderConstraintFeedback, setTimetableOrderConstraintFeedback] = useState<
+    TimetableOrderConstraintFeedback | null
+  >(null)
+  const [activeTimetableOrderBlockKey, setActiveTimetableOrderBlockKey] = useState<
+    string | null
   >(null)
   const paSettingsRef = useRef<PaSettingsHandle>(null)
   const dutySettingsRef = useRef<DutySettingsHandle>(null)
@@ -546,7 +564,9 @@ function App() {
     setDutyAssignments(snapshot.dutyAssignments)
     setTimetableLocks(snapshot.timetableLocks)
     setTimetableOrderConstraints(snapshot.timetableOrderConstraints)
+    setActiveTimetableOrderBlockKey(null)
     setTimetableLockFeedback(clearTimetableLockFeedback())
+    setTimetableOrderConstraintFeedback(null)
     setSelectedEventId('')
     setSelectedTimetableEventDayId(undefined)
     setSelectedTimetableStageId(undefined)
@@ -677,6 +697,25 @@ function App() {
         scheduleItems,
       })
     : []
+  const timetableOrderConstraintBlocks = (
+    selectedEvent && timetableSelection.eventDayId && currentStage
+      ? createTimetableOrderConstraintBlockPresentations({
+          eventId: selectedEvent.id,
+          eventDayId: timetableSelection.eventDayId,
+          stageId: currentStage.id,
+          timetableOrderConstraints,
+          eventDays: selectedEventDays,
+          stages: selectedStages,
+          sections: selectedSections,
+          eventBands: selectedEventBands,
+        })
+      : []
+  )
+  const visibleTimetableOrderBlockKey = activeTimetableOrderBlockKey &&
+    timetableOrderConstraintBlocks.some(block => block.key === activeTimetableOrderBlockKey)
+    ? activeTimetableOrderBlockKey
+    : null
+
   const invalidCurrentStageScheduleItemIds = currentStage
     ? getInvalidSectionScheduleItemIds(
         currentStage,
@@ -704,6 +743,8 @@ function App() {
     if (!events.some((event) => event.id === eventId)) return
 
     setTimetableLockFeedback(clearTimetableLockFeedback())
+    setTimetableOrderConstraintFeedback(null)
+    setActiveTimetableOrderBlockKey(null)
     setGenerationPreview(null)
     setGenerationOptionsScope(null)
     setResetConfirmation(null)
@@ -722,6 +763,8 @@ function App() {
     if (!selectedEventDays.some(eventDay => eventDay.id === eventDayId)) return
 
     setSelectedTimetableEventDayId(eventDayId)
+    setTimetableOrderConstraintFeedback(null)
+    setActiveTimetableOrderBlockKey(null)
     setGenerationPreview(null)
     setGenerationOptionsScope(null)
     setResetConfirmation(null)
@@ -739,6 +782,8 @@ function App() {
     setDutyAutoAssignmentDialog(null)
     setGridAssignmentDeletion(null)
     setGridAssignmentFeedback(null)
+    setTimetableOrderConstraintFeedback(null)
+    setActiveTimetableOrderBlockKey(null)
     setSelectedTimetableStageId(stageId)
   }
 
@@ -761,6 +806,8 @@ function App() {
     })
 
     setTimetableLockFeedback(clearTimetableLockFeedback())
+    setTimetableOrderConstraintFeedback(null)
+    setActiveTimetableOrderBlockKey(null)
     setEvents((previous) => [...previous, created.event])
     setEventDays((previous) => [...previous, ...created.eventDays])
     setSelectedEventId(created.event.id)
@@ -813,6 +860,8 @@ function App() {
     setSelectedTimetableEventDayId(undefined)
     setSelectedTimetableStageId(undefined)
     setTimetableLockFeedback(clearTimetableLockFeedback())
+    setTimetableOrderConstraintFeedback(null)
+    setActiveTimetableOrderBlockKey(null)
     setGenerationPreview(null)
     setGenerationOptionsScope(null)
     setResetConfirmation(null)
@@ -873,6 +922,8 @@ function App() {
     })
     setSelectedTimetableEventDayId(nextTimetableSelection.eventDayId)
     setSelectedTimetableStageId(nextTimetableSelection.stageId)
+    setTimetableOrderConstraintFeedback(null)
+    setActiveTimetableOrderBlockKey(null)
 
     return result
   }
@@ -1165,6 +1216,7 @@ function App() {
     // Autosave observes the resulting complete domain snapshot, never a half apply.
     setScheduleItems(generationPreview.candidate.scheduleItems)
     setPaAssignments(generationPreview.candidate.paAssignments)
+    setTimetableOrderConstraintFeedback(null)
     setOperationsPanelRevision(revision => revision + 1)
     setGenerationFeedback({ eventId: selectedEvent.id, eventDayId: timetableEventDay.id, kind: 'success',
       message: `✓ ${formatGenerationDay(timetableEventDay)}のタイムテーブルとPA担当を自動生成結果へ更新しました。`,
@@ -1206,6 +1258,7 @@ function App() {
     setTimetableLocks(result.timetableLocks)
     setOperationsPanelRevision(revision => revision + 1)
     setTimetableLockFeedback(clearTimetableLockFeedback())
+    setTimetableOrderConstraintFeedback(null)
     setGenerationPreview(null)
     setGenerationFeedback({ eventId: selectedEvent.id, eventDayId: timetableEventDay.id, kind: 'success',
       message: `✓ ${formatGenerationDay(timetableEventDay)}のタイムテーブルを初期化しました。出演バンドは未配置に戻り、PA・当日運営担当・TT固定を削除しました。` })
@@ -1374,6 +1427,8 @@ function App() {
     })
     setSelectedTimetableEventDayId(nextTimetableSelection.eventDayId)
     setSelectedTimetableStageId(nextTimetableSelection.stageId)
+    setTimetableOrderConstraintFeedback(null)
+    setActiveTimetableOrderBlockKey(null)
 
     return result
   }
@@ -1393,11 +1448,45 @@ function App() {
     sections,
   })
 
-  const commitScheduleItemsIfLocksAllow = (
+  const evaluateSelectedOrderConstraintTransition = (
+    candidateScheduleItems: ScheduleItem[],
+  ) => timetableSelection.eventDayId
+    ? evaluateTimetableOrderConstraintManualTransition({
+        eventId: selectedEventId,
+        eventDayId: timetableSelection.eventDayId,
+        timetableOrderConstraints,
+        currentScheduleItems: scheduleItems,
+        candidateScheduleItems,
+        eventDays,
+        stages,
+        sections,
+        eventBands,
+      })
+    : undefined
+
+  const allowSelectedOrderConstraintTransition = (
+    candidateScheduleItems: ScheduleItem[],
+  ): boolean => {
+    const evaluation = evaluateSelectedOrderConstraintTransition(candidateScheduleItems)
+    if (!evaluation || evaluation.allowed) return true
+    if (!timetableSelection.eventDayId || !currentStage) return false
+    setTimetableLockFeedback(clearTimetableLockFeedback())
+    setTimetableOrderConstraintFeedback({
+      eventId: selectedEventId,
+      eventDayId: timetableSelection.eventDayId,
+      stageId: currentStage.id,
+      message: evaluation.introducedIssues[0]?.message ??
+        '出演順制約によりこの操作はできません。',
+    })
+    return false
+  }
+
+  const commitScheduleItemsIfScheduleGuardsAllow = (
     candidateScheduleItems: ScheduleItem[],
   ): boolean => {
     const evaluation = evaluateSelectedEventLocks(candidateScheduleItems)
     if (!evaluation.valid) {
+      setTimetableOrderConstraintFeedback(null)
       setTimetableLockFeedback(
         {
           eventId: selectedEventId,
@@ -1406,8 +1495,10 @@ function App() {
       )
       return false
     }
+    if (!allowSelectedOrderConstraintTransition(candidateScheduleItems)) return false
     setScheduleItems(candidateScheduleItems)
     setTimetableLockFeedback(clearTimetableLockFeedback())
+    setTimetableOrderConstraintFeedback(null)
     return true
   }
 
@@ -1438,7 +1529,7 @@ function App() {
       newBreakItem,
       getScheduleLaneItems(scheduleItems, lane).length,
     )
-    if (commitScheduleItemsIfLocksAllow(candidate)) setBreakDuration(10)
+    if (commitScheduleItemsIfScheduleGuardsAllow(candidate)) setBreakDuration(10)
   }
 
   const handleAddInterSectionBreak = (afterSectionId: SectionId) => {
@@ -1468,12 +1559,12 @@ function App() {
       newBreakItem,
       getScheduleLaneItems(scheduleItems, lane).length,
     )
-    if (commitScheduleItemsIfLocksAllow(candidate)) setBreakDuration(10)
+    if (commitScheduleItemsIfScheduleGuardsAllow(candidate)) setBreakDuration(10)
   }
 
   // 演奏項目を削除すると、参照先のEventBandが算出プールへ戻る。休憩はそのまま削除する
   const handleRemoveScheduleItem = (id: string) => {
-    commitScheduleItemsIfLocksAllow(removeScheduleItem(scheduleItems, id))
+    commitScheduleItemsIfScheduleGuardsAllow(removeScheduleItem(scheduleItems, id))
   }
 
   const handleSetTimetableLock = (
@@ -1493,6 +1584,7 @@ function App() {
       sections,
     })
     if (!result.ok) {
+      setTimetableOrderConstraintFeedback(null)
       setTimetableLockFeedback(
         {
           eventId: selectedEventId,
@@ -1501,8 +1593,10 @@ function App() {
       )
       return
     }
+    if (!allowSelectedOrderConstraintTransition(result.scheduleItems)) return
     setScheduleItems(result.scheduleItems)
     setTimetableLocks(result.timetableLocks)
+    setTimetableOrderConstraintFeedback(null)
     setTimetableLockFeedback({
       eventId: selectedEventId,
       message: 'TT固定を更新しました。',
@@ -1524,6 +1618,14 @@ function App() {
       eventId: selectedEventId,
       message: 'このイベントのTT固定をすべて解除しました。',
     })
+  }
+
+  const handleCommitTimetableOrderConstraints = (
+    nextConstraints: TimetableOrderConstraint[],
+  ) => {
+    setTimetableOrderConstraints(nextConstraints)
+    setTimetableOrderConstraintFeedback(null)
+    setActiveTimetableOrderBlockKey(null)
   }
 
   // ==================== 🔀 安全なドラッグ＆ドロップ処理 ====================
@@ -1600,7 +1702,7 @@ function App() {
           sourceLane,
         )[sourceIndex]
         if (!sourceItem || sourceItem.id !== result.draggableId) return
-        commitScheduleItemsIfLocksAllow(reorderScheduleLaneItems(
+        commitScheduleItemsIfScheduleGuardsAllow(reorderScheduleLaneItems(
           scheduleItems, sourceLane, sourceIndex, destinationIndex,
         ))
       }
@@ -1627,7 +1729,7 @@ function App() {
       })
       if (!newScheduleItem) return
 
-      commitScheduleItemsIfLocksAllow(insertScheduleItemInLane(
+      commitScheduleItemsIfScheduleGuardsAllow(insertScheduleItemInLane(
         scheduleItems,
         destinationLane,
         newScheduleItem,
@@ -1649,7 +1751,7 @@ function App() {
       ) return
 
       const remainingScheduleItems = removeScheduleItem(scheduleItems, scheduleItem.id)
-      if (!commitScheduleItemsIfLocksAllow(remainingScheduleItems)) return
+      if (!commitScheduleItemsIfScheduleGuardsAllow(remainingScheduleItems)) return
       setEventBands(previous => {
         const daySpecificBands = getEventBandsForEventDay(
           previous,
@@ -1697,7 +1799,7 @@ function App() {
       )[sourceIndex]
       if (!sourceItem || sourceItem.id !== result.draggableId) return
 
-      commitScheduleItemsIfLocksAllow(moveScheduleItemWithinStage({
+      commitScheduleItemsIfScheduleGuardsAllow(moveScheduleItemWithinStage({
         scheduleItems,
         stage: currentStage,
         stageSections: currentStageSections,
@@ -2303,7 +2405,7 @@ function App() {
       sections={selectedSections}
       eventBands={selectedEventBands}
       timetableOrderConstraints={timetableOrderConstraints}
-      onCommit={setTimetableOrderConstraints}
+      onCommit={handleCommitTimetableOrderConstraints}
     />
   ) : null
   const activeGridAssignmentDialog =
@@ -2532,7 +2634,13 @@ function App() {
                           ref={provided.innerRef}
                           className="timetable-pool-list"
                         >
-                          {poolEventBands.map((eventBand, index) => (
+                          {poolEventBands.map((eventBand, index) => {
+                            const orderConstraintMember =
+                              getTimetableOrderConstraintBlockMember(
+                                timetableOrderConstraintBlocks,
+                                eventBand.id,
+                              )
+                            return (
                             <Draggable
                               key={eventBand.id}
                               draggableId={eventBand.id}
@@ -2543,14 +2651,44 @@ function App() {
                                   ref={provided.innerRef}
                                   {...provided.draggableProps}
                                   {...provided.dragHandleProps}
-                                  className="timetable-pool-card"
+                                  className={[
+                                    'timetable-pool-card',
+                                    orderConstraintMember?.blockKey ===
+                                      visibleTimetableOrderBlockKey
+                                      ? 'timetable-pool-card--order-highlight'
+                                      : '',
+                                  ].filter(Boolean).join(' ')}
                                   style={provided.draggableProps.style}
+                                  onMouseEnter={orderConstraintMember
+                                    ? () => setActiveTimetableOrderBlockKey(
+                                        orderConstraintMember.blockKey,
+                                      )
+                                    : undefined}
+                                  onMouseLeave={orderConstraintMember
+                                    ? () => setActiveTimetableOrderBlockKey(null)
+                                    : undefined}
+                                  onFocusCapture={orderConstraintMember
+                                    ? () => setActiveTimetableOrderBlockKey(
+                                        orderConstraintMember.blockKey,
+                                      )
+                                    : undefined}
+                                  onBlurCapture={orderConstraintMember
+                                    ? () => setActiveTimetableOrderBlockKey(null)
+                                    : undefined}
                                 >
                                   <div>
                                     <span className="timetable-drag-handle" aria-hidden="true">☰</span>
                                     <span className="timetable-pool-band-name">
                                       {eventBand.name}
                                     </span>
+                                    {orderConstraintMember && (
+                                      <span
+                                        className="timetable-order-block-badge"
+                                        title={orderConstraintMember.title}
+                                      >
+                                        🔗 {orderConstraintMember.badgeLabel}
+                                      </span>
+                                    )}
                                     <div className="timetable-item-members">
                                       {getEventBandMemberLabel(eventBand)}
                                     </div>
@@ -2561,7 +2699,8 @@ function App() {
                                 </li>
                               )}
                             </Draggable>
-                          ))}
+                            )
+                          })}
                           {poolEventBands.length === 0 && (
                             <li className="timetable-lane__empty">
                               {currentDayEventBands.length === 0
@@ -2598,6 +2737,16 @@ function App() {
                       timetableLockFeedback,
                       selectedEventId,
                     )}
+                    orderConstraintFeedback={
+                      timetableOrderConstraintFeedback?.eventId === selectedEvent.id &&
+                      timetableOrderConstraintFeedback.eventDayId === timetableSelection.eventDayId &&
+                      timetableOrderConstraintFeedback.stageId === currentStage.id
+                        ? timetableOrderConstraintFeedback.message
+                        : ''
+                    }
+                    orderConstraintBlocks={timetableOrderConstraintBlocks}
+                    activeOrderConstraintBlockKey={visibleTimetableOrderBlockKey}
+                    onOrderConstraintBlockHighlightChange={setActiveTimetableOrderBlockKey}
                     onSetTimetableLock={handleSetTimetableLock}
                     onUnlockTimetableLock={handleUnlockTimetableLock}
                     onUnlockAllTimetableLocks={handleUnlockAllTimetableLocks}
@@ -2638,8 +2787,11 @@ function App() {
                     eventBands={selectedEventBands}
                     scheduleItems={selectedScheduleItems}
                     timetableOrderConstraints={timetableOrderConstraints}
+                    orderConstraintBlocks={timetableOrderConstraintBlocks}
+                    activeOrderConstraintBlockKey={visibleTimetableOrderBlockKey}
+                    onOrderConstraintBlockHighlightChange={setActiveTimetableOrderBlockKey}
                     createConstraintId={() => createId('timetable-order-constraint')}
-                    onCommit={setTimetableOrderConstraints}
+                    onCommit={handleCommitTimetableOrderConstraints}
                   />
                 ) : null}
                 renderPaPanel={(onValidationFailed) => currentStage ? (
@@ -2662,6 +2814,8 @@ function App() {
                     onSelectScope={(eventDayId, stageId) => {
                       setSelectedTimetableEventDayId(eventDayId)
                       setSelectedTimetableStageId(stageId)
+                      setTimetableOrderConstraintFeedback(null)
+                      setActiveTimetableOrderBlockKey(null)
                     }}
                     onValidationFailed={onValidationFailed}
                     createDraftId={() => createId('pa-assignment-draft')}
@@ -2693,6 +2847,8 @@ function App() {
                     onSelectScope={(eventDayId, stageId) => {
                       setSelectedTimetableEventDayId(eventDayId)
                       setSelectedTimetableStageId(stageId)
+                      setTimetableOrderConstraintFeedback(null)
+                      setActiveTimetableOrderBlockKey(null)
                     }}
                     onValidationFailed={onValidationFailed}
                     createDraftId={() => createId('duty-draft')}
