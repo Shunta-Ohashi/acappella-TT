@@ -64,16 +64,50 @@ test('Workbook modelはEventDay・Stage順に全StageのSheetを作り空Stage�
   assert.equal(first.sheets.every((sheet) => sheet.headers.length > 0), true)
 })
 
-test('Sheet名は31文字・禁止文字・空名・case-insensitive collisionを安全に処理する', () => {
+test('Sheet名は通常名・31文字以下・31文字超を安全な長さで維持する', () => {
+  const exact = 'A'.repeat(31)
   const names = createTimetableWorksheetNames([
-    { date: '2027-11-01', stageName: 'Main:/?*[]\\ Very Long Stage Name' },
-    { date: '2027-11-01', stageName: 'Main:/?*[]\\ Very Long Stage Name' },
-    { date: '2027-11-02', stageName: "''''" },
+    { date: '2027-11-01', stageName: 'Main Stage' },
+    { date: '', stageName: exact },
+    { date: '2027-11-02', stageName: 'Very Long Stage Name '.repeat(3) },
   ])
+  assert.deepEqual(names.slice(0, 2), ['2027-11-01 Main Stage', exact])
+  assert.equal(names[2].length, 31)
+})
+
+test('Sheet名はtruncate後・suffix後もapostrophe・禁止文字・control文字を残さない', () => {
+  const truncatedAtApostrophe = `${'A'.repeat(30)}'BBB`
+  const names = createTimetableWorksheetNames([
+    { date: '', stageName: truncatedAtApostrophe },
+    { date: '', stageName: `'${truncatedAtApostrophe}` },
+    { date: '2027-11-01', stageName: 'Main:/?*[]\\\u0000\u001f Stage' },
+  ])
+  assert.equal(names[0], 'A'.repeat(30))
   assert.equal(names.every((name) => name.length > 0 && name.length <= 31), true)
-  assert.equal(names.every((name) => !/[:\\/?*[\]]/.test(name)), true)
-  assert.equal(new Set(names.map((name) => name.toLocaleLowerCase())).size, names.length)
+  assert.equal(names.every((name) => !/^'|'$/.test(name)), true)
+  assert.equal(names.every((name) => !/[:\\/?*[\]\u0000-\u001f]/.test(name)), true)
+})
+
+test('Sheet名はcase-insensitive collisionを連番化し長い名前でも31文字以内にする', () => {
+  const longName = 'Long Stage Name '.repeat(4)
+  const names = createTimetableWorksheetNames([
+    { date: '2027-11-01', stageName: 'Main' },
+    { date: '2027-11-01', stageName: 'main' },
+    { date: '2027-11-02', stageName: longName },
+    { date: '2027-11-02', stageName: longName },
+  ])
+  assert.equal(new Set(names.map((name) => name.toLowerCase())).size, names.length)
   assert.match(names[1], /\(2\)$/)
+  assert.match(names[3], /\(2\)$/)
+  assert.equal(names.every((name) => name.length <= 31), true)
+})
+
+test('Sheet名の入力とfallbackが空になっても安全な既定名を使う', () => {
+  const names = createTimetableWorksheetNames([
+    { date: "'''", stageName: "'''" },
+    { date: "'''", stageName: "'''" },
+  ])
+  assert.deepEqual(names, ['Sheet', 'Sheet (2)'])
 })
 
 test('Workbook headerは固定列、最低7 Member列、順序付きでuniqueなDuty列を持つ', () => {

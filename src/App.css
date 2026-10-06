@@ -3428,6 +3428,11 @@
   cursor: pointer;
 }
 
+.csv-file-button:focus-within {
+  outline: 3px solid rgb(37 99 235 / 25%);
+  outline-offset: 2px;
+}
+
 .csv-import-control {
   position: relative;
   display: flex;

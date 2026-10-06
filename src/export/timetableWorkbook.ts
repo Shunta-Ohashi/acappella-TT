@@ -92,21 +92,44 @@ const sanitizeWorksheetNamePart = (value: string): string =>
     .trim()
     .replace(/^'+|'+$/g, '')
 
+const MAX_WORKSHEET_NAME_LENGTH = 31
+
+const finalizeWorksheetName = (
+  value: string,
+  fallback: string,
+  maxLength = MAX_WORKSHEET_NAME_LENGTH,
+): string => {
+  const normalize = (candidate: string): string =>
+    sanitizeWorksheetNamePart(candidate)
+      .slice(0, maxLength)
+      .trim()
+      .replace(/^'+|'+$/g, '')
+      .trim()
+
+  return normalize(value) || normalize(fallback) || 'Sheet'.slice(0, maxLength)
+}
+
 export const createTimetableWorksheetNames = (
   items: { date: string; stageName: string }[],
 ): string[] => {
   const used = new Set<string>()
   return items.map(({ date, stageName }) => {
-    const fallback = `${date} Stage`
-    const sanitized = sanitizeWorksheetNamePart(`${date} ${stageName}`) || fallback
+    const fallbackDate = sanitizeWorksheetNamePart(date)
+    const fallback = fallbackDate ? `${fallbackDate} Stage` : 'Sheet'
+    const sanitized = sanitizeWorksheetNamePart(`${date} ${stageName}`)
     let sequence = 1
-    let candidate = sanitized.slice(0, 31)
-    while (used.has(candidate.toLocaleLowerCase())) {
+    let candidate = finalizeWorksheetName(sanitized, fallback)
+    while (used.has(candidate.toLowerCase())) {
       sequence += 1
       const suffix = ` (${sequence})`
-      candidate = `${sanitized.slice(0, 31 - suffix.length)}${suffix}`
+      const prefix = finalizeWorksheetName(
+        sanitized,
+        fallback,
+        MAX_WORKSHEET_NAME_LENGTH - suffix.length,
+      )
+      candidate = finalizeWorksheetName(`${prefix}${suffix}`, `Sheet${suffix}`)
     }
-    used.add(candidate.toLocaleLowerCase())
+    used.add(candidate.toLowerCase())
     return candidate
   })
 }
