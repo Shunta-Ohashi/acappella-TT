@@ -78,6 +78,8 @@ import { TimetableGridAssignmentDialog } from './components/TimetableGridAssignm
 import { TimetableGridAssignmentDeletionDialog } from './components/TimetableGridAssignmentDeletionDialog'
 import { TimetableDutyAutoAssignmentDialog } from './components/TimetableDutyAutoAssignmentDialog'
 import { TimetableOperationsWorkspace } from './components/TimetableOperationsWorkspace'
+import { TimetableOrderConstraintSettings } from './components/TimetableOrderConstraintSettings'
+import { TimetableOrderConstraintRepairPanel } from './components/TimetableOrderConstraintRepairPanel'
 import {
   areTimetableGridAssignmentTargetsEqual,
   resolveTimetableGridSelection,
@@ -2292,6 +2294,18 @@ function App() {
       onUnlockTimetableLock={handleUnlockTimetableLock}
     />
   )
+  const unavailableTimetableOrderConstraintRepair = selectedEvent ? (
+    <TimetableOrderConstraintRepairPanel
+      key={selectedEvent.id}
+      event={selectedEvent}
+      eventDays={selectedEventDays}
+      stages={selectedStages}
+      sections={selectedSections}
+      eventBands={selectedEventBands}
+      timetableOrderConstraints={timetableOrderConstraints}
+      onCommit={setTimetableOrderConstraints}
+    />
+  ) : null
   const activeGridAssignmentDialog =
     gridAssignmentDialog?.eventId === selectedEvent?.id &&
     timetableGridSelection
@@ -2481,12 +2495,14 @@ function App() {
                     <h3>開催日が設定されていません</h3>
                     <p>Step 1で開催日を設定してください。</p>
                     {unavailableTimetableLockRepair}
+                    {unavailableTimetableOrderConstraintRepair}
                   </section>
                 ) : !currentStage ? (
                   <section className="timetable-empty-state">
                     <h3>この開催日にはStageがありません</h3>
                     <p>タイムテーブルを作成するには、Step 2でStageを設定してください。</p>
                     {unavailableTimetableLockRepair}
+                    {unavailableTimetableOrderConstraintRepair}
                     <button
                       type="button"
                       className="secondary-button"
@@ -2503,6 +2519,7 @@ function App() {
                     </p>
                     <p>対象項目: {invalidCurrentStageScheduleItemIds.join('、')}</p>
                     {unavailableTimetableLockRepair}
+                    {unavailableTimetableOrderConstraintRepair}
                   </section>
                 ) : undefined}
                 pool={currentStage ? (
@@ -2609,6 +2626,22 @@ function App() {
                     calculatedItems={calculatedItems}
                   />
                 )}
+                orderPanel={currentStage && timetableEventDay ? (
+                  <TimetableOrderConstraintSettings
+                    key={`${selectedEvent.id}:${timetableEventDay.id}:${currentStage.id}`}
+                    event={selectedEvent}
+                    eventDay={timetableEventDay}
+                    stage={currentStage}
+                    eventDays={selectedEventDays}
+                    stages={selectedStages}
+                    sections={selectedSections}
+                    eventBands={selectedEventBands}
+                    scheduleItems={selectedScheduleItems}
+                    timetableOrderConstraints={timetableOrderConstraints}
+                    createConstraintId={() => createId('timetable-order-constraint')}
+                    onCommit={setTimetableOrderConstraints}
+                  />
+                ) : null}
                 renderPaPanel={(onValidationFailed) => currentStage ? (
                   <PaSettings
                     ref={paSettingsRef}

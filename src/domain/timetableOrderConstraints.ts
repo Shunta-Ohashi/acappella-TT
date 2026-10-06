@@ -1,11 +1,15 @@
 import type {
+  Event,
   EventBand,
   EventBandId,
   EventDay,
+  EventDayId,
   FixedPlacement,
   ScheduleItem,
   Section,
+  SectionId,
   Stage,
+  StageId,
   TimetableOrderConstraint,
   TimetableOrderConstraintId,
 } from './models'
@@ -69,6 +73,22 @@ export interface EvaluateTimetableOrderConstraintsInput {
   sections: Section[]
   eventBands: EventBand[]
 }
+
+export interface TimetableOrderConstraintDraft {
+  sectionId?: SectionId
+  eventBandIds: EventBandId[]
+}
+
+interface TimetableOrderConstraintMutationReferences {
+  eventDays: EventDay[]
+  stages: Stage[]
+  sections: Section[]
+  eventBands: EventBand[]
+}
+
+export type TimetableOrderConstraintMutationResult =
+  | { ok: true; timetableOrderConstraints: TimetableOrderConstraint[] }
+  | { ok: false; errors: string[] }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -499,6 +519,128 @@ export const evaluateTimetableOrderConstraints = ({
     .map(({ constraint }) => constraint)).violations)
   const sorted = sortViolations(violations)
   return { valid: sorted.length === 0, violations: sorted }
+}
+
+const validateTimetableOrderConstraintMutation = ({
+  eventId,
+  timetableOrderConstraints,
+  eventDays,
+  stages,
+  sections,
+  eventBands,
+}: {
+  eventId: string
+  timetableOrderConstraints: TimetableOrderConstraint[]
+} & TimetableOrderConstraintMutationReferences): TimetableOrderConstraintMutationResult => {
+  const evaluation = evaluateTimetableOrderConstraints({
+    eventId,
+    timetableOrderConstraints: timetableOrderConstraints.filter(
+      constraint => constraint.eventId === eventId,
+    ),
+    eventDays,
+    stages,
+    sections,
+    eventBands,
+  })
+  if (!evaluation.valid) {
+    return {
+      ok: false,
+      errors: [...new Set(evaluation.violations.map(violation => violation.message))],
+    }
+  }
+  return { ok: true, timetableOrderConstraints }
+}
+
+/** Create a constraint from an authoritative Event / EventDay / Stage scope. */
+export const createTimetableOrderConstraintUpdate = ({
+  timetableOrderConstraints,
+  constraintId,
+  event,
+  eventDay,
+  stage,
+  draft,
+  ...references
+}: {
+  timetableOrderConstraints: TimetableOrderConstraint[]
+  constraintId: TimetableOrderConstraintId
+  event: Pick<Event, 'id'>
+  eventDay: Pick<EventDay, 'id'>
+  stage: Pick<Stage, 'id'>
+  draft: TimetableOrderConstraintDraft
+} & TimetableOrderConstraintMutationReferences): TimetableOrderConstraintMutationResult => {
+  if (timetableOrderConstraints.some(constraint => constraint.id === constraintId)) {
+    return { ok: false, errors: ['同じ出演順制約IDがすでに使用されています。'] }
+  }
+  const created: TimetableOrderConstraint = {
+    id: constraintId,
+    eventId: event.id,
+    eventDayId: eventDay.id,
+    stageId: stage.id,
+    ...(draft.sectionId !== undefined ? { sectionId: draft.sectionId } : {}),
+    eventBandIds: [...draft.eventBandIds],
+  }
+  return validateTimetableOrderConstraintMutation({
+    eventId: event.id,
+    timetableOrderConstraints: [...timetableOrderConstraints, created],
+    ...references,
+  })
+}
+
+/** Update only the editable fields while preserving the existing constraint scope and ID. */
+export const updateTimetableOrderConstraint = ({
+  timetableOrderConstraints,
+  constraintId,
+  eventId,
+  eventDayId,
+  stageId,
+  draft,
+  ...references
+}: {
+  timetableOrderConstraints: TimetableOrderConstraint[]
+  constraintId: TimetableOrderConstraintId
+  eventId: string
+  eventDayId: EventDayId
+  stageId: StageId
+  draft: TimetableOrderConstraintDraft
+} & TimetableOrderConstraintMutationReferences): TimetableOrderConstraintMutationResult => {
+  const matches = timetableOrderConstraints.filter(constraint => constraint.id === constraintId)
+  const existing = matches[0]
+  if (matches.length !== 1 || !existing || existing.eventId !== eventId ||
+    existing.eventDayId !== eventDayId || existing.stageId !== stageId) {
+    return { ok: false, errors: ['編集対象の出演順制約を安全に特定できません。'] }
+  }
+  const updated = timetableOrderConstraints.map(constraint => constraint.id === constraintId
+    ? {
+        ...constraint,
+        sectionId: draft.sectionId,
+        eventBandIds: [...draft.eventBandIds],
+      }
+    : constraint)
+  return validateTimetableOrderConstraintMutation({
+    eventId,
+    timetableOrderConstraints: updated,
+    ...references,
+  })
+}
+
+/** Delete one unambiguously identified constraint, including a semantically broken one. */
+export const deleteTimetableOrderConstraint = ({
+  timetableOrderConstraints,
+  constraintId,
+}: {
+  timetableOrderConstraints: TimetableOrderConstraint[]
+  constraintId: TimetableOrderConstraintId
+}): TimetableOrderConstraintMutationResult => {
+  const matches = timetableOrderConstraints.filter(constraint => constraint.id === constraintId)
+  if (matches.length !== 1) {
+    return { ok: false, errors: ['削除対象の出演順制約を安全に特定できません。'] }
+  }
+  return {
+    ok: true,
+    timetableOrderConstraints: timetableOrderConstraints.filter(
+      constraint => constraint.id !== constraintId,
+    ),
+  }
 }
 
 /**

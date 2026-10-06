@@ -4945,6 +4945,271 @@
   border: 0;
 }
 
+.timetable-order-settings {
+  display: grid;
+  gap: 10px;
+}
+
+.timetable-order-settings__description,
+.timetable-order-settings__guide,
+.timetable-order-settings__empty {
+  margin: 0;
+  color: #526175;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.timetable-order-settings__add {
+  width: 100%;
+}
+
+.timetable-order-settings__guide {
+  padding: 8px;
+  background: #f8fafc;
+  border-radius: 7px;
+}
+
+.timetable-order-settings__empty {
+  padding: 18px 10px;
+  text-align: center;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+}
+
+.timetable-order-settings__list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timetable-order-settings__item {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid #d9e0e7;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.timetable-order-settings__item strong,
+.timetable-order-settings__item p {
+  margin: 0;
+}
+
+.timetable-order-settings__item strong {
+  color: #263c55;
+  font-size: 12px;
+}
+
+.timetable-order-settings__item p {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: #1e293b;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.timetable-order-settings__status {
+  display: inline-block;
+  margin-top: 6px;
+  color: #526175;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.timetable-order-settings__status--satisfied { color: #28734d; }
+.timetable-order-settings__status--missing { color: #83510f; }
+.timetable-order-settings__status--unmet { color: #9b2c2c; }
+.timetable-order-settings__status--invalid { color: #9b2c2c; }
+
+.timetable-order-settings__validation-messages {
+  display: grid;
+  gap: 3px;
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: #9b2c2c;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.timetable-order-settings__repair {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.timetable-order-settings__repair h3 {
+  margin: 0;
+  color: #9b2c2c;
+  font-size: 13px;
+}
+
+.timetable-order-settings__constraint-id {
+  display: block;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+  color: #64748b;
+  font-size: 10px;
+}
+
+.timetable-order-settings__actions {
+  display: flex;
+  gap: 6px;
+}
+
+.timetable-order-settings__actions button {
+  flex: 1 1 0;
+}
+
+.timetable-order-settings__delete,
+.timetable-order-dialog__remove {
+  padding: 8px 10px;
+  color: #9f2017;
+  background: #fff;
+  border: 1px solid #f0b4ae;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.timetable-order-dialog__remove:disabled {
+  color: #8793a3;
+  background: #f4f6f8;
+  border-color: #dce2e9;
+  cursor: not-allowed;
+}
+
+.timetable-order-dialog {
+  width: min(680px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 0;
+  overflow: auto;
+  border: 0;
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgb(15 23 42 / 24%);
+}
+
+.timetable-order-dialog::backdrop {
+  background: rgb(15 23 42 / 52%);
+}
+
+.timetable-order-dialog form {
+  display: grid;
+  gap: 18px;
+  padding: 26px;
+  color: #1e293b;
+}
+
+.timetable-order-dialog header p,
+.timetable-order-dialog header h2,
+.timetable-order-dialog__lane,
+.timetable-order-dialog__errors p {
+  margin: 0;
+}
+
+.timetable-order-dialog header p {
+  color: #526175;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+
+.timetable-order-dialog header h2 {
+  margin: 5px 0 7px;
+}
+
+.timetable-order-dialog header span,
+.timetable-order-dialog__lane {
+  color: #526175;
+  font-size: 13px;
+}
+
+.timetable-order-dialog__section {
+  display: grid;
+  gap: 6px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.timetable-order-dialog__section select,
+.timetable-order-dialog__band-row select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid #b8c2cf;
+  border-radius: 8px;
+  background: #fff;
+  color: #1e293b;
+  font: inherit;
+}
+
+.timetable-order-dialog__bands {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid #d9e0e7;
+  border-radius: 9px;
+}
+
+.timetable-order-dialog__bands legend {
+  padding: 0 5px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.timetable-order-dialog__band-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.timetable-order-dialog__band-row > span {
+  color: #526175;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.timetable-order-dialog__band-row .secondary-button,
+.timetable-order-dialog__remove {
+  min-width: 38px;
+  padding: 8px;
+}
+
+.timetable-order-dialog__add-band {
+  justify-self: start;
+}
+
+.timetable-order-dialog__errors {
+  display: grid;
+  gap: 4px;
+}
+
+.timetable-order-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid #e5eaf0;
+}
+
+@media (max-width: 600px) {
+  .timetable-order-dialog form { padding: 20px 16px; }
+  .timetable-order-dialog__band-row {
+    grid-template-columns: 22px minmax(0, 1fr) repeat(2, auto);
+  }
+  .timetable-order-dialog__band-row label { grid-column: 2 / -1; }
+}
+
 .operations-placeholder {
   padding: 20px;
   color: #475569;
