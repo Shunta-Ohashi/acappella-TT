@@ -2,8 +2,13 @@ import { getDutyAssignmentScopeStatus, getDutyAssignmentsForEvent } from '../dom
 import { isValidLocalDate } from '../domain/eventCreation.ts'
 import { detectScheduleIssues } from '../domain/issues.ts'
 import { compareStableText } from '../domain/schedule.ts'
+import { isValidStageTimeRange } from '../domain/stageTimeRanges.ts'
 import { calculateEventDayTimelines } from '../domain/timetable.ts'
-import { formatMinuteAsLocalTime, isValidLocalTime } from '../domain/timeline.ts'
+import {
+  formatMinuteAsLocalTime,
+  isValidLocalTime,
+  parseLocalTimeToMinute,
+} from '../domain/timeline.ts'
 import type { TimetableWorkbookInput } from '../export/timetableWorkbook.ts'
 import { createTimetableWorkspaceRows } from '../ui/timetableWorkspaceRows.ts'
 
@@ -256,6 +261,17 @@ const parseStringArray = (value: unknown): string[] | undefined => {
 
 const isDisplayTime = (value: string): boolean => value === '24:00' || isValidLocalTime(value)
 
+const parseDisplayTimeToMinute = (value: string): number | undefined => {
+  if (value === '24:00') return 24 * 60
+  return isValidLocalTime(value) ? parseLocalTimeToMinute(value) : undefined
+}
+
+const isValidDisplayTimeRange = (startTime: string, endTime: string): boolean => {
+  const startMinute = parseDisplayTimeToMinute(startTime)
+  const endMinute = parseDisplayTimeToMinute(endTime)
+  return startMinute !== undefined && endMinute !== undefined && startMinute < endMinute
+}
+
 const parseDuty = (value: unknown): TimetablePreShareDuty | undefined => {
   if (!isRecord(value)) return undefined
   const name = parseString(value.name)
@@ -273,6 +289,7 @@ const parseEntry = (value: unknown): TimetablePreShareEntry | undefined => {
   const subPa = parseStringArray(value.subPa)
   if (
     !startTime || !endTime || !isDisplayTime(startTime) || !isDisplayTime(endTime) ||
+    !isValidDisplayTimeRange(startTime, endTime) ||
     (value.kind !== 'performance' && value.kind !== 'break') || title === undefined ||
     members === undefined || mainPa === undefined || subPa === undefined ||
     !Array.isArray(value.duties)
@@ -299,9 +316,9 @@ const parseStage = (value: unknown): TimetablePreShareStage | undefined => {
     ? undefined
     : parseString(value.plannedEndTime)
   if (
-    name === undefined || !plannedStartTime || !isValidLocalTime(plannedStartTime) ||
+    name === undefined || !plannedStartTime ||
     (plannedEndTime === undefined && value.plannedEndTime !== undefined) ||
-    (plannedEndTime !== undefined && !isValidLocalTime(plannedEndTime)) ||
+    !isValidStageTimeRange(plannedStartTime, plannedEndTime) ||
     !Array.isArray(value.entries)
   ) return undefined
   const entries = Array.from(value.entries).map(parseEntry)
@@ -342,7 +359,8 @@ export const parseTimetablePreShareSnapshot = (
     : { version: TIMETABLE_PRE_SHARE_VERSION, eventName, createdAt, days: days as TimetablePreShareDay[] }
 }
 
-const normalizeSearch = (value: string): string => value.trim().toLocaleLowerCase()
+const normalizeSearch = (value: string): string =>
+  value.normalize('NFKC').trim().toLocaleLowerCase()
 
 export const filterTimetablePreShareEntries = (
   entries: TimetablePreShareEntry[],

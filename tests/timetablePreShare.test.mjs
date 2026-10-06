@@ -20,6 +20,7 @@ import {
   MAX_TIMETABLE_PRE_SHARE_URL_LENGTH,
   resolveTimetablePreShareRoute,
 } from '../src/share/timetablePreShareCodec.ts'
+import { isTimetablePreShareHash } from '../src/share/timetablePreShareRouting.ts'
 
 const FIXED_NOW = new Date('2027-11-01T09:30:00.000Z')
 
@@ -277,6 +278,56 @@ test('検索はBand・出演Member・Main/Sub PA・Duty担当・Duty名をtrim/c
   assert.deepEqual(filterTimetablePreShareEntries(entries, '休憩'), [])
 })
 
+test('検索はNFKC互換文字を正規化して全角ASCII・半角カナを一致させる', () => {
+  const alpha = makeEntry({ title: 'Alpha' })
+  const timekeeper = makeEntry({
+    title: 'Bravo',
+    duties: [{ name: 'タイムキーパー', members: ['担当者'] }],
+  })
+  assert.deepEqual(filterTimetablePreShareEntries([alpha, timekeeper], ' ＡＬＰＨＡ '), [alpha])
+  assert.deepEqual(filterTimetablePreShareEntries([alpha, timekeeper], 'ﾀｲﾑｷｰﾊﾟｰ'), [timekeeper])
+})
+
+test('Share parserはStage・Entryの逆転/同時刻をrejectし23:50→24:00を許可する', () => {
+  const assertMalformed = (mutate) => {
+    const snapshot = makeSmallSnapshot()
+    mutate(snapshot.days[0].stages[0])
+    assert.equal(parseTimetablePreShareSnapshot(snapshot), undefined)
+    assert.deepEqual(decodeTimetablePreSharePayload(encodeUnknown(snapshot)), {
+      ok: false, reason: 'MALFORMED',
+    })
+  }
+
+  assert.ok(parseTimetablePreShareSnapshot(makeSmallSnapshot()))
+  const noStageEnd = makeSmallSnapshot()
+  delete noStageEnd.days[0].stages[0].plannedEndTime
+  assert.ok(parseTimetablePreShareSnapshot(noStageEnd))
+  assertMalformed(stage => {
+    stage.plannedStartTime = '18:00'
+    stage.plannedEndTime = '10:00'
+  })
+  assertMalformed(stage => {
+    stage.plannedStartTime = '10:00'
+    stage.plannedEndTime = '10:00'
+  })
+  assertMalformed(stage => {
+    stage.entries[0].startTime = '10:10'
+    stage.entries[0].endTime = '10:00'
+  })
+  assertMalformed(stage => {
+    stage.entries[0].startTime = '10:00'
+    stage.entries[0].endTime = '10:00'
+  })
+  const untilMidnight = makeSmallSnapshot()
+  untilMidnight.days[0].stages[0].entries[0].startTime = '23:50'
+  untilMidnight.days[0].stages[0].entries[0].endTime = '24:00'
+  assert.ok(parseTimetablePreShareSnapshot(untilMidnight))
+  assertMalformed(stage => {
+    stage.entries[0].startTime = '24:00'
+    stage.entries[0].endTime = '24:00'
+  })
+})
+
 test('Day/Stage summaryは予定順とPerformance・Break件数を算出する', () => {
   const early = makeEntry({ startTime: '09:00', endTime: '09:10' })
   const rest = makeEntry({
@@ -336,9 +387,22 @@ test('Routingは通常URL・valid share・broken shareを分離しqueryを維持
   const url = new URL(created.url)
   assert.equal(url.search, '?mode=preview')
   assert.equal(resolveTimetablePreShareRoute('').kind, 'app')
+  assert.equal(resolveTimetablePreShareRoute('#other').kind, 'app')
+  assert.equal(resolveTimetablePreShareRoute('#share-other').kind, 'app')
+  assert.equal(resolveTimetablePreShareRoute('#share').kind, 'error')
+  assert.equal(resolveTimetablePreShareRoute('#share=').kind, 'error')
   assert.deepEqual(resolveTimetablePreShareRoute(url.hash), { kind: 'share', snapshot })
   assert.equal(resolveTimetablePreShareRoute('#share=broken').kind, 'error')
   assert.equal(createNormalAppUrl(created.url), 'https://example.test/app?mode=preview')
+})
+
+test('lazy routing markerはbare・empty・valid payloadをShare側へ送り類似hashを除外する', () => {
+  assert.equal(isTimetablePreShareHash('#share'), true)
+  assert.equal(isTimetablePreShareHash('#share='), true)
+  assert.equal(isTimetablePreShareHash('#share=payload'), true)
+  assert.equal(isTimetablePreShareHash(''), false)
+  assert.equal(isTimetablePreShareHash('#other'), false)
+  assert.equal(isTimetablePreShareHash('#share-other'), false)
 })
 
 test('Timeline計算不能Stageが1件でもあればShare Snapshot全体をfailureにする', () => {

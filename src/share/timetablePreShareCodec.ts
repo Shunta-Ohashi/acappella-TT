@@ -3,6 +3,7 @@ import {
   parseTimetablePreShareSnapshot,
   type TimetablePreShareSnapshotV1,
 } from './timetablePreShare.ts'
+import { isTimetablePreShareHash } from './timetablePreShareRouting.ts'
 
 export const MAX_TIMETABLE_PRE_SHARE_URL_LENGTH = 65_536
 export const MAX_TIMETABLE_PRE_SHARE_DECOMPRESSED_BYTES = 2 * 1024 * 1024
@@ -114,7 +115,8 @@ export type TimetablePreShareRoute =
   | { kind: 'error' }
 
 export const resolveTimetablePreShareRoute = (hash: string): TimetablePreShareRoute => {
-  if (!hash.startsWith('#share=')) return { kind: 'app' }
+  if (!isTimetablePreShareHash(hash)) return { kind: 'app' }
+  if (hash === '#share') return { kind: 'error' }
   const decoded = decodeTimetablePreSharePayload(hash.slice('#share='.length))
   return decoded.ok ? { kind: 'share', snapshot: decoded.snapshot } : { kind: 'error' }
 }

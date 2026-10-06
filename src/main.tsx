@@ -1,10 +1,11 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { isTimetablePreShareHash } from './share/timetablePreShareRouting.ts'
 import './index.css'
 
 const root = createRoot(document.getElementById('root')!)
 
-if (!window.location.hash.startsWith('#share=')) {
+if (!isTimetablePreShareHash(window.location.hash)) {
   void import('./App.tsx').then(({ default: App }) => {
     root.render(
       <StrictMode>
