@@ -257,7 +257,32 @@ test('Timetable CSVはselected Eventに関係する不正なDuty scopeをwarning
   }
 })
 
-test('Timetable CSVは正常assignmentと完全にforeignなPA・Dutyで不要なwarningを出さない', () => {
+test('Timetable CSVはselected EventのPAがmissing Memberを参照するとwarningにする', () => {
+  const input = makeInput()
+  const assignment = input.paAssignments.find((item) => item.eventId === input.event.id)
+  input.paAssignments = [...input.paAssignments, {
+    ...assignment, id: 'pa-missing-member', memberId: 'missing-member',
+  }]
+  const result = createTimetableCsv(input)
+  assert.equal(result.ok, true, JSON.stringify(result))
+  if (result.ok) assert.equal(result.warnings.some((warning) => warning.includes('参照切れ')), true)
+})
+
+test('Timetable CSVはselected EventのDutyがmissing Memberを参照するとwarningにする', () => {
+  const input = makeInput()
+  const eventDutyTypeIds = new Set(input.dutyTypes
+    .filter((type) => type.eventId === input.event.id)
+    .map((type) => type.id))
+  const assignment = input.dutyAssignments.find((item) => eventDutyTypeIds.has(item.dutyTypeId))
+  input.dutyAssignments = [...input.dutyAssignments, {
+    ...assignment, id: 'duty-missing-member', memberId: 'missing-member',
+  }]
+  const result = createTimetableCsv(input)
+  assert.equal(result.ok, true, JSON.stringify(result))
+  if (result.ok) assert.equal(result.warnings.some((warning) => warning.includes('参照切れ')), true)
+})
+
+test('Timetable CSVは正常assignmentと完全にforeignなmissing Member参照で不要なwarningを出さない', () => {
   const input = makeInput()
   const foreignDay = input.eventDays.find((day) => day.eventId !== input.event.id)
   const foreignStage = input.stages.find((stage) => stage.eventDayId === foreignDay.id)
@@ -272,6 +297,7 @@ test('Timetable CSVは正常assignmentと完全にforeignなPA・Dutyで不要�
     eventId: foreignDay.eventId,
     eventDayId: foreignDay.id,
     stageId: foreignStage.id,
+    memberId: 'foreign-missing-member',
   }]
   input.dutyTypes = [...input.dutyTypes, foreignDutyType]
   input.dutyAssignments = [...input.dutyAssignments, {
@@ -280,6 +306,7 @@ test('Timetable CSVは正常assignmentと完全にforeignなPA・Dutyで不要�
     dutyTypeId: foreignDutyType.id,
     eventDayId: foreignDay.id,
     stageId: foreignStage.id,
+    memberId: 'foreign-missing-member',
   }]
   const result = createTimetableCsv(input)
   assert.equal(result.ok, true, JSON.stringify(result))
@@ -307,10 +334,28 @@ test('空Timetableもheader-only CSVとしてexportできる', () => {
   assert.equal(parsed.rows.length, 1)
 })
 
-test('Timetable filenameは危険文字をsanitizeしtimestampを含める', () => {
-  const filename = createTimetableCsvFilename(
-    { ...makeInput().event, name: 'Live / A:*?"<>|' },
-    new Date(2027, 0, 2, 3, 4, 5),
+test('Timetable filenameは通常名・禁止文字・control character・fallbackを安全に扱う', () => {
+  const event = makeInput().event
+  const now = new Date(2027, 0, 2, 3, 4, 5)
+  assert.equal(
+    createTimetableCsvFilename({ ...event, name: 'Normal Event' }, now),
+    'acappella-tt-Normal Event-timetable-20270102-030405.csv',
   )
-  assert.equal(filename, 'acappella-tt-Live _ A_______-timetable-20270102-030405.csv')
+  assert.equal(
+    createTimetableCsvFilename({ ...event, name: 'Live / A:*?"<>|' }, now),
+    'acappella-tt-Live _ A_______-timetable-20270102-030405.csv',
+  )
+  const controlled = createTimetableCsvFilename({
+    ...event, name: 'Line\nTab\tNul\0Unit\u001f',
+  }, now)
+  assert.equal(controlled, 'acappella-tt-LineTabNulUnit-timetable-20270102-030405.csv')
+  assert.equal([...controlled].some((character) => (character.codePointAt(0) ?? 0) <= 0x1f), false)
+  assert.equal(
+    createTimetableCsvFilename({ ...event, id: 'safe-event-id', name: '\n\t\0\u001f' }, now),
+    'acappella-tt-safe-event-id-timetable-20270102-030405.csv',
+  )
+  assert.equal(
+    createTimetableCsvFilename({ ...event, id: '\n\t\0', name: '\n\t\0\u001f' }, now),
+    'acappella-tt-event-timetable-20270102-030405.csv',
+  )
 })

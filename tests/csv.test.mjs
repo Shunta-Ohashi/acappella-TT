@@ -53,6 +53,14 @@ test('空行を安全に無視し、CSV行番号を維持する', () => {
   assert.deepEqual(result.rows.map((row) => row.rowNumber), [1, 3, 5])
 })
 
+test('全cellが空の複数列rowを無視し、値があるrowと物理行番号を維持する', () => {
+  const result = parseCsv('a,b,c\n1,2,3\n,,,\n"","",""\n  , , \nA,,C')
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.deepEqual(result.rows.map((row) => row.rowNumber), [1, 2, 6])
+  assert.deepEqual(result.rows[2].cells, ['A', '', 'C'])
+})
+
 test('閉じていないquoteをrejectする', () => {
   const result = parseCsv('a,b\n1,"broken')
   assert.equal(result.ok, false)

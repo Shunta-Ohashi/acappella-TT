@@ -76,19 +76,21 @@ export const createTimetableCsv = (input: TimetableCsvInput): TimetableCsvResult
       const eventDay = eventDayById.get(assignment.eventDayId)
       const stage = stageById.get(assignment.stageId)
       return !eventDay || eventDay.eventId !== input.event.id || !stage ||
-        stage.eventDayId !== assignment.eventDayId
+        stage.eventDayId !== assignment.eventDayId || !memberById.has(assignment.memberId)
     })
   const hasInvalidDutyScope = getDutyAssignmentsForEvent({
     event: input.event,
     stages,
     dutyTypes: input.dutyTypes,
     dutyAssignments: input.dutyAssignments,
-  }).some((assignment) => !getDutyAssignmentScopeStatus({
-    assignment,
-    event: input.event,
-    eventDays: input.eventDays,
-    stages: input.stages,
-  }).valid)
+  }).some((assignment) =>
+    !getDutyAssignmentScopeStatus({
+      assignment,
+      event: input.event,
+      eventDays: input.eventDays,
+      stages: input.stages,
+    }).valid || !memberById.has(assignment.memberId),
+  )
   if (hasInvalidPaScope || hasInvalidDutyScope) warnings.add(assignmentWarning)
 
   for (const eventDay of eventDays) {
@@ -213,7 +215,12 @@ export const createTimetableCsv = (input: TimetableCsvInput): TimetableCsvResult
 }
 
 const sanitizeFilenamePart = (value: string): string =>
-  value.replace(/[\\/:*?"<>|]/g, '_').trim().replace(/[. ]+$/g, '')
+  [...value]
+    .filter((character) => (character.codePointAt(0) ?? 0) > 0x1f)
+    .join('')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .trim()
+    .replace(/[. ]+$/g, '')
 
 const pad = (value: number): string => String(value).padStart(2, '0')
 

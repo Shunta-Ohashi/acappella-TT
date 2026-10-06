@@ -35,7 +35,7 @@ export type CsvImportPlan<T> =
   | { ok: false; errors: CsvImportError[] }
 
 const isBlankRow = (cells: string[]): boolean =>
-  cells.length === 1 && cells[0].trim() === ''
+  cells.every((cell) => cell.trim() === '')
 
 export const parseCsv = (source: string): CsvParseResult => {
   const text = source.startsWith('\uFEFF') ? source.slice(1) : source
