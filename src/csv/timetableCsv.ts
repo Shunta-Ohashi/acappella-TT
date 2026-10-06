@@ -6,8 +6,9 @@ import { detectScheduleIssues } from '../domain/issues.ts'
 import { calculateEventDayTimelines } from '../domain/timetable.ts'
 import { formatMinuteAsLocalTime } from '../domain/timeline.ts'
 import { getInterSectionBreakPresentation } from '../ui/interSectionBreakPresentation.ts'
+import { getMemberDisplayName } from '../ui/eventBandPresentation.ts'
 import { createTimetableWorkspaceRows } from '../ui/timetableWorkspaceRows.ts'
-import { serializeCsv } from './csv.ts'
+import { serializeSpreadsheetCsv } from './spreadsheetCsv.ts'
 import { getOrderedEventDays } from './eventCsvShared.ts'
 
 export interface TimetableCsvInput {
@@ -35,7 +36,16 @@ const BASE_HEADERS = [
 ] as const
 const LAST_HEADERS = ['ERROR', 'WARNING', 'INFO', 'ScheduleItem ID', 'EventBand ID'] as const
 
-const uniqueNames = (names: string[]): string => [...new Set(names)].join('|')
+const joinUniqueIdentityLabels = (
+  values: { identity: string; label: string }[],
+): string => {
+  const seen = new Set<string>()
+  return values.flatMap(({ identity, label }) => {
+    if (seen.has(identity)) return []
+    seen.add(identity)
+    return [label]
+  }).join('|')
+}
 
 export const createTimetableCsv = (input: TimetableCsvInput): TimetableCsvResult => {
   const eventDays = getOrderedEventDays(input.event, input.eventDays)
@@ -44,6 +54,9 @@ export const createTimetableCsv = (input: TimetableCsvInput): TimetableCsvResult
   const eventBands = input.eventBands.filter((band) => band.eventId === input.event.id)
   const dutyTypes = input.dutyTypes.filter((type) => type.eventId === input.event.id)
     .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+  const memberById = new Map(input.members.map((member) => [member.id, member]))
+  const paById = new Map(input.paAssignments.map((assignment) => [assignment.id, assignment]))
+  const dutyById = new Map(input.dutyAssignments.map((assignment) => [assignment.id, assignment]))
   const rows: string[][] = [[
     ...BASE_HEADERS,
     ...dutyTypes.map((type) => `当日運営:${type.name}`),
@@ -137,12 +150,28 @@ export const createTimetableCsv = (input: TimetableCsvInput): TimetableCsvResult
           formatMinuteAsLocalTime(row.calculatedItem.plannedEndMinute),
           item.kind === 'performance' ? '出演' : '休憩',
           item.kind === 'performance' ? row.eventBand?.name ?? '' : item.title,
-          item.kind === 'performance' ? uniqueNames(row.memberNames) : '',
+          item.kind === 'performance' && row.eventBand
+            ? joinUniqueIdentityLabels(row.eventBand.memberIds.map((memberId) => ({
+                identity: memberId,
+                label: memberById.has(memberId)
+                  ? getMemberDisplayName(memberById.get(memberId)!)
+                  : '不明なメンバー',
+              })))
+            : '',
           String(item.kind === 'performance' ? row.eventBand?.durationMinutes ?? '' : item.durationMinutes),
-          uniqueNames(row.paCoverage.main.map((coverage) => coverage.memberName)),
-          uniqueNames(row.paCoverage.sub.map((coverage) => coverage.memberName)),
-          ...dutyTypes.map((type) => uniqueNames(
-            (row.dutyCoverage[type.id] ?? []).map((coverage) => coverage.memberName),
+          joinUniqueIdentityLabels(row.paCoverage.main.map((coverage) => ({
+            identity: paById.get(coverage.assignmentId)?.memberId ?? `pa:${coverage.assignmentId}`,
+            label: coverage.memberName,
+          }))),
+          joinUniqueIdentityLabels(row.paCoverage.sub.map((coverage) => ({
+            identity: paById.get(coverage.assignmentId)?.memberId ?? `pa:${coverage.assignmentId}`,
+            label: coverage.memberName,
+          }))),
+          ...dutyTypes.map((type) => joinUniqueIdentityLabels(
+            (row.dutyCoverage[type.id] ?? []).map((coverage) => ({
+              identity: dutyById.get(coverage.assignmentId)?.memberId ?? `duty:${coverage.assignmentId}`,
+              label: coverage.memberName,
+            })),
           )),
           String(row.issueCounts.ERROR),
           String(row.issueCounts.WARNING),
@@ -153,7 +182,7 @@ export const createTimetableCsv = (input: TimetableCsvInput): TimetableCsvResult
       }
     }
   }
-  return { ok: true, csv: serializeCsv(rows), rowCount: rows.length - 1, warnings: [...warnings] }
+  return { ok: true, csv: serializeSpreadsheetCsv(rows), rowCount: rows.length - 1, warnings: [...warnings] }
 }
 
 const sanitizeFilenamePart = (value: string): string =>

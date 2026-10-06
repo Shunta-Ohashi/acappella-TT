@@ -4,11 +4,10 @@ import {
   type CommonMemberDraft,
 } from '../domain/commonMembers.ts'
 import {
-  parseCsvTable,
-  serializeCsv,
   type CsvImportError,
   type CsvImportPlan,
 } from './csv.ts'
+import { parseSpreadsheetCsvTable, serializeSpreadsheetCsv } from './spreadsheetCsv.ts'
 
 export const COMMON_MEMBER_CSV_HEADERS = [
   '本名', 'アカペラネーム', '入学年度', '状態', '備考', 'メンバーID',
@@ -17,13 +16,13 @@ export const COMMON_MEMBER_CSV_HEADERS = [
 const COMMON_MEMBER_REQUIRED_HEADERS = ['本名'] as const
 
 const parseStatus = (value: string): boolean | undefined => {
-  const normalized = value.trim().toLocaleLowerCase()
+  const normalized = value.trim().toLowerCase()
   if (['在籍中', 'active', 'true', '1'].includes(normalized)) return true
   if (['非在籍', 'inactive', 'false', '0'].includes(normalized)) return false
   return undefined
 }
 
-export const createCommonMemberCsv = (members: Member[]): string => serializeCsv([
+export const createCommonMemberCsv = (members: Member[]): string => serializeSpreadsheetCsv([
   COMMON_MEMBER_CSV_HEADERS,
   ...members.map((member) => [
     member.realName,
@@ -44,7 +43,7 @@ export const planCommonMemberCsvImport = ({
   members: Member[]
   createMemberId: () => MemberId
 }): CsvImportPlan<Member[]> => {
-  const table = parseCsvTable(csv, COMMON_MEMBER_REQUIRED_HEADERS)
+  const table = parseSpreadsheetCsvTable(csv, COMMON_MEMBER_REQUIRED_HEADERS)
   if (!table.ok) return table
   const errors: CsvImportError[] = []
   const seenIds = new Set<string>()

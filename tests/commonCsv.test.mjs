@@ -54,6 +54,32 @@ test('Common MemberのExportはIDを維持してそのまま再Importできる',
   assert.deepEqual(JSON.parse(JSON.stringify(result.candidate)), members)
 })
 
+test('Common Memberのformula-likeな正当値は安全化してExportしImportで復元する', () => {
+  const formulaMember = {
+    id: 'member-formula',
+    realName: '=LOVE',
+    acaName: '+TEST',
+    active: true,
+    notes: '@USER',
+  }
+  const exported = createCommonMemberCsv([formulaMember])
+  const raw = parseCsv(exported)
+  assert.equal(raw.ok, true)
+  if (!raw.ok) return
+  assert.deepEqual(raw.rows[1].cells.slice(0, 2), ["'=LOVE", "'+TEST"])
+  assert.equal(raw.rows[1].cells[4], "'@USER")
+
+  const imported = planCommonMemberCsvImport({
+    csv: exported,
+    members: [formulaMember],
+    createMemberId: () => 'unused',
+  })
+  assert.equal(imported.ok, true, JSON.stringify(imported))
+  if (imported.ok) {
+    assert.deepEqual(JSON.parse(JSON.stringify(imported.candidate)), [formulaMember])
+  }
+})
+
 test('Common Memberは本名だけのCSVと技術header省略を許可しIDなし行を常に新規作成する', () => {
   const result = planCommonMemberCsvImport({
     csv: csv(['本名'], [['佐藤 花子']]),
@@ -97,11 +123,13 @@ test('Common Member既存更新で状態header省略または空欄なら既存�
 })
 
 test('Common Memberは既存の英語statusを解釈し重複ID・invalid yearをatomicにrejectする', () => {
-  const english = planCommonMemberCsvImport({
-    csv: csv(['本名', '状態'], [['Test', 'ACTIVE']]), members: [], createMemberId: () => 'new',
-  })
-  assert.equal(english.ok, true)
-  if (english.ok) assert.equal(english.candidate[0].active, true)
+  for (const [status, expected] of [['ACTIVE', true], ['INACTIVE', false], ['TRUE', true], ['FALSE', false]]) {
+    const english = planCommonMemberCsvImport({
+      csv: csv(['本名', '状態'], [['Test', status]]), members: [], createMemberId: () => `new-${status}`,
+    })
+    assert.equal(english.ok, true)
+    if (english.ok) assert.equal(english.candidate[0].active, expected)
+  }
   const duplicate = planCommonMemberCsvImport({
     csv: csv(COMMON_MEMBER_CSV_HEADERS, [
       ['A', '', '2025', '在籍中', '', 'same'],
@@ -114,6 +142,17 @@ test('Common Memberは既存の英語statusを解釈し重複ID・invalid year�
   })
   assert.equal(invalid.ok, false)
   assert.equal('candidate' in invalid, false)
+})
+
+test('Common Bandはlocale非依存でuppercase英語statusを解釈する', () => {
+  for (const [status, expected] of [['ACTIVE', true], ['INACTIVE', false], ['TRUE', true], ['FALSE', false]]) {
+    const result = planCommonBandCsvImport({
+      csv: csv(['バンド名', 'メンバー1', '状態'], [['Band', 'はな', status]]),
+      bands: [], members, createBandId: () => `band-${status}`,
+    })
+    assert.equal(result.ok, true)
+    if (result.ok) assert.equal(result.candidate[0].active, expected)
+  }
 })
 
 test('Common Band exportは最低7つの名前列と右端の技術列を持つ', () => {

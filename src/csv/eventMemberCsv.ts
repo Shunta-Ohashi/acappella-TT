@@ -7,9 +7,8 @@ import {
   validateEventMemberSettingsDraft,
   type EventMemberSettingsDraft,
 } from '../domain/eventMemberSettings.ts'
-import {
-  parseCsvTable, serializeCsv, type CsvImportError, type CsvImportPlan,
-} from './csv.ts'
+import { type CsvImportError, type CsvImportPlan } from './csv.ts'
+import { parseSpreadsheetCsvTable, serializeSpreadsheetCsv } from './spreadsheetCsv.ts'
 import {
   formatTimeRange,
   getOrderedEventDays,
@@ -27,7 +26,7 @@ export const EVENT_MEMBER_CSV_HEADERS = [
 const EVENT_MEMBER_REQUIRED_HEADERS = ['メンバー', '開催日', '参加状態'] as const
 
 const parseParticipation = (value: string): ParticipationStatus | undefined => {
-  const normalized = value.trim().toLocaleLowerCase()
+  const normalized = value.trim().toLowerCase()
   if (['参加', 'participating'].includes(normalized)) return 'participating'
   if (['不参加', 'absent'].includes(normalized)) return 'absent'
   if (['未定', 'undecided'].includes(normalized)) return 'undecided'
@@ -35,7 +34,7 @@ const parseParticipation = (value: string): ParticipationStatus | undefined => {
 }
 
 const parseCapability = (value: string): boolean | undefined => {
-  const normalized = value.trim().toLocaleLowerCase()
+  const normalized = value.trim().toLowerCase()
   if (['可', 'true', '1', 'yes'].includes(normalized)) return true
   if (['不可', 'false', '0', 'no'].includes(normalized)) return false
   return undefined
@@ -51,7 +50,7 @@ export const createEventMemberCsv = ({
 }): string => {
   const memberById = new Map(members.map((member) => [member.id, member]))
   const dayById = new Map(getOrderedEventDays(event, eventDays).map((day) => [day.id, day]))
-  return serializeCsv([
+  return serializeSpreadsheetCsv([
     EVENT_MEMBER_CSV_HEADERS,
     ...draft.members.flatMap((memberDraft) => {
       const member = memberById.get(memberDraft.memberId)
@@ -87,7 +86,7 @@ export const planEventMemberCsvImport = ({
   draft: EventMemberSettingsDraft
   createDraftId: () => string
 }): CsvImportPlan<EventMemberSettingsDraft> => {
-  const table = parseCsvTable(csv, EVENT_MEMBER_REQUIRED_HEADERS)
+  const table = parseSpreadsheetCsvTable(csv, EVENT_MEMBER_REQUIRED_HEADERS)
   if (!table.ok) return table
   const errors: CsvImportError[] = []
   const candidate = structuredClone(draft)

@@ -133,6 +133,28 @@ test('Event Memberはstatus・PA・複数/open time rangeを維持する', () =>
   })
 })
 
+test('Event Memberはlocale非依存でuppercase participation・PA tokenを解釈する', () => {
+  const cases = [
+    ['PARTICIPATING', 'TRUE', 'FALSE', 'participating', { main: true, sub: false }],
+    ['ABSENT', 'YES', 'NO', 'absent', { main: true, sub: false }],
+    ['UNDECIDED', 'FALSE', 'TRUE', 'undecided', { main: false, sub: true }],
+  ]
+  for (const [status, main, sub, expectedStatus, expectedCapabilities] of cases) {
+    const result = planEventMemberCsvImport({
+      csv: csv(['メンバー', '開催日', '参加状態', 'Main PA', 'Sub PA'], [
+        ['はな', '2027-11-01', status, main, sub],
+      ]),
+      event, eventDays, members, eventMembers, eventMemberDays, draft: makeMemberDraft(),
+      createDraftId: () => 'unused',
+    })
+    assert.equal(result.ok, true, JSON.stringify(result))
+    if (!result.ok) continue
+    const updated = result.candidate.members.find((item) => item.memberId === 'member-1')
+    assert.equal(updated.days.find((day) => day.eventDayId === 'day-1').participationStatus, expectedStatus)
+    assert.deepEqual(updated.paCapabilities, expectedCapabilities)
+  }
+})
+
 test('Event Memberは省略したPA・詳細headerについて既存draft値を維持する', () => {
   const draft = makeMemberDraft()
   draft.members[0].days[0].notes = 'keep'
@@ -309,6 +331,45 @@ test('Event Bandは出演バンドIDで更新しunknown ID・foreign day・missi
     })
     assert.equal(result.ok, false)
   }
+})
+
+test('Event Band既存fixed sourceは列省略時に維持し、明示変更だけを検証する', () => {
+  const baseHeaders = ['バンド名', '開催日', 'メンバー1', '出演枠', '出演バンドID']
+  const omitted = planEventBandCsvImport({
+    csv: csv(baseHeaders, [['Minimal update', '2027-11-01', 'はな', '10', 'event-band-1']]),
+    event, eventDays, bands, members, eventMembers, eventMemberDays,
+    eventBands: existingEventBands, draft: makeBandDraft(), createDraftId: () => 'unused',
+  })
+  assert.equal(omitted.ok, true, JSON.stringify(omitted))
+  if (omitted.ok) assert.equal(omitted.candidate.items[0].bandId, 'band-1')
+
+  const blank = planEventBandCsvImport({
+    csv: csv([...baseHeaders, '固定バンド名', '固定バンドID'], [[
+      'Remove source', '2027-11-01', 'はな', '10', 'event-band-1', '', '',
+    ]]),
+    event, eventDays, bands, members, eventMembers, eventMemberDays,
+    eventBands: existingEventBands, draft: makeBandDraft(), createDraftId: () => 'unused',
+  })
+  assert.equal(blank.ok, false)
+
+  const same = planEventBandCsvImport({
+    csv: csv([...baseHeaders, '固定バンド名'], [[
+      'Same source', '2027-11-01', 'はな', '10', 'event-band-1', 'Fixed',
+    ]]),
+    event, eventDays, bands, members, eventMembers, eventMemberDays,
+    eventBands: existingEventBands, draft: makeBandDraft(), createDraftId: () => 'unused',
+  })
+  assert.equal(same.ok, true, JSON.stringify(same))
+
+  const differentBand = { id: 'band-2', name: 'Different', defaultMemberIds: ['member-1'], active: true }
+  const changed = planEventBandCsvImport({
+    csv: csv([...baseHeaders, '固定バンド名'], [[
+      'Changed source', '2027-11-01', 'はな', '10', 'event-band-1', 'Different',
+    ]]),
+    event, eventDays, bands: [...bands, differentBand], members, eventMembers, eventMemberDays,
+    eventBands: existingEventBands, draft: makeBandDraft(), createDraftId: () => 'unused',
+  })
+  assert.equal(changed.ok, false)
 })
 
 test('Event Band import後の既存save semanticsはStep 5 conditionsを維持する', () => {

@@ -121,6 +121,79 @@ test('Timetable CSVはMain/Sub PA・dynamic Duty列・Issue count列を出力す
   assert.equal(rows.every((row) => /^\d+$/.test(row[header.indexOf('ERROR')])), true)
 })
 
+test('Timetable CSVはPerformance MemberをIDでdedupeし同名の別Memberを保持する', () => {
+  const input = makeInput()
+  const targetBandId = 'event-band-demo-main-01'
+  const targetBand = input.eventBands.find((band) => band.id === targetBandId)
+  const [firstId, secondId] = targetBand.memberIds
+  input.members = input.members.map((member) =>
+    member.id === firstId || member.id === secondId
+      ? { ...member, acaName: '同名Performance' }
+      : member,
+  )
+  input.eventBands = input.eventBands.map((band) => band.id === targetBandId
+    ? { ...band, memberIds: [...band.memberIds, firstId] }
+    : band)
+  const parsed = parseResult(input)
+  if (!parsed) return
+  const [header, ...rows] = parsed.rows
+  const row = rows.find((candidate) => candidate[header.indexOf('EventBand ID')] === targetBandId)
+  assert.equal(row[header.indexOf('メンバー')].split('|').filter((name) => name === '同名Performance').length, 2)
+})
+
+test('Timetable CSVはMain PAをMember IDでdedupeし同名の別Memberを保持する', () => {
+  const input = makeInput()
+  const assignment = input.paAssignments.find((item) => item.id === 'pa-assignment-demo-main-day1-main')
+  const otherMemberId = 'member-demo-04'
+  input.members = input.members.map((member) =>
+    member.id === assignment.memberId || member.id === otherMemberId
+      ? { ...member, acaName: '同名PA' }
+      : member,
+  )
+  input.paAssignments = [
+    ...input.paAssignments,
+    { ...assignment, id: 'pa-same-name-other-member', memberId: otherMemberId },
+    { ...assignment, id: 'pa-duplicate-same-member' },
+  ]
+  const parsed = parseResult(input)
+  if (!parsed) return
+  const [header, ...rows] = parsed.rows
+  const row = rows.find((candidate) => candidate[header.indexOf('ScheduleItem ID')] === 'schedule-demo-main-day1-break')
+  assert.equal(row[header.indexOf('Main PA')], '同名PA|同名PA')
+})
+
+test('Timetable CSVはDutyをMember IDでdedupeし同名の別Memberを保持する', () => {
+  const input = makeInput()
+  const assignment = input.dutyAssignments.find((item) => item.id === 'duty-assignment-demo-photo')
+  const otherMemberId = 'member-demo-02'
+  input.members = input.members.map((member) =>
+    member.id === assignment.memberId || member.id === otherMemberId
+      ? { ...member, acaName: '同名Duty' }
+      : member,
+  )
+  input.dutyAssignments = [
+    ...input.dutyAssignments,
+    { ...assignment, id: 'duty-same-name-other-member', memberId: otherMemberId },
+    { ...assignment, id: 'duty-duplicate-same-member' },
+  ]
+  const parsed = parseResult(input)
+  if (!parsed) return
+  const [header, ...rows] = parsed.rows
+  const row = rows.find((candidate) => candidate[header.indexOf('ScheduleItem ID')] === 'schedule-demo-main-day1-break')
+  assert.equal(row[header.indexOf('当日運営:撮影')], '同名Duty|同名Duty')
+})
+
+test('Timetable CSVもformula-likeな表示値をSpreadsheet-safeに書き出す', () => {
+  const input = makeInput()
+  input.stages = input.stages.map((stage) => stage.id === 'stage-demo-main-day1'
+    ? { ...stage, name: '=Main Stage' }
+    : stage)
+  const parsed = parseResult(input)
+  if (!parsed) return
+  const [header, ...rows] = parsed.rows
+  assert.equal(rows.some((row) => row[header.indexOf('Stage')] === "'=Main Stage"), true)
+})
+
 test('Timetable CSVはunresolved assignmentをwarningとして通知する', () => {
   const input = makeInput()
   input.paAssignments = [...input.paAssignments, {

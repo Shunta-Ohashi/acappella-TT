@@ -2,12 +2,11 @@ import type { Band, BandId, Member } from '../domain/models.ts'
 import { createCommonBandUpdate, type CommonBandDraft } from '../domain/commonBands.ts'
 import {
   parseCsv,
-  parseCsvTable,
-  serializeCsv,
   splitListCell,
   type CsvImportError,
   type CsvImportPlan,
 } from './csv.ts'
+import { parseSpreadsheetCsvTable, serializeSpreadsheetCsv } from './spreadsheetCsv.ts'
 import { resolveMemberList } from './memberResolution.ts'
 import {
   createBandMemberHeaders,
@@ -26,7 +25,7 @@ export const COMMON_BAND_CSV_HEADERS = createCommonBandCsvHeaders()
 const COMMON_BAND_REQUIRED_HEADERS = ['バンド名'] as const
 
 const parseStatus = (value: string): boolean | undefined => {
-  const normalized = value.trim().toLocaleLowerCase()
+  const normalized = value.trim().toLowerCase()
   if (['活動中', 'active', 'true', '1'].includes(normalized)) return true
   if (['活動終了', 'inactive', 'false', '0'].includes(normalized)) return false
   return undefined
@@ -37,7 +36,7 @@ export const createCommonBandCsv = (bands: Band[], members: Member[]): string =>
   const memberColumnCount = Math.max(0, ...bands.map((band) => band.defaultMemberIds.length))
   const headers = createCommonBandCsvHeaders(memberColumnCount)
   const memberHeaders = createBandMemberHeaders(memberColumnCount)
-  return serializeCsv([
+  return serializeSpreadsheetCsv([
     headers,
     ...bands.map((band) => [
       band.name,
@@ -66,7 +65,7 @@ export const planCommonBandCsvImport = ({
 }): CsvImportPlan<Band[]> => {
   const parsed = parseCsv(csv)
   if (!parsed.ok) return parsed
-  const table = parseCsvTable(csv, COMMON_BAND_REQUIRED_HEADERS)
+  const table = parseSpreadsheetCsvTable(csv, COMMON_BAND_REQUIRED_HEADERS)
   if (!table.ok) return table
   const memberHeaderResult = getBandMemberHeaders(
     parsed.rows[0]?.cells.map((header) => header.trim()) ?? [],

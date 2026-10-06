@@ -6,8 +6,9 @@ import {
   type EventBandSettingsItemDraft,
 } from '../domain/eventBandSettings.ts'
 import {
-  parseCsv, parseCsvTable, serializeCsv, splitListCell, type CsvImportError, type CsvImportPlan,
+  parseCsv, splitListCell, type CsvImportError, type CsvImportPlan,
 } from './csv.ts'
+import { parseSpreadsheetCsvTable, serializeSpreadsheetCsv } from './spreadsheetCsv.ts'
 import { getOrderedEventDays, resolveEventDayId } from './eventCsvShared.ts'
 import { resolveMemberList } from './memberResolution.ts'
 import {
@@ -41,7 +42,7 @@ export const createEventBandCsv = ({
   const memberColumnCount = Math.max(0, ...draft.items.map((item) => item.memberIds.length))
   const headers = createEventBandCsvHeaders(memberColumnCount)
   const memberHeaders = createBandMemberHeaders(memberColumnCount)
-  return serializeCsv([
+  return serializeSpreadsheetCsv([
     headers,
     ...draft.items.map((item) => {
       const day = dayById.get(item.eventDayId)
@@ -80,7 +81,7 @@ export const planEventBandCsvImport = ({
 }): CsvImportPlan<EventBandSettingsDraft> => {
   const parsed = parseCsv(csv)
   if (!parsed.ok) return parsed
-  const table = parseCsvTable(csv, EVENT_BAND_REQUIRED_HEADERS)
+  const table = parseSpreadsheetCsvTable(csv, EVENT_BAND_REQUIRED_HEADERS)
   if (!table.ok) return table
   const memberHeaderResult = getBandMemberHeaders(
     parsed.rows[0]?.cells.map((header) => header.trim()) ?? [],
@@ -120,9 +121,14 @@ export const planEventBandCsvImport = ({
       errors.push({ rowNumber: row.rowNumber, column: '開催日ID', message: day.message })
       continue
     }
+    const hasBandIdColumn = Object.hasOwn(row.values, '固定バンドID')
+    const hasBandNameColumn = Object.hasOwn(row.values, '固定バンド名')
+    const hasBandSourceColumns = hasBandIdColumn || hasBandNameColumn
     const explicitBandId = row.values['固定バンドID']?.trim() ?? ''
     const bandName = row.values['固定バンド名']?.trim() ?? ''
-    let bandId = explicitBandId || undefined
+    let bandId = hasBandSourceColumns
+      ? explicitBandId || undefined
+      : existing?.bandId
     if (bandId && !bands.some((band) => band.id === bandId)) {
       errors.push({ rowNumber: row.rowNumber, column: '固定バンドID', message: '固定バンドが見つかりません。' })
       continue
