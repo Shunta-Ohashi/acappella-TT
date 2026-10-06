@@ -112,6 +112,13 @@ export const getFinalCheckRepairTarget = (
   return 6
 }
 
+export const getFinalCheckRepairTargetForIssue = (
+  issue: ScheduleIssue,
+): EventEditorStepId => issue.code === 'PREFERENCE_NOT_MET' &&
+  (issue.memberIds?.length ?? 0) > 0
+    ? 3
+    : getFinalCheckRepairTarget(issue.code)
+
 const severityOrder: Record<IssueSeverity, number> = {
   ERROR: 0,
   WARNING: 1,
@@ -186,6 +193,14 @@ export const createEventFinalCheckReport = (
   const addFinding = (finding: EventFinalCheckFinding) => {
     if (!findings.has(finding.key)) findings.set(finding.key, finding)
   }
+  const getInvalidEventDayReference = (eventDayId: EventDayId) => {
+    if (eventDayIds.has(eventDayId)) return undefined
+    return input.eventDays.some(day => day.id === eventDayId) ? 'foreign' : 'missing'
+  }
+  const getSafeStageScope = (stageId: StageId) => {
+    const stage = stageById.get(stageId)
+    return stage ? { eventDayId: stage.eventDayId, stageId: stage.id } : {}
+  }
   const resolveScope = (issue: ScheduleIssue): {
     eventDayId?: EventDayId
     stageId?: StageId
@@ -217,6 +232,61 @@ export const createEventFinalCheckReport = (
     addFinding({
       key: 'structure|event-days-missing', severity: 'ERROR', category: 'structure',
       code: 'EVENT_DAY_MISSING', message: '開催日が設定されていません。', targetStep: 1,
+    })
+  }
+
+  for (const band of eventBands) {
+    const invalidReference = getInvalidEventDayReference(band.eventDayId)
+    if (!invalidReference) continue
+    addFinding({
+      key: `structure|event-band-${invalidReference}-day|${band.id}`,
+      severity: 'ERROR', category: 'structure',
+      code: invalidReference === 'missing'
+        ? 'EVENT_BAND_EVENT_DAY_NOT_FOUND'
+        : 'EVENT_BAND_EVENT_DAY_MISMATCH',
+      message: invalidReference === 'missing'
+        ? `バンド「${band.name}」の出演日に存在しない開催日が指定されています。`
+        : `バンド「${band.name}」の出演日がこのイベントの開催日ではありません。`,
+      targetStep: 4,
+    })
+  }
+
+  const memberNameById = new Map(input.members.map(member => [member.id, member.realName]))
+  for (const assignment of paAssignments) {
+    const invalidReference = getInvalidEventDayReference(assignment.eventDayId)
+    if (!invalidReference) continue
+    const memberName = memberNameById.get(assignment.memberId) ?? '不明なメンバー'
+    addFinding({
+      key: `structure|pa-${invalidReference}-day|${assignment.id}`,
+      severity: 'ERROR', category: 'structure',
+      code: invalidReference === 'missing'
+        ? 'PA_EVENT_DAY_NOT_FOUND'
+        : 'PA_EVENT_DAY_MISMATCH',
+      message: invalidReference === 'missing'
+        ? `メンバー「${memberName}」のPA担当に存在しない開催日が指定されています。`
+        : `メンバー「${memberName}」のPA担当がこのイベントの開催日ではありません。`,
+      targetStep: 6,
+      ...getSafeStageScope(assignment.stageId),
+    })
+  }
+
+  const dutyTypeNameById = new Map(dutyTypes.map(type => [type.id, type.name]))
+  for (const assignment of dutyAssignments) {
+    const invalidReference = getInvalidEventDayReference(assignment.eventDayId)
+    if (!invalidReference) continue
+    const dutyTypeName = dutyTypeNameById.get(assignment.dutyTypeId) ?? '不明な仕事'
+    const memberName = memberNameById.get(assignment.memberId) ?? '不明なメンバー'
+    addFinding({
+      key: `structure|duty-${invalidReference}-day|${assignment.id}`,
+      severity: 'ERROR', category: 'structure',
+      code: invalidReference === 'missing'
+        ? 'DUTY_EVENT_DAY_NOT_FOUND'
+        : 'DUTY_EVENT_DAY_MISMATCH',
+      message: invalidReference === 'missing'
+        ? `${dutyTypeName}（${memberName}）の担当に存在しない開催日が指定されています。`
+        : `${dutyTypeName}（${memberName}）の担当がこのイベントの開催日ではありません。`,
+      targetStep: 6,
+      ...getSafeStageScope(assignment.stageId),
     })
   }
 
@@ -310,7 +380,7 @@ export const createEventFinalCheckReport = (
             sections,
           }),
           ...(details.length > 0 ? { details } : {}),
-          targetStep: getFinalCheckRepairTarget(issue.code),
+          targetStep: getFinalCheckRepairTargetForIssue(issue),
           ...scope,
         })
       }

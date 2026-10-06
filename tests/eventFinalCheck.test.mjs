@@ -4,8 +4,12 @@ import test from 'node:test'
 import {
   createEventFinalCheckReport,
   getFinalCheckRepairTarget,
+  getFinalCheckRepairTargetForIssue,
 } from '../src/domain/eventFinalCheck.ts'
-import { resolveEventFinalCheckRepairNavigation } from '../src/ui/eventFinalCheckPresentation.ts'
+import {
+  groupEventFinalCheckFindingsForDisplay,
+  resolveEventFinalCheckRepairNavigation,
+} from '../src/ui/eventFinalCheckPresentation.ts'
 
 const makeInput = () => ({
   event: {
@@ -130,6 +134,91 @@ test('EventBand day mismatchはStep 4へ案内する', () => {
   assert.equal(finding?.targetStep, 4)
 })
 
+test('selected EventのEventBand・PA・Dutyがmissing/foreign EventDayを参照したらERRORにする', () => {
+  const cases = [
+    { kind: 'band', dayId: 'missing-day', expectedCode: 'EVENT_BAND_EVENT_DAY_NOT_FOUND',
+      expectedStep: 4 },
+    { kind: 'band', dayId: 'foreign-day', expectedCode: 'EVENT_BAND_EVENT_DAY_MISMATCH',
+      expectedStep: 4 },
+    { kind: 'pa', dayId: 'missing-day', expectedCode: 'PA_EVENT_DAY_NOT_FOUND',
+      expectedStep: 6 },
+    { kind: 'pa', dayId: 'foreign-day', expectedCode: 'PA_EVENT_DAY_MISMATCH',
+      expectedStep: 6 },
+    { kind: 'duty', dayId: 'missing-day', expectedCode: 'DUTY_EVENT_DAY_NOT_FOUND',
+      expectedStep: 6 },
+    { kind: 'duty', dayId: 'foreign-day', expectedCode: 'DUTY_EVENT_DAY_MISMATCH',
+      expectedStep: 6 },
+  ]
+
+  for (const { kind, dayId, expectedCode, expectedStep } of cases) {
+    const input = makeInput()
+    input.eventDays.push({ id: 'foreign-day', eventId: 'event-2',
+      date: '2027-11-02', label: '別イベント', order: 0 })
+    if (kind === 'band') input.eventBands.push({
+      id: `band-${dayId}`, eventId: 'event-1', eventDayId: dayId,
+      name: 'Alpha', memberIds: [], durationMinutes: 10,
+    })
+    if (kind === 'pa') input.paAssignments.push({
+      id: `pa-${dayId}`, eventId: 'event-1', eventDayId: dayId,
+      stageId: 'stage-1', memberId: 'member-a', role: 'main',
+      from: { kind: 'time', time: '10:00' },
+      until: { kind: 'time', time: '11:00' },
+    })
+    if (kind === 'duty') {
+      input.dutyTypes.push({ id: 'duty-a', eventId: 'event-1', name: '撮影', order: 0 })
+      input.dutyAssignments.push({
+        id: `duty-${dayId}`, dutyTypeId: 'duty-a', eventDayId: dayId,
+        stageId: 'stage-1', memberId: 'member-a',
+        from: { kind: 'time', time: '10:00' },
+        until: { kind: 'time', time: '11:00' },
+      })
+    }
+
+    const report = createEventFinalCheckReport(input)
+    const finding = report.findings.find(candidate => candidate.code === expectedCode)
+    assert.deepEqual([finding?.severity, finding?.targetStep],
+      ['ERROR', expectedStep], `${kind}:${dayId}`)
+    assert.ok(report.findings.length > 0, `${kind}:${dayId}`)
+  }
+})
+
+test('PREFERENCE_NOT_METはMember由来をStep 3、Band由来をStep 5へ案内する', () => {
+  const memberPreference = {
+    severity: 'INFO', code: 'PREFERENCE_NOT_MET',
+    message: 'メンバー member-a の出演希望時間外です',
+    memberIds: ['member-a'], eventBandIds: ['band-a'], scheduleItemIds: ['item-a'],
+  }
+  const bandPreference = {
+    severity: 'INFO', code: 'PREFERENCE_NOT_MET',
+    message: 'EventBand band-a の出演希望時間外です',
+    eventBandIds: ['band-a'], scheduleItemIds: ['item-a'],
+  }
+
+  assert.equal(getFinalCheckRepairTargetForIssue(memberPreference), 3)
+  assert.equal(getFinalCheckRepairTargetForIssue(bandPreference), 5)
+
+  const input = makeInput()
+  input.members.push({ id: 'member-a', realName: 'Alice', active: true })
+  input.eventMembers.push({ id: 'event-member-a', eventId: 'event-1',
+    memberId: 'member-a', paCapabilities: { main: true, sub: true } })
+  input.eventMemberDays.push({ id: 'event-member-day-a',
+    eventMemberId: 'event-member-a', eventDayId: 'day-1',
+    participationStatus: 'participating',
+    preferredTimeRange: { from: '11:00', until: '12:00' } })
+  input.eventBands.push({ id: 'band-a', eventId: 'event-1', eventDayId: 'day-1',
+    name: 'Alpha', memberIds: ['member-a'], durationMinutes: 10,
+    preferredTimeRange: { from: '11:00', until: '12:00' } })
+  input.scheduleItems.push({ id: 'performance-a', stageId: 'stage-1', order: 0,
+    kind: 'performance', eventBandId: 'band-a' })
+
+  const preferenceFindings = createEventFinalCheckReport(input).findings
+    .filter(finding => finding.code === 'PREFERENCE_NOT_MET')
+  const memberFinding = preferenceFindings.find(finding => finding.message.includes('Alice'))
+  const bandFinding = preferenceFindings.find(finding => finding.message.includes('Alpha'))
+  assert.deepEqual([memberFinding?.severity, memberFinding?.targetStep], ['INFO', 3])
+  assert.deepEqual([bandFinding?.severity, bandFinding?.targetStep], ['INFO', 5])
+})
+
 test('既存のPerformance間隔WARNINGをseverity変更せずStep 6へ出す', () => {
   const input = makeInput()
   input.members.push({ id: 'member-a', realName: 'Alice', active: true })
@@ -248,14 +337,81 @@ test('Step 6修復先のvalidなEventDay・Stage scopeを保持する', () => {
 
 test('Step 6修復先のstale scopeをstateへ渡さず現在のvalid selectionへ戻す', () => {
   const input = makeInput()
+  input.stages.push({ id: 'stage-1-b', eventDayId: 'day-1', name: 'Stage B', order: 1,
+    plannedStartTime: '10:00', plannedEndTime: '18:00' })
   assert.deepEqual(resolveEventFinalCheckRepairNavigation({
     target: { step: 6, eventDayId: 'deleted-day', stageId: 'deleted-stage' },
     eventId: input.event.id,
     eventDays: input.eventDays,
     stages: input.stages,
     currentEventDayId: 'day-1',
-    currentStageId: 'stage-1',
+    currentStageId: 'stage-1-b',
+  }), { step: 6, eventDayId: 'day-1', stageId: 'stage-1-b' })
+})
+
+test('Step 6修復先scopeなしでは現在Day・Stageを維持する', () => {
+  const input = makeInput()
+  input.stages.push({ id: 'stage-1-b', eventDayId: 'day-1', name: 'Stage B', order: 1,
+    plannedStartTime: '10:00', plannedEndTime: '18:00' })
+  assert.deepEqual(resolveEventFinalCheckRepairNavigation({
+    target: { step: 6 }, eventId: input.event.id,
+    eventDays: input.eventDays, stages: input.stages,
+    currentEventDayId: 'day-1', currentStageId: 'stage-1-b',
+  }), { step: 6, eventDayId: 'day-1', stageId: 'stage-1-b' })
+  assert.deepEqual(resolveEventFinalCheckRepairNavigation({
+    target: { step: 6, eventDayId: 'day-1', stageId: 'deleted-stage' },
+    eventId: input.event.id,
+    eventDays: input.eventDays,
+    stages: input.stages,
+    currentEventDayId: 'day-1',
+    currentStageId: 'stage-1-b',
+  }), { step: 6, eventDayId: 'day-1', stageId: 'stage-1-b' })
+})
+
+test('別のvalid target DayでStageがinvalidならtarget Dayの先頭Stageへ移動する', () => {
+  const input = makeInput()
+  input.eventDays.push({ id: 'day-2', eventId: 'event-1', date: '2027-11-02',
+    label: '2日目', order: 1 })
+  input.stages.push({ id: 'stage-2', eventDayId: 'day-2', name: 'Day 2 Stage', order: 0,
+    plannedStartTime: '10:00', plannedEndTime: '18:00' })
+  assert.deepEqual(resolveEventFinalCheckRepairNavigation({
+    target: { step: 6, eventDayId: 'day-2', stageId: 'deleted-stage' },
+    eventId: input.event.id, eventDays: input.eventDays, stages: input.stages,
+    currentEventDayId: 'day-1', currentStageId: 'stage-1',
+  }), { step: 6, eventDayId: 'day-2', stageId: 'stage-2' })
+})
+
+test('現在Stage自体がstaleなら現在Dayの先頭valid Stageへfallbackする', () => {
+  const input = makeInput()
+  assert.deepEqual(resolveEventFinalCheckRepairNavigation({
+    target: { step: 6, eventDayId: 'deleted-day', stageId: 'deleted-stage' },
+    eventId: input.event.id, eventDays: input.eventDays, stages: input.stages,
+    currentEventDayId: 'day-1', currentStageId: 'deleted-stage',
   }), { step: 6, eventDayId: 'day-1', stageId: 'stage-1' })
+})
+
+test('DayとStageが不一致のfindingもfallback groupへ残す', () => {
+  const input = makeInput()
+  input.eventDays.push({ id: 'day-2', eventId: 'event-1', date: '2027-11-02',
+    label: '2日目', order: 1 })
+  input.stages.push({ id: 'stage-2', eventDayId: 'day-2', name: 'Day 2 Stage', order: 0,
+    plannedStartTime: '10:00', plannedEndTime: '18:00' })
+  const finding = {
+    key: 'mismatched-stage-day', severity: 'ERROR', category: 'schedule',
+    code: 'TEST', message: 'Stage参照が開催日と一致しません。', targetStep: 6,
+    eventDayId: 'day-1', stageId: 'stage-2',
+  }
+
+  const groups = groupEventFinalCheckFindingsForDisplay({
+    findings: [finding], eventDays: input.eventDays, stages: input.stages,
+  })
+  assert.deepEqual(groups.dayGroups[0].stageGroups, [])
+  assert.deepEqual(groups.dayGroups[0].unresolvedStageFindings, [finding])
+  assert.equal(groups.dayGroups.flatMap(group => [
+    ...group.dayOnly,
+    ...group.stageGroups.flatMap(stageGroup => stageGroup.findings),
+    ...group.unresolvedStageFindings,
+  ]).length, 1)
 })
 
 test('Step 2〜5への修復移動ではTimetable scopeを変更対象に含めない', () => {

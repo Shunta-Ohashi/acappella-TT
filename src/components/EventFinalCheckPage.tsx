@@ -7,7 +7,10 @@ import type {
 import type { EventDay, Stage } from '../domain/models'
 import { ISSUE_SEVERITIES } from '../ui/issuePresentation'
 import { eventEditorSteps, type EventEditorStepId } from '../ui/eventEditorSteps'
-import type { EventFinalCheckRepairTarget } from '../ui/eventFinalCheckPresentation'
+import {
+  groupEventFinalCheckFindingsForDisplay,
+  type EventFinalCheckRepairTarget,
+} from '../ui/eventFinalCheckPresentation'
 
 interface EventFinalCheckPageProps {
   report: EventFinalCheckReport
@@ -73,26 +76,12 @@ export function EventFinalCheckPage({
     ? report.findings
     : report.findings.filter(finding => finding.severity === severityFilter),
   [report.findings, severityFilter])
-  const eventDayById = new Map(eventDays.map(day => [day.id, day]))
-  const stageById = new Map(stages.map(stage => [stage.id, stage]))
-  const globalFindings = visibleFindings.filter(finding => !finding.eventDayId)
-  const dayGroups = eventDays.flatMap(eventDay => {
-    const dayFindings = visibleFindings.filter(finding => finding.eventDayId === eventDay.id)
-    if (dayFindings.length === 0) return []
-    const dayOnly = dayFindings.filter(finding => !finding.stageId)
-    const stageGroups = stages.filter(stage => stage.eventDayId === eventDay.id)
-      .flatMap(stage => {
-        const findings = dayFindings.filter(finding => finding.stageId === stage.id)
-        return findings.length > 0 ? [{ stage, findings }] : []
-      })
-    const staleStageFindings = dayFindings.filter(finding =>
-      finding.stageId !== undefined && !stageById.has(finding.stageId),
-    )
-    return [{ eventDay, dayOnly, stageGroups, staleStageFindings }]
-  })
-  const ungrouped = visibleFindings.filter(finding =>
-    finding.eventDayId !== undefined && !eventDayById.has(finding.eventDayId),
-  )
+  const { globalFindings, dayGroups, ungrouped } = useMemo(() =>
+    groupEventFinalCheckFindingsForDisplay({
+      findings: visibleFindings,
+      eventDays,
+      stages,
+    }), [eventDays, stages, visibleFindings])
   const totalCount = report.findings.length
   const hasErrors = report.counts.ERROR > 0
 
@@ -157,7 +146,12 @@ export function EventFinalCheckPage({
                 </div>
               </section>
             )}
-            {dayGroups.map(({ eventDay, dayOnly, stageGroups, staleStageFindings }) => (
+            {dayGroups.map(({
+              eventDay,
+              dayOnly,
+              stageGroups,
+              unresolvedStageFindings,
+            }) => (
               <section key={eventDay.id} className="event-final-check__group">
                 <h3>{eventDay.label || eventDay.date}</h3>
                 {dayOnly.length > 0 && (
@@ -177,11 +171,11 @@ export function EventFinalCheckPage({
                     </div>
                   </section>
                 ))}
-                {staleStageFindings.length > 0 && (
+                {unresolvedStageFindings.length > 0 && (
                   <section className="event-final-check__stage-group">
-                    <h4>不明なStage</h4>
+                    <h4>Stage参照を確認してください</h4>
                     <div className="event-final-check__finding-list">
-                      {staleStageFindings.map(finding => (
+                      {unresolvedStageFindings.map(finding => (
                         <FindingCard key={finding.key} finding={finding} onNavigate={onNavigateToRepair} />
                       ))}
                     </div>
