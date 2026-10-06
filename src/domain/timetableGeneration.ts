@@ -143,6 +143,7 @@ interface ScheduleProposal {
 }
 
 type OrderBlocksByLane = Map<string, string[][]>
+type LaneOrderMode = 'member-separated' | 'original' | 'both'
 
 const laneKey = (stageId: StageId, sectionId?: SectionId): string =>
   `${stageId}\u0000${sectionId ?? ''}`
@@ -235,6 +236,7 @@ const completeLaneOrders = function* (
   template: (EventBand | undefined)[],
   freeBands: EventBand[],
   rank: Map<string, number>,
+  mode: LaneOrderMode,
 ): Generator<EventBand[]> {
   const original = [...template]
   let freeIndex = 0
@@ -244,7 +246,15 @@ const completeLaneOrders = function* (
   if (freeIndex !== freeBands.length || original.some(band => band === undefined)) return
   const originalOrder = original as EventBand[]
   const separated = completeMemberSeparatedOrder(template, freeBands, rank)
-  if (separated && separated.some((band, index) => band.id !== originalOrder[index].id)) {
+  const hasDistinctSeparatedOrder = separated?.some(
+    (band, index) => band.id !== originalOrder[index].id,
+  ) === true
+  if (mode === 'member-separated') {
+    if (hasDistinctSeparatedOrder && separated) yield separated
+    else yield originalOrder
+    return
+  }
+  if (mode === 'both' && hasDistinctSeparatedOrder && separated) {
     yield separated
   }
   yield originalOrder
@@ -255,6 +265,7 @@ const applyLaneOrderBlocks = function* (
   slots: (EventBand | undefined)[],
   reserved: Set<number>,
   blocks: string[][] | undefined,
+  mode: LaneOrderMode,
 ): Generator<EventBand[]> {
   const bands = indexes.map(index => slots[index]).filter((band): band is EventBand => band !== undefined)
   if (bands.length !== indexes.length) return
@@ -271,7 +282,7 @@ const applyLaneOrderBlocks = function* (
       template[position] = bandById.get(bandId)
     }
     const freeBands = bands.filter(band => !fixedPositionByBand.has(band.id))
-    yield* completeLaneOrders(template, freeBands, rank)
+    yield* completeLaneOrders(template, freeBands, rank, mode)
     return
   }
   const blockBandIds = new Set<string>()
@@ -323,7 +334,7 @@ const applyLaneOrderBlocks = function* (
     (rank.get(left.id) ?? 0) - (rank.get(right.id) ?? 0) || left.id.localeCompare(right.id))
   const placeFreeBlocks = function* (blockIndex: number): Generator<EventBand[]> {
     if (blockIndex === freeBlocks.length) {
-      yield* completeLaneOrders(ordered, freeBands, rank)
+      yield* completeLaneOrders(ordered, freeBands, rank, mode)
       return
     }
     const block = freeBlocks[blockIndex]
@@ -462,6 +473,7 @@ const orderStageBands = function* (
   const visitLane = function* (
     laneIndex: number,
     ordered: Map<string, EventBand[]>,
+    mode: LaneOrderMode,
   ): Generator<Map<string, EventBand[]>> {
     if (laneIndex === laneContexts.length) {
       yield ordered
@@ -473,13 +485,23 @@ const orderStageBands = function* (
       context.slots,
       context.reserved,
       orderBlocksByLane.get(context.lane.key),
+      mode,
     )) {
       const next = new Map(ordered)
       next.set(context.lane.key, laneBands)
-      yield* visitLane(laneIndex + 1, next)
+      yield* visitLane(laneIndex + 1, next, mode)
     }
   }
-  yield* visitLane(0, new Map())
+  // Prioritize coherent global strategies before the lane-local Cartesian
+  // product. Otherwise, with five two-choice lanes, the all-original fallback
+  // would be candidate 32 and fall outside the default Schedule search cap.
+  for (const mode of ['member-separated', 'original'] as const) {
+    const first = visitLane(0, new Map(), mode).next()
+    if (!first.done) yield first.value
+  }
+  // Retain every mixed separated/original and free-block combination after the
+  // two global fallbacks. Proposal-level deduplication handles repeated modes.
+  yield* visitLane(0, new Map(), 'both')
 }
 
 const buildProposals = function* ({
