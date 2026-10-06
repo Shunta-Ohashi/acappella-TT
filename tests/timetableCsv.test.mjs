@@ -211,6 +211,81 @@ test('Timetable CSVはunresolved assignmentをwarningとして通知する', () 
   if (result.ok) assert.equal(result.warnings.some((warning) => warning.includes('参照切れ')), true)
 })
 
+test('Timetable CSVはselected Eventの不正なPA scopeをwarningにする', () => {
+  const variants = [
+    (assignment) => ({ ...assignment, id: 'pa-missing-day', eventDayId: 'missing-day' }),
+    (assignment) => ({ ...assignment, id: 'pa-missing-stage', stageId: 'missing-stage' }),
+    (assignment, input) => ({
+      ...assignment,
+      id: 'pa-day-stage-mismatch',
+      eventDayId: input.eventDays.find((day) =>
+        day.eventId === input.event.id && day.id !== assignment.eventDayId,
+      ).id,
+    }),
+  ]
+  for (const createInvalid of variants) {
+    const input = makeInput()
+    const assignment = input.paAssignments.find((item) => item.eventId === input.event.id)
+    input.paAssignments = [...input.paAssignments, createInvalid(assignment, input)]
+    const result = createTimetableCsv(input)
+    assert.equal(result.ok, true, JSON.stringify(result))
+    if (result.ok) assert.equal(result.warnings.some((warning) => warning.includes('参照切れ')), true)
+  }
+})
+
+test('Timetable CSVはselected Eventに関係する不正なDuty scopeをwarningにする', () => {
+  const variants = [
+    (assignment) => ({ ...assignment, id: 'duty-missing-stage', stageId: 'missing-stage' }),
+    (assignment, input) => ({
+      ...assignment,
+      id: 'duty-day-stage-mismatch',
+      eventDayId: input.eventDays.find((day) =>
+        day.eventId === input.event.id && day.id !== assignment.eventDayId,
+      ).id,
+    }),
+  ]
+  for (const createInvalid of variants) {
+    const input = makeInput()
+    const eventDutyTypeIds = new Set(input.dutyTypes
+      .filter((type) => type.eventId === input.event.id)
+      .map((type) => type.id))
+    const assignment = input.dutyAssignments.find((item) => eventDutyTypeIds.has(item.dutyTypeId))
+    input.dutyAssignments = [...input.dutyAssignments, createInvalid(assignment, input)]
+    const result = createTimetableCsv(input)
+    assert.equal(result.ok, true, JSON.stringify(result))
+    if (result.ok) assert.equal(result.warnings.some((warning) => warning.includes('参照切れ')), true)
+  }
+})
+
+test('Timetable CSVは正常assignmentと完全にforeignなPA・Dutyで不要なwarningを出さない', () => {
+  const input = makeInput()
+  const foreignDay = input.eventDays.find((day) => day.eventId !== input.event.id)
+  const foreignStage = input.stages.find((stage) => stage.eventDayId === foreignDay.id)
+  const paTemplate = input.paAssignments.find((item) => item.eventId === input.event.id)
+  const dutyTemplate = input.dutyAssignments[0]
+  const foreignDutyType = {
+    id: 'foreign-duty-type', eventId: foreignDay.eventId, name: 'Foreign', order: 0,
+  }
+  input.paAssignments = [...input.paAssignments, {
+    ...paTemplate,
+    id: 'foreign-pa',
+    eventId: foreignDay.eventId,
+    eventDayId: foreignDay.id,
+    stageId: foreignStage.id,
+  }]
+  input.dutyTypes = [...input.dutyTypes, foreignDutyType]
+  input.dutyAssignments = [...input.dutyAssignments, {
+    ...dutyTemplate,
+    id: 'foreign-duty',
+    dutyTypeId: foreignDutyType.id,
+    eventDayId: foreignDay.id,
+    stageId: foreignStage.id,
+  }]
+  const result = createTimetableCsv(input)
+  assert.equal(result.ok, true, JSON.stringify(result))
+  if (result.ok) assert.deepEqual(result.warnings, [])
+})
+
 test('Timetable CSVはinvalid Stageをsilent skipせずexport全体を失敗させる', () => {
   const input = makeInput()
   const target = input.scheduleItems.find((item) => item.kind === 'performance')

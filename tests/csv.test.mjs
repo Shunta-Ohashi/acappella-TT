@@ -95,3 +95,29 @@ test('不足headerと重複headerをrejectする', () => {
   if (result.ok) return
   assert.equal(result.errors.length, 2)
 })
+
+test('table parserはheaderを超えるdata cellをrejectし、不足cellだけを空欄補完する', () => {
+  for (const source of [
+    'a,b,c\n1,2,3,4',
+    'a,b,c\n1,2,3,',
+  ]) {
+    const result = parseCsvTable(source, ['a'])
+    assert.equal(result.ok, false)
+    if (!result.ok) {
+      assert.equal(result.errors[0].rowNumber, 2)
+      assert.equal(result.errors[0].column, '列数')
+    }
+  }
+
+  const fewer = parseCsvTable('a,b,c\n1,2', ['a'])
+  assert.equal(fewer.ok, true)
+  if (fewer.ok) assert.deepEqual(fewer.rows[0].values, { a: '1', b: '2', c: '' })
+
+  const quotedComma = parseCsvTable('a,b,c\n"1,2",3,4', ['a'])
+  assert.equal(quotedComma.ok, true)
+  if (quotedComma.ok) assert.equal(quotedComma.rows[0].values.a, '1,2')
+
+  const quotedNewline = parseCsvTable('a,b,c\n"line 1\nline 2",3,4', ['a'])
+  assert.equal(quotedNewline.ok, true)
+  if (quotedNewline.ok) assert.equal(quotedNewline.rows[0].values.a, 'line 1\nline 2')
+})

@@ -3,6 +3,10 @@ import type {
   Member, PaAssignment, ScheduleItem, Section, Stage,
 } from '../domain/models.ts'
 import { detectScheduleIssues } from '../domain/issues.ts'
+import {
+  getDutyAssignmentScopeStatus,
+  getDutyAssignmentsForEvent,
+} from '../domain/dutyAssignments.ts'
 import { calculateEventDayTimelines } from '../domain/timetable.ts'
 import { formatMinuteAsLocalTime } from '../domain/timeline.ts'
 import { getInterSectionBreakPresentation } from '../ui/interSectionBreakPresentation.ts'
@@ -63,6 +67,29 @@ export const createTimetableCsv = (input: TimetableCsvInput): TimetableCsvResult
     ...LAST_HEADERS,
   ]]
   const warnings = new Set<string>()
+  const assignmentWarning = 'Grid外または参照切れの担当はCSVの各行に完全には反映されていません。'
+  const eventDayById = new Map(input.eventDays.map((day) => [day.id, day]))
+  const stageById = new Map(input.stages.map((stage) => [stage.id, stage]))
+  const hasInvalidPaScope = input.paAssignments
+    .filter((assignment) => assignment.eventId === input.event.id)
+    .some((assignment) => {
+      const eventDay = eventDayById.get(assignment.eventDayId)
+      const stage = stageById.get(assignment.stageId)
+      return !eventDay || eventDay.eventId !== input.event.id || !stage ||
+        stage.eventDayId !== assignment.eventDayId
+    })
+  const hasInvalidDutyScope = getDutyAssignmentsForEvent({
+    event: input.event,
+    stages,
+    dutyTypes: input.dutyTypes,
+    dutyAssignments: input.dutyAssignments,
+  }).some((assignment) => !getDutyAssignmentScopeStatus({
+    assignment,
+    event: input.event,
+    eventDays: input.eventDays,
+    stages: input.stages,
+  }).valid)
+  if (hasInvalidPaScope || hasInvalidDutyScope) warnings.add(assignmentWarning)
 
   for (const eventDay of eventDays) {
     let timelines
@@ -121,7 +148,7 @@ export const createTimetableCsv = (input: TimetableCsvInput): TimetableCsvResult
         workspace.unresolvedDutyAssignments.length > 0 ||
         workspace.offGridDutyAssignments.length > 0
       ) {
-        warnings.add('Grid外または参照切れの担当はCSVの各行に完全には反映されていません。')
+        warnings.add(assignmentWarning)
       }
       for (const row of workspace.rows) {
         const item = row.scheduleItem

@@ -13,11 +13,12 @@ test('Spreadsheet exportはformula prefixを実行されないtextへ変換す�
   for (const value of ['=LOVE', '+TEST', '-NAME', '@USER']) {
     assert.equal(protectSpreadsheetCell(value), `'${value}`)
   }
+  assert.equal(protectSpreadsheetCell("'original"), "''original")
   assert.equal(protectSpreadsheetCell('通常値'), '通常値')
 })
 
 test('Spreadsheet-safe ExportからImportするとformula-likeな正当値を復元する', () => {
-  const values = ['=LOVE', '+TEST', '-NAME', '@USER', '通常値', "'=先頭apostrophe"]
+  const values = ['=LOVE', '+TEST', '-NAME', '@USER', '通常値', "'original", "'=先頭apostrophe"]
   const exported = serializeSpreadsheetCsv([['名前'], ...values.map((value) => [value])])
   const raw = parseCsv(exported)
   assert.equal(raw.ok, true)

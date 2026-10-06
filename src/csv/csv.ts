@@ -143,6 +143,15 @@ export const parseCsvTable = (
       column: header,
       message: '必須列がありません。',
     })),
+    ...dataRows.flatMap((row): CsvImportError[] =>
+      row.cells.length > headers.length
+        ? [{
+            rowNumber: row.rowNumber,
+            column: '列数',
+            message: 'データ列がヘッダーより多くあります。',
+          }]
+        : [],
+    ),
   ]
   if (errors.length > 0) return { ok: false, errors }
 

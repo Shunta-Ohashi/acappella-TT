@@ -10,7 +10,7 @@ import {
 } from './csv.ts'
 import { parseSpreadsheetCsvTable, serializeSpreadsheetCsv } from './spreadsheetCsv.ts'
 import { getOrderedEventDays, resolveEventDayId } from './eventCsvShared.ts'
-import { resolveMemberList } from './memberResolution.ts'
+import { getCsvMemberName, resolveMemberList } from './memberResolution.ts'
 import {
   createBandMemberHeaders,
   getBandMemberHeaders,
@@ -51,7 +51,7 @@ export const createEventBandCsv = ({
         day?.date ?? '',
         ...memberHeaders.map((_, index) => {
           const member = memberById.get(item.memberIds[index])
-          return member?.acaName ?? member?.realName ?? ''
+          return getCsvMemberName(member)
         }),
         item.durationMinutes,
         item.bandId ? bandById.get(item.bandId)?.name ?? '' : '',

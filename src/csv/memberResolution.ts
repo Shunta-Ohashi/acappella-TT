@@ -4,6 +4,10 @@ export type MemberResolution =
   | { ok: true; memberId: MemberId }
   | { ok: false; message: string }
 
+export const getCsvMemberName = (
+  member: Pick<Member, 'realName'> | undefined,
+): string => member?.realName ?? ''
+
 export const resolveMemberId = (
   idValue: string,
   nameValue: string,

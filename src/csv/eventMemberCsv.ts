@@ -16,7 +16,7 @@ import {
   parsePreferredTimeRangeCell,
   resolveEventDayId,
 } from './eventCsvShared.ts'
-import { resolveMemberId } from './memberResolution.ts'
+import { getCsvMemberName, resolveMemberId } from './memberResolution.ts'
 
 export const EVENT_MEMBER_CSV_HEADERS = [
   'メンバー', '開催日', '参加状態', 'Main PA', 'Sub PA', '出演可能時間帯',
@@ -57,7 +57,7 @@ export const createEventMemberCsv = ({
       return memberDraft.days.map((dayDraft) => {
         const day = dayById.get(dayDraft.eventDayId)
         return [
-          member?.acaName ?? member?.realName ?? '',
+          getCsvMemberName(member),
           day?.date ?? '',
           dayDraft.participationStatus === 'participating' ? '参加'
             : dayDraft.participationStatus === 'absent' ? '不参加' : '未定',

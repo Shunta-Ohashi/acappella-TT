@@ -7,7 +7,7 @@ import {
   type CsvImportPlan,
 } from './csv.ts'
 import { parseSpreadsheetCsvTable, serializeSpreadsheetCsv } from './spreadsheetCsv.ts'
-import { resolveMemberList } from './memberResolution.ts'
+import { getCsvMemberName, resolveMemberList } from './memberResolution.ts'
 import {
   createBandMemberHeaders,
   getBandMemberHeaders,
@@ -42,7 +42,7 @@ export const createCommonBandCsv = (bands: Band[], members: Member[]): string =>
       band.name,
       ...memberHeaders.map((_, index) => {
         const member = memberById.get(band.defaultMemberIds[index])
-        return member?.acaName ?? member?.realName ?? ''
+        return getCsvMemberName(member)
       }),
       band.active ? '活動中' : '活動終了',
       band.notes ?? '',

@@ -160,7 +160,7 @@ test('Common Band exportは最低7つの名前列と右端の技術列を持つ'
   assert.equal(parsed.ok, true)
   if (!parsed.ok) return
   assert.deepEqual(parsed.rows[0].cells, [...COMMON_BAND_CSV_HEADERS])
-  assert.deepEqual(parsed.rows[1].cells.slice(0, 4), ['Choir', 'はな', '', ''])
+  assert.deepEqual(parsed.rows[1].cells.slice(0, 4), ['Choir', '佐藤 花子', '', ''])
   assert.deepEqual(parsed.rows[0].cells.slice(-2), ['バンドID', 'メンバーID一覧'])
   assert.deepEqual(parsed.rows[1].cells.slice(-2), ['band-1', 'member-1'])
 })
@@ -175,7 +175,7 @@ test('Common Band exportは最大Member数に合わせて8列以上へ拡張す�
   assert.equal(parsed.ok, true)
   if (!parsed.ok) return
   assert.equal(parsed.rows[0].cells.includes('メンバー9'), true)
-  assert.equal(parsed.rows[1].cells[9], 'Member 9')
+  assert.equal(parsed.rows[1].cells[9], 'Real 9')
   assert.equal(parsed.rows[0].cells.at(-1), 'メンバーID一覧')
 })
 
@@ -188,6 +188,58 @@ test('Common BandのExportは技術IDを使ってそのまま再Importできる'
   assert.equal(result.createdCount, 0)
   assert.equal(result.updatedCount, bands.length)
   assert.deepEqual(JSON.parse(JSON.stringify(result.candidate)), bands)
+})
+
+test('Common Bandのhuman member列は本名を使いcross-field collisionを避ける', () => {
+  const configuredMembers = [
+    { id: 'member-a', realName: '山田太郎', acaName: 'たろう', active: true },
+    { id: 'member-b', realName: 'たろう', acaName: 'びー', active: true },
+  ]
+  const configuredBand = {
+    id: 'band-cross-field', name: 'Cross field', defaultMemberIds: ['member-a'], active: true,
+  }
+  const exported = parseCsv(createCommonBandCsv([configuredBand], configuredMembers))
+  assert.equal(exported.ok, true)
+  if (!exported.ok) return
+  assert.equal(exported.rows[1].cells[1], '山田太郎')
+
+  const imported = planCommonBandCsvImport({
+    csv: csv(['バンド名', 'メンバー1'], [['Cross field', exported.rows[1].cells[1]]]),
+    bands: [], members: configuredMembers, createBandId: () => 'imported-band',
+  })
+  assert.equal(imported.ok, true, JSON.stringify(imported))
+  if (imported.ok) assert.deepEqual(imported.candidate[0].defaultMemberIds, ['member-a'])
+
+  const ambiguous = planCommonBandCsvImport({
+    csv: csv(['バンド名', 'メンバー1'], [['Ambiguous', '山田太郎']]),
+    bands: [],
+    members: [...configuredMembers, {
+      id: 'member-c', realName: '山田太郎', acaName: 'しー', active: true,
+    }],
+    createBandId: () => 'ambiguous-band',
+  })
+  assert.equal(ambiguous.ok, false)
+})
+
+test('Common Bandのformula-likeなhuman文字列をSpreadsheet-safeにexportする', () => {
+  const configuredMembers = [{ id: 'formula-member', realName: '+MEMBER', active: true }]
+  const configuredBand = {
+    id: 'formula-band', name: '=BAND', defaultMemberIds: ['formula-member'], active: true,
+  }
+  const csvSource = createCommonBandCsv([configuredBand], configuredMembers)
+  const exported = parseCsv(csvSource)
+  assert.equal(exported.ok, true)
+  if (!exported.ok) return
+  assert.deepEqual(exported.rows[1].cells.slice(0, 2), ["'=BAND", "'+MEMBER"])
+
+  const imported = planCommonBandCsvImport({
+    csv: csvSource,
+    bands: [configuredBand],
+    members: configuredMembers,
+    createBandId: () => 'unused',
+  })
+  assert.equal(imported.ok, true, JSON.stringify(imported))
+  if (imported.ok) assert.equal(imported.candidate[0].name, '=BAND')
 })
 
 test('Common Bandはバンド名と名前列だけで作成し途中の空cellを無視する', () => {
