@@ -3,13 +3,13 @@ import type {
   EventMemberDay, Member, PaAssignment, ScheduleItem, Section, Stage,
 } from '../domain/models.ts'
 import { detectScheduleIssues } from '../domain/issues.ts'
+import { compareStableText } from '../domain/schedule.ts'
 import {
   getDutyAssignmentScopeStatus,
   getDutyAssignmentsForEvent,
 } from '../domain/dutyAssignments.ts'
 import { calculateEventDayTimelines } from '../domain/timetable.ts'
 import { formatMinuteAsLocalTime } from '../domain/timeline.ts'
-import { getOrderedEventDays } from '../csv/eventCsvShared.ts'
 import { getMemberDisplayName } from '../ui/eventBandPresentation.ts'
 import { createTimetableWorkspaceRows } from '../ui/timetableWorkspaceRows.ts'
 
@@ -53,6 +53,17 @@ export interface TimetableDutyColumn {
 
 const FIXED_HEADERS = ['スタート時間', '内容', 'Main PA', 'Sub PA'] as const
 
+const compareOrderedIds = (
+  left: { order: number; id: string },
+  right: { order: number; id: string },
+): number => left.order - right.order || compareStableText(left.id, right.id)
+
+const compareAssignments = (
+  left: { memberId: string; id: string },
+  right: { memberId: string; id: string },
+): number =>
+  compareStableText(left.memberId, right.memberId) || compareStableText(left.id, right.id)
+
 const createUniqueLabel = (
   base: string,
   used: Set<string>,
@@ -86,7 +97,10 @@ export const createTimetableDutyColumns = (
 
 const sanitizeWorksheetNamePart = (value: string): string =>
   [...value]
-    .filter((character) => (character.codePointAt(0) ?? 0) > 0x1f)
+    .filter((character) => {
+      const codePoint = character.codePointAt(0) ?? 0
+      return codePoint > 0x1f && !(codePoint >= 0xd800 && codePoint <= 0xdfff)
+    })
     .join('')
     .replace(/[:\\/?*[\]]/g, '_')
     .trim()
@@ -94,19 +108,28 @@ const sanitizeWorksheetNamePart = (value: string): string =>
 
 const MAX_WORKSHEET_NAME_LENGTH = 31
 
+const truncateWorksheetNameSafely = (value: string, maxLength: number): string => {
+  if (value.length <= maxLength) return value
+  const truncated = value.slice(0, maxLength)
+  const lastCodeUnit = truncated.charCodeAt(truncated.length - 1)
+  return lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff
+    ? truncated.slice(0, -1)
+    : truncated
+}
+
 const finalizeWorksheetName = (
   value: string,
   fallback: string,
   maxLength = MAX_WORKSHEET_NAME_LENGTH,
 ): string => {
   const normalize = (candidate: string): string =>
-    sanitizeWorksheetNamePart(candidate)
-      .slice(0, maxLength)
+    truncateWorksheetNameSafely(sanitizeWorksheetNamePart(candidate), maxLength)
       .trim()
       .replace(/^'+|'+$/g, '')
       .trim()
 
-  return normalize(value) || normalize(fallback) || 'Sheet'.slice(0, maxLength)
+  return normalize(value) || normalize(fallback) ||
+    truncateWorksheetNameSafely('Sheet', maxLength)
 }
 
 export const createTimetableWorksheetNames = (
@@ -161,21 +184,27 @@ const getUniqueEventBandMemberNames = (
 export const createTimetableWorkbookModel = (
   input: TimetableWorkbookInput,
 ): TimetableWorkbookModelResult => {
-  const eventDays = getOrderedEventDays(input.event, input.eventDays)
+  const eventDays = input.eventDays
+    .filter((day) => day.eventId === input.event.id)
+    .sort((left, right) =>
+      left.order - right.order ||
+      compareStableText(left.date, right.date) ||
+      compareStableText(left.id, right.id),
+    )
   const eventDayIds = new Set(eventDays.map((day) => day.id))
   const stages = input.stages.filter((stage) => eventDayIds.has(stage.eventDayId))
   const eventBands = input.eventBands.filter((band) => band.eventId === input.event.id)
   const dutyTypes = input.dutyTypes.filter((type) => type.eventId === input.event.id)
-    .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+    .sort(compareOrderedIds)
   const eventPaAssignments = input.paAssignments.filter((assignment) =>
     assignment.eventId === input.event.id,
-  )
+  ).sort(compareAssignments)
   const eventDutyAssignments = getDutyAssignmentsForEvent({
     event: input.event,
     stages,
     dutyTypes: input.dutyTypes,
     dutyAssignments: input.dutyAssignments,
-  })
+  }).sort(compareAssignments)
   const memberById = new Map(input.members.map((member) => [member.id, member]))
   const paById = new Map(eventPaAssignments.map((assignment) => [assignment.id, assignment]))
   const dutyById = new Map(eventDutyAssignments.map((assignment) => [assignment.id, assignment]))
@@ -191,7 +220,7 @@ export const createTimetableWorkbookModel = (
   ]
   const orderedScopes = eventDays.flatMap((eventDay) =>
     stages.filter((stage) => stage.eventDayId === eventDay.id)
-      .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+      .sort(compareOrderedIds)
       .map((stage) => ({ eventDay, stage })),
   )
   const sheetNames = createTimetableWorksheetNames(orderedScopes.map(({ eventDay, stage }) => ({
@@ -244,7 +273,7 @@ export const createTimetableWorkbookModel = (
       }
     }
     const dayStages = stages.filter((stage) => stage.eventDayId === eventDay.id)
-      .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+      .sort(compareOrderedIds)
     const issues = detectScheduleIssues({
       event: input.event,
       members: input.members,

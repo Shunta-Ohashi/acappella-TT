@@ -38,6 +38,20 @@ const getModel = (input = makeInput()) => {
   return result.ok ? result.model : undefined
 }
 
+const hasUnpairedSurrogate = (value) => {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index)
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1)
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true
+      index += 1
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      return true
+    }
+  }
+  return false
+}
+
 test('Workbook modelはEventDay・Stage順に全StageのSheetを作り空Stageもheader-onlyにする', () => {
   const input = makeInput()
   input.eventDays = [...input.eventDays].reverse()
@@ -69,10 +83,12 @@ test('Sheet名は通常名・31文字以下・31文字超を安全な長さで�
   const names = createTimetableWorksheetNames([
     { date: '2027-11-01', stageName: 'Main Stage' },
     { date: '', stageName: exact },
+    { date: '', stageName: 'B'.repeat(32) },
     { date: '2027-11-02', stageName: 'Very Long Stage Name '.repeat(3) },
   ])
   assert.deepEqual(names.slice(0, 2), ['2027-11-01 Main Stage', exact])
-  assert.equal(names[2].length, 31)
+  assert.equal(names[2], 'B'.repeat(31))
+  assert.equal(names[3].length, 31)
 })
 
 test('Sheet名はtruncate後・suffix後もapostrophe・禁止文字・control文字を残さない', () => {
@@ -100,6 +116,28 @@ test('Sheet名はcase-insensitive collisionを連番化し長い名前でも31�
   assert.match(names[1], /\(2\)$/)
   assert.match(names[3], /\(2\)$/)
   assert.equal(names.every((name) => name.length <= 31), true)
+})
+
+test('Sheet名は日本語とemojiをUTF-16の31文字境界で分断せずsuffixも安全に付ける', () => {
+  const splitByOldSlice = `${'A'.repeat(30)}😀末尾`
+  const longEmojiName = `音楽祭${'🎤'.repeat(20)}終演`
+  const names = createTimetableWorksheetNames([
+    { date: '', stageName: '日'.repeat(32) },
+    { date: '', stageName: splitByOldSlice },
+    { date: '', stageName: longEmojiName },
+    { date: '', stageName: longEmojiName },
+    { date: '', stageName: `${'A'.repeat(28)}😀'末尾` },
+    { date: '', stageName: `${'B'.repeat(27)}🎵:/?*[]\\末尾` },
+  ])
+  assert.equal(names[0], '日'.repeat(31))
+  assert.equal(names[1], 'A'.repeat(30))
+  assert.equal(names[4], `${'A'.repeat(28)}😀`)
+  assert.match(names[3], /\(2\)$/)
+  assert.equal(names.every((name) => name.length > 0 && name.length <= 31), true)
+  assert.equal(names.every((name) => !hasUnpairedSurrogate(name)), true)
+  assert.equal(names.every((name) => !name.includes('\ufffd')), true)
+  assert.equal(names.every((name) => !/^'|'$/.test(name)), true)
+  assert.equal(names.every((name) => !/[:\\/?*[\]]/.test(name)), true)
 })
 
 test('Sheet名の入力とfallbackが空になっても安全な既定名を使う', () => {
@@ -196,8 +234,65 @@ test('PA/Dutyは同一rowの別Memberを区切り、同一Member IDをdedupeす�
   if (!model) return
   const sheet = model.sheets.find((candidate) => candidate.stageId === 'stage-demo-main-day1')
   const breakRow = sheet.rows.find((row) => row[sheet.headers.indexOf('内容')] === '昼休憩')
-  assert.equal(breakRow[sheet.headers.indexOf('Main PA')].split('|').length, 2)
-  assert.equal(breakRow[sheet.headers.indexOf('撮影')].split('|').length, 2)
+  const reversed = getModel({
+    ...input,
+    paAssignments: [...input.paAssignments].reverse(),
+    dutyAssignments: [...input.dutyAssignments].reverse(),
+  })
+  const reversedSheet = reversed.sheets.find((candidate) =>
+    candidate.stageId === 'stage-demo-main-day1')
+  const reversedBreakRow = reversedSheet.rows.find((row) =>
+    row[reversedSheet.headers.indexOf('内容')] === '昼休憩')
+  for (const headerName of ['Main PA', '撮影']) {
+    const cell = breakRow[sheet.headers.indexOf(headerName)]
+    assert.equal(cell.split('|').length, 2)
+    assert.equal(reversedBreakRow[reversedSheet.headers.indexOf(headerName)], cell)
+  }
+})
+
+test('Workbook表示はdomain collectionの入力配列順とlocaleに依存しない', () => {
+  const input = makeInput()
+  const targetDayIds = input.eventDays.filter((day) => day.eventId === input.event.id)
+    .map((day) => day.id)
+  input.eventDays = input.eventDays.map((day) => targetDayIds.includes(day.id)
+    ? { ...day, order: 0, date: '2027-11-01' }
+    : day)
+  const firstDayId = targetDayIds[0]
+  input.stages = input.stages.map((stage) => stage.eventDayId === firstDayId
+    ? { ...stage, order: 0 }
+    : stage)
+  input.dutyTypes = input.dutyTypes.map((type) => type.eventId === input.event.id
+    ? { ...type, order: 0 }
+    : type)
+
+  const pa = input.paAssignments.find((assignment) =>
+    assignment.eventId === input.event.id && assignment.role === 'main')
+  const duty = input.dutyAssignments.find((assignment) =>
+    assignment.eventDayId === pa.eventDayId && assignment.stageId === pa.stageId)
+  input.paAssignments = [
+    ...input.paAssignments,
+    { ...pa, id: 'pa-determinism-z', memberId: 'member-demo-04' },
+    { ...pa, id: 'pa-determinism-a', memberId: 'member-demo-03' },
+  ]
+  input.dutyAssignments = [
+    ...input.dutyAssignments,
+    { ...duty, id: 'duty-determinism-z', memberId: 'member-demo-04' },
+    { ...duty, id: 'duty-determinism-a', memberId: 'member-demo-03' },
+  ]
+
+  const baseline = getModel(input)
+  const reordered = getModel({
+    ...input,
+    eventDays: [...input.eventDays].reverse(),
+    stages: [...input.stages].reverse(),
+    dutyTypes: [...input.dutyTypes].reverse(),
+    paAssignments: [...input.paAssignments].reverse(),
+    dutyAssignments: [...input.dutyAssignments].reverse(),
+    scheduleItems: [...input.scheduleItems].reverse(),
+    members: [...input.members].reverse(),
+    eventBands: [...input.eventBands].reverse(),
+  })
+  assert.deepEqual(reordered, baseline)
 })
 
 test('selected Eventのbroken担当だけwarningにしforeign PA/Dutyをrow・warningから隔離する', () => {
@@ -280,6 +375,32 @@ test('ExcelJS生成は複数Sheet・format・freeze・filter・formula-like stri
   assert.ok(worksheet.autoFilter)
   assert.equal(worksheet.getRow(1).font.bold, true)
   assert.equal(worksheet.getColumn(1).width, 12)
+})
+
+test('Unicode Sheet名をExcelJSで生成・再読込して文字列とSheet数を維持する', async () => {
+  const names = createTimetableWorksheetNames([
+    { date: '', stageName: `${'A'.repeat(29)}😀末尾` },
+    { date: '', stageName: `音楽祭${'🎵'.repeat(20)}` },
+  ])
+  const model = {
+    sheets: names.map((name, index) => ({
+      name,
+      eventDayId: `day-${index}`,
+      stageId: `stage-${index}`,
+      headers: ['内容'],
+      rows: [[`演奏${index + 1}`]],
+    })),
+    warnings: [],
+    rowCount: names.length,
+  }
+  const content = await createTimetableWorkbookXlsx(model)
+  const ExcelJS = (await import('exceljs')).default
+  const workbook = new ExcelJS.Workbook()
+  await workbook.xlsx.load(content)
+  assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), names)
+  assert.equal(workbook.worksheets.length, 2)
+  assert.equal(workbook.worksheets.every((sheet) => !hasUnpairedSurrogate(sheet.name)), true)
+  assert.equal(workbook.worksheets.every((sheet) => !sheet.name.includes('\ufffd')), true)
 })
 
 test('Excel filenameとMIMEは安全な.xlsx download用になる', () => {
