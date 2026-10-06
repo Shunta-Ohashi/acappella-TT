@@ -25,6 +25,9 @@ export interface ScheduleLane {
   afterSectionId?: SectionId
 }
 
+export const compareStableText = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0
+
 export const compareScheduleItemOrder = (
   left: Pick<ScheduleItem, 'order'>,
   right: Pick<ScheduleItem, 'order'>,
@@ -132,8 +135,8 @@ export const getEventDaysForEvent = (
   .filter(eventDay => eventDay.eventId === eventId)
   .sort((left, right) =>
     left.order - right.order ||
-    left.date.localeCompare(right.date) ||
-    left.id.localeCompare(right.id),
+    compareStableText(left.date, right.date) ||
+    compareStableText(left.id, right.id),
   )
 
 export const getStagesForEventDay = (
@@ -142,7 +145,7 @@ export const getStagesForEventDay = (
 ): Stage[] => stages
   .filter(stage => stage.eventDayId === eventDayId)
   .sort((left, right) =>
-    left.order - right.order || left.id.localeCompare(right.id),
+    left.order - right.order || compareStableText(left.id, right.id),
   )
 
 export const getSectionsForStage = (
@@ -151,7 +154,7 @@ export const getSectionsForStage = (
 ): Section[] => sections
   .filter(section => section.stageId === stageId)
   .sort((left, right) =>
-    left.order - right.order || left.id.localeCompare(right.id),
+    left.order - right.order || compareStableText(left.id, right.id),
   )
 
 export const resolveTimetableSelection = ({

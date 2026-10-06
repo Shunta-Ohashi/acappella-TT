@@ -11,6 +11,7 @@ import type {
 } from './models'
 import {
   compareScheduleItemOrder,
+  getSectionsForStage,
   isValidScheduleItemSectionAssignment,
 } from './schedule.ts'
 
@@ -69,11 +70,7 @@ export const calculateStageTimeline = ({
 }: CalculateStageTimelineInput): CalculatedScheduleItem[] => {
   const eventBandsById = new Map(eventBands.map(eventBand => [eventBand.id, eventBand]))
   const stageScheduleItems = scheduleItems.filter(item => item.stageId === stage.id)
-  const stageSections = sections
-    .filter(section => section.stageId === stage.id)
-    .sort((left, right) =>
-      left.order - right.order || left.id.localeCompare(right.id),
-    )
+  const stageSections = getSectionsForStage(sections, stage.id)
   const calculatedItems: CalculatedScheduleItem[] = []
   let currentMinute = parseLocalTimeToMinute(stage.plannedStartTime)
 
