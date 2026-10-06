@@ -166,18 +166,18 @@ export function TimetablePreSharePage({ snapshot }: TimetablePreSharePageProps) 
                           <span>出演</span>{entry.members.join(' / ')}
                         </p>
                       )}
-                      <dl className="pre-share-entry__assignments">
-                        <AssignmentLine label="Main PA" names={entry.mainPa} />
-                        <AssignmentLine label="Sub PA" names={entry.subPa} />
-                        {entry.duties.map((duty, dutyIndex) => (
-                          <AssignmentLine
-                            key={`${duty.name}:${dutyIndex}`}
-                            label={duty.name}
-                            names={duty.members}
-                          />
-                        ))}
-                      </dl>
                     </div>
+                    <dl className="pre-share-entry__assignments">
+                      <AssignmentLine label="Main PA" names={entry.mainPa} />
+                      <AssignmentLine label="Sub PA" names={entry.subPa} />
+                      {entry.duties.map((duty, dutyIndex) => (
+                        <AssignmentLine
+                          key={`${duty.name}:${dutyIndex}`}
+                          label={duty.name}
+                          names={duty.members}
+                        />
+                      ))}
+                    </dl>
                   </article>
                 ))}
                 {visibleEntries.length === 0 && (
