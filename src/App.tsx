@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd'
 import type { DropResult } from '@hello-pangea/dnd'
 import type {
@@ -104,6 +111,12 @@ import { createScheduleItemsForTimetableGeneration, DEFAULT_TIMETABLE_GENERATION
   type TimetableGenerationUiOptions } from './domain/timetableGenerationOptions'
 import { resetEventDayTimetable } from './domain/timetableReset'
 import { hasUnsavedOperationsChanges } from './ui/operationsDraftChanges'
+import {
+  cloneTimetableEditSnapshot,
+  createTimetableHistoryController,
+  type TimetableEditSnapshot,
+  type TimetableHistoryEntry,
+} from './ui/timetableHistory'
 import {
   createDutyAutoAssignments,
   planDutyAutoAssignments,
@@ -391,6 +404,20 @@ function App() {
   const [activeTimetableOrderBlockKey, setActiveTimetableOrderBlockKey] = useState<
     string | null
   >(null)
+  const [timetableHistoryController] = useState(createTimetableHistoryController)
+  const timetableHistory = useSyncExternalStore(
+    timetableHistoryController.subscribe,
+    timetableHistoryController.getState,
+    timetableHistoryController.getState,
+  )
+  const timetableHistorySessionEventIdRef = useRef<EventId | null>(null)
+  const timetableHistoryReplayRef = useRef(false)
+  const [timetableHistoryFeedback, setTimetableHistoryFeedback] = useState<{
+    eventId: EventId
+    entry: TimetableHistoryEntry
+    kind: 'success' | 'error'
+    message: string
+  } | null>(null)
   const paSettingsRef = useRef<PaSettingsHandle>(null)
   const dutySettingsRef = useRef<DutySettingsHandle>(null)
   const [generationPreview, setGenerationPreview] = useState<GenerationPreviewState | null>(null)
@@ -540,7 +567,67 @@ function App() {
     savePersistedState(domainState)
   }, [domainState])
 
+  const timetableHistoryActive = activeView === 'event-editor' &&
+    activeStep === 6 && selectedEventId.length > 0
+  useEffect(() => {
+    if (!timetableHistoryActive) {
+      timetableHistoryController.reset()
+      timetableHistorySessionEventIdRef.current = null
+      timetableHistoryReplayRef.current = false
+      return
+    }
+    const entry: TimetableHistoryEntry = {
+      snapshot: {
+        stages,
+        eventBands,
+        scheduleItems,
+        paAssignments,
+        dutyTypes,
+        dutyAssignments,
+        timetableLocks,
+        timetableOrderConstraints,
+      },
+      context: {
+        ...(timetableSelection.eventDayId
+          ? { eventDayId: timetableSelection.eventDayId }
+          : {}),
+        ...(timetableSelection.stageId
+          ? { stageId: timetableSelection.stageId }
+          : {}),
+      },
+    }
+    if (timetableHistorySessionEventIdRef.current !== selectedEventId) {
+      timetableHistorySessionEventIdRef.current = selectedEventId
+      timetableHistoryReplayRef.current = false
+      timetableHistoryController.reset(entry)
+      return
+    }
+    if (timetableHistoryReplayRef.current) {
+      timetableHistoryReplayRef.current = false
+      return
+    }
+    timetableHistoryController.record(entry)
+  }, [
+    timetableHistoryActive,
+    timetableHistoryController,
+    selectedEventId,
+    timetableSelection.eventDayId,
+    timetableSelection.stageId,
+    stages,
+    eventBands,
+    scheduleItems,
+    paAssignments,
+    dutyTypes,
+    dutyAssignments,
+    timetableLocks,
+    timetableOrderConstraints,
+  ])
+
   const applyPersistedSnapshot = (snapshot: PersistedAppStateV5) => {
+    timetableHistoryController.reset()
+    timetableHistorySessionEventIdRef.current = null
+    timetableHistoryReplayRef.current = false
+    setTimetableHistoryFeedback(null)
     setGenerationOptionsScope(null)
     setResetConfirmation(null)
     setGenerationPreview(null)
@@ -1112,6 +1199,123 @@ function App() {
   }
 
   const hasUnsavedOperations = () => hasUnsavedOperationsChanges(paSettingsRef.current, dutySettingsRef.current)
+
+  const clearTimetableHistoryEphemeralState = () => {
+    setGenerationOptionsScope(null)
+    setResetConfirmation(null)
+    setGenerationPreview(null)
+    setGenerationFeedback(null)
+    setGridAssignmentDialog(null)
+    setDutyAutoAssignmentDialog(null)
+    setGridAssignmentDeletion(null)
+    setGridAssignmentFeedback(null)
+    setTimetableGridSelectionState((previous) => ({
+      ...previous,
+      selection: null,
+    }))
+    setTimetableLockFeedback(clearTimetableLockFeedback())
+    setTimetableOrderConstraintFeedback(null)
+    setActiveTimetableOrderBlockKey(null)
+  }
+
+  const applyTimetableEditSnapshot = (
+    snapshot: TimetableEditSnapshot,
+    context: TimetableHistoryEntry['context'],
+  ) => {
+    const restored = cloneTimetableEditSnapshot(snapshot)
+    setStages(restored.stages)
+    setEventBands(restored.eventBands)
+    setScheduleItems(restored.scheduleItems)
+    setPaAssignments(restored.paAssignments)
+    setDutyTypes(restored.dutyTypes)
+    setDutyAssignments(restored.dutyAssignments)
+    setTimetableLocks(restored.timetableLocks)
+    setTimetableOrderConstraints(restored.timetableOrderConstraints)
+    const restoredSelection = resolveTimetableSelection({
+      eventId: selectedEventId,
+      eventDays,
+      stages: restored.stages,
+      selectedEventDayId: context.eventDayId,
+      selectedStageId: context.stageId,
+    })
+    setSelectedTimetableEventDayId(restoredSelection.eventDayId)
+    setSelectedTimetableStageId(restoredSelection.stageId)
+    clearTimetableHistoryEphemeralState()
+    setOperationsPanelRevision((revision) => revision + 1)
+  }
+
+  const performTimetableHistoryTransition = (
+    direction: 'undo' | 'redo',
+  ): boolean => {
+    if (!timetableHistoryActive || !timetableHistory) return false
+    const available = direction === 'undo'
+      ? timetableHistory.past.length > 0
+      : timetableHistory.future.length > 0
+    if (!available) return false
+    if (hasUnsavedOperations()) {
+      setTimetableHistoryFeedback({
+        eventId: selectedEventId,
+        entry: timetableHistory.present,
+        kind: 'error',
+        message: 'PAまたは当日運営に未保存の変更があります。先に保存してください。',
+      })
+      return false
+    }
+    timetableHistoryReplayRef.current = true
+    const transition = direction === 'undo'
+      ? timetableHistoryController.undo()
+      : timetableHistoryController.redo()
+    if (!transition?.changed) {
+      timetableHistoryReplayRef.current = false
+      return false
+    }
+    applyTimetableEditSnapshot(transition.entry.snapshot, transition.entry.context)
+    setTimetableHistoryFeedback({
+      eventId: selectedEventId,
+      entry: transition.state.present,
+      kind: 'success',
+      message: direction === 'undo'
+        ? '1つ前の操作に戻しました。'
+        : '操作をやり直しました。',
+    })
+    return true
+  }
+
+  const canUndoTimetable = timetableHistoryActive &&
+    (timetableHistory?.past.length ?? 0) > 0
+  const canRedoTimetable = timetableHistoryActive &&
+    (timetableHistory?.future.length ?? 0) > 0
+  const visibleTimetableHistoryFeedback =
+    timetableHistoryFeedback?.eventId === selectedEventId &&
+    timetableHistoryFeedback.entry === timetableHistory?.present
+      ? timetableHistoryFeedback
+      : null
+  const performTimetableHistoryTransitionEvent = useEffectEvent(
+    performTimetableHistoryTransition,
+  )
+
+  useEffect(() => {
+    if (!timetableHistoryActive) return
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.isComposing || event.altKey || (!event.ctrlKey && !event.metaKey)) return
+      const target = event.target instanceof Element ? event.target : null
+      if (target?.closest(
+        'input, textarea, select, [contenteditable]:not([contenteditable="false"]), dialog, [role="dialog"], [aria-modal="true"]',
+      )) return
+      const key = event.key.toLowerCase()
+      const direction = key === 'z'
+        ? event.shiftKey ? 'redo' : 'undo'
+        : key === 'y' && event.ctrlKey && !event.metaKey && !event.shiftKey
+          ? 'redo'
+          : undefined
+      if (!direction) return
+      const available = direction === 'undo' ? canUndoTimetable : canRedoTimetable
+      if (!available) return
+      if (performTimetableHistoryTransitionEvent(direction)) event.preventDefault()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [timetableHistoryActive, canUndoTimetable, canRedoTimetable])
 
   const timetableResetInput = selectedEvent && timetableEventDay
     ? { event: selectedEvent, eventDay: timetableEventDay, eventDays, stages, eventBands,
@@ -2440,7 +2644,10 @@ function App() {
         <EventEditorShell
           eventName={selectedEvent?.name ?? 'イベント'}
           activeStep={activeStep}
-          onStepChange={setActiveStep}
+          onStepChange={(step) => {
+            if (step !== 6) setTimetableHistoryFeedback(null)
+            setActiveStep(step)
+          }}
           onBackToEvents={() => setActiveView('events')}
         >
           {activeStep === 1 && selectedEvent ? (
@@ -2551,6 +2758,15 @@ function App() {
                 onSelectStage={handleSelectTimetableStage}
                 poolCount={poolEventBands.length}
                 issueCounts={currentStageIssueCounts}
+                canUndo={canUndoTimetable}
+                canRedo={canRedoTimetable}
+                onUndo={() => {
+                  performTimetableHistoryTransition('undo')
+                }}
+                onRedo={() => {
+                  performTimetableHistoryTransition('redo')
+                }}
+                historyFeedback={visibleTimetableHistoryFeedback}
                 generationAction={(
                   <div className="timetable-generation-action">
                     <div className="timetable-generation-action__buttons">

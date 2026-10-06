@@ -14,6 +14,11 @@ interface TimetableOperationsWorkspaceProps {
   poolCount: number
   issueCounts: IssueSeverityCounts
   settings: ReactNode
+  canUndo: boolean
+  canRedo: boolean
+  onUndo: () => void
+  onRedo: () => void
+  historyFeedback: { kind: 'success' | 'error'; message: string } | null
   generationAction?: ReactNode
   unavailableContent?: ReactNode
   pool: ReactNode
@@ -48,6 +53,11 @@ export function TimetableOperationsWorkspace({
   poolCount,
   issueCounts,
   settings,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
+  historyFeedback,
   generationAction,
   unavailableContent,
   pool,
@@ -121,6 +131,23 @@ export function TimetableOperationsWorkspace({
         </div>
 
         <div className="timetable-workspace-toolbar__actions">
+          <div className="timetable-history-controls" aria-label="タイムテーブル編集履歴">
+            <button type="button" disabled={!canUndo} onClick={onUndo}>
+              <span aria-hidden="true">↶</span> 元に戻す
+            </button>
+            <button type="button" disabled={!canRedo} onClick={onRedo}>
+              <span aria-hidden="true">↷</span> やり直す
+            </button>
+            {historyFeedback && (
+              <p
+                className={`timetable-history-feedback timetable-history-feedback--${historyFeedback.kind}`}
+                role={historyFeedback.kind === 'error' ? 'alert' : 'status'}
+                aria-live="polite"
+              >
+                {historyFeedback.message}
+              </p>
+            )}
+          </div>
           {generationAction}
           <button
             type="button"
