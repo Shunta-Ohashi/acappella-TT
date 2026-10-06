@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   countIssuesBySeverity,
+  formatScheduleIssueMessage,
   getHighestSeverityByScheduleItem,
   getIssuesForStage,
 } from '../src/ui/issuePresentation.ts'
@@ -45,6 +46,30 @@ test('Issueなしの場合は全件数が0でScheduleItem severityも空にな�
     INFO: 0,
   })
   assert.equal(getHighestSeverityByScheduleItem([]).size, 0)
+})
+
+test('Issue messageの内部IDを既存表示名へ置き換える', () => {
+  const message = formatScheduleIssueMessage({
+    severity: 'ERROR',
+    code: 'DUTY_MEMBER_PERFORMANCE_OVERLAP',
+    message: 'member-a / band-a / stage-a / section-a / duty-a',
+    memberIds: ['member-a'],
+    eventBandIds: ['band-a'],
+    stageIds: ['stage-a'],
+    sectionIds: ['section-a'],
+    dutyTypeIds: ['duty-a'],
+  }, {
+    members: [{ id: 'member-a', realName: 'Alice', active: true }],
+    eventBands: [{ id: 'band-a', eventId: 'event-a', eventDayId: 'day-a',
+      name: 'Alpha', memberIds: [], durationMinutes: 10 }],
+    dutyTypes: [{ id: 'duty-a', eventId: 'event-a', name: '撮影', order: 0 }],
+    stages: [{ id: 'stage-a', eventDayId: 'day-a', name: 'Main', order: 0,
+      plannedStartTime: '10:00', plannedEndTime: '18:00' }],
+    sections: [{ id: 'section-a', stageId: 'stage-a', name: '第1部', order: 0,
+      plannedStartTime: '10:00', plannedEndTime: '12:00' }],
+  })
+
+  assert.equal(message, 'Alice / Alpha / Main / 第1部 / 撮影')
 })
 
 test('Issue一覧を選択中Stageとの関連で絞り込む', () => {

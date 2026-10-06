@@ -135,7 +135,13 @@ import {
 import { EventList } from './components/EventList'
 import { DataBackupSettings } from './components/DataBackupSettings'
 import { EventOutputPage } from './components/EventOutputPage'
+import { EventFinalCheckPage } from './components/EventFinalCheckPage'
 import { IssuePanel } from './components/IssuePanel'
+import { createEventFinalCheckReport } from './domain/eventFinalCheck'
+import {
+  resolveEventFinalCheckRepairNavigation,
+  type EventFinalCheckRepairTarget,
+} from './ui/eventFinalCheckPresentation'
 import {
   createEventData,
   type NewEventDraft,
@@ -752,7 +758,7 @@ function App() {
         dutyAssignments,
       })
     : []
-  const selectedEventCalculatedItems = selectedEvent
+  const selectedEventCalculatedItems = selectedEvent && activeStep !== 7
     ? selectedEventDays.flatMap((eventDay) => calculateEventDayTimelines({
         eventDayId: eventDay.id,
         stages: selectedStages,
@@ -761,6 +767,44 @@ function App() {
         eventBands: selectedEventBands,
       }).calculatedItems)
     : []
+  const finalCheckReport = useMemo(() => {
+    if (activeStep !== 7) return undefined
+    const event = events.find(candidate => candidate.id === selectedEventId)
+    return event
+      ? createEventFinalCheckReport({
+        event,
+        eventDays,
+        stages,
+        sections,
+        members,
+        eventMembers,
+        eventMemberDays,
+        eventBands,
+        scheduleItems,
+        paAssignments,
+        dutyTypes,
+        dutyAssignments,
+        timetableLocks,
+        timetableOrderConstraints,
+      }) : undefined
+  }, [
+    activeStep,
+    selectedEventId,
+    events,
+    eventDays,
+    stages,
+    sections,
+    members,
+    eventMembers,
+    eventMemberDays,
+    eventBands,
+    scheduleItems,
+    paAssignments,
+    dutyTypes,
+    dutyAssignments,
+    timetableLocks,
+    timetableOrderConstraints,
+  ])
   const startTime = currentStage?.plannedStartTime ?? ''
   const currentStageScheduleItems = currentStage
     ? getStageScheduleItems(selectedScheduleItems, currentStage.id)
@@ -2022,7 +2066,7 @@ function App() {
   }
 
   // 選択日の全StageをIssue判定へ渡し、表示は選択中Stageだけに絞る
-  const eventDayTimelines = selectedEvent && timetableSelection.eventDayId
+  const eventDayTimelines = selectedEvent && timetableSelection.eventDayId && activeStep !== 7
     ? calculateEventDayTimelines({
         eventDayId: timetableSelection.eventDayId,
         stages: timetableStages,
@@ -2035,7 +2079,7 @@ function App() {
   const currentStageCalculatedItems = currentStage
     ? calculatedItems.filter(item => item.stageId === currentStage.id)
     : []
-  const scheduleIssues = selectedEvent
+  const scheduleIssues = selectedEvent && activeStep !== 7
     ? detectScheduleIssues({
         event: selectedEvent,
         members,
@@ -2062,7 +2106,7 @@ function App() {
       )
     : []
   const currentStageIssueCounts = countIssuesBySeverity(currentStageIssues)
-  const timetableWorkspaceRows = currentStage && timetableSelection.eventDayId
+  const timetableWorkspaceRows = currentStage && timetableSelection.eventDayId && activeStep !== 7
     ? createTimetableWorkspaceRows({
         eventDayId: timetableSelection.eventDayId,
         stageId: currentStage.id,
@@ -2618,6 +2662,27 @@ function App() {
     timetableGridSelection
       ? gridAssignmentDialog
       : null
+  const handleFinalCheckNavigation = (target: EventFinalCheckRepairTarget) => {
+    if (!selectedEvent) return
+    const navigation = resolveEventFinalCheckRepairNavigation({
+      target,
+      eventId: selectedEvent.id,
+      eventDays: selectedEventDays,
+      stages: selectedStages,
+      currentEventDayId: timetableSelection.eventDayId,
+      currentStageId: timetableSelection.stageId,
+    })
+    if (navigation.step === 6) {
+      setSelectedTimetableEventDayId(navigation.eventDayId)
+      setSelectedTimetableStageId(navigation.stageId)
+      setTimetableOrderConstraintFeedback(null)
+      setActiveTimetableOrderBlockKey(null)
+    } else {
+      setTimetableHistoryFeedback(null)
+    }
+    setActiveStep(navigation.step)
+  }
+
   const activeDutyAutoAssignmentDialog =
     dutyAutoAssignmentDialog?.eventId === selectedEvent?.id &&
     timetableGridSelection
@@ -3087,6 +3152,15 @@ function App() {
                 )}
               />
             </DragDropContext>
+          ) : activeStep === 7 && selectedEvent && finalCheckReport ? (
+            <EventFinalCheckPage
+              key={selectedEvent.id}
+              report={finalCheckReport}
+              eventDays={selectedEventDays}
+              stages={selectedStages}
+              onNavigateToRepair={handleFinalCheckNavigation}
+              onProceed={() => setActiveStep(8)}
+            />
           ) : activeStep === 8 && selectedEvent ? (
             <EventOutputPage
               event={selectedEvent}
