@@ -3867,6 +3867,60 @@
   flex-wrap: wrap;
 }
 
+.timetable-workspace-toolbar__action-stack {
+  display: grid;
+  flex: 0 1 auto;
+  gap: 3px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.timetable-history-controls {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 5px;
+}
+
+.timetable-history-controls > button {
+  min-height: 30px;
+  padding: 4px 8px;
+  color: #344154;
+  background: #f8fafc;
+  border: 1px solid #bfc9d5;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.timetable-history-controls > button:disabled {
+  color: #94a3b8;
+  background: #f1f5f9;
+  cursor: not-allowed;
+}
+
+.timetable-history-feedback-slot {
+  min-width: 0;
+  min-height: 14px;
+}
+
+.timetable-history-feedback {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.timetable-history-feedback--success {
+  color: #28734d;
+}
+
+.timetable-history-feedback--error {
+  color: #9b2c2c;
+}
+
 .timetable-generation-action {
   display: grid;
   gap: 5px;

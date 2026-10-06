@@ -14,6 +14,11 @@ interface TimetableOperationsWorkspaceProps {
   poolCount: number
   issueCounts: IssueSeverityCounts
   settings: ReactNode
+  canUndo: boolean
+  canRedo: boolean
+  onUndo: () => void
+  onRedo: () => void
+  historyFeedback: { kind: 'success' | 'error'; message: string } | null
   generationAction?: ReactNode
   unavailableContent?: ReactNode
   pool: ReactNode
@@ -48,6 +53,11 @@ export function TimetableOperationsWorkspace({
   poolCount,
   issueCounts,
   settings,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
+  historyFeedback,
   generationAction,
   unavailableContent,
   pool,
@@ -120,40 +130,61 @@ export function TimetableOperationsWorkspace({
           <div className="timetable-workspace-toolbar__settings">{settings}</div>
         </div>
 
-        <div className="timetable-workspace-toolbar__actions">
-          {generationAction}
-          <button
-            type="button"
-            className="workspace-toggle-button"
-            aria-expanded={isPoolOpen}
-            aria-label={isPoolOpen
-              ? `未配置バンド${poolCount}件を閉じる`
-              : `未配置バンド${poolCount}件を開く`}
-            onClick={() => setIsPoolOpen((isOpen) => !isOpen)}
-          >
-            未配置 {poolCount}件
-          </button>
-          <span className="workspace-issue-count workspace-issue-count--error">
-            ERROR {issueCounts.ERROR}
-          </span>
-          <span className="workspace-issue-count workspace-issue-count--warning">
-            WARNING {issueCounts.WARNING}
-          </span>
-          <div className="operations-panel-selector" aria-label="表示するサイドパネル">
-            {(Object.keys(panelLabels) as OperationsPanel[]).map((panel) => (
-              <button
-                key={panel}
-                type="button"
-                aria-pressed={isSidePanelOpen && activePanel === panel}
-                className={isSidePanelOpen && activePanel === panel
-                  ? 'operations-panel-selector__button operations-panel-selector__button--active'
-                  : 'operations-panel-selector__button'}
-                onClick={() => openPanel(panel)}
-              >
-                {panelLabels[panel]}
-                {panel === 'issues' ? ` ${issueCount}` : ''}
+        <div className="timetable-workspace-toolbar__action-stack">
+          <div className="timetable-workspace-toolbar__actions">
+            <div className="timetable-history-controls" aria-label="タイムテーブル編集履歴">
+              <button type="button" disabled={!canUndo} onClick={onUndo}>
+                <span aria-hidden="true">↶</span> 元に戻す
               </button>
-            ))}
+              <button type="button" disabled={!canRedo} onClick={onRedo}>
+                <span aria-hidden="true">↷</span> やり直す
+              </button>
+            </div>
+            {generationAction}
+            <button
+              type="button"
+              className="workspace-toggle-button"
+              aria-expanded={isPoolOpen}
+              aria-label={isPoolOpen
+                ? `未配置バンド${poolCount}件を閉じる`
+                : `未配置バンド${poolCount}件を開く`}
+              onClick={() => setIsPoolOpen((isOpen) => !isOpen)}
+            >
+              未配置 {poolCount}件
+            </button>
+            <span className="workspace-issue-count workspace-issue-count--error">
+              ERROR {issueCounts.ERROR}
+            </span>
+            <span className="workspace-issue-count workspace-issue-count--warning">
+              WARNING {issueCounts.WARNING}
+            </span>
+            <div className="operations-panel-selector" aria-label="表示するサイドパネル">
+              {(Object.keys(panelLabels) as OperationsPanel[]).map((panel) => (
+                <button
+                  key={panel}
+                  type="button"
+                  aria-pressed={isSidePanelOpen && activePanel === panel}
+                  className={isSidePanelOpen && activePanel === panel
+                    ? 'operations-panel-selector__button operations-panel-selector__button--active'
+                    : 'operations-panel-selector__button'}
+                  onClick={() => openPanel(panel)}
+                >
+                  {panelLabels[panel]}
+                  {panel === 'issues' ? ` ${issueCount}` : ''}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="timetable-history-feedback-slot">
+            {historyFeedback && (
+              <p
+                className={`timetable-history-feedback timetable-history-feedback--${historyFeedback.kind}`}
+                role={historyFeedback.kind === 'error' ? 'alert' : 'status'}
+                aria-live="polite"
+              >
+                {historyFeedback.message}
+              </p>
+            )}
           </div>
         </div>
       </section>
