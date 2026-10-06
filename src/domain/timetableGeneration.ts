@@ -492,15 +492,14 @@ const orderStageBands = function* (
       yield* visitLane(laneIndex + 1, next, mode)
     }
   }
-  // Prioritize coherent global strategies before the lane-local Cartesian
-  // product. Otherwise, with five two-choice lanes, the all-original fallback
-  // would be candidate 32 and fall outside the default Schedule search cap.
-  for (const mode of ['member-separated', 'original'] as const) {
-    const first = visitLane(0, new Map(), mode).next()
-    if (!first.done) yield first.value
-  }
+  // Try one coherent member-separated strategy first, then preserve the whole
+  // original-only structural stream. In particular, later free-block placements
+  // must not be delayed behind mixed lane orders and pushed outside a small cap.
+  const separatedFirst = visitLane(0, new Map(), 'member-separated').next()
+  if (!separatedFirst.done) yield separatedFirst.value
+  yield* visitLane(0, new Map(), 'original')
   // Retain every mixed separated/original and free-block combination after the
-  // two global fallbacks. Proposal-level deduplication handles repeated modes.
+  // original stream. Proposal-level deduplication handles repeated modes.
   yield* visitLane(0, new Map(), 'both')
 }
 
