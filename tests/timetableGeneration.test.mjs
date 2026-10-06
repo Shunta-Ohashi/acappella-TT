@@ -7,7 +7,7 @@ import { buildPaActivities, buildPerformanceActivities,
 import { detectScheduleIssues } from '../src/domain/issues.ts'
 import { evaluateScheduleConstraints } from '../src/domain/schedulingConstraints.ts'
 import { calculateEventDayTimelines } from '../src/domain/timetable.ts'
-import { calculateStageTimeline } from '../src/domain/timeline.ts'
+import { calculateStageTimeline, formatMinuteAsLocalTime } from '../src/domain/timeline.ts'
 import { hasSafeStageTimelineArithmetic } from '../src/domain/timetableGenerationArithmetic.ts'
 import { evaluateTimetableLocks } from '../src/domain/timetableLocks.ts'
 import {
@@ -59,6 +59,60 @@ const createInput = ({ bandCount = 4, sectionCount = 2, paCount = 2 } = {}) => {
     scheduleItems: [], timetableLocks: [], timetableOrderConstraints: [],
     dutyTypes: [], dutyAssignments: [],
   }
+}
+
+const createUnconstrainedInput = ({ bandCount, sectionCount = 2, paCount = 2 }) => {
+  const input = createInput({ bandCount, sectionCount, paCount })
+  assert.equal(input.scheduleItems.filter(item => item.kind === 'performance').length, 0)
+  assert.equal(input.timetableLocks.length, 0)
+  assert.equal(input.timetableOrderConstraints.length, 0)
+  assert.ok(input.eventBands.every(band => band.fixedPlacement === undefined))
+  return input
+}
+
+const makeSeparatedSharedMemberCase = () => {
+  const input = createUnconstrainedInput({ bandCount: 14, sectionCount: 3, paCount: 3 })
+  // Initial load balancing puts each modulo-three group into one lane. Every
+  // lane has adjacent shared-member pairs that rotation/reverse cannot all split.
+  const sharedPairs = [[0, 3], [6, 9], [1, 4], [7, 10], [2, 5], [8, 11]]
+  for (const [first, second] of sharedPairs) {
+    input.eventBands[second].memberIds = [`performer-${first}`]
+  }
+  return {
+    input,
+    sharedMemberIds: sharedPairs.map(([first]) => `performer-${first}`),
+  }
+}
+
+const makeGlobalOriginalFallbackCase = () => {
+  const input = createInput({ bandCount: 15, sectionCount: 5, paCount: 5 })
+  input.stages[0].plannedEndTime = '15:00'
+  for (let laneIndex = 0; laneIndex < input.sections.length; laneIndex += 1) {
+    const section = input.sections[laneIndex]
+    const sectionStart = 600 + laneIndex * 60
+    section.plannedStartTime = formatMinuteAsLocalTime(sectionStart)
+    section.plannedEndTime = formatMinuteAsLocalTime(sectionStart + 60)
+    const [first, second, third] = [laneIndex, laneIndex + 5, laneIndex + 10]
+      .map(index => input.eventBands[index])
+    second.memberIds = [...first.memberIds]
+    for (const [band, offset] of [[first, 0], [second, 40], [third, 50]]) {
+      band.availableTimeRange = {
+        from: formatMinuteAsLocalTime(sectionStart + offset),
+        until: formatMinuteAsLocalTime(sectionStart + offset + 10),
+      }
+    }
+    input.scheduleItems.push(
+      { id: `fallback-performance-${first.id}`, kind: 'performance',
+        eventBandId: first.id, stageId: input.stages[0].id, sectionId: section.id, order: 0 },
+      { id: `fallback-break-${laneIndex}`, kind: 'break', title: '掛け持ち休憩',
+        durationMinutes: 30, stageId: input.stages[0].id, sectionId: section.id, order: 1 },
+      { id: `fallback-performance-${second.id}`, kind: 'performance',
+        eventBandId: second.id, stageId: input.stages[0].id, sectionId: section.id, order: 2 },
+      { id: `fallback-performance-${third.id}`, kind: 'performance',
+        eventBandId: third.id, stageId: input.stages[0].id, sectionId: section.id, order: 3 },
+    )
+  }
+  return input
 }
 
 const assertInvalidRuntimeGenerationInput = (input) => {
@@ -842,6 +896,74 @@ test('40 Band・4 Section・Main/Sub各4候補を全配置し、時間・担当�
     }).feasible, true)
   }
   assert.deepEqual(generateTimetablePlan(input), result)
+})
+
+for (const bandCount of [4, 6, 8, 10, 14]) {
+  test(`未配置・固定なし・順序制約なしの${bandCount} Bandを既定上限内で生成する`, () => {
+    const input = createUnconstrainedInput({ bandCount })
+    const original = structuredClone(input)
+    const result = generateTimetablePlan(input)
+    assert.equal(result.ok, true, JSON.stringify(result))
+    assert.equal(result.plan.placements.length, bandCount)
+    assert.ok(result.plan.diagnostics.scheduleCandidatesEvaluated <= 24)
+    assert.deepEqual(generateTimetablePlan(input), result)
+    assert.deepEqual(input, original)
+  })
+}
+
+test('Main/Sub各1候補でも1 laneの未配置14 Bandを生成できる', () => {
+  const input = createUnconstrainedInput({ bandCount: 14, sectionCount: 1, paCount: 1 })
+  const result = generateTimetablePlan(input)
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.deepEqual(result.plan.paShifts.map(shift => shift.memberId).sort(), ['main-0', 'sub-0'])
+})
+
+test('rotationでは分離できない複数の掛け持ち隣接ペアも既定上限内で生成する', () => {
+  const { input, sharedMemberIds } = makeSeparatedSharedMemberCase()
+  const original = structuredClone(input)
+  const result = generateTimetablePlan(input)
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(result.plan.placements.length, 14)
+  assert.equal(result.plan.paShifts.length, 6)
+  assert.ok(result.plan.diagnostics.scheduleCandidatesEvaluated <= 24)
+  const scheduleItems = materializeSchedule(input, result.plan)
+  const calculatedItems = calculateEventDayTimelines({
+    ...input, eventDayId: input.eventDay.id, scheduleItems,
+  }).calculatedItems
+  const performance = buildPerformanceActivities(calculatedItems, input.eventBands).activities
+  assert.deepEqual(sharedMemberIds,
+    ['performer-0', 'performer-6', 'performer-1', 'performer-7', 'performer-2', 'performer-8'])
+  for (const memberId of sharedMemberIds) {
+    assert.equal(evaluateMemberActivitySpacing({
+      activities: performance.filter(activity => activity.memberId === memberId),
+      stageItems: calculatedItems,
+    }).feasible, true)
+  }
+  assert.deepEqual(generateTimetablePlan(input), result)
+  assert.deepEqual(input, original)
+})
+
+test('掛け持ちaware候補を先に評価し上限1でもfeasible planへ到達する', () => {
+  const { input } = makeSeparatedSharedMemberCase()
+  const original = structuredClone(input)
+  const result = generateTimetablePlan({
+    ...input, options: { maxScheduleCandidates: 1 },
+  })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(result.plan.diagnostics.scheduleCandidatesEvaluated, 1)
+  assert.deepEqual(input, original)
+})
+
+test('5 laneのall-original fallbackをmixed候補より先に評価する', () => {
+  const input = makeGlobalOriginalFallbackCase()
+  const original = structuredClone(input)
+  const result = generateTimetablePlan({
+    ...input, options: { maxScheduleCandidates: 2 },
+  })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(result.plan.diagnostics.scheduleCandidatesEvaluated, 2)
+  assert.deepEqual(generateTimetablePlan(input).ok, true)
+  assert.deepEqual(input, original)
 })
 
 test('SectionなしStageを1 laneとして生成し、PA shiftも作る', () => {
@@ -2298,6 +2420,16 @@ const createPaBeamInput = () => {
     calculatedItems: [], baseActivities: [], scopes: [], beamWidth: 1, maxExpandedStates: 100,
   }
 }
+
+test('PA taskがない場合は探索枠を消費せず空のcomplete planを返す', () => {
+  const input = createPaBeamInput()
+  const original = structuredClone(input)
+  assert.deepEqual(planPaShifts(input), { ok: true, plans: [{
+    shifts: [], undecidedCount: 0,
+    eligibleMemberIds: { main: [], sub: [] },
+  }] })
+  assert.deepEqual(input, original)
+})
 
 const paScope = (index, fromMinute) => ({
   key: `scope-${index}`, eventDayId: 'day-1', stageId: 'stage-1',

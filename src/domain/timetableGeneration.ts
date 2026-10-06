@@ -143,6 +143,7 @@ interface ScheduleProposal {
 }
 
 type OrderBlocksByLane = Map<string, string[][]>
+type LaneOrderMode = 'member-separated' | 'original' | 'both'
 
 const laneKey = (stageId: StageId, sectionId?: SectionId): string =>
   `${stageId}\u0000${sectionId ?? ''}`
@@ -182,18 +183,92 @@ const buildOrderBlocksByLane = (
   return result
 }
 
+const sharedMemberCount = (left: EventBand | undefined, right: EventBand): number => {
+  if (!left) return 0
+  const leftMembers = new Set(left.memberIds)
+  return [...new Set(right.memberIds)].filter(memberId => leftMembers.has(memberId)).length
+}
+
+/**
+ * Fill only unreserved positions while preferring candidates that do not put
+ * the same Member in consecutive Performances. This is proposal ordering, not
+ * a second constraint implementation: downstream Activity Spacing remains the
+ * authority and the original order remains in the bounded search space.
+ */
+const completeMemberSeparatedOrder = (
+  template: (EventBand | undefined)[],
+  freeBands: EventBand[],
+  rank: Map<string, number>,
+): EventBand[] | undefined => {
+  const completed = [...template]
+  const remaining = [...freeBands]
+  const overlapDegree = new Map(freeBands.map(band => [
+    band.id,
+    freeBands.reduce((total, candidate) =>
+      total + (candidate.id === band.id ? 0 : sharedMemberCount(candidate, band)), 0),
+  ]))
+  for (let position = 0; position < completed.length; position += 1) {
+    if (completed[position] !== undefined) continue
+    const previous = completed[position - 1]
+    const next = completed[position + 1]
+    remaining.sort((left, right) => {
+      const leftAdjacentOverlap = sharedMemberCount(previous, left) +
+        sharedMemberCount(next, left)
+      const rightAdjacentOverlap = sharedMemberCount(previous, right) +
+        sharedMemberCount(next, right)
+      if (leftAdjacentOverlap !== rightAdjacentOverlap) {
+        return leftAdjacentOverlap - rightAdjacentOverlap
+      }
+      // When adjacency is tied, place the more constrained Band first so that
+      // later positions retain more non-overlapping choices.
+      return (overlapDegree.get(right.id) ?? 0) - (overlapDegree.get(left.id) ?? 0) ||
+        (rank.get(left.id) ?? 0) - (rank.get(right.id) ?? 0) ||
+        left.id.localeCompare(right.id)
+    })
+    completed[position] = remaining.shift()
+  }
+  return remaining.length === 0 && completed.every(band => band !== undefined)
+    ? completed as EventBand[]
+    : undefined
+}
+
+const completeLaneOrders = function* (
+  template: (EventBand | undefined)[],
+  freeBands: EventBand[],
+  rank: Map<string, number>,
+  mode: LaneOrderMode,
+): Generator<EventBand[]> {
+  const original = [...template]
+  let freeIndex = 0
+  for (let position = 0; position < original.length; position += 1) {
+    if (original[position] === undefined) original[position] = freeBands[freeIndex++]
+  }
+  if (freeIndex !== freeBands.length || original.some(band => band === undefined)) return
+  const originalOrder = original as EventBand[]
+  const separated = completeMemberSeparatedOrder(template, freeBands, rank)
+  const hasDistinctSeparatedOrder = separated?.some(
+    (band, index) => band.id !== originalOrder[index].id,
+  ) === true
+  if (mode === 'member-separated') {
+    if (hasDistinctSeparatedOrder && separated) yield separated
+    else yield originalOrder
+    return
+  }
+  if (mode === 'both' && hasDistinctSeparatedOrder && separated) {
+    yield separated
+  }
+  yield originalOrder
+}
+
 const applyLaneOrderBlocks = function* (
   indexes: number[],
   slots: (EventBand | undefined)[],
   reserved: Set<number>,
   blocks: string[][] | undefined,
+  mode: LaneOrderMode,
 ): Generator<EventBand[]> {
   const bands = indexes.map(index => slots[index]).filter((band): band is EventBand => band !== undefined)
   if (bands.length !== indexes.length) return
-  if (!blocks?.length) {
-    yield bands
-    return
-  }
   const bandById = new Map(bands.map(band => [band.id, band]))
   const rank = new Map(bands.map((band, index) => [band.id, index]))
   const fixedPositionByBand = new Map<string, number>()
@@ -201,6 +276,15 @@ const applyLaneOrderBlocks = function* (
     const band = slots[globalIndex]
     if (band && reserved.has(globalIndex)) fixedPositionByBand.set(band.id, localIndex)
   })
+  if (!blocks?.length) {
+    const template: (EventBand | undefined)[] = Array(bands.length).fill(undefined)
+    for (const [bandId, position] of fixedPositionByBand) {
+      template[position] = bandById.get(bandId)
+    }
+    const freeBands = bands.filter(band => !fixedPositionByBand.has(band.id))
+    yield* completeLaneOrders(template, freeBands, rank, mode)
+    return
+  }
   const blockBandIds = new Set<string>()
   for (const block of blocks) {
     for (const bandId of block) {
@@ -250,15 +334,7 @@ const applyLaneOrderBlocks = function* (
     (rank.get(left.id) ?? 0) - (rank.get(right.id) ?? 0) || left.id.localeCompare(right.id))
   const placeFreeBlocks = function* (blockIndex: number): Generator<EventBand[]> {
     if (blockIndex === freeBlocks.length) {
-      const completed = [...ordered]
-      let freeIndex = 0
-      for (let position = 0; position < completed.length; position += 1) {
-        if (completed[position] !== undefined) continue
-        completed[position] = freeBands[freeIndex++]
-      }
-      if (freeIndex === freeBands.length && completed.every(band => band !== undefined)) {
-        yield completed as EventBand[]
-      }
+      yield* completeLaneOrders(ordered, freeBands, rank, mode)
       return
     }
     const block = freeBlocks[blockIndex]
@@ -397,6 +473,7 @@ const orderStageBands = function* (
   const visitLane = function* (
     laneIndex: number,
     ordered: Map<string, EventBand[]>,
+    mode: LaneOrderMode,
   ): Generator<Map<string, EventBand[]>> {
     if (laneIndex === laneContexts.length) {
       yield ordered
@@ -408,13 +485,22 @@ const orderStageBands = function* (
       context.slots,
       context.reserved,
       orderBlocksByLane.get(context.lane.key),
+      mode,
     )) {
       const next = new Map(ordered)
       next.set(context.lane.key, laneBands)
-      yield* visitLane(laneIndex + 1, next)
+      yield* visitLane(laneIndex + 1, next, mode)
     }
   }
-  yield* visitLane(0, new Map())
+  // Try one coherent member-separated strategy first, then preserve the whole
+  // original-only structural stream. In particular, later free-block placements
+  // must not be delayed behind mixed lane orders and pushed outside a small cap.
+  const separatedFirst = visitLane(0, new Map(), 'member-separated').next()
+  if (!separatedFirst.done) yield separatedFirst.value
+  yield* visitLane(0, new Map(), 'original')
+  // Retain every mixed separated/original and free-block combination after the
+  // original stream. Proposal-level deduplication handles repeated modes.
+  yield* visitLane(0, new Map(), 'both')
 }
 
 const buildProposals = function* ({

@@ -70,6 +70,36 @@ const blockPlacementInput = ({ unrelated = 0, availableFrom } = {}) => {
   return input
 }
 
+const memberAwareBlockFallbackInput = () => {
+  const input = blockPlacementInput({ unrelated: 3 })
+  const firstFree = input.eventBands.find(band => band.id === 'band-free-1')
+  const secondFree = input.eventBands.find(band => band.id === 'band-free-2')
+  const thirdFree = input.eventBands.find(band => band.id === 'band-free-3')
+  input.members.push({ id: 'shared-member', realName: '掛け持ち', active: true })
+  input.eventMembers.push({
+    id: 'em-shared-member', eventId: input.event.id, memberId: 'shared-member',
+    paCapabilities: { main: false, sub: false },
+  })
+  input.eventMemberDays.push({
+    id: 'emd-shared-member', eventMemberId: 'em-shared-member',
+    eventDayId: input.eventDay.id, participationStatus: 'participating',
+  })
+  firstFree.memberIds = ['performer-2', 'shared-member']
+  firstFree.availableTimeRange = { from: '10:00', until: '10:10' }
+  secondFree.availableTimeRange = { from: '10:30', until: '10:40' }
+  thirdFree.memberIds = ['shared-member']
+  thirdFree.availableTimeRange = { from: '10:40', until: '10:50' }
+  input.activitySpacingPolicy = Object.fromEntries([
+    'performance-to-performance',
+    'work-to-performance',
+    'performance-to-work',
+    'work-to-work',
+  ].map(category => [category, {
+    minimumMinutes: 0, preferredMinutes: 0, sufficientMinutes: 0,
+  }]))
+  return input
+}
+
 const laneOrder = (plan, stageId = 'stage-a1', sectionId = 'section-1') =>
   plan.placements.filter(item => item.stageId === stageId && item.sectionId === sectionId)
     .sort((left, right) => left.order - right.order)
@@ -111,6 +141,20 @@ test('start 0と1がrejectされてもstart 2の合法配置を評価して成�
   const result = generateTimetablePlan(input)
   assert.equal(result.ok, true)
   assert.equal(laneOrder(result.plan).indexOf('band-1'), 2)
+  assert.deepEqual(generateTimetablePlan(input), result)
+  assert.deepEqual(input, original)
+})
+
+test('掛け持ち分離候補があっても後続の元順free block配置を小さい上限内で評価する', () => {
+  const input = memberAwareBlockFallbackInput()
+  input.options = { maxScheduleCandidates: 3 }
+  const original = structuredClone(input)
+  const result = generateTimetablePlan(input)
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.deepEqual(laneOrder(result.plan), [
+    'band-free-1', 'band-1', 'band-2', 'band-free-2', 'band-free-3',
+  ])
+  assert.equal(result.plan.diagnostics.scheduleCandidatesEvaluated, 3)
   assert.deepEqual(generateTimetablePlan(input), result)
   assert.deepEqual(input, original)
 })
