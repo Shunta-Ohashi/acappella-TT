@@ -11,12 +11,12 @@ import type {
 import {
   createTimetableOrderConstraintUpdate,
   deleteTimetableOrderConstraint,
-  evaluateTimetableOrderConstraints,
   updateTimetableOrderConstraint,
   type TimetableOrderConstraintDraft,
   type TimetableOrderConstraintMutationResult,
 } from '../domain/timetableOrderConstraints'
 import {
+  evaluateTimetableOrderConstraintOccurrences,
   getTimetableOrderConstraintScheduleStatus,
   isTimetableOrderConstraintScopeReachable,
 } from '../ui/timetableOrderConstraintPresentation'
@@ -71,7 +71,7 @@ export function TimetableOrderConstraintSettings({
   const currentEventConstraints = timetableOrderConstraints.filter(
     constraint => constraint.eventId === event.id,
   )
-  const semanticEvaluation = evaluateTimetableOrderConstraints({
+  const constraintOccurrences = evaluateTimetableOrderConstraintOccurrences({
     eventId: event.id,
     timetableOrderConstraints: currentEventConstraints,
     eventDays,
@@ -86,22 +86,18 @@ export function TimetableOrderConstraintSettings({
       eventDays,
       stages,
     })
-  const constraints = currentEventConstraints
-    .filter(constraint => isScopeReachable(constraint) &&
+  const constraints = constraintOccurrences
+    .filter(({ constraint }) => isScopeReachable(constraint) &&
       constraint.eventDayId === eventDay.id && constraint.stageId === stage.id)
     .sort((left, right) =>
-      (sectionOrderById.get(left.sectionId ?? '') ?? Number.MAX_SAFE_INTEGER) -
-        (sectionOrderById.get(right.sectionId ?? '') ?? Number.MAX_SAFE_INTEGER) ||
-      left.id.localeCompare(right.id))
+      (sectionOrderById.get(left.constraint.sectionId ?? '') ?? Number.MAX_SAFE_INTEGER) -
+        (sectionOrderById.get(right.constraint.sectionId ?? '') ?? Number.MAX_SAFE_INTEGER) ||
+      left.constraint.id.localeCompare(right.constraint.id) ||
+      left.occurrenceIndex - right.occurrenceIndex)
   const formatBandOrder = (constraint: TimetableOrderConstraint): string =>
     constraint.eventBandIds.map(eventBandId =>
       bandById.get(eventBandId)?.name ?? `参照先不明（${eventBandId}）`,
     ).join(' → ')
-
-  const getSemanticMessages = (constraint: TimetableOrderConstraint): string[] =>
-    [...new Set(semanticEvaluation.violations
-      .filter(violation => violation.constraintIds.includes(constraint.id))
-      .map(violation => violation.message))]
 
   const applyResult = (
     result: TimetableOrderConstraintMutationResult,
@@ -186,23 +182,25 @@ export function TimetableOrderConstraintSettings({
         </p>
       ) : (
         <ul className="timetable-order-settings__list">
-          {constraints.map((constraint, index) => {
+          {constraints.map(({ constraint, occurrenceIndex, semanticViolations }) => {
             const bandOrder = formatBandOrder(constraint)
             const laneLabel = constraint.sectionId
               ? sectionById.get(constraint.sectionId)?.name ??
                 `不明なSection（${constraint.sectionId}）`
               : 'Stage全体'
-            const semanticViolations = semanticEvaluation.violations.filter(
-              violation => violation.constraintIds.includes(constraint.id),
-            )
-            const semanticMessages = getSemanticMessages(constraint)
+            const semanticMessages = [...new Set(
+              semanticViolations.map(violation => violation.message),
+            )]
             const status = getTimetableOrderConstraintScheduleStatus({
               constraint,
               scheduleItems,
               semanticViolations,
             })
             return (
-              <li key={`${constraint.id}:${index}`} className="timetable-order-settings__item">
+              <li
+                key={`${constraint.id}:${occurrenceIndex}`}
+                className="timetable-order-settings__item"
+              >
                 <div>
                   <strong>{laneLabel}</strong>
                   <p>{bandOrder}</p>
@@ -252,7 +250,7 @@ export function TimetableOrderConstraintSettings({
         sections={sections}
         eventBands={eventBands}
         timetableOrderConstraints={timetableOrderConstraints}
-        semanticViolations={semanticEvaluation.violations}
+        constraintOccurrences={constraintOccurrences}
         onCommit={onCommit}
       />
 

@@ -9,10 +9,12 @@ import type {
 } from '../domain/models'
 import {
   deleteTimetableOrderConstraint,
-  evaluateTimetableOrderConstraints,
-  type TimetableOrderConstraintViolation,
 } from '../domain/timetableOrderConstraints'
-import { isTimetableOrderConstraintScopeReachable } from '../ui/timetableOrderConstraintPresentation'
+import {
+  evaluateTimetableOrderConstraintOccurrences,
+  isTimetableOrderConstraintScopeReachable,
+  type TimetableOrderConstraintOccurrence,
+} from '../ui/timetableOrderConstraintPresentation'
 import { DeleteConfirmationDialog } from './DeleteConfirmationDialog'
 
 interface TimetableOrderConstraintRepairPanelProps {
@@ -22,7 +24,7 @@ interface TimetableOrderConstraintRepairPanelProps {
   sections: Section[]
   eventBands: EventBand[]
   timetableOrderConstraints: TimetableOrderConstraint[]
-  semanticViolations?: TimetableOrderConstraintViolation[]
+  constraintOccurrences?: TimetableOrderConstraintOccurrence[]
   onCommit: (constraints: TimetableOrderConstraint[]) => void
 }
 
@@ -33,7 +35,7 @@ export function TimetableOrderConstraintRepairPanel({
   sections,
   eventBands,
   timetableOrderConstraints,
-  semanticViolations,
+  constraintOccurrences,
   onCommit,
 }: TimetableOrderConstraintRepairPanelProps) {
   const [pendingDeletion, setPendingDeletion] = useState<TimetableOrderConstraint | null>(null)
@@ -41,25 +43,26 @@ export function TimetableOrderConstraintRepairPanel({
   const currentEventConstraints = timetableOrderConstraints.filter(
     constraint => constraint.eventId === event.id,
   )
-  const violations = semanticViolations ?? evaluateTimetableOrderConstraints({
+  const occurrences = constraintOccurrences ?? evaluateTimetableOrderConstraintOccurrences({
     eventId: event.id,
     timetableOrderConstraints: currentEventConstraints,
     eventDays,
     stages,
     sections,
     eventBands,
-  }).violations
-  const unreachableConstraints = currentEventConstraints
-    .filter(constraint => !isTimetableOrderConstraintScopeReachable({
+  })
+  const unreachableOccurrences = occurrences
+    .filter(({ constraint }) => !isTimetableOrderConstraintScopeReachable({
       constraint,
       eventId: event.id,
       eventDays,
       stages,
     }))
     .sort((left, right) =>
-      left.eventDayId.localeCompare(right.eventDayId) ||
-      left.stageId.localeCompare(right.stageId) ||
-      left.id.localeCompare(right.id))
+      left.constraint.eventDayId.localeCompare(right.constraint.eventDayId) ||
+      left.constraint.stageId.localeCompare(right.constraint.stageId) ||
+      left.constraint.id.localeCompare(right.constraint.id) ||
+      left.occurrenceIndex - right.occurrenceIndex)
   const currentEventDayIds = new Set(eventDays
     .filter(candidate => candidate.eventId === event.id)
     .map(candidate => candidate.id))
@@ -79,11 +82,6 @@ export function TimetableOrderConstraintRepairPanel({
     ).join(' → ')
   }
 
-  const getSemanticMessages = (constraint: TimetableOrderConstraint): string[] =>
-    [...new Set(violations
-      .filter(violation => violation.constraintIds.includes(constraint.id))
-      .map(violation => violation.message))]
-
   const confirmDeletion = () => {
     if (!pendingDeletion) return
     const result = deleteTimetableOrderConstraint({
@@ -100,19 +98,23 @@ export function TimetableOrderConstraintRepairPanel({
     setPendingDeletion(null)
   }
 
-  if (unreachableConstraints.length === 0) return null
+  if (unreachableOccurrences.length === 0) return null
 
   return (
     <section
       className="timetable-order-settings__repair"
       aria-label="修復が必要な出演順制約"
     >
-      <h3>修復が必要な出演順制約 {unreachableConstraints.length}件</h3>
+      <h3>修復が必要な出演順制約 {unreachableOccurrences.length}件</h3>
       <p className="timetable-order-settings__guide">
         開催日またはStageの参照を確認できません。内容を確認して削除してください。
       </p>
       <ul className="timetable-order-settings__list">
-        {unreachableConstraints.map((constraint, index) => {
+        {unreachableOccurrences.map(({
+          constraint,
+          occurrenceIndex,
+          semanticViolations,
+        }) => {
           const referencedDay = eventDays.find(candidate =>
             candidate.id === constraint.eventDayId && candidate.eventId === event.id)
           const referencedStage = stages.find(candidate =>
@@ -127,10 +129,12 @@ export function TimetableOrderConstraintRepairPanel({
               ? `${referencedStage.name}（開催日不一致）`
               : `参照先不明（${constraint.stageId}）`
           const bandOrder = formatBandOrder(constraint)
-          const semanticMessages = getSemanticMessages(constraint)
+          const semanticMessages = [...new Set(
+            semanticViolations.map(violation => violation.message),
+          )]
           return (
             <li
-              key={`repair:${constraint.id}:${index}`}
+              key={`repair:${constraint.id}:${occurrenceIndex}`}
               className="timetable-order-settings__item"
             >
               <div>

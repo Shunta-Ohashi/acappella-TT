@@ -13,6 +13,7 @@ import {
   updateTimetableOrderConstraint,
 } from '../src/domain/timetableOrderConstraints.ts'
 import {
+  evaluateTimetableOrderConstraintOccurrences,
   getInitialTimetableOrderConstraintSectionId,
   getTimetableOrderConstraintScheduleStatus,
   isTimetableOrderConstraintScopeReachable,
@@ -62,6 +63,12 @@ const constraint = (overrides = {}) => ({
 
 const evaluate = (timetableOrderConstraints, overrides = {}) =>
   evaluateTimetableOrderConstraints({
+    eventId: 'event-1', timetableOrderConstraints,
+    eventDays, stages, sections, eventBands, ...overrides,
+  })
+
+const evaluateOccurrences = (timetableOrderConstraints, overrides = {}) =>
+  evaluateTimetableOrderConstraintOccurrences({
     eventId: 'event-1', timetableOrderConstraints,
     eventDays, stages, sections, eventBands, ...overrides,
   })
@@ -263,6 +270,96 @@ test('出演順制約の通常UI scope到達可能性はEventDayとStageだけ�
   })), false)
   assert.equal(isReachable(constraint({ sectionId: 'missing-section' })), true)
   assert.equal(isReachable(constraint({ sectionId: 'section-day-2' })), true)
+})
+
+test('duplicate ID occurrenceごとにminimum-band violationを分離する', () => {
+  const occurrences = evaluateOccurrences([
+    constraint({ id: 'duplicate', eventBandIds: ['band-a'] }),
+    constraint({ id: 'duplicate', eventBandIds: ['band-b', 'band-c'] }),
+  ])
+  const firstCodes = codes({ violations: occurrences[0].semanticViolations })
+  const secondCodes = codes({ violations: occurrences[1].semanticViolations })
+
+  assert.ok(firstCodes.includes('DUPLICATE_CONSTRAINT_ID'))
+  assert.ok(firstCodes.includes('INVALID_CONSTRAINT'))
+  assert.ok(secondCodes.includes('DUPLICATE_CONSTRAINT_ID'))
+  assert.equal(secondCodes.includes('INVALID_CONSTRAINT'), false)
+  assert.deepEqual(occurrences.map(item => item.occurrenceIndex), [0, 1])
+})
+
+test('duplicate ID occurrenceごとにmissing Band violationを分離する', () => {
+  const occurrences = evaluateOccurrences([
+    constraint({ id: 'duplicate', eventBandIds: ['band-a', 'missing-band-a'] }),
+    constraint({ id: 'duplicate', eventBandIds: ['band-b', 'missing-band-b'] }),
+  ])
+  const missingBandIds = occurrences.map(({ semanticViolations }) =>
+    semanticViolations
+      .filter(violation => violation.code === 'EVENT_BAND_NOT_FOUND')
+      .flatMap(violation => violation.eventBandIds))
+
+  assert.deepEqual(missingBandIds, [['missing-band-a'], ['missing-band-b']])
+  for (const occurrence of occurrences) {
+    assert.ok(codes({ violations: occurrence.semanticViolations })
+      .includes('DUPLICATE_CONSTRAINT_ID'))
+  }
+})
+
+test('duplicate ID occurrenceごとにinvalid scope violationを分離する', () => {
+  const occurrenceStages = [...stages, {
+    id: 'stage-for-missing-day',
+    eventDayId: 'missing-day',
+    name: 'Missing day stage',
+    order: 0,
+    plannedStartTime: '10:00',
+  }]
+  const occurrences = evaluateOccurrences([
+    constraint({
+      id: 'duplicate',
+      eventDayId: 'missing-day',
+      stageId: 'stage-for-missing-day',
+      sectionId: undefined,
+    }),
+    constraint({ id: 'duplicate', stageId: 'missing-stage', sectionId: undefined }),
+  ], { stages: occurrenceStages })
+  const firstCodes = codes({ violations: occurrences[0].semanticViolations })
+  const secondCodes = codes({ violations: occurrences[1].semanticViolations })
+
+  assert.ok(firstCodes.includes('EVENT_DAY_NOT_FOUND'))
+  assert.equal(firstCodes.includes('STAGE_NOT_FOUND'), false)
+  assert.ok(secondCodes.includes('STAGE_NOT_FOUND'))
+  assert.equal(secondCodes.includes('EVENT_DAY_NOT_FOUND'), false)
+})
+
+test('unique ID occurrenceはcanonical violation associationを維持する', () => {
+  const input = [
+    constraint({ id: 'first', eventBandIds: ['band-a'] }),
+    constraint({ id: 'second', eventBandIds: ['band-b', 'missing-band'] }),
+  ]
+  const canonical = evaluate(input)
+  const occurrences = evaluateOccurrences(input)
+
+  for (const occurrence of occurrences) {
+    assert.deepEqual(
+      occurrence.semanticViolations,
+      canonical.violations.filter(violation =>
+        violation.constraintIds.includes(occurrence.constraint.id)),
+    )
+  }
+})
+
+test('duplicate IDの全occurrenceを要修正statusにする', () => {
+  const occurrences = evaluateOccurrences([
+    constraint({ id: 'duplicate', eventBandIds: ['band-a'] }),
+    constraint({ id: 'duplicate', eventBandIds: ['band-b', 'band-c'] }),
+  ])
+
+  for (const occurrence of occurrences) {
+    assert.deepEqual(getTimetableOrderConstraintScheduleStatus({
+      constraint: occurrence.constraint,
+      scheduleItems: [],
+      semanticViolations: occurrence.semanticViolations,
+    }), { kind: 'invalid', label: '出演順制約：要修正' })
+  }
 })
 
 test('constraint ID・内部Band ID・runtime shapeをfail closedで検証する', () => {
@@ -698,17 +795,14 @@ test('semantic invalidな出演順制約はschedule状態にかかわらず要�
   ]
 
   for (const fixture of fixtures) {
-    const semanticEvaluation = evaluate(fixture.constraints, {
+    const targetOccurrence = evaluateOccurrences(fixture.constraints, {
       ...(fixture.eventBands ? { eventBands: fixture.eventBands } : {}),
-    })
-    const target = fixture.constraints.find(item => item.id === fixture.targetId)
-    const semanticViolations = semanticEvaluation.violations.filter(violation =>
-      violation.constraintIds.includes(fixture.targetId))
-    assert.ok(semanticViolations.length > 0, fixture.targetId)
+    }).find(item => item.constraint.id === fixture.targetId)
+    assert.ok(targetOccurrence?.semanticViolations.length > 0, fixture.targetId)
     assert.deepEqual(getTimetableOrderConstraintScheduleStatus({
-      constraint: target,
+      constraint: targetOccurrence.constraint,
       scheduleItems: [],
-      semanticViolations,
+      semanticViolations: targetOccurrence.semanticViolations,
     }), { kind: 'invalid', label: '出演順制約：要修正' })
   }
 })
