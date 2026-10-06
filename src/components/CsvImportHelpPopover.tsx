@@ -89,34 +89,36 @@ export function CsvImportHelpPopover({ content }: CsvImportHelpPopoverProps) {
       </button>
 
       {isOpen && (
-        <section
-          id={popoverId}
-          className="csv-import-help__popover"
-          role="dialog"
-          aria-modal="false"
-          aria-labelledby={titleId}
-        >
-          <header>
-            <h3 id={titleId}>{content.title}</h3>
-            <p>{content.description}</p>
-          </header>
-          <ColumnTable columns={content.columns} />
-          <div className="csv-import-help__example">
-            <strong>CSV例</strong>
-            <pre>{content.example}</pre>
-          </div>
-          <ul>
-            {content.notes.map((note) => <li key={note}>{note}</li>)}
-            <li>現在のデータをCSV書き出しすると、そのまま編集用テンプレートとして利用できます。データがなくても入力用のheaderを取得できます。</li>
-          </ul>
-          {content.technicalColumns.length > 0 && (
-            <div className="csv-import-help__technical">
-              <h4>詳細設定 / ID列</h4>
-              <p>ID列は通常入力・編集不要です。書き出したCSVを正確に再読み込みするときに使用します。</p>
-              <ColumnTable columns={content.technicalColumns} />
+        <div className="csv-import-help__popover-hit-area">
+          <section
+            id={popoverId}
+            className="csv-import-help__popover"
+            role="dialog"
+            aria-modal="false"
+            aria-labelledby={titleId}
+          >
+            <header>
+              <h3 id={titleId}>{content.title}</h3>
+              <p>{content.description}</p>
+            </header>
+            <ColumnTable columns={content.columns} />
+            <div className="csv-import-help__example">
+              <strong>CSV例</strong>
+              <pre>{content.example}</pre>
             </div>
-          )}
-        </section>
+            <ul>
+              {content.notes.map((note) => <li key={note}>{note}</li>)}
+              <li>現在のデータをCSV書き出しすると、そのまま編集用テンプレートとして利用できます。データがなくても入力用のheaderを取得できます。</li>
+            </ul>
+            {content.technicalColumns.length > 0 && (
+              <div className="csv-import-help__technical">
+                <h4>詳細設定 / ID列</h4>
+                <p>ID列は通常入力・編集不要です。書き出したCSVを正確に再読み込みするときに使用します。</p>
+                <ColumnTable columns={content.technicalColumns} />
+              </div>
+            )}
+          </section>
+        </div>
       )}
     </div>
   )

@@ -3473,11 +3473,15 @@
   outline-offset: 2px;
 }
 
-.csv-import-help__popover {
+.csv-import-help__popover-hit-area {
   position: absolute;
-  top: calc(100% + 8px);
+  top: 100%;
   right: 0;
   z-index: 60;
+  padding-top: 8px;
+}
+
+.csv-import-help__popover {
   display: grid;
   width: min(660px, calc(100vw - 32px));
   max-width: calc(100vw - 32px);
