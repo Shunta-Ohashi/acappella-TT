@@ -4203,6 +4203,37 @@
   cursor: grabbing;
 }
 
+.timetable-pool-card--order-highlight {
+  outline: 2px solid #2f7b75;
+  outline-offset: -2px;
+  background: #effaf8;
+}
+
+.timetable-order-block-badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 1px 4px;
+  color: #245c57;
+  background: #effaf8;
+  border: 1px solid #9bc9c4;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.timetable-order-block-badge:focus-visible {
+  outline: 2px solid #245c57;
+  outline-offset: 2px;
+}
+
+.timetable-pool-card .timetable-order-block-badge {
+  margin-left: 5px;
+  vertical-align: middle;
+}
+
 .timetable-grid-wrap {
   --timetable-grid-columns: 76px 280px 116px 116px;
   --timetable-grid-min-width: 588px;
@@ -4588,6 +4619,13 @@
 
 .timetable-grid__row--warning {
   box-shadow: inset 4px 0 #a15c07;
+}
+
+.timetable-grid__row--order-highlight {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid #2f7b75;
+  outline-offset: -2px;
 }
 
 .timetable-grid__time {
@@ -4993,6 +5031,18 @@
   border: 1px solid #d9e0e7;
   border-radius: 8px;
   background: #fff;
+}
+
+.timetable-order-settings__item--linked-highlight {
+  border-color: #2f7b75;
+  outline: 2px solid #2f7b75;
+  outline-offset: -2px;
+  background: #effaf8;
+}
+
+.timetable-order-settings__item > div:first-child > .timetable-order-block-badge {
+  margin-left: 6px;
+  vertical-align: middle;
 }
 
 .timetable-order-settings__item strong,

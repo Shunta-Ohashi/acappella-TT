@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type FocusEvent } from 'react'
 import type {
   Event,
   EventBand,
@@ -20,6 +20,10 @@ import {
   getTimetableOrderConstraintScheduleStatus,
   isTimetableOrderConstraintScopeReachable,
 } from '../ui/timetableOrderConstraintPresentation'
+import {
+  getTimetableOrderConstraintBlockForConstraint,
+  type TimetableOrderConstraintBlockPresentation,
+} from '../ui/timetableOrderConstraintLinkPresentation'
 import { DeleteConfirmationDialog } from './DeleteConfirmationDialog'
 import { TimetableOrderConstraintDialog } from './TimetableOrderConstraintDialog'
 import { TimetableOrderConstraintRepairPanel } from './TimetableOrderConstraintRepairPanel'
@@ -34,6 +38,9 @@ interface TimetableOrderConstraintSettingsProps {
   eventBands: EventBand[]
   scheduleItems: ScheduleItem[]
   timetableOrderConstraints: TimetableOrderConstraint[]
+  orderConstraintBlocks: TimetableOrderConstraintBlockPresentation[]
+  activeOrderConstraintBlockKey: string | null
+  onOrderConstraintBlockHighlightChange: (blockKey: string | null) => void
   createConstraintId: () => string
   onCommit: (constraints: TimetableOrderConstraint[]) => void
 }
@@ -52,6 +59,9 @@ export function TimetableOrderConstraintSettings({
   eventBands,
   scheduleItems,
   timetableOrderConstraints,
+  orderConstraintBlocks,
+  activeOrderConstraintBlockKey,
+  onOrderConstraintBlockHighlightChange,
   createConstraintId,
   onCommit,
 }: TimetableOrderConstraintSettingsProps) {
@@ -196,13 +206,47 @@ export function TimetableOrderConstraintSettings({
               scheduleItems,
               semanticViolations,
             })
+            const block = semanticViolations.length === 0
+              ? getTimetableOrderConstraintBlockForConstraint(
+                  orderConstraintBlocks,
+                  constraint,
+                )
+              : undefined
+            const handleBlur = (event: FocusEvent<HTMLLIElement>) => {
+              const nextTarget = event.relatedTarget
+              if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return
+              onOrderConstraintBlockHighlightChange(null)
+            }
             return (
               <li
                 key={`${constraint.id}:${occurrenceIndex}`}
-                className="timetable-order-settings__item"
+                className={[
+                  'timetable-order-settings__item',
+                  block?.key === activeOrderConstraintBlockKey
+                    ? 'timetable-order-settings__item--linked-highlight'
+                    : '',
+                ].filter(Boolean).join(' ')}
+                onMouseEnter={block
+                  ? () => onOrderConstraintBlockHighlightChange(block.key)
+                  : undefined}
+                onMouseLeave={block
+                  ? () => onOrderConstraintBlockHighlightChange(null)
+                  : undefined}
+                onFocusCapture={block
+                  ? () => onOrderConstraintBlockHighlightChange(block.key)
+                  : undefined}
+                onBlurCapture={block ? handleBlur : undefined}
               >
                 <div>
                   <strong>{laneLabel}</strong>
+                  {block && (
+                    <span
+                      className="timetable-order-block-badge"
+                      title={block.title}
+                    >
+                      🔗 {block.label}
+                    </span>
+                  )}
                   <p>{bandOrder}</p>
                   <small className={`timetable-order-settings__status timetable-order-settings__status--${status.kind}`}>
                     {status.label}
