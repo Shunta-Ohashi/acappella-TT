@@ -63,7 +63,11 @@ export const createEventMemberCsv = ({
             : dayDraft.participationStatus === 'absent' ? '不参加' : '未定',
           memberDraft.paCapabilities.main ? '可' : '不可',
           memberDraft.paCapabilities.sub ? '可' : '不可',
-          dayDraft.availabilityWindows?.map(formatTimeRange).join('|') ?? '',
+          dayDraft.availabilityWindows === undefined
+            ? ''
+            : dayDraft.availabilityWindows.length === 0
+              ? 'なし'
+              : dayDraft.availabilityWindows.map(formatTimeRange).join('|'),
           dayDraft.preferredTimeRange ? formatTimeRange(dayDraft.preferredTimeRange) : '',
           dayDraft.notes ?? '',
           memberDraft.memberId,

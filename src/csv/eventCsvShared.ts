@@ -45,7 +45,11 @@ const parseTimeRange = (value: string): TimeRange | undefined | string => {
 export const parseAvailabilityCell = (
   value: string,
 ): { ok: true; value?: TimeRange[] } | { ok: false; message: string } => {
-  if (!value.trim()) return { ok: true }
+  const normalized = value.trim()
+  if (!normalized) return { ok: true }
+  if (normalized === 'なし' || normalized.toLowerCase() === 'none') {
+    return { ok: true, value: [] }
+  }
   const ranges: TimeRange[] = []
   for (const part of value.split('|')) {
     const range = parseTimeRange(part)

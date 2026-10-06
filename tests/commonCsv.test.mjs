@@ -144,6 +144,23 @@ test('Common Memberは既存の英語statusを解釈し重複ID・invalid year�
   assert.equal('candidate' in invalid, false)
 })
 
+test('Common Memberの新規Importは非在籍を維持し状態blankだけ在籍中をdefaultにする', () => {
+  const result = planCommonMemberCsvImport({
+    csv: csv(['本名', '状態', 'メンバーID'], [
+      ['IDなし非在籍', '非在籍', ''],
+      ['明示ID非在籍', 'inactive', 'portable-inactive-member'],
+      ['状態blank', '', 'portable-active-member'],
+    ]),
+    members: [],
+    createMemberId: () => 'generated-inactive-member',
+  })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  if (!result.ok) return
+  assert.equal(result.candidate.find((item) => item.id === 'generated-inactive-member').active, false)
+  assert.equal(result.candidate.find((item) => item.id === 'portable-inactive-member').active, false)
+  assert.equal(result.candidate.find((item) => item.id === 'portable-active-member').active, true)
+})
+
 test('Common Bandはlocale非依存でuppercase英語statusを解釈する', () => {
   for (const [status, expected] of [['ACTIVE', true], ['INACTIVE', false], ['TRUE', true], ['FALSE', false]]) {
     const result = planCommonBandCsvImport({
@@ -153,6 +170,23 @@ test('Common Bandはlocale非依存でuppercase英語statusを解釈する', () 
     assert.equal(result.ok, true)
     if (result.ok) assert.equal(result.candidate[0].active, expected)
   }
+})
+
+test('Common Bandの新規Importは活動終了を維持し状態blankだけ活動中をdefaultにする', () => {
+  const generatedIds = ['generated-inactive-band']
+  const result = planCommonBandCsvImport({
+    csv: csv(['バンド名', 'メンバー1', '状態', 'バンドID'], [
+      ['IDなし活動終了', 'はな', '活動終了', ''],
+      ['明示ID活動終了', 'れん', 'inactive', 'portable-inactive-band'],
+      ['状態blank', 'あおい', '', 'portable-active-band'],
+    ]),
+    bands: [], members, createBandId: () => generatedIds.shift() ?? 'unexpected-id',
+  })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  if (!result.ok) return
+  assert.equal(result.candidate.find((item) => item.id === 'generated-inactive-band').active, false)
+  assert.equal(result.candidate.find((item) => item.id === 'portable-inactive-band').active, false)
+  assert.equal(result.candidate.find((item) => item.id === 'portable-active-band').active, true)
 })
 
 test('Common Band exportは最低7つの名前列と右端の技術列を持つ', () => {

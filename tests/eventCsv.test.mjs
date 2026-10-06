@@ -89,6 +89,61 @@ test('Event MemberのExportは技術IDを使ってそのまま再Importできる
   assert.deepEqual(result.candidate, draft)
 })
 
+test('Event Memberはavailabilityのblank・なし・通常・複数・片側rangeを区別してround-tripする', () => {
+  const cases = [
+    { value: undefined, exported: '' },
+    { value: [], exported: 'なし' },
+    { value: [{ from: '09:00', until: '12:00' }], exported: '09:00-12:00' },
+    {
+      value: [{ from: '09:00', until: '11:00' }, { from: '13:00', until: '17:00' }],
+      exported: '09:00-11:00|13:00-17:00',
+    },
+    { value: [{ from: '13:00' }], exported: '13:00-' },
+  ]
+  for (const { value, exported: expectedCell } of cases) {
+    const draft = makeMemberDraft()
+    const targetDay = draft.members[0].days[0]
+    if (value === undefined) delete targetDay.availabilityWindows
+    else targetDay.availabilityWindows = value
+    const before = structuredClone(draft)
+    const source = createEventMemberCsv({ event, eventDays, members, draft })
+    const parsed = parseCsv(source)
+    assert.equal(parsed.ok, true)
+    if (!parsed.ok) continue
+    const header = parsed.rows[0].cells
+    const row = parsed.rows.slice(1).find((candidate) =>
+      candidate.cells[header.indexOf('メンバーID')] === 'member-1' &&
+      candidate.cells[header.indexOf('開催日ID')] === 'day-1')
+    assert.equal(row?.cells[header.indexOf('出演可能時間帯')], expectedCell)
+
+    const imported = planEventMemberCsvImport({
+      csv: source, event, eventDays, members, eventMembers, eventMemberDays, draft,
+      createDraftId: () => 'unused',
+    })
+    assert.equal(imported.ok, true, JSON.stringify(imported))
+    if (imported.ok) assert.deepEqual(imported.candidate, draft)
+    assert.deepEqual(draft, before)
+  }
+})
+
+test('Event Memberは「なし」とNONEを明示的な出演可能時間なしとしてImportする', () => {
+  for (const value of ['なし', 'NONE']) {
+    const result = planEventMemberCsvImport({
+      csv: csv(['メンバー', '開催日', '参加状態', '出演可能時間帯'], [[
+        'はな', '2027-11-01', '参加', value,
+      ]]),
+      event, eventDays, members, eventMembers, eventMemberDays, draft: makeMemberDraft(),
+      createDraftId: () => 'unused',
+    })
+    assert.equal(result.ok, true, JSON.stringify(result))
+    if (result.ok) {
+      const day = result.candidate.members.find((item) => item.memberId === 'member-1')
+        .days.find((item) => item.eventDayId === 'day-1')
+      assert.deepEqual(day.availabilityWindows, [])
+    }
+  }
+})
+
 test('Event Memberのhuman member列は本名を使いcross-field collisionを避ける', () => {
   const configuredMembers = members.map((member) => member.id === 'member-1'
     ? { ...member, realName: '山田太郎', acaName: 'たろう' }
@@ -218,6 +273,7 @@ test('Event Memberはlocale非依存でuppercase participation・PA tokenを解�
 test('Event Memberは省略したPA・詳細headerについて既存draft値を維持する', () => {
   const draft = makeMemberDraft()
   draft.members[0].days[0].notes = 'keep'
+  draft.members[0].days[0].availabilityWindows = []
   const result = planEventMemberCsvImport({
     csv: csv(['メンバー', '開催日', '参加状態'], [['はな', '2027-11-01', '未定']]),
     event, eventDays, members, eventMembers, eventMemberDays, draft, createDraftId: () => 'unused',
@@ -227,6 +283,7 @@ test('Event Memberは省略したPA・詳細headerについて既存draft値を�
   const updated = result.candidate.members.find((item) => item.memberId === 'member-1')
   assert.deepEqual(updated.paCapabilities, { main: true, sub: false })
   assert.equal(updated.days[0].notes, 'keep')
+  assert.deepEqual(updated.days[0].availabilityWindows, [])
 })
 
 test('Event Memberはambiguous name・foreign day・duplicate pair・PA不一致をatomicにrejectする', () => {

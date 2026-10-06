@@ -57,6 +57,7 @@ test('Event Member Helpは簡略形式・行モデル・PA・時間帯syntaxを�
   assert.match(descriptions, /可.*不可/)
   assert.match(descriptions, /09:00-11:00\|13:00-17:00/)
   assert.match(descriptions, /空欄は制限なし/)
+  assert.match(descriptions, /なし.*出演可能時間なし/)
 })
 
 test('Event Band Helpは簡略形式・固定バンド名・動的メンバー列を説明する', () => {

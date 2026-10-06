@@ -1,6 +1,6 @@
 import type {
-  DutyAssignment, DutyType, Event, EventBand, EventDay, EventMember, EventMemberDay,
-  Member, PaAssignment, ScheduleItem, Section, Stage,
+  DutyAssignment, DutyType, DutyTypeId, Event, EventBand, EventDay, EventMember,
+  EventMemberDay, Member, PaAssignment, ScheduleItem, Section, Stage,
 } from '../domain/models.ts'
 import { detectScheduleIssues } from '../domain/issues.ts'
 import {
@@ -9,13 +9,11 @@ import {
 } from '../domain/dutyAssignments.ts'
 import { calculateEventDayTimelines } from '../domain/timetable.ts'
 import { formatMinuteAsLocalTime } from '../domain/timeline.ts'
-import { getInterSectionBreakPresentation } from '../ui/interSectionBreakPresentation.ts'
+import { getOrderedEventDays } from '../csv/eventCsvShared.ts'
 import { getMemberDisplayName } from '../ui/eventBandPresentation.ts'
 import { createTimetableWorkspaceRows } from '../ui/timetableWorkspaceRows.ts'
-import { serializeSpreadsheetCsv } from './spreadsheetCsv.ts'
-import { getOrderedEventDays } from './eventCsvShared.ts'
 
-export interface TimetableCsvInput {
+export interface TimetableWorkbookInput {
   event: Event
   eventDays: EventDay[]
   stages: Stage[]
@@ -30,15 +28,88 @@ export interface TimetableCsvInput {
   dutyAssignments: DutyAssignment[]
 }
 
-export type TimetableCsvResult =
-  | { ok: true; csv: string; rowCount: number; warnings: string[] }
+export interface TimetableWorkbookSheetModel {
+  name: string
+  eventDayId: string
+  stageId: string
+  headers: string[]
+  rows: string[][]
+}
+
+export interface TimetableWorkbookModel {
+  sheets: TimetableWorkbookSheetModel[]
+  warnings: string[]
+  rowCount: number
+}
+
+export type TimetableWorkbookModelResult =
+  | { ok: true; model: TimetableWorkbookModel }
   | { ok: false; message: string }
 
-const BASE_HEADERS = [
-  '開催日', '開催日ラベル', 'Stage', 'Section', '開始', '終了', '種別', '名称',
-  'メンバー', '所要時間', 'Main PA', 'Sub PA',
-] as const
-const LAST_HEADERS = ['ERROR', 'WARNING', 'INFO', 'ScheduleItem ID', 'EventBand ID'] as const
+export interface TimetableDutyColumn {
+  dutyTypeId: DutyTypeId
+  header: string
+}
+
+const FIXED_HEADERS = ['スタート時間', '内容', 'Main PA', 'Sub PA'] as const
+
+const createUniqueLabel = (
+  base: string,
+  used: Set<string>,
+  separator = ' ',
+): string => {
+  let suffix = 1
+  let candidate = base
+  while (used.has(candidate)) {
+    suffix += 1
+    candidate = `${base}${separator}(${suffix})`
+  }
+  used.add(candidate)
+  return candidate
+}
+
+export const createTimetableDutyColumns = (
+  dutyTypes: Pick<DutyType, 'id' | 'name'>[],
+  memberColumnCount: number,
+): TimetableDutyColumn[] => {
+  const fixedHeaders = new Set<string>([
+    ...FIXED_HEADERS,
+    ...Array.from({ length: memberColumnCount }, (_, index) => `メンバー${index + 1}`),
+  ])
+  const used = new Set(fixedHeaders)
+  return dutyTypes.map((type) => {
+    const originalName = type.name.trim() || '当日運営'
+    const base = fixedHeaders.has(originalName) ? `当日運営:${originalName}` : originalName
+    return { dutyTypeId: type.id, header: createUniqueLabel(base, used) }
+  })
+}
+
+const sanitizeWorksheetNamePart = (value: string): string =>
+  [...value]
+    .filter((character) => (character.codePointAt(0) ?? 0) > 0x1f)
+    .join('')
+    .replace(/[:\\/?*[\]]/g, '_')
+    .trim()
+    .replace(/^'+|'+$/g, '')
+
+export const createTimetableWorksheetNames = (
+  items: { date: string; stageName: string }[],
+): string[] => {
+  const used = new Set<string>()
+  return items.map(({ date, stageName }) => {
+    const fallback = `${date} Stage`
+    const sanitized = sanitizeWorksheetNamePart(`${date} ${stageName}`) || fallback
+    let sequence = 1
+    let candidate = sanitized.slice(0, 31)
+    while (used.has(candidate.toLocaleLowerCase())) {
+      sequence += 1
+      const suffix = ` (${sequence})`
+      candidate = `${sanitized.slice(0, 31 - suffix.length)}${suffix}`
+    }
+    used.add(candidate.toLocaleLowerCase())
+    return candidate
+  })
+}
 
 const joinUniqueIdentityLabels = (
   values: { identity: string; label: string }[],
@@ -51,7 +122,22 @@ const joinUniqueIdentityLabels = (
   }).join('|')
 }
 
-export const createTimetableCsv = (input: TimetableCsvInput): TimetableCsvResult => {
+const getUniqueEventBandMemberNames = (
+  eventBand: EventBand,
+  memberById: Map<string, Member>,
+): string[] => {
+  const seen = new Set<string>()
+  return eventBand.memberIds.flatMap((memberId) => {
+    if (seen.has(memberId)) return []
+    seen.add(memberId)
+    const member = memberById.get(memberId)
+    return [member ? getMemberDisplayName(member) : '不明なメンバー']
+  })
+}
+
+export const createTimetableWorkbookModel = (
+  input: TimetableWorkbookInput,
+): TimetableWorkbookModelResult => {
   const eventDays = getOrderedEventDays(input.event, input.eventDays)
   const eventDayIds = new Set(eventDays.map((day) => day.id))
   const stages = input.stages.filter((stage) => eventDayIds.has(stage.eventDayId))
@@ -70,21 +156,35 @@ export const createTimetableCsv = (input: TimetableCsvInput): TimetableCsvResult
   const memberById = new Map(input.members.map((member) => [member.id, member]))
   const paById = new Map(eventPaAssignments.map((assignment) => [assignment.id, assignment]))
   const dutyById = new Map(eventDutyAssignments.map((assignment) => [assignment.id, assignment]))
-  const rows: string[][] = [[
-    ...BASE_HEADERS,
-    ...dutyTypes.map((type) => `当日運営:${type.name}`),
-    ...LAST_HEADERS,
-  ]]
+  const memberColumnCount = Math.max(7, ...eventBands.map((band) => band.memberIds.length))
+  const memberHeaders = Array.from(
+    { length: memberColumnCount },
+    (_, index) => `メンバー${index + 1}`,
+  )
+  const dutyColumns = createTimetableDutyColumns(dutyTypes, memberColumnCount)
+  const headers = [
+    'スタート時間', '内容', ...memberHeaders, 'Main PA', 'Sub PA',
+    ...dutyColumns.map((column) => column.header),
+  ]
+  const orderedScopes = eventDays.flatMap((eventDay) =>
+    stages.filter((stage) => stage.eventDayId === eventDay.id)
+      .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+      .map((stage) => ({ eventDay, stage })),
+  )
+  const sheetNames = createTimetableWorksheetNames(orderedScopes.map(({ eventDay, stage }) => ({
+    date: eventDay.date,
+    stageName: stage.name,
+  })))
   const warnings = new Set<string>()
-  const assignmentWarning = 'Grid外または参照切れの担当はCSVの各行に完全には反映されていません。'
+  const assignmentWarning = 'Grid外または参照切れの担当はExcelの各行に完全には反映されていません。'
   const eventDayById = new Map(input.eventDays.map((day) => [day.id, day]))
   const stageById = new Map(input.stages.map((stage) => [stage.id, stage]))
   const hasInvalidPaScope = eventPaAssignments.some((assignment) => {
-      const eventDay = eventDayById.get(assignment.eventDayId)
-      const stage = stageById.get(assignment.stageId)
-      return !eventDay || eventDay.eventId !== input.event.id || !stage ||
-        stage.eventDayId !== assignment.eventDayId || !memberById.has(assignment.memberId)
-    })
+    const eventDay = eventDayById.get(assignment.eventDayId)
+    const stage = stageById.get(assignment.stageId)
+    return !eventDay || eventDay.eventId !== input.event.id || !stage ||
+      stage.eventDayId !== assignment.eventDayId || !memberById.has(assignment.memberId)
+  })
   const hasInvalidDutyScope = eventDutyAssignments.some((assignment) =>
     !getDutyAssignmentScopeStatus({
       assignment,
@@ -95,6 +195,8 @@ export const createTimetableCsv = (input: TimetableCsvInput): TimetableCsvResult
   )
   if (hasInvalidPaScope || hasInvalidDutyScope) warnings.add(assignmentWarning)
 
+  const sheets: TimetableWorkbookSheetModel[] = []
+  let rowCount = 0
   for (const eventDay of eventDays) {
     let timelines
     try {
@@ -106,11 +208,17 @@ export const createTimetableCsv = (input: TimetableCsvInput): TimetableCsvResult
         eventBands,
       })
     } catch {
-      return { ok: false, message: `${eventDay.label || eventDay.date}のタイムテーブルを計算できないためCSVを書き出せません。` }
+      return {
+        ok: false,
+        message: `${eventDay.label || eventDay.date}のタイムテーブルを計算できないためExcelを書き出せません。`,
+      }
     }
     if (timelines.invalidStages.length > 0) {
       const invalidStage = stages.find((stage) => stage.id === timelines.invalidStages[0].stageId)
-      return { ok: false, message: `${invalidStage?.name ?? timelines.invalidStages[0].stageId} Stageのタイムテーブルを計算できないためCSVを書き出せません。` }
+      return {
+        ok: false,
+        message: `${invalidStage?.name ?? timelines.invalidStages[0].stageId} Stageのタイムテーブルを計算できないためExcelを書き出せません。`,
+      }
     }
     const dayStages = stages.filter((stage) => stage.eventDayId === eventDay.id)
       .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
@@ -131,8 +239,9 @@ export const createTimetableCsv = (input: TimetableCsvInput): TimetableCsvResult
     })
 
     for (const stage of dayStages) {
-      const stageSections = input.sections.filter((section) => section.stageId === stage.id)
-        .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+      const scopeIndex = orderedScopes.findIndex((scope) =>
+        scope.eventDay.id === eventDay.id && scope.stage.id === stage.id,
+      )
       const workspace = createTimetableWorkspaceRows({
         eventDayId: eventDay.id,
         stageId: stage.id,
@@ -155,42 +264,15 @@ export const createTimetableCsv = (input: TimetableCsvInput): TimetableCsvResult
       ) {
         warnings.add(assignmentWarning)
       }
-      for (const row of workspace.rows) {
+      const rows = workspace.rows.map((row) => {
         const item = row.scheduleItem
-        const section = item.sectionId
-          ? stageSections.find((candidate) => candidate.id === item.sectionId)
-          : undefined
-        let sectionLabel = section?.name ?? ''
-        if (item.kind === 'break' && item.afterSectionId) {
-          const previousIndex = stageSections.findIndex((candidate) => candidate.id === item.afterSectionId)
-          const nextSection = stageSections[previousIndex + 1]
-          if (previousIndex >= 0 && nextSection) {
-            sectionLabel = getInterSectionBreakPresentation(
-              stageSections[previousIndex], nextSection, [
-                { id: 'time', label: '時刻', width: 1 },
-                { id: 'item', label: '内容', width: 1 },
-              ], item,
-            ).sectionLabel
-          }
-        }
-        rows.push([
-          eventDay.date,
-          eventDay.label ?? '',
-          stage.name,
-          sectionLabel,
+        const memberNames = item.kind === 'performance' && row.eventBand
+          ? getUniqueEventBandMemberNames(row.eventBand, memberById)
+          : []
+        return [
           formatMinuteAsLocalTime(row.calculatedItem.plannedStartMinute),
-          formatMinuteAsLocalTime(row.calculatedItem.plannedEndMinute),
-          item.kind === 'performance' ? '出演' : '休憩',
           item.kind === 'performance' ? row.eventBand?.name ?? '' : item.title,
-          item.kind === 'performance' && row.eventBand
-            ? joinUniqueIdentityLabels(row.eventBand.memberIds.map((memberId) => ({
-                identity: memberId,
-                label: memberById.has(memberId)
-                  ? getMemberDisplayName(memberById.get(memberId)!)
-                  : '不明なメンバー',
-              })))
-            : '',
-          String(item.kind === 'performance' ? row.eventBand?.durationMinutes ?? '' : item.durationMinutes),
+          ...Array.from({ length: memberColumnCount }, (_, index) => memberNames[index] ?? ''),
           joinUniqueIdentityLabels(row.paCoverage.main.map((coverage) => ({
             identity: paById.get(coverage.assignmentId)?.memberId ?? `pa:${coverage.assignmentId}`,
             label: coverage.memberName,
@@ -199,22 +281,26 @@ export const createTimetableCsv = (input: TimetableCsvInput): TimetableCsvResult
             identity: paById.get(coverage.assignmentId)?.memberId ?? `pa:${coverage.assignmentId}`,
             label: coverage.memberName,
           }))),
-          ...dutyTypes.map((type) => joinUniqueIdentityLabels(
-            (row.dutyCoverage[type.id] ?? []).map((coverage) => ({
-              identity: dutyById.get(coverage.assignmentId)?.memberId ?? `duty:${coverage.assignmentId}`,
+          ...dutyColumns.map((column) => joinUniqueIdentityLabels(
+            (row.dutyCoverage[column.dutyTypeId] ?? []).map((coverage) => ({
+              identity: dutyById.get(coverage.assignmentId)?.memberId ??
+                `duty:${coverage.assignmentId}`,
               label: coverage.memberName,
             })),
           )),
-          String(row.issueCounts.ERROR),
-          String(row.issueCounts.WARNING),
-          String(row.issueCounts.INFO),
-          item.id,
-          item.kind === 'performance' ? item.eventBandId : '',
-        ])
-      }
+        ]
+      })
+      rowCount += rows.length
+      sheets.push({
+        name: sheetNames[scopeIndex],
+        eventDayId: eventDay.id,
+        stageId: stage.id,
+        headers: [...headers],
+        rows,
+      })
     }
   }
-  return { ok: true, csv: serializeSpreadsheetCsv(rows), rowCount: rows.length - 1, warnings: [...warnings] }
+  return { ok: true, model: { sheets, warnings: [...warnings], rowCount } }
 }
 
 const sanitizeFilenamePart = (value: string): string =>
@@ -227,8 +313,8 @@ const sanitizeFilenamePart = (value: string): string =>
 
 const pad = (value: number): string => String(value).padStart(2, '0')
 
-export const createTimetableCsvFilename = (event: Event, now = new Date()): string => {
+export const createTimetableWorkbookFilename = (event: Event, now = new Date()): string => {
   const eventPart = sanitizeFilenamePart(event.name) || sanitizeFilenamePart(event.id) || 'event'
   const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
-  return `acappella-tt-${eventPart}-timetable-${timestamp}.csv`
+  return `acappella-tt-${eventPart}-timetable-${timestamp}.xlsx`
 }
