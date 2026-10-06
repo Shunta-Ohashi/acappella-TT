@@ -204,6 +204,22 @@ test('Share parser/decoderはinvalid createdAt、base64url・圧縮・JSON・ver
   })), { ok: false, reason: 'MALFORMED' })
 })
 
+test('plannedEndTimeはfield absentとvalid LocalTimeだけを許可しpresent-but-invalid値をrejectする', () => {
+  const withoutEnd = makeSmallSnapshot()
+  delete withoutEnd.days[0].stages[0].plannedEndTime
+  assert.ok(parseTimetablePreShareSnapshot(withoutEnd))
+  assert.ok(parseTimetablePreShareSnapshot(makeSmallSnapshot()))
+
+  for (const invalid of [null, 123, true, {}, [], '']) {
+    const snapshot = makeSmallSnapshot()
+    snapshot.days[0].stages[0].plannedEndTime = invalid
+    assert.equal(parseTimetablePreShareSnapshot(snapshot), undefined, String(invalid))
+    assert.deepEqual(decodeTimetablePreSharePayload(encodeUnknown(snapshot)), {
+      ok: false, reason: 'MALFORMED',
+    }, String(invalid))
+  }
+})
+
 test('Share decoderとURL生成は明示的size上限を超えるpayloadをrejectする', () => {
   assert.deepEqual(
     decodeTimetablePreSharePayload('A'.repeat(MAX_TIMETABLE_PRE_SHARE_URL_LENGTH + 1)),
@@ -215,6 +231,17 @@ test('Share decoderとURL生成は明示的size上限を超えるpayloadをrejec
   assert.deepEqual(decodeTimetablePreSharePayload(decompressionBomb), {
     ok: false, reason: 'TOO_LARGE',
   })
+
+  const oversizedSnapshot = makeSmallSnapshot({
+    eventName: '🎤'.repeat(Math.floor(MAX_TIMETABLE_PRE_SHARE_DECOMPRESSED_BYTES / 4) + 1),
+  })
+  assert.throws(() => encodeTimetablePreShareSnapshot(oversizedSnapshot))
+  const oversizedResult = createTimetablePreShareUrl(
+    oversizedSnapshot,
+    'https://example.test/app?mode=preview',
+  )
+  assert.equal(oversizedResult.ok, false)
+  if (!oversizedResult.ok) assert.match(oversizedResult.message, /大きすぎる/)
 
   let state = 0x12345678
   const largeName = Array.from({ length: 100_000 }, () => {
@@ -269,6 +296,35 @@ test('Day/Stage summaryは予定順とPerformance・Break件数を算出する',
     ],
   }), {
     startTime: '09:00', endTime: '11:10', performanceCount: 2, breakCount: 1,
+  })
+})
+
+test('Day/Stage summaryはentry配列順や並行Stageに依存せず最小開始・最大終了を使う', () => {
+  const stageAEntry = makeEntry({
+    startTime: '13:00', endTime: '14:00', kind: 'break', title: 'Long Break',
+    members: [], mainPa: [], subPa: [], duties: [],
+  })
+  const stageBEntry = makeEntry({ startTime: '13:30', endTime: '13:40' })
+  assert.deepEqual(getTimetablePreShareDaySummary({
+    date: '2027-11-01',
+    stages: [
+      { name: 'Stage A', plannedStartTime: '13:00', entries: [stageAEntry] },
+      { name: 'Stage B', plannedStartTime: '13:30', entries: [stageBEntry] },
+    ],
+  }), {
+    startTime: '13:00', endTime: '14:00', performanceCount: 1, breakCount: 1,
+  })
+
+  assert.deepEqual(getTimetablePreShareStageSummary({
+    name: 'Scrambled', plannedStartTime: '09:00', plannedEndTime: '18:00',
+    entries: [stageBEntry, stageAEntry],
+  }), {
+    startTime: '13:00', endTime: '14:00', performanceCount: 1, breakCount: 1,
+  })
+  assert.deepEqual(getTimetablePreShareStageSummary({
+    name: 'Empty', plannedStartTime: '09:00', plannedEndTime: '18:00', entries: [],
+  }), {
+    startTime: '09:00', endTime: '18:00', performanceCount: 0, breakCount: 0,
   })
 })
 

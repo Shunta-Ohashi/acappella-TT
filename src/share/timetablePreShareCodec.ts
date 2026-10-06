@@ -8,6 +8,8 @@ export const MAX_TIMETABLE_PRE_SHARE_URL_LENGTH = 65_536
 export const MAX_TIMETABLE_PRE_SHARE_DECOMPRESSED_BYTES = 2 * 1024 * 1024
 const DECOMPRESSION_INPUT_CHUNK_BYTES = 1024
 
+class TimetablePreSharePayloadTooLargeError extends RangeError {}
+
 const bytesToBase64 = (bytes: Uint8Array): string => {
   let binary = ''
   const chunkSize = 0x8000
@@ -76,7 +78,11 @@ export const encodeTimetablePreShareSnapshot = (
 ): string => {
   const validated = parseTimetablePreShareSnapshot(snapshot)
   if (!validated) throw new RangeError('Invalid timetable pre-share snapshot')
-  return bytesToBase64(zlibSync(strToU8(JSON.stringify(validated)), { level: 9 }))
+  const bytes = strToU8(JSON.stringify(validated))
+  if (bytes.byteLength > MAX_TIMETABLE_PRE_SHARE_DECOMPRESSED_BYTES) {
+    throw new TimetablePreSharePayloadTooLargeError('Timetable pre-share snapshot is too large')
+  }
+  return bytesToBase64(zlibSync(bytes, { level: 9 }))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/u, '')
@@ -131,7 +137,13 @@ export const createTimetablePreShareUrl = (
           ok: false,
           message: '共有リンクが大きすぎるため作成できません。Excel出力を利用してください。',
         }
-  } catch {
+  } catch (error) {
+    if (error instanceof TimetablePreSharePayloadTooLargeError) {
+      return {
+        ok: false,
+        message: '共有リンクが大きすぎるため作成できません。Excel出力を利用してください。',
+      }
+    }
     return { ok: false, message: '共有リンクを作成できませんでした。' }
   }
 }

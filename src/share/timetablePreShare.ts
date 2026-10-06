@@ -300,6 +300,7 @@ const parseStage = (value: unknown): TimetablePreShareStage | undefined => {
     : parseString(value.plannedEndTime)
   if (
     name === undefined || !plannedStartTime || !isValidLocalTime(plannedStartTime) ||
+    (plannedEndTime === undefined && value.plannedEndTime !== undefined) ||
     (plannedEndTime !== undefined && !isValidLocalTime(plannedEndTime)) ||
     !Array.isArray(value.entries)
   ) return undefined
@@ -372,16 +373,22 @@ const summarizeEntries = (
   entries: TimetablePreShareEntry[],
   fallbackStart?: string,
   fallbackEnd?: string,
-): TimetablePreShareSummary => ({
-  ...(entries[0]?.startTime || fallbackStart
-    ? { startTime: entries[0]?.startTime ?? fallbackStart }
-    : {}),
-  ...(entries.at(-1)?.endTime || fallbackEnd
-    ? { endTime: entries.at(-1)?.endTime ?? fallbackEnd }
-    : {}),
-  performanceCount: entries.filter(entry => entry.kind === 'performance').length,
-  breakCount: entries.filter(entry => entry.kind === 'break').length,
-})
+): TimetablePreShareSummary => {
+  const startTime = entries.length > 0
+    ? entries.reduce((minimum, entry) =>
+        entry.startTime < minimum ? entry.startTime : minimum, entries[0].startTime)
+    : fallbackStart
+  const endTime = entries.length > 0
+    ? entries.reduce((maximum, entry) =>
+        entry.endTime > maximum ? entry.endTime : maximum, entries[0].endTime)
+    : fallbackEnd
+  return {
+    ...(startTime ? { startTime } : {}),
+    ...(endTime ? { endTime } : {}),
+    performanceCount: entries.filter(entry => entry.kind === 'performance').length,
+    breakCount: entries.filter(entry => entry.kind === 'break').length,
+  }
+}
 
 export const getTimetablePreShareStageSummary = (
   stage: TimetablePreShareStage,
@@ -390,9 +397,5 @@ export const getTimetablePreShareStageSummary = (
 
 export const getTimetablePreShareDaySummary = (
   day: TimetablePreShareDay,
-): TimetablePreShareSummary => {
-  const entries = day.stages.flatMap(stage => stage.entries)
-    .sort((left, right) => left.startTime.localeCompare(right.startTime) ||
-      left.endTime.localeCompare(right.endTime))
-  return summarizeEntries(entries)
-}
+): TimetablePreShareSummary =>
+  summarizeEntries(day.stages.flatMap(stage => stage.entries))
