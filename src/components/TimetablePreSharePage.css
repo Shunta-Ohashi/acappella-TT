@@ -178,7 +178,7 @@ body {
 
 .pre-share-entry {
   display: grid;
-  grid-template-columns: 118px minmax(210px, 0.85fr) minmax(340px, 1.35fr);
+  grid-template-columns: 84px minmax(220px, 0.85fr) minmax(360px, 1.35fr);
   min-width: 0;
   overflow: hidden;
   border: 1px solid #dbe3eb;
@@ -188,22 +188,26 @@ body {
 
 .pre-share-entry__time {
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  flex-direction: column;
   justify-content: center;
-  gap: 3px;
   margin: 0;
-  padding: 18px 9px;
+  padding: 12px 7px;
   border-right: 1px solid #dbe3eb;
   background: #f3f7fb;
   color: #294762;
   font-size: 14px;
   font-variant-numeric: tabular-nums;
   font-weight: 800;
+  line-height: 1.1;
   white-space: nowrap;
 }
 
-.pre-share-entry__time span {
-  color: #91a0b0;
+.pre-share-entry__time-connector {
+  width: 1px;
+  height: 10px;
+  margin: 3px 0;
+  background: #a6b3c1;
 }
 
 .pre-share-entry__body {
@@ -352,11 +356,11 @@ body {
 
 @media (max-width: 900px) {
   .pre-share-entry {
-    grid-template-columns: 100px minmax(160px, 0.85fr) minmax(0, 1.35fr);
+    grid-template-columns: 76px minmax(170px, 0.85fr) minmax(0, 1.35fr);
   }
 
   .pre-share-entry__time {
-    padding-inline: 7px;
+    padding-inline: 5px;
     font-size: 13px;
   }
 
@@ -418,12 +422,12 @@ body {
 
 @media (max-width: 560px) {
   .pre-share-entry {
-    grid-template-columns: 90px minmax(0, 1fr);
+    grid-template-columns: 68px minmax(0, 1fr);
   }
 
   .pre-share-entry__time {
     grid-row: 1 / span 2;
-    padding: 14px 6px;
+    padding: 11px 4px;
     font-size: 12px;
   }
 
@@ -453,7 +457,7 @@ body {
 
 @media (max-width: 380px) {
   .pre-share-entry {
-    grid-template-columns: 82px minmax(0, 1fr);
+    grid-template-columns: 64px minmax(0, 1fr);
   }
 
   .pre-share-entry__time {

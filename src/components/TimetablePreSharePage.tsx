@@ -157,7 +157,9 @@ export function TimetablePreSharePage({ snapshot }: TimetablePreSharePageProps) 
                     key={`${entry.startTime}:${entry.endTime}:${entry.kind}:${index}`}
                   >
                     <p className="pre-share-entry__time">
-                      <time>{entry.startTime}</time><span aria-hidden="true">–</span><time>{entry.endTime}</time>
+                      <time>{entry.startTime}</time>
+                      <span className="pre-share-entry__time-connector" aria-hidden="true" />
+                      <time>{entry.endTime}</time>
                     </p>
                     <div className="pre-share-entry__body">
                       <h3>{entry.title}</h3>
