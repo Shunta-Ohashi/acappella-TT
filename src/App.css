@@ -3727,12 +3727,12 @@
   margin: 0;
 }
 
-.event-output-page > div {
+.event-output-page__content {
   display: grid;
   gap: 8px;
 }
 
-.event-output-page > div p,
+.event-output-page__content p,
 .event-output-page__feedback {
   color: #526175;
   line-height: 1.6;

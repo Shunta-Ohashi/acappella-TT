@@ -128,7 +128,7 @@ export function EventOutputPage(props: TimetableWorkbookInput) {
   return (
     <div className="event-output-sections">
       <section className="event-output-page" aria-labelledby="event-output-excel-title">
-        <div>
+        <div className="event-output-page__content">
           <h3 id="event-output-excel-title">タイムテーブルExcel</h3>
           <p>イベント全体を1つのExcelファイルとして書き出します。開催日・Stageごとにシートが分かれます。</p>
           <p>Excel出力は書き出し専用です。アプリ全体の復元にはJSONバックアップを利用してください。</p>
@@ -145,7 +145,7 @@ export function EventOutputPage(props: TimetableWorkbookInput) {
       </section>
 
       <section className="event-output-page" aria-labelledby="event-output-share-title">
-        <div>
+        <div className="event-output-page__content">
           <h3 id="event-output-share-title">事前共有タイムテーブル</h3>
           <p>演者・運営向けに、出演時刻・メンバー・PA・当日運営担当を確認できる閲覧専用ページを共有します。</p>
           <p className="event-output-page__notice">
