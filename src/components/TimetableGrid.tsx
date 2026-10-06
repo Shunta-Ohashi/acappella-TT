@@ -80,6 +80,7 @@ interface TimetableGridProps {
   eventBands: EventBand[]
   lockViolations: TimetableLockViolation[]
   lockFeedback: string
+  orderConstraintFeedback: string
   onSetTimetableLock: (
     scheduleItemId: ScheduleItemId,
     mode: TimetableLockMode,
@@ -529,6 +530,7 @@ export function TimetableGrid({
   eventBands,
   lockViolations,
   lockFeedback,
+  orderConstraintFeedback,
   onSetTimetableLock,
   onUnlockTimetableLock,
   onUnlockAllTimetableLocks,
@@ -843,6 +845,16 @@ export function TimetableGrid({
       {lockFeedback && (
         <p className="timetable-grid__lock-feedback" role="status">
           {lockFeedback}
+        </p>
+      )}
+
+      {orderConstraintFeedback && (
+        <p
+          className="timetable-grid__order-constraint-feedback"
+          role="alert"
+          aria-live="polite"
+        >
+          {orderConstraintFeedback}
         </p>
       )}
 

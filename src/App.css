@@ -4284,7 +4284,8 @@
 
 .timetable-grid__broken-pa,
 .timetable-grid__broken-duty,
-.timetable-grid__lock-feedback {
+.timetable-grid__lock-feedback,
+.timetable-grid__order-constraint-feedback {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -4307,7 +4308,8 @@
   font-size: 10px;
 }
 
-.timetable-grid__lock-feedback {
+.timetable-grid__lock-feedback,
+.timetable-grid__order-constraint-feedback {
   margin: 0;
 }
 
