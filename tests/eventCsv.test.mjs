@@ -271,8 +271,10 @@ test('Event Band exportは人間向け列、最低7メンバー列、右端技�
   if (!parsed.ok) return
   assert.deepEqual(parsed.rows[0].cells, [...EVENT_BAND_CSV_HEADERS])
   assert.deepEqual(parsed.rows[1].cells.slice(0, 4), ['Existing', '2027-11-01', '佐藤 花子', ''])
-  assert.deepEqual(parsed.rows[0].cells.slice(-4), ['出演バンドID', '開催日ID', '固定バンドID', 'メンバーID一覧'])
-  assert.deepEqual(parsed.rows[1].cells.slice(-4), ['event-band-1', 'day-1', 'band-1', 'member-1'])
+  assert.deepEqual(parsed.rows[0].cells.slice(-5), ['出演バンドID', '開催日ID', '固定バンドID', 'メンバーID一覧', '下書きID'])
+  assert.deepEqual(parsed.rows[1].cells.slice(-5), [
+    'event-band-1', 'day-1', 'band-1', 'member-1', 'event-band-event-band-1',
+  ])
 })
 
 test('Event BandのExportは技術IDを使ってそのまま再Importできる', () => {
@@ -287,6 +289,131 @@ test('Event BandのExportは技術IDを使ってそのまま再Importできる',
   assert.equal(result.createdCount, 0)
   assert.equal(result.updatedCount, draft.items.length)
   assert.deepEqual(result.candidate, draft)
+})
+
+test('Event Bandの未保存draftは下書きIDでExport・再Importして同じrowを更新する', () => {
+  const draft = { items: [{
+    draftId: 'unsaved-draft-1',
+    eventId: event.id,
+    eventDayId: 'day-2',
+    name: 'Unsaved',
+    memberIds: ['member-2'],
+    durationMinutes: '10',
+  }] }
+  const before = structuredClone(draft)
+  const csvSource = createEventBandCsv({ event, eventDays, bands, members, draft })
+  const exported = parseCsv(csvSource)
+  assert.equal(exported.ok, true)
+  if (!exported.ok) return
+  assert.equal(exported.rows[0].cells.at(-1), '下書きID')
+  assert.equal(exported.rows[1].cells.at(-1), 'unsaved-draft-1')
+
+  const roundTrip = planEventBandCsvImport({
+    csv: csvSource, event, eventDays, bands, members, eventMembers, eventMemberDays,
+    eventBands: existingEventBands, draft, createDraftId: () => 'must-not-create',
+  })
+  assert.equal(roundTrip.ok, true, JSON.stringify(roundTrip))
+  if (roundTrip.ok) {
+    assert.equal(roundTrip.candidate.items.length, 1)
+    assert.equal(roundTrip.candidate.items[0].draftId, 'unsaved-draft-1')
+    assert.equal(roundTrip.createdCount, 0)
+    assert.equal(roundTrip.updatedCount, 1)
+  }
+
+  const updated = planEventBandCsvImport({
+    csv: csv(['バンド名', '開催日', 'メンバー1', '出演枠', '下書きID'], [[
+      'Unsaved updated', '2027-11-02', '鈴木 蓮', '10', 'unsaved-draft-1',
+    ]]),
+    event, eventDays, bands, members, eventMembers, eventMemberDays,
+    eventBands: existingEventBands, draft, createDraftId: () => 'must-not-create',
+  })
+  assert.equal(updated.ok, true, JSON.stringify(updated))
+  if (updated.ok) {
+    assert.equal(updated.candidate.items.length, 1)
+    assert.equal(updated.candidate.items[0].draftId, 'unsaved-draft-1')
+    assert.equal(updated.candidate.items[0].name, 'Unsaved updated')
+    assert.equal(updated.createdCount, 0)
+    assert.equal(updated.updatedCount, 1)
+  }
+  assert.deepEqual(draft, before)
+})
+
+test('Event Bandのunknown・省略下書きIDはnew draftにし、duplicate・曖昧IDはrejectする', () => {
+  const draft = { items: [{
+    draftId: 'current-unsaved', eventId: event.id, eventDayId: 'day-2',
+    name: 'Current', memberIds: ['member-2'], durationMinutes: '10',
+  }] }
+  const unknown = planEventBandCsvImport({
+    csv: csv(['バンド名', '開催日', 'メンバー1', '出演枠', '下書きID'], [[
+      'Imported old session', '2027-11-02', '鈴木 蓮', '10', 'old-session-draft',
+    ]]),
+    event, eventDays, bands, members, eventMembers, eventMemberDays,
+    eventBands: existingEventBands, draft, createDraftId: () => 'generated-new-draft',
+  })
+  assert.equal(unknown.ok, true, JSON.stringify(unknown))
+  if (unknown.ok) {
+    assert.equal(unknown.createdCount, 1)
+    assert.equal(unknown.updatedCount, 0)
+    assert.equal(unknown.candidate.items.some((item) => item.draftId === 'generated-new-draft'), true)
+  }
+
+  const omitted = planEventBandCsvImport({
+    csv: csv(['バンド名', '開催日', 'メンバー1', '出演枠'], [[
+      'No draft column', '2027-11-02', '鈴木 蓮', '10',
+    ]]),
+    event, eventDays, bands, members, eventMembers, eventMemberDays,
+    eventBands: existingEventBands, draft, createDraftId: () => 'generated-without-column',
+  })
+  assert.equal(omitted.ok, true, JSON.stringify(omitted))
+  if (omitted.ok) assert.equal(omitted.createdCount, 1)
+
+  const duplicate = planEventBandCsvImport({
+    csv: csv(['バンド名', '開催日', 'メンバー1', '出演枠', '下書きID'], [
+      ['One', '2027-11-02', '鈴木 蓮', '10', 'duplicate-draft'],
+      ['Two', '2027-11-02', '鈴木 蓮', '10', 'duplicate-draft'],
+    ]),
+    event, eventDays, bands, members, eventMembers, eventMemberDays,
+    eventBands: existingEventBands, draft, createDraftId: () => 'unused',
+  })
+  assert.equal(duplicate.ok, false)
+
+  const ambiguousDraft = { items: [
+    { ...draft.items[0], draftId: 'ambiguous-draft', name: 'One' },
+    { ...draft.items[0], draftId: 'ambiguous-draft', name: 'Two' },
+  ] }
+  const ambiguous = planEventBandCsvImport({
+    csv: csv(['バンド名', '開催日', 'メンバー1', '出演枠', '下書きID'], [[
+      'Ambiguous', '2027-11-02', '鈴木 蓮', '10', 'ambiguous-draft',
+    ]]),
+    event, eventDays, bands, members, eventMembers, eventMemberDays,
+    eventBands: existingEventBands, draft: ambiguousDraft, createDraftId: () => 'unused',
+  })
+  assert.equal(ambiguous.ok, false)
+})
+
+test('Event Bandは出演バンドIDを下書きIDより優先する', () => {
+  const draft = { items: [
+    ...makeBandDraft().items,
+    {
+      draftId: 'unsaved-draft', eventId: event.id, eventDayId: 'day-2',
+      name: 'Unsaved remains', memberIds: ['member-2'], durationMinutes: '10',
+    },
+  ] }
+  const result = planEventBandCsvImport({
+    csv: csv([
+      'バンド名', '開催日', 'メンバー1', '出演枠', '出演バンドID', '下書きID',
+    ], [[
+      'Persistent updated', '2027-11-01', '佐藤 花子', '10', 'event-band-1', 'unsaved-draft',
+    ]]),
+    event, eventDays, bands, members, eventMembers, eventMemberDays,
+    eventBands: existingEventBands, draft, createDraftId: () => 'unused',
+  })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  if (!result.ok) return
+  assert.equal(result.createdCount, 0)
+  assert.equal(result.updatedCount, 1)
+  assert.equal(result.candidate.items.find((item) => item.eventBandId === 'event-band-1').name, 'Persistent updated')
+  assert.equal(result.candidate.items.find((item) => item.draftId === 'unsaved-draft').name, 'Unsaved remains')
 })
 
 test('Event Bandのhuman member列は本名を使いcross-field collisionを避ける', () => {
@@ -358,6 +485,7 @@ test('Event Bandは技術headerなしで企画Bandをname/date/member fallback�
   })
   assert.equal(result.ok, true)
   if (!result.ok) return
+  assert.equal(result.createdCount, 1)
   const added = result.candidate.items.find((item) => item.draftId === 'draft-new')
   assert.equal(added.eventDayId, 'day-2')
   assert.deepEqual(added.memberIds, ['member-2'])

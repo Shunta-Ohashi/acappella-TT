@@ -64,6 +64,10 @@ test('Event Band Helpは簡略形式・固定バンド名・動的メンバー�
   assert.equal(EVENT_BAND_CSV_HELP.columns.some((column) => column.name === '固定バンド名'), true)
   assert.match(EVENT_BAND_CSV_HELP.notes.join(' '), /8人以上/)
   assert.deepEqual(EVENT_BAND_CSV_HELP.technicalColumns.map((column) => column.name), [
-    '出演バンドID', '開催日ID', '固定バンドID', 'メンバーID一覧',
+    '出演バンドID', '開催日ID', '固定バンドID', 'メンバーID一覧', '下書きID',
   ])
+  assert.match(
+    EVENT_BAND_CSV_HELP.technicalColumns.find((column) => column.name === '下書きID')?.description ?? '',
+    /保存前.*再読み込み.*空欄.*省略/,
+  )
 })

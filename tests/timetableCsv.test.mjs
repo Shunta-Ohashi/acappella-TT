@@ -282,8 +282,10 @@ test('Timetable CSVはselected EventのDutyがmissing Memberを参照するとwa
   if (result.ok) assert.equal(result.warnings.some((warning) => warning.includes('参照切れ')), true)
 })
 
-test('Timetable CSVは正常assignmentと完全にforeignなmissing Member参照で不要なwarningを出さない', () => {
+test('Timetable CSVはforeign assignmentをselected EventのCSV・warningから隔離する', () => {
   const input = makeInput()
+  const baseline = createTimetableCsv(input)
+  assert.equal(baseline.ok, true, JSON.stringify(baseline))
   const foreignDay = input.eventDays.find((day) => day.eventId !== input.event.id)
   const foreignStage = input.stages.find((stage) => stage.eventDayId === foreignDay.id)
   const paTemplate = input.paAssignments.find((item) => item.eventId === input.event.id)
@@ -298,6 +300,11 @@ test('Timetable CSVは正常assignmentと完全にforeignなmissing Member参照
     eventDayId: foreignDay.id,
     stageId: foreignStage.id,
     memberId: 'foreign-missing-member',
+  }, {
+    ...paTemplate,
+    id: 'foreign-pa-with-target-scope',
+    eventId: foreignDay.eventId,
+    memberId: 'foreign-missing-member',
   }]
   input.dutyTypes = [...input.dutyTypes, foreignDutyType]
   input.dutyAssignments = [...input.dutyAssignments, {
@@ -307,10 +314,15 @@ test('Timetable CSVは正常assignmentと完全にforeignなmissing Member参照
     eventDayId: foreignDay.id,
     stageId: foreignStage.id,
     memberId: 'foreign-missing-member',
+  }, {
+    ...dutyTemplate,
+    id: 'foreign-duty-with-target-scope',
+    dutyTypeId: foreignDutyType.id,
+    memberId: 'foreign-missing-member',
   }]
   const result = createTimetableCsv(input)
   assert.equal(result.ok, true, JSON.stringify(result))
-  if (result.ok) assert.deepEqual(result.warnings, [])
+  assert.deepEqual(result, baseline)
 })
 
 test('Timetable CSVはinvalid Stageをsilent skipせずexport全体を失敗させる', () => {

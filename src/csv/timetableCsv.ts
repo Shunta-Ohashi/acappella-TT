@@ -58,9 +58,18 @@ export const createTimetableCsv = (input: TimetableCsvInput): TimetableCsvResult
   const eventBands = input.eventBands.filter((band) => band.eventId === input.event.id)
   const dutyTypes = input.dutyTypes.filter((type) => type.eventId === input.event.id)
     .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+  const eventPaAssignments = input.paAssignments.filter((assignment) =>
+    assignment.eventId === input.event.id,
+  )
+  const eventDutyAssignments = getDutyAssignmentsForEvent({
+    event: input.event,
+    stages,
+    dutyTypes: input.dutyTypes,
+    dutyAssignments: input.dutyAssignments,
+  })
   const memberById = new Map(input.members.map((member) => [member.id, member]))
-  const paById = new Map(input.paAssignments.map((assignment) => [assignment.id, assignment]))
-  const dutyById = new Map(input.dutyAssignments.map((assignment) => [assignment.id, assignment]))
+  const paById = new Map(eventPaAssignments.map((assignment) => [assignment.id, assignment]))
+  const dutyById = new Map(eventDutyAssignments.map((assignment) => [assignment.id, assignment]))
   const rows: string[][] = [[
     ...BASE_HEADERS,
     ...dutyTypes.map((type) => `当日運営:${type.name}`),
@@ -70,20 +79,13 @@ export const createTimetableCsv = (input: TimetableCsvInput): TimetableCsvResult
   const assignmentWarning = 'Grid外または参照切れの担当はCSVの各行に完全には反映されていません。'
   const eventDayById = new Map(input.eventDays.map((day) => [day.id, day]))
   const stageById = new Map(input.stages.map((stage) => [stage.id, stage]))
-  const hasInvalidPaScope = input.paAssignments
-    .filter((assignment) => assignment.eventId === input.event.id)
-    .some((assignment) => {
+  const hasInvalidPaScope = eventPaAssignments.some((assignment) => {
       const eventDay = eventDayById.get(assignment.eventDayId)
       const stage = stageById.get(assignment.stageId)
       return !eventDay || eventDay.eventId !== input.event.id || !stage ||
         stage.eventDayId !== assignment.eventDayId || !memberById.has(assignment.memberId)
     })
-  const hasInvalidDutyScope = getDutyAssignmentsForEvent({
-    event: input.event,
-    stages,
-    dutyTypes: input.dutyTypes,
-    dutyAssignments: input.dutyAssignments,
-  }).some((assignment) =>
+  const hasInvalidDutyScope = eventDutyAssignments.some((assignment) =>
     !getDutyAssignmentScopeStatus({
       assignment,
       event: input.event,
@@ -120,10 +122,11 @@ export const createTimetableCsv = (input: TimetableCsvInput): TimetableCsvResult
       eventBands,
       stages: dayStages,
       sections: input.sections,
-      paAssignments: input.paAssignments.filter((assignment) =>
-        assignment.eventId === input.event.id && assignment.eventDayId === eventDay.id),
+      paAssignments: eventPaAssignments.filter((assignment) =>
+        assignment.eventDayId === eventDay.id),
       dutyTypes,
-      dutyAssignments: input.dutyAssignments.filter((assignment) => assignment.eventDayId === eventDay.id),
+      dutyAssignments: eventDutyAssignments.filter((assignment) =>
+        assignment.eventDayId === eventDay.id),
       calculatedItems: timelines.calculatedItems,
     })
 
@@ -137,9 +140,9 @@ export const createTimetableCsv = (input: TimetableCsvInput): TimetableCsvResult
         calculatedItems: timelines.calculatedItems.filter((item) => item.stageId === stage.id),
         eventBands,
         members: input.members,
-        paAssignments: input.paAssignments,
+        paAssignments: eventPaAssignments,
         dutyTypes,
-        dutyAssignments: input.dutyAssignments,
+        dutyAssignments: eventDutyAssignments,
         issues,
         stages,
         sections: input.sections,

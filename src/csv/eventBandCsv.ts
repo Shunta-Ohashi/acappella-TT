@@ -20,7 +20,7 @@ import {
 
 export const createEventBandCsvHeaders = (memberCount = 0): string[] => [
   'バンド名', '開催日', ...createBandMemberHeaders(memberCount), '出演枠', '固定バンド名',
-  '出演バンドID', '開催日ID', '固定バンドID', MEMBER_ID_LIST_HEADER,
+  '出演バンドID', '開催日ID', '固定バンドID', MEMBER_ID_LIST_HEADER, '下書きID',
 ]
 
 export const EVENT_BAND_CSV_HEADERS = createEventBandCsvHeaders()
@@ -59,6 +59,7 @@ export const createEventBandCsv = ({
         item.eventDayId,
         item.bandId ?? '',
         item.memberIds.join('|'),
+        item.draftId,
       ]
     }),
   ])
@@ -94,23 +95,44 @@ export const planEventBandCsvImport = ({
   const draftByEventBandId = new Map(candidate.items.flatMap((item) =>
     item.eventBandId ? [[item.eventBandId, item] as const] : [],
   ))
+  const unsavedDraftsById = new Map<string, EventBandSettingsItemDraft[]>()
+  candidate.items.filter((item) => !item.eventBandId).forEach((item) => {
+    const matches = unsavedDraftsById.get(item.draftId) ?? []
+    matches.push(item)
+    unsavedDraftsById.set(item.draftId, matches)
+  })
   const seenIds = new Set<string>()
+  const seenDraftIds = new Set<string>()
   const rowByDraftId = new Map<string, number>()
   let createdCount = 0
   let updatedCount = 0
 
   for (const row of table.rows) {
     const eventBandId = row.values['出演バンドID']?.trim() ?? ''
+    const importedDraftId = row.values['下書きID']?.trim() ?? ''
     if (eventBandId && seenIds.has(eventBandId)) {
       errors.push({ rowNumber: row.rowNumber, column: '出演バンドID', message: 'CSV内でIDが重複しています。' })
       continue
     }
     if (eventBandId) seenIds.add(eventBandId)
+    if (importedDraftId && seenDraftIds.has(importedDraftId)) {
+      errors.push({ rowNumber: row.rowNumber, column: '下書きID', message: 'CSV内で下書きIDが重複しています。' })
+      continue
+    }
+    if (importedDraftId) seenDraftIds.add(importedDraftId)
     const existing = eventBandId ? existingById.get(eventBandId) : undefined
     if (eventBandId && !existing) {
       errors.push({ rowNumber: row.rowNumber, column: '出演バンドID', message: '現在のイベントに存在しない出演バンドIDです。新規行では空欄にしてください。' })
       continue
     }
+    const matchingDrafts = !eventBandId && importedDraftId
+      ? unsavedDraftsById.get(importedDraftId) ?? []
+      : []
+    if (matchingDrafts.length > 1) {
+      errors.push({ rowNumber: row.rowNumber, column: '下書きID', message: '現在の下書きに同じIDの出演バンドが複数あります。' })
+      continue
+    }
+    const matchingDraft = matchingDrafts[0]
     const day = resolveEventDayId(
       event,
       eventDays,
@@ -128,7 +150,7 @@ export const planEventBandCsvImport = ({
     const bandName = row.values['固定バンド名']?.trim() ?? ''
     let bandId = hasBandSourceColumns
       ? explicitBandId || undefined
-      : existing?.bandId
+      : existing?.bandId ?? matchingDraft?.bandId
     if (bandId && !bands.some((band) => band.id === bandId)) {
       errors.push({ rowNumber: row.rowNumber, column: '固定バンドID', message: '固定バンドが見つかりません。' })
       continue
@@ -163,7 +185,7 @@ export const planEventBandCsvImport = ({
     const item: EventBandSettingsItemDraft = {
       draftId: eventBandId
         ? draftByEventBandId.get(eventBandId)?.draftId ?? `event-band-${eventBandId}`
-        : createDraftId(),
+        : matchingDraft?.draftId ?? createDraftId(),
       ...(eventBandId ? { eventBandId } : {}),
       eventId: event.id,
       eventDayId: day.eventDayId,
@@ -177,6 +199,10 @@ export const planEventBandCsvImport = ({
       const index = candidate.items.findIndex((current) => current.eventBandId === eventBandId)
       if (index < 0) candidate.items.push(item)
       else candidate.items[index] = item
+      updatedCount += 1
+    } else if (matchingDraft) {
+      const index = candidate.items.findIndex((current) => current === matchingDraft)
+      candidate.items[index] = item
       updatedCount += 1
     } else {
       candidate.items.push(item)
