@@ -19,7 +19,10 @@ if (!isTimetablePreShareHash(window.location.hash)) {
     import('./components/TimetablePreSharePage.tsx'),
     import('./components/TimetablePreShareErrorPage.tsx'),
   ]).then(([routing, sharePage, errorPage]) => {
-    const route = routing.resolveTimetablePreShareRoute(window.location.hash)
+    const route = routing.resolveTimetablePreShareRoute(
+      window.location.hash,
+      window.location.href.length,
+    )
     root.render(
       <StrictMode>
         {route.kind === 'share'

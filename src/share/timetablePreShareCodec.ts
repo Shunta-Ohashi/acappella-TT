@@ -6,6 +6,7 @@ import {
 import { isTimetablePreShareHash } from './timetablePreShareRouting.ts'
 
 export const MAX_TIMETABLE_PRE_SHARE_URL_LENGTH = 65_536
+export const MAX_TIMETABLE_PRE_SHARE_PAYLOAD_LENGTH = 65_536
 export const MAX_TIMETABLE_PRE_SHARE_DECOMPRESSED_BYTES = 2 * 1024 * 1024
 const DECOMPRESSION_INPUT_CHUNK_BYTES = 1024
 
@@ -96,7 +97,7 @@ export type DecodeTimetablePreShareResult =
 export const decodeTimetablePreSharePayload = (
   payload: string,
 ): DecodeTimetablePreShareResult => {
-  if (payload.length > MAX_TIMETABLE_PRE_SHARE_URL_LENGTH) {
+  if (payload.length > MAX_TIMETABLE_PRE_SHARE_PAYLOAD_LENGTH) {
     return { ok: false, reason: 'TOO_LARGE' }
   }
   try {
@@ -114,8 +115,13 @@ export type TimetablePreShareRoute =
   | { kind: 'share'; snapshot: TimetablePreShareSnapshotV1 }
   | { kind: 'error' }
 
-export const resolveTimetablePreShareRoute = (hash: string): TimetablePreShareRoute => {
+export const resolveTimetablePreShareRoute = (
+  hash: string,
+  fullUrlLength: number,
+): TimetablePreShareRoute => {
   if (!isTimetablePreShareHash(hash)) return { kind: 'app' }
+  if (!Number.isSafeInteger(fullUrlLength) || fullUrlLength < 0 ||
+    fullUrlLength > MAX_TIMETABLE_PRE_SHARE_URL_LENGTH) return { kind: 'error' }
   if (hash === '#share') return { kind: 'error' }
   const decoded = decodeTimetablePreSharePayload(hash.slice('#share='.length))
   return decoded.ok ? { kind: 'share', snapshot: decoded.snapshot } : { kind: 'error' }

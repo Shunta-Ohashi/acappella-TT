@@ -78,6 +78,13 @@ const uniqueLabelsByIdentity = (
 const formatShareMinute = (minute: number): string =>
   minute === 24 * 60 ? '24:00' : formatMinuteAsLocalTime(minute)
 
+const isValidShareMinuteRange = (startMinute: number, endMinute: number): boolean =>
+  Number.isSafeInteger(startMinute) &&
+  Number.isSafeInteger(endMinute) &&
+  startMinute >= 0 &&
+  startMinute < endMinute &&
+  endMinute <= 24 * 60
+
 const INCOMPLETE_ASSIGNMENTS_WARNING =
   'Grid外または参照切れの担当は共有ページの各行に完全には反映されていません。'
 
@@ -93,6 +100,15 @@ export const createTimetablePreShareSnapshot = (
       compareStableText(left.date, right.date) || compareStableText(left.id, right.id))
   const eventDayIds = new Set(eventDays.map(day => day.id))
   const stages = input.stages.filter(stage => eventDayIds.has(stage.eventDayId))
+  const invalidStage = stages.find(stage =>
+    !isValidStageTimeRange(stage.plannedStartTime, stage.plannedEndTime),
+  )
+  if (invalidStage) {
+    return {
+      ok: false,
+      message: `${invalidStage.name} Stageの開始・終了時刻が正しくないため共有リンクを作成できません。`,
+    }
+  }
   const eventBands = input.eventBands.filter(band => band.eventId === input.event.id)
   const dutyTypes = input.dutyTypes.filter(type => type.eventId === input.event.id)
     .sort(compareOrderedIds)
@@ -190,6 +206,21 @@ export const createTimetablePreShareSnapshot = (
         workspace.offGridDutyAssignments.length > 0
       ) warnings.add(INCOMPLETE_ASSIGNMENTS_WARNING)
 
+      const invalidShareRow = workspace.rows.find(row => !isValidShareMinuteRange(
+        row.calculatedItem.plannedStartMinute,
+        row.calculatedItem.plannedEndMinute,
+      ))
+      if (invalidShareRow) {
+        const crossesMidnight = invalidShareRow.calculatedItem.plannedStartMinute >= 24 * 60 ||
+          invalidShareRow.calculatedItem.plannedEndMinute > 24 * 60
+        return {
+          ok: false,
+          message: crossesMidnight
+            ? `${stage.name} Stageのタイムテーブルが24:00を超えるため共有リンクを作成できません。`
+            : `${stage.name} Stageのタイムテーブルの時刻範囲が正しくないため共有リンクを作成できません。`,
+        }
+      }
+
       const entries = workspace.rows.map((row): TimetablePreShareEntry => ({
         startTime: formatShareMinute(row.calculatedItem.plannedStartMinute),
         endTime: formatShareMinute(row.calculatedItem.plannedEndMinute),
@@ -235,16 +266,16 @@ export const createTimetablePreShareSnapshot = (
       stages: shareStages,
     })
   }
-  return {
-    ok: true,
-    snapshot: {
-      version: TIMETABLE_PRE_SHARE_VERSION,
-      eventName: input.event.name,
-      createdAt: now.toISOString(),
-      days,
-    },
-    warnings: [...warnings],
+  const snapshot: TimetablePreShareSnapshotV1 = {
+    version: TIMETABLE_PRE_SHARE_VERSION,
+    eventName: input.event.name,
+    createdAt: now.toISOString(),
+    days,
   }
+  const validatedSnapshot = parseTimetablePreShareSnapshot(snapshot)
+  return validatedSnapshot
+    ? { ok: true, snapshot: validatedSnapshot, warnings: [...warnings] }
+    : { ok: false, message: '共有タイムテーブルの内容を検証できないため共有リンクを作成できません。' }
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -360,7 +391,7 @@ export const parseTimetablePreShareSnapshot = (
 }
 
 const normalizeSearch = (value: string): string =>
-  value.normalize('NFKC').trim().toLocaleLowerCase()
+  value.normalize('NFKC').trim().toLowerCase()
 
 export const filterTimetablePreShareEntries = (
   entries: TimetablePreShareEntry[],

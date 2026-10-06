@@ -17,6 +17,7 @@ import {
   decodeTimetablePreSharePayload,
   encodeTimetablePreShareSnapshot,
   MAX_TIMETABLE_PRE_SHARE_DECOMPRESSED_BYTES,
+  MAX_TIMETABLE_PRE_SHARE_PAYLOAD_LENGTH,
   MAX_TIMETABLE_PRE_SHARE_URL_LENGTH,
   resolveTimetablePreShareRoute,
 } from '../src/share/timetablePreShareCodec.ts'
@@ -88,6 +89,42 @@ const makeSmallSnapshot = (overrides = {}) => ({
   }],
   ...overrides,
 })
+
+const makeSingleBreakInput = ({
+  plannedStartTime,
+  durationMinutes,
+  plannedEndTime,
+}) => {
+  const input = makeInput()
+  const eventDay = input.eventDays.find(day => day.eventId === input.event.id)
+  assert.ok(eventDay)
+  const stage = {
+    id: 'stage-share-boundary',
+    eventDayId: eventDay.id,
+    name: '境界確認',
+    order: 0,
+    plannedStartTime,
+    ...(plannedEndTime === undefined ? {} : { plannedEndTime }),
+  }
+  return {
+    ...input,
+    eventDays: [eventDay],
+    stages: [stage],
+    sections: [],
+    eventBands: [],
+    scheduleItems: [{
+      id: 'schedule-share-boundary-break',
+      stageId: stage.id,
+      order: 0,
+      kind: 'break',
+      title: '境界休憩',
+      durationMinutes,
+    }],
+    paAssignments: [],
+    dutyTypes: [],
+    dutyAssignments: [],
+  }
+}
 
 test('事前共有Snapshot V1はDay・Stage順、Performance・Break、時刻・Member・PA・Dutyを保持する', () => {
   const input = makeInput()
@@ -223,7 +260,7 @@ test('plannedEndTimeはfield absentとvalid LocalTimeだけを許可しpresent-b
 
 test('Share decoderとURL生成は明示的size上限を超えるpayloadをrejectする', () => {
   assert.deepEqual(
-    decodeTimetablePreSharePayload('A'.repeat(MAX_TIMETABLE_PRE_SHARE_URL_LENGTH + 1)),
+    decodeTimetablePreSharePayload('A'.repeat(MAX_TIMETABLE_PRE_SHARE_PAYLOAD_LENGTH + 1)),
     { ok: false, reason: 'TOO_LARGE' },
   )
   const decompressionBomb = encodeUnknown(makeSmallSnapshot({
@@ -286,6 +323,48 @@ test('検索はNFKC互換文字を正規化して全角ASCII・半角カナを�
   })
   assert.deepEqual(filterTimetablePreShareEntries([alpha, timekeeper], ' ＡＬＰＨＡ '), [alpha])
   assert.deepEqual(filterTimetablePreShareEntries([alpha, timekeeper], 'ﾀｲﾑｷｰﾊﾟｰ'), [timekeeper])
+})
+
+test('検索はASCII caseを閲覧環境に依存しない形で一致させる', () => {
+  const entry = makeEntry({ mainPa: ['MAIN PERSON'] })
+  assert.deepEqual(filterTimetablePreShareEntries([entry], 'main person'), [entry])
+})
+
+test('Snapshot creatorは24:00終端を許可し24:00超過をwrapせずrejectする', () => {
+  const untilMidnight = createTimetablePreShareSnapshot(makeSingleBreakInput({
+    plannedStartTime: '23:40', durationMinutes: 20,
+  }), FIXED_NOW)
+  assert.equal(untilMidnight.ok, true, JSON.stringify(untilMidnight))
+  if (untilMidnight.ok) {
+    const entry = untilMidnight.snapshot.days[0].stages[0].entries[0]
+    assert.deepEqual([entry.startTime, entry.endTime], ['23:40', '24:00'])
+    const payload = encodeTimetablePreShareSnapshot(untilMidnight.snapshot)
+    assert.deepEqual(decodeTimetablePreSharePayload(payload), {
+      ok: true, snapshot: untilMidnight.snapshot,
+    })
+  }
+
+  const crossesMidnight = createTimetablePreShareSnapshot(makeSingleBreakInput({
+    plannedStartTime: '23:50', durationMinutes: 20,
+  }), FIXED_NOW)
+  assert.equal(crossesMidnight.ok, false)
+  if (!crossesMidnight.ok) assert.match(crossesMidnight.message, /24:00|日付をまたぐ/)
+})
+
+test('Snapshot creatorはStageのinvalid plannedEndTimeをparser到達前にrejectする', () => {
+  for (const [start, end] of [
+    ['10:00', 'bad'],
+    ['18:00', '10:00'],
+    ['10:00', '10:00'],
+  ]) {
+    const result = createTimetablePreShareSnapshot(makeSingleBreakInput({
+      plannedStartTime: start, plannedEndTime: end, durationMinutes: 10,
+    }), FIXED_NOW)
+    assert.equal(result.ok, false, `${start}→${end}`)
+  }
+  assert.equal(createTimetablePreShareSnapshot(makeSingleBreakInput({
+    plannedStartTime: '10:00', durationMinutes: 10,
+  }), FIXED_NOW).ok, true)
 })
 
 test('Share parserはStage・Entryの逆転/同時刻をrejectし23:50→24:00を許可する', () => {
@@ -386,14 +465,37 @@ test('Routingは通常URL・valid share・broken shareを分離しqueryを維持
   if (!created.ok) return
   const url = new URL(created.url)
   assert.equal(url.search, '?mode=preview')
-  assert.equal(resolveTimetablePreShareRoute('').kind, 'app')
-  assert.equal(resolveTimetablePreShareRoute('#other').kind, 'app')
-  assert.equal(resolveTimetablePreShareRoute('#share-other').kind, 'app')
-  assert.equal(resolveTimetablePreShareRoute('#share').kind, 'error')
-  assert.equal(resolveTimetablePreShareRoute('#share=').kind, 'error')
-  assert.deepEqual(resolveTimetablePreShareRoute(url.hash), { kind: 'share', snapshot })
-  assert.equal(resolveTimetablePreShareRoute('#share=broken').kind, 'error')
+  assert.equal(resolveTimetablePreShareRoute('', 1).kind, 'app')
+  assert.equal(resolveTimetablePreShareRoute('#other', 20).kind, 'app')
+  assert.equal(resolveTimetablePreShareRoute('#share-other', 30).kind, 'app')
+  assert.equal(resolveTimetablePreShareRoute('#share', 30).kind, 'error')
+  assert.equal(resolveTimetablePreShareRoute('#share=', 31).kind, 'error')
+  assert.deepEqual(resolveTimetablePreShareRoute(url.hash, created.url.length), {
+    kind: 'share', snapshot,
+  })
+  assert.equal(resolveTimetablePreShareRoute('#share=broken', 40).kind, 'error')
+  assert.equal(resolveTimetablePreShareRoute(
+    url.hash,
+    MAX_TIMETABLE_PRE_SHARE_URL_LENGTH + 1,
+  ).kind, 'error')
   assert.equal(createNormalAppUrl(created.url), 'https://example.test/app?mode=preview')
+})
+
+test('Share routingとURL生成は同じpayloadでも完全URL長の上限を適用する', () => {
+  const snapshot = makeSmallSnapshot()
+  const short = createTimetablePreShareUrl(snapshot, 'https://example.test/app?mode=preview')
+  assert.equal(short.ok, true)
+  if (!short.ok) return
+  const shortUrl = new URL(short.url)
+  assert.equal(resolveTimetablePreShareRoute(shortUrl.hash, short.url.length).kind, 'share')
+
+  const longBase = `https://example.test/${'x'.repeat(MAX_TIMETABLE_PRE_SHARE_URL_LENGTH)}?mode=preview`
+  const long = createTimetablePreShareUrl(snapshot, longBase)
+  assert.equal(long.ok, false)
+  assert.equal(resolveTimetablePreShareRoute(
+    shortUrl.hash,
+    longBase.length + shortUrl.hash.length,
+  ).kind, 'error')
 })
 
 test('lazy routing markerはbare・empty・valid payloadをShare側へ送り類似hashを除外する', () => {
