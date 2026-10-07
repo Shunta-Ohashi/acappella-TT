@@ -6,11 +6,24 @@ import './index.css'
 const root = createRoot(document.getElementById('root')!)
 
 if (!isTimetablePreShareHash(window.location.hash)) {
-  void import('./App.tsx').then(({ default: App }) => {
+  void Promise.all([
+    import('./App.tsx'),
+    import('./cloud/CloudAppGate.tsx'),
+  ]).then(([app, cloud]) => {
+    const App = app.default
     root.render(
       <StrictMode>
-        <App />
+        <cloud.CloudAppGate>
+          <App />
+        </cloud.CloudAppGate>
       </StrictMode>,
+    )
+  }).catch(() => {
+    root.render(
+      <main role="alert">
+        <h1>アプリを起動できませんでした</h1>
+        <p>設定または通信状態を確認して、ページを再読み込みしてください。</p>
+      </main>,
     )
   })
 } else {

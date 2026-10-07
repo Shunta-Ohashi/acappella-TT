@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
+import { useOptionalCloudWorkspace } from '../cloud/useCloudWorkspace.ts'
 
 export type AppSection = 'events' | 'shared-data' | 'settings'
 
@@ -13,6 +14,44 @@ const navigationItems: Array<{ id: AppSection; label: string }> = [
   { id: 'shared-data', label: '共通データ' },
   { id: 'settings', label: '設定' },
 ]
+
+function CloudAccountControls() {
+  const cloud = useOptionalCloudWorkspace()
+  const [signOutError, setSignOutError] = useState('')
+  if (!cloud) return null
+
+  const signOut = async () => {
+    setSignOutError('')
+    try {
+      await cloud.signOut()
+    } catch {
+      setSignOutError('ログアウトできませんでした。')
+    }
+  }
+
+  return (
+    <div className="top-navigation__cloud-account">
+      {cloud.availableWorkspaces.length > 1 ? (
+        <select
+          aria-label="ワークスペース"
+          value={cloud.workspace.id}
+          onChange={event => cloud.selectWorkspace(event.target.value)}
+        >
+          {cloud.availableWorkspaces.map(access => (
+            <option key={access.workspace.id} value={access.workspace.id}>
+              {access.workspace.name}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <span className="top-navigation__workspace-name">{cloud.workspace.name}</span>
+      )}
+      <span className="top-navigation__profile-name">{cloud.profile.displayName}</span>
+      <button type="button" onClick={() => void signOut()}>ログアウト</button>
+      {signOutError && <span className="top-navigation__cloud-error" role="alert">{signOutError}</span>}
+    </div>
+  )
+}
 
 export function AppShell({
   activeSection,
@@ -31,21 +70,24 @@ export function AppShell({
             Acappella TT
           </button>
 
-          <nav className="top-navigation__links" aria-label="メインナビゲーション">
-            {navigationItems.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={item.id === activeSection
-                  ? 'top-navigation__link top-navigation__link--active'
-                  : 'top-navigation__link'}
-                aria-current={item.id === activeSection ? 'page' : undefined}
-                onClick={() => onNavigate(item.id)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </nav>
+          <div className="top-navigation__right">
+            <nav className="top-navigation__links" aria-label="メインナビゲーション">
+              {navigationItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={item.id === activeSection
+                    ? 'top-navigation__link top-navigation__link--active'
+                    : 'top-navigation__link'}
+                  aria-current={item.id === activeSection ? 'page' : undefined}
+                  onClick={() => onNavigate(item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </nav>
+            <CloudAccountControls />
+          </div>
         </div>
       </header>
 
