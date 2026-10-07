@@ -1,5 +1,5 @@
-import type { IssueSeverity, ScheduleIssue, ScheduleIssueCode } from './issues'
-import { detectScheduleIssues } from './issues.ts'
+import type { IssueSeverity, ScheduleIssue, ScheduleIssueCode } from '../domain/issues'
+import { detectScheduleIssues } from '../domain/issues.ts'
 import type {
   DutyAssignment,
   DutyType,
@@ -17,28 +17,28 @@ import type {
   StageId,
   TimetableLock,
   TimetableOrderConstraint,
-} from './models'
+} from '../domain/models'
 import {
   compareStableText,
   getEventDaysForEvent,
   getStagesForEventDay,
   getUnscheduledEventBandsForEventDay,
-} from './schedule.ts'
-import { calculateEventDayTimelines } from './timetable.ts'
-import { evaluateTimetableLocks } from './timetableLocks.ts'
+} from '../domain/schedule.ts'
+import { calculateEventDayTimelines } from '../domain/timetable.ts'
+import { evaluateTimetableLocks } from '../domain/timetableLocks.ts'
 import {
   evaluateScheduledTimetableOrderConstraints,
   evaluateTimetableOrderConstraints,
   type ScheduledTimetableOrderConstraintViolationCode,
-} from './timetableOrderConstraints.ts'
-import { getDutyAssignmentsForEvent } from './dutyAssignments.ts'
-import { createTimetableWorkspaceRows } from '../ui/timetableWorkspaceRows.ts'
+} from '../domain/timetableOrderConstraints.ts'
+import { getDutyAssignmentsForEvent } from '../domain/dutyAssignments.ts'
+import { createTimetableWorkspaceRows } from './timetableWorkspaceRows.ts'
 import {
   countIssuesBySeverity,
   formatScheduleIssueMessage,
   type IssueSeverityCounts,
-} from '../ui/issuePresentation.ts'
-import type { EventEditorStepId } from '../ui/eventEditorSteps.ts'
+} from './issuePresentation.ts'
+import type { EventEditorStepId } from './eventEditorSteps.ts'
 
 export type EventFinalCheckCategory =
   | 'structure'
@@ -313,37 +313,51 @@ export const createEventFinalCheckReport = (
       targetStep: 6, eventDayId: eventDay.id,
     })
 
-    let timelines
-    try {
-      timelines = calculateEventDayTimelines({
-        eventDayId: eventDay.id,
-        stages: dayStages,
-        sections,
-        scheduleItems,
-        eventBands,
-      })
-    } catch {
-      addFinding({
-        key: `structure|timeline-failure|${eventDay.id}`, severity: 'ERROR', category: 'structure',
-        code: 'TIMELINE_CALCULATION_FAILED',
-        message: `${dayLabel}のタイムテーブルを計算できません。`,
-        targetStep: 6, eventDayId: eventDay.id,
-      })
-      continue
-    }
+    const calculatedItems: ReturnType<
+      typeof calculateEventDayTimelines
+    >['calculatedItems'] = []
+    const evaluableStages: Stage[] = []
+    for (const stage of dayStages) {
+      let stageTimelines
+      try {
+        stageTimelines = calculateEventDayTimelines({
+          eventDayId: eventDay.id,
+          stages: [stage],
+          sections,
+          scheduleItems,
+          eventBands,
+        })
+      } catch {
+        addFinding({
+          key: `structure|timeline-failure|${stage.id}`,
+          severity: 'ERROR', category: 'structure', code: 'TIMELINE_CALCULATION_FAILED',
+          message: `${stage.name}のタイムテーブルを計算できません。`,
+          targetStep: 6, eventDayId: eventDay.id, stageId: stage.id,
+        })
+        continue
+      }
 
-    for (const invalid of timelines.invalidStages) {
-      const stage = stageById.get(invalid.stageId)
-      addFinding({
-        key: `structure|invalid-stage|${invalid.stageId}`, severity: 'ERROR', category: 'structure',
-        code: 'INVALID_STAGE_TIMELINE',
-        message: `${stage?.name ?? '不明なStage'}のSection設定と出演項目の所属を確認してください。`,
-        details: invalid.scheduleItemIds.length > 0
-          ? [`対象項目: ${invalid.scheduleItemIds.length}件`] : undefined,
-        targetStep: 2, eventDayId: eventDay.id,
-        ...(stage ? { stageId: stage.id } : {}),
-      })
+      if (stageTimelines.invalidStages.length > 0) {
+        for (const invalid of stageTimelines.invalidStages) {
+          addFinding({
+            key: `structure|invalid-stage|${invalid.stageId}`,
+            severity: 'ERROR', category: 'structure', code: 'INVALID_STAGE_TIMELINE',
+            message: `${stage.name}のSection設定と出演項目の所属を確認してください。`,
+            details: invalid.scheduleItemIds.length > 0
+              ? [`対象項目: ${invalid.scheduleItemIds.length}件`] : undefined,
+            targetStep: 2, eventDayId: eventDay.id, stageId: stage.id,
+          })
+        }
+        continue
+      }
+
+      calculatedItems.push(...stageTimelines.calculatedItems)
+      evaluableStages.push(stage)
     }
+    const evaluableStageIds = new Set(evaluableStages.map(stage => stage.id))
+    const evaluableSections = sections.filter(section =>
+      evaluableStageIds.has(section.stageId),
+    )
 
     let dayIssues: ScheduleIssue[] = []
     try {
@@ -353,14 +367,18 @@ export const createEventFinalCheckReport = (
         eventMembers,
         eventMemberDays,
         eventBands,
-        stages: dayStages,
-        sections,
-        paAssignments: paAssignments.filter(assignment => assignment.eventDayId === eventDay.id),
+        stages: evaluableStages,
+        sections: evaluableSections,
+        paAssignments: paAssignments.filter(assignment =>
+          assignment.eventDayId === eventDay.id &&
+          evaluableStageIds.has(assignment.stageId),
+        ),
         dutyTypes,
         dutyAssignments: dutyAssignments.filter(assignment =>
-          assignment.eventDayId === eventDay.id,
+          assignment.eventDayId === eventDay.id &&
+          evaluableStageIds.has(assignment.stageId),
         ),
-        calculatedItems: timelines.calculatedItems,
+        calculatedItems,
       }).filter(issue => issue.code !== 'EVENT_BAND_DAY_MISMATCH' ||
         !issue.eventBandIds?.some(eventBandId => invalidEventDayBandIds.has(eventBandId)))
       for (const issue of dayIssues) {
@@ -400,13 +418,13 @@ export const createEventFinalCheckReport = (
       .flatMap(issue => issue.paAssignmentIds ?? []))
     const invalidDutyIds = new Set(dayIssues.filter(issue => issue.severity === 'ERROR')
       .flatMap(issue => issue.dutyAssignmentIds ?? []))
-    for (const stage of dayStages) {
+    for (const stage of evaluableStages) {
       try {
         const workspace = createTimetableWorkspaceRows({
           eventDayId: eventDay.id,
           stageId: stage.id,
           scheduleItems,
-          calculatedItems: timelines.calculatedItems.filter(item => item.stageId === stage.id),
+          calculatedItems: calculatedItems.filter(item => item.stageId === stage.id),
           eventBands,
           members: input.members,
           paAssignments,

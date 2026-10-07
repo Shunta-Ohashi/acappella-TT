@@ -5,7 +5,7 @@ import {
   createEventFinalCheckReport,
   getFinalCheckRepairTarget,
   getFinalCheckRepairTargetForIssue,
-} from '../src/domain/eventFinalCheck.ts'
+} from '../src/ui/eventFinalCheckReport.ts'
 import {
   getEventFinalCheckStatusMessage,
   groupEventFinalCheckFindingsForDisplay,
@@ -95,6 +95,40 @@ test('timeline計算失敗でもreportを返し、別Dayのfindingを継続す�
     finding.code === 'TIMELINE_CALCULATION_FAILED' && finding.eventDayId === 'day-1'))
   assert.ok(report.findings.some(finding =>
     finding.code === 'STAGE_MISSING' && finding.eventDayId === 'day-2'))
+})
+
+test('Stage単位のTimeline failureを隔離し前後Stageの評価を継続する', () => {
+  const input = makeInput()
+  input.stages = [
+    { id: 'stage-a', eventDayId: 'day-1', name: 'Stage A', order: 0,
+      plannedStartTime: '10:00', plannedEndTime: '18:00' },
+    { id: 'stage-b', eventDayId: 'day-1', name: 'Stage B', order: 1,
+      plannedStartTime: '10:00', plannedEndTime: '18:00' },
+    { id: 'stage-c', eventDayId: 'day-1', name: 'Stage C', order: 2,
+      plannedStartTime: '10:00', plannedEndTime: '10:05' },
+  ]
+  input.sections.push({ id: 'section-a', stageId: 'stage-a', name: '第1部', order: 0 })
+  input.eventBands.push({ id: 'band-c', eventId: 'event-1', eventDayId: 'day-1',
+    name: 'Charlie', memberIds: [], durationMinutes: 10 })
+  input.scheduleItems.push(
+    { id: 'invalid-break-a', stageId: 'stage-a', order: 0,
+      kind: 'break', title: '所属不正', durationMinutes: 5 },
+    { id: 'missing-performance-b', stageId: 'stage-b', order: 0,
+      kind: 'performance', eventBandId: 'missing-band' },
+    { id: 'performance-c', stageId: 'stage-c', order: 0,
+      kind: 'performance', eventBandId: 'band-c' },
+  )
+
+  const report = createEventFinalCheckReport(input)
+  assert.ok(report.findings.some(finding =>
+    finding.code === 'INVALID_STAGE_TIMELINE' && finding.stageId === 'stage-a'))
+  assert.ok(report.findings.some(finding =>
+    finding.code === 'TIMELINE_CALCULATION_FAILED' && finding.stageId === 'stage-b'))
+  assert.ok(report.findings.some(finding =>
+    finding.code === 'STAGE_END_EXCEEDED' && finding.stageId === 'stage-c'))
+  assert.equal(report.findings.some(finding =>
+    finding.code === 'WORKSPACE_EVALUATION_FAILED' &&
+    (finding.stageId === 'stage-a' || finding.stageId === 'stage-b')), false)
 })
 
 test('Section所属が不正なStageをStep 2のERRORとして反映する', () => {

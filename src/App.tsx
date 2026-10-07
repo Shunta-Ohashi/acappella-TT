@@ -110,7 +110,10 @@ import { createScheduleItemsForTimetableGeneration, DEFAULT_TIMETABLE_GENERATION
   hasValidTimetableGenerationPreprocessingInput, validateTimetableGenerationBreakRemoval,
   type TimetableGenerationUiOptions } from './domain/timetableGenerationOptions'
 import { resetEventDayTimetable } from './domain/timetableReset'
-import { hasUnsavedOperationsChanges } from './ui/operationsDraftChanges'
+import {
+  getUnsavedOperationsNavigationMessage,
+  hasUnsavedOperationsChanges,
+} from './ui/operationsDraftChanges'
 import {
   cloneTimetableEditSnapshot,
   createTimetableHistoryController,
@@ -137,7 +140,7 @@ import { DataBackupSettings } from './components/DataBackupSettings'
 import { EventOutputPage } from './components/EventOutputPage'
 import { EventFinalCheckPage } from './components/EventFinalCheckPage'
 import { IssuePanel } from './components/IssuePanel'
-import { createEventFinalCheckReport } from './domain/eventFinalCheck'
+import { createEventFinalCheckReport } from './ui/eventFinalCheckReport'
 import {
   resolveEventFinalCheckRepairNavigation,
   type EventFinalCheckRepairTarget,
@@ -423,6 +426,10 @@ function App() {
     eventId: EventId
     entry: TimetableHistoryEntry
     kind: 'success' | 'error'
+    message: string
+  } | null>(null)
+  const [step6NavigationFeedback, setStep6NavigationFeedback] = useState<{
+    eventId: EventId
     message: string
   } | null>(null)
   const paSettingsRef = useRef<PaSettingsHandle>(null)
@@ -885,6 +892,7 @@ function App() {
     setDutyAutoAssignmentDialog(null)
     setGridAssignmentDeletion(null)
     setGridAssignmentFeedback(null)
+    setStep6NavigationFeedback(null)
     setSelectedEventId(eventId)
     setSelectedTimetableEventDayId(undefined)
     setSelectedTimetableStageId(undefined)
@@ -1230,6 +1238,7 @@ function App() {
   }
 
   const handleSaveStep6AndNext = () => {
+    setStep6NavigationFeedback(null)
     const paResult = paSettingsRef.current?.prepareDraft()
     if (!paResult?.ok) return
 
@@ -1244,6 +1253,38 @@ function App() {
   }
 
   const hasUnsavedOperations = () => hasUnsavedOperationsChanges(paSettingsRef.current, dutySettingsRef.current)
+
+  const blockUnsavedOperationsNavigation = (
+    target: EventEditorStepId | 'events',
+  ): boolean => {
+    const message = getUnsavedOperationsNavigationMessage({
+      activeStep,
+      target,
+      hasUnsavedChanges: hasUnsavedOperations(),
+    })
+    if (!message) {
+      setStep6NavigationFeedback(null)
+      return false
+    }
+    setStep6NavigationFeedback({ eventId: selectedEventId, message })
+    return true
+  }
+
+  const handleEventEditorStepChange = (step: EventEditorStepId) => {
+    if (blockUnsavedOperationsNavigation(step)) return
+    if (step !== 6) setTimetableHistoryFeedback(null)
+    setActiveStep(step)
+  }
+
+  const handleLeaveEventEditor = () => {
+    if (blockUnsavedOperationsNavigation('events')) return
+    setActiveView('events')
+  }
+
+  const handleAppNavigation = (section: AppSection) => {
+    if (activeView === 'event-editor' && blockUnsavedOperationsNavigation('events')) return
+    setActiveView(section)
+  }
 
   const clearTimetableHistoryEphemeralState = () => {
     setGenerationOptionsScope(null)
@@ -2696,7 +2737,7 @@ function App() {
   return (
     <AppShell
       activeSection={activeView === 'event-editor' ? 'events' : activeView}
-      onNavigate={(section) => setActiveView(section)}
+      onNavigate={handleAppNavigation}
     >
       {backupFeedback && (
         <div
@@ -2710,11 +2751,8 @@ function App() {
         <EventEditorShell
           eventName={selectedEvent?.name ?? 'イベント'}
           activeStep={activeStep}
-          onStepChange={(step) => {
-            if (step !== 6) setTimetableHistoryFeedback(null)
-            setActiveStep(step)
-          }}
-          onBackToEvents={() => setActiveView('events')}
+          onStepChange={handleEventEditorStepChange}
+          onBackToEvents={handleLeaveEventEditor}
         >
           {activeStep === 1 && selectedEvent ? (
             <EventBasicInfo
@@ -2833,6 +2871,11 @@ function App() {
                   performTimetableHistoryTransition('redo')
                 }}
                 historyFeedback={visibleTimetableHistoryFeedback}
+                navigationFeedback={
+                  step6NavigationFeedback?.eventId === selectedEvent.id
+                    ? step6NavigationFeedback.message
+                    : null
+                }
                 generationAction={(
                   <div className="timetable-generation-action">
                     <div className="timetable-generation-action__buttons">
@@ -3103,7 +3146,10 @@ function App() {
                     createDraftId={() => createId('pa-assignment-draft')}
                     formId={`pa-settings-${selectedEvent.id}`}
                     onCreateUpdate={handleCreatePaAssignmentsUpdate}
-                    onCommit={(result) => setPaAssignments(result.paAssignments)}
+                    onCommit={(result) => {
+                      setPaAssignments(result.paAssignments)
+                      setStep6NavigationFeedback(null)
+                    }}
                     onSaveAndNext={handleSaveStep6AndNext}
                   />
                 ) : null}
@@ -3138,6 +3184,7 @@ function App() {
                     onCommit={(result) => {
                       setDutyTypes(result.dutyTypes)
                       setDutyAssignments(result.dutyAssignments)
+                      setStep6NavigationFeedback(null)
                     }}
                   />
                 ) : null}

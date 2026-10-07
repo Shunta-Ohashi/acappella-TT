@@ -5,7 +5,7 @@ import type {
   Stage,
   StageId,
 } from '../domain/models'
-import type { EventFinalCheckFinding } from '../domain/eventFinalCheck.ts'
+import type { EventFinalCheckFinding } from './eventFinalCheckReport.ts'
 import { getStagesForEventDay, resolveTimetableSelection } from '../domain/schedule.ts'
 import type { EventEditorStepId } from './eventEditorSteps.ts'
 

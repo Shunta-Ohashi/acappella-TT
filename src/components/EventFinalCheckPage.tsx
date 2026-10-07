@@ -3,7 +3,7 @@ import type { IssueSeverity } from '../domain/issues'
 import type {
   EventFinalCheckFinding,
   EventFinalCheckReport,
-} from '../domain/eventFinalCheck'
+} from '../ui/eventFinalCheckReport'
 import type { EventDay, Stage } from '../domain/models'
 import { ISSUE_SEVERITIES } from '../ui/issuePresentation'
 import { eventEditorSteps, type EventEditorStepId } from '../ui/eventEditorSteps'
