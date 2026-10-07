@@ -17,6 +17,8 @@
 
 ## 開発
 
+必要なruntimeはNode.js 22.12.0以上です。
+
 ```bash
 npm install
 npm run dev
@@ -57,6 +59,10 @@ Vercelではrepository rootをプロジェクトとして登録し、次の設�
 
 ## Security and privacy
 
-現時点では認証機能を実装していないため、production URLを知っている人はアプリ自体を開けます。共同編集・クラウド保存を導入するまでは、production deploymentを複数人での実データ共有基盤として使用しないでください。
+Supabase用envを設定した環境では、通常の編集画面を登録済みユーザーのEmail Magic Link認証とWorkspace所属で保護できます。env未設定時は開発用のlocal-only modeとなり、認証なしで従来どおり起動します。事前共有URLは引き続き公開閲覧用です。
 
-Supabase、認証、クラウド永続化、リアルタイム共同編集は後続対応予定です。
+認証後も編集データはCloudへ保存されません。共同編集・クラウド永続化・リアルタイム同期は後続対応です。
+
+## Cloud development
+
+Supabase Auth / Workspace環境の準備は[Cloud setup](docs/cloud-setup.md)を参照してください。Cloud用envを設定しない場合は、従来どおりlocal-only modeで起動します。

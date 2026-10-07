@@ -34,7 +34,7 @@ test('生成設定・適用・TT初期化は同じPA/Duty dirty guardを利用�
   assert.equal(hasUnsavedOperationsChanges(null, null), false)
 })
 
-test('Step 6の未保存PA/Dutyは全Step移動とイベント編集離脱をblockする', () => {
+test('Step 6の未保存PA/Dutyは全Step移動・イベント編集離脱・logoutをblockする', () => {
   const expected = 'PAまたは当日運営に未保存の変更があります。保存してから移動してください。'
   for (const target of [1, 2, 3, 4, 5, 7, 8, 'events']) {
     assert.equal(getUnsavedOperationsNavigationMessage({
@@ -43,6 +43,16 @@ test('Step 6の未保存PA/Dutyは全Step移動とイベント編集離脱をblo
       hasUnsavedChanges: true,
     }), expected, String(target))
   }
+  assert.equal(getUnsavedOperationsNavigationMessage({
+    activeStep: 6,
+    target: 'sign-out',
+    hasUnsavedChanges: true,
+  }), 'PAまたは当日運営に未保存の変更があります。保存してからログアウトしてください。')
+  assert.equal(getUnsavedOperationsNavigationMessage({
+    activeStep: 6,
+    target: 'workspace-switch',
+    hasUnsavedChanges: true,
+  }), 'PAまたは当日運営に未保存の変更があります。保存してからワークスペースを切り替えてください。')
   assert.equal(getUnsavedOperationsNavigationMessage({
     activeStep: 6,
     target: 6,
@@ -54,8 +64,18 @@ test('Step 6の未保存PA/Dutyは全Step移動とイベント編集離脱をblo
     hasUnsavedChanges: false,
   }), undefined)
   assert.equal(getUnsavedOperationsNavigationMessage({
+    activeStep: 6,
+    target: 'workspace-switch',
+    hasUnsavedChanges: false,
+  }), undefined)
+  assert.equal(getUnsavedOperationsNavigationMessage({
     activeStep: 5,
-    target: 6,
+    target: 'sign-out',
+    hasUnsavedChanges: true,
+  }), undefined)
+  assert.equal(getUnsavedOperationsNavigationMessage({
+    activeStep: 5,
+    target: 'workspace-switch',
     hasUnsavedChanges: true,
   }), undefined)
 })

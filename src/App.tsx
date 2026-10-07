@@ -248,8 +248,11 @@ import {
 } from './ui/timetableOrderConstraintLinkPresentation'
 import { createDemoData } from './data/demoData'
 import {
+  createCloudScopedStorageKey,
+  isPersistenceScopeReady,
   loadPersistedStateOrFallback,
   savePersistedState,
+  STORAGE_KEY,
   type PersistedAppStateV5,
   type PersistedDomainState,
 } from './persistence/localPersistence'
@@ -258,6 +261,7 @@ import {
   createBackupJson,
   parseBackupJson,
 } from './persistence/dataBackup'
+import { useOptionalCloudWorkspace } from './cloud/useCloudWorkspace.ts'
 import './App.css'
 
 type AppView = 'event-editor' | AppSection
@@ -307,8 +311,22 @@ const DEFAULT_EVENT_SETTINGS = {
 >
 
 function App() {
+  const cloudWorkspace = useOptionalCloudWorkspace()
+  const requestedPersistenceStorageKey = cloudWorkspace
+    ? createCloudScopedStorageKey({
+        userId: cloudWorkspace.user.id,
+        workspaceId: cloudWorkspace.workspace.id,
+      })
+    : STORAGE_KEY
+  const [activePersistenceStorageKey, setActivePersistenceStorageKey] = useState(
+    requestedPersistenceStorageKey,
+  )
   const [initialAppState] = useState(() =>
-    loadPersistedStateOrFallback(createDemoData),
+    loadPersistedStateOrFallback(
+      createDemoData,
+      undefined,
+      requestedPersistenceStorageKey,
+    ),
   )
   const initialEventId = initialAppState.events[0]?.id ?? ''
   const initialEventDayId = getEventDaysForEvent(
@@ -544,6 +562,76 @@ function App() {
     })
   }
 
+  const rehydratePersistenceScope = useEffectEvent((
+    snapshot: PersistedAppStateV5,
+    storageKey: string,
+  ) => {
+    const nextEventId = snapshot.events.some(event => event.id === selectedEventId)
+      ? selectedEventId
+      : snapshot.events[0]?.id ?? ''
+    const nextEventDays = getEventDaysForEvent(snapshot.eventDays, nextEventId)
+    const nextEventDayId = nextEventDays.some(
+      eventDay => eventDay.id === selectedTimetableEventDayId,
+    )
+      ? selectedTimetableEventDayId
+      : nextEventDays[0]?.id
+    const nextStages = nextEventDayId
+      ? getStagesForEventDay(snapshot.stages, nextEventDayId)
+      : []
+    const nextStageId = nextStages.some(stage => stage.id === selectedTimetableStageId)
+      ? selectedTimetableStageId
+      : nextStages[0]?.id
+
+    setMembers(snapshot.members)
+    setBands(snapshot.bands)
+    setEvents(snapshot.events)
+    setEventDays(snapshot.eventDays)
+    setStages(snapshot.stages)
+    setSections(snapshot.sections)
+    setEventMembers(snapshot.eventMembers)
+    setEventMemberDays(snapshot.eventMemberDays)
+    setEventBands(snapshot.eventBands)
+    setScheduleItems(snapshot.scheduleItems)
+    setPaAssignments(snapshot.paAssignments)
+    setDutyTypes(snapshot.dutyTypes)
+    setDutyAssignments(snapshot.dutyAssignments)
+    setTimetableLocks(snapshot.timetableLocks)
+    setTimetableOrderConstraints(snapshot.timetableOrderConstraints)
+    setSelectedEventId(nextEventId)
+    setSelectedTimetableEventDayId(nextEventDayId)
+    setSelectedTimetableStageId(nextStageId)
+    timetableHistoryController.reset()
+    timetableHistorySessionEventIdRef.current = null
+    timetableHistoryReplayRef.current = false
+    setOperationsPanelRevision(revision => revision + 1)
+    setActivePersistenceStorageKey(storageKey)
+  })
+
+  useEffect(() => {
+    if (isPersistenceScopeReady(
+      activePersistenceStorageKey,
+      requestedPersistenceStorageKey,
+    )) return
+
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      rehydratePersistenceScope(loadPersistedStateOrFallback(
+        createDemoData,
+        undefined,
+        requestedPersistenceStorageKey,
+      ), requestedPersistenceStorageKey)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [activePersistenceStorageKey, requestedPersistenceStorageKey])
+
+  const persistenceScopeReady = isPersistenceScopeReady(
+    activePersistenceStorageKey,
+    requestedPersistenceStorageKey,
+  )
+
   const domainState = useMemo<PersistedDomainState>(() => ({
     members,
     bands,
@@ -578,8 +666,9 @@ function App() {
     timetableOrderConstraints,
   ])
   useEffect(() => {
-    savePersistedState(domainState)
-  }, [domainState])
+    if (!persistenceScopeReady) return
+    savePersistedState(domainState, undefined, activePersistenceStorageKey)
+  }, [activePersistenceStorageKey, domainState, persistenceScopeReady])
 
   const timetableHistoryActive = activeView === 'event-editor' &&
     activeStep === 6 && selectedEventId.length > 0
@@ -717,7 +806,10 @@ function App() {
         return
       }
       if (!window.confirm('バックアップを復元すると、現在のデータはすべて置き換わり、未保存の編集も失われます。復元しますか？')) return
-      if (!savePersistedState(snapshot)) {
+      if (!isPersistenceScopeReady(
+        activePersistenceStorageKey,
+        requestedPersistenceStorageKey,
+      ) || !savePersistedState(snapshot, undefined, activePersistenceStorageKey)) {
         setBackupFeedback({ kind: 'error', message: 'バックアップを保存できませんでした。現在のデータは変更されていません。' })
         return
       }
@@ -1255,7 +1347,7 @@ function App() {
   const hasUnsavedOperations = () => hasUnsavedOperationsChanges(paSettingsRef.current, dutySettingsRef.current)
 
   const blockUnsavedOperationsNavigation = (
-    target: EventEditorStepId | 'events',
+    target: EventEditorStepId | 'events' | 'sign-out' | 'workspace-switch',
   ): boolean => {
     const message = getUnsavedOperationsNavigationMessage({
       activeStep,
@@ -1285,6 +1377,12 @@ function App() {
     if (activeView === 'event-editor' && blockUnsavedOperationsNavigation('events')) return
     setActiveView(section)
   }
+
+  const handleBeforeSignOut = (): boolean =>
+    activeView !== 'event-editor' || !blockUnsavedOperationsNavigation('sign-out')
+
+  const handleBeforeWorkspaceChange = (): boolean =>
+    activeView !== 'event-editor' || !blockUnsavedOperationsNavigation('workspace-switch')
 
   const clearTimetableHistoryEphemeralState = () => {
     setGenerationOptionsScope(null)
@@ -2764,10 +2862,20 @@ function App() {
       ? gridAssignmentDeletion
       : null
 
+  if (!persistenceScopeReady) {
+    return (
+      <main className="app-loading" aria-busy="true">
+        <p role="status">ワークスペースのデータを読み込んでいます…</p>
+      </main>
+    )
+  }
+
   return (
     <AppShell
       activeSection={activeView === 'event-editor' ? 'events' : activeView}
       onNavigate={handleAppNavigation}
+      onBeforeSignOut={handleBeforeSignOut}
+      onBeforeWorkspaceChange={handleBeforeWorkspaceChange}
     >
       {backupFeedback && (
         <div

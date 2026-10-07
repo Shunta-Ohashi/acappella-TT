@@ -39,6 +39,22 @@ import {
 export const CURRENT_STORAGE_VERSION = 5 as const
 export const STORAGE_KEY = 'acappella-tt:app-state'
 
+export interface CloudPersistenceScope {
+  userId: string
+  workspaceId: string
+}
+
+export const createCloudScopedStorageKey = ({
+  userId,
+  workspaceId,
+}: CloudPersistenceScope): string =>
+  `${STORAGE_KEY}:cloud:${encodeURIComponent(userId)}:${encodeURIComponent(workspaceId)}`
+
+export const isPersistenceScopeReady = (
+  activeStorageKey: string,
+  requestedStorageKey: string,
+): boolean => activeStorageKey === requestedStorageKey
+
 export interface PersistedDomainState {
   members: Member[]
   bands: Band[]
@@ -190,17 +206,18 @@ const getBrowserStorage = (): StorageLike | undefined => {
 
 export const loadPersistedState = (
   storage: StorageLike | undefined = getBrowserStorage(),
+  storageKey: string = STORAGE_KEY,
 ): PersistedAppStateV5 | undefined => {
   if (!storage) return undefined
 
   try {
-    const serialized = storage.getItem(STORAGE_KEY)
+    const serialized = storage.getItem(storageKey)
     if (serialized === null) return undefined
 
     const state = parsePersistedState(serialized)
     if (state) return state
 
-    storage.removeItem(STORAGE_KEY)
+    storage.removeItem(storageKey)
     return undefined
   } catch {
     return undefined
@@ -210,17 +227,19 @@ export const loadPersistedState = (
 export const loadPersistedStateOrFallback = (
   createFallback: () => PersistedDomainState,
   storage: StorageLike | undefined = getBrowserStorage(),
+  storageKey: string = STORAGE_KEY,
 ): PersistedAppStateV5 =>
-  loadPersistedState(storage) ?? createPersistedAppState(createFallback())
+  loadPersistedState(storage, storageKey) ?? createPersistedAppState(createFallback())
 
 export const savePersistedState = (
   state: PersistedDomainState,
   storage: StorageLike | undefined = getBrowserStorage(),
+  storageKey: string = STORAGE_KEY,
 ): boolean => {
   if (!storage) return false
 
   try {
-    storage.setItem(STORAGE_KEY, serializePersistedState(state))
+    storage.setItem(storageKey, serializePersistedState(state))
     return true
   } catch (error) {
     console.warn('ローカルデータを保存できませんでした。', error)
@@ -230,11 +249,12 @@ export const savePersistedState = (
 
 export const clearPersistedState = (
   storage: StorageLike | undefined = getBrowserStorage(),
+  storageKey: string = STORAGE_KEY,
 ): boolean => {
   if (!storage) return false
 
   try {
-    storage.removeItem(STORAGE_KEY)
+    storage.removeItem(storageKey)
     return true
   } catch (error) {
     console.warn('ローカルデータを削除できませんでした。', error)
