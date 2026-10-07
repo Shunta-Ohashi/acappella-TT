@@ -17,6 +17,8 @@
 
 ## 開発
 
+必要なruntimeはNode.js 22.12.0以上です。
+
 ```bash
 npm install
 npm run dev

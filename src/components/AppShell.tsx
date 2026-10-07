@@ -6,6 +6,7 @@ export type AppSection = 'events' | 'shared-data' | 'settings'
 interface AppShellProps {
   activeSection: AppSection
   onNavigate: (section: AppSection) => void
+  onBeforeSignOut?: () => boolean
   children: ReactNode
 }
 
@@ -15,17 +16,26 @@ const navigationItems: Array<{ id: AppSection; label: string }> = [
   { id: 'settings', label: '設定' },
 ]
 
-function CloudAccountControls() {
+function CloudAccountControls({
+  onBeforeSignOut,
+}: {
+  onBeforeSignOut?: () => boolean
+}) {
   const cloud = useOptionalCloudWorkspace()
   const [signOutError, setSignOutError] = useState('')
+  const [signingOut, setSigningOut] = useState(false)
   if (!cloud) return null
 
   const signOut = async () => {
     setSignOutError('')
+    if (onBeforeSignOut && !onBeforeSignOut()) return
+    setSigningOut(true)
     try {
       await cloud.signOut()
     } catch {
       setSignOutError('ログアウトできませんでした。')
+    } finally {
+      setSigningOut(false)
     }
   }
 
@@ -47,7 +57,9 @@ function CloudAccountControls() {
         <span className="top-navigation__workspace-name">{cloud.workspace.name}</span>
       )}
       <span className="top-navigation__profile-name">{cloud.profile.displayName}</span>
-      <button type="button" onClick={() => void signOut()}>ログアウト</button>
+      <button type="button" disabled={signingOut} onClick={() => void signOut()}>
+        {signingOut ? 'ログアウト中…' : 'ログアウト'}
+      </button>
       {signOutError && <span className="top-navigation__cloud-error" role="alert">{signOutError}</span>}
     </div>
   )
@@ -56,6 +68,7 @@ function CloudAccountControls() {
 export function AppShell({
   activeSection,
   onNavigate,
+  onBeforeSignOut,
   children,
 }: AppShellProps) {
   return (
@@ -86,7 +99,7 @@ export function AppShell({
                 </button>
               ))}
             </nav>
-            <CloudAccountControls />
+            <CloudAccountControls onBeforeSignOut={onBeforeSignOut} />
           </div>
         </div>
       </header>

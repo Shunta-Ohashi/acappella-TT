@@ -1255,7 +1255,7 @@ function App() {
   const hasUnsavedOperations = () => hasUnsavedOperationsChanges(paSettingsRef.current, dutySettingsRef.current)
 
   const blockUnsavedOperationsNavigation = (
-    target: EventEditorStepId | 'events',
+    target: EventEditorStepId | 'events' | 'sign-out',
   ): boolean => {
     const message = getUnsavedOperationsNavigationMessage({
       activeStep,
@@ -1285,6 +1285,9 @@ function App() {
     if (activeView === 'event-editor' && blockUnsavedOperationsNavigation('events')) return
     setActiveView(section)
   }
+
+  const handleBeforeSignOut = (): boolean =>
+    activeView !== 'event-editor' || !blockUnsavedOperationsNavigation('sign-out')
 
   const clearTimetableHistoryEphemeralState = () => {
     setGenerationOptionsScope(null)
@@ -2768,6 +2771,7 @@ function App() {
     <AppShell
       activeSection={activeView === 'event-editor' ? 'events' : activeView}
       onNavigate={handleAppNavigation}
+      onBeforeSignOut={handleBeforeSignOut}
     >
       {backupFeedback && (
         <div

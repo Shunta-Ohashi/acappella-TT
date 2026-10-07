@@ -6,6 +6,8 @@
 
 Supabase Dashboardでprojectを作成します。frontendへ設定するのはProject URLとPublishable keyだけです。`service_role` keyはブラウザ・Vercel・repositoryへ絶対に設定しないでください。
 
+開発・build環境にはNode.js 22.12.0以上を使用します。VercelもNode.js 22系に設定してください。
+
 ## 2. migrationを適用する
 
 SQL Editorなど管理者権限のある方法で、`supabase/migrations/20261007_auth_workspace.sql`を適用します。このmigrationは`profiles`、`workspaces`、`workspace_members`を作成し、全tableでRLSを有効化します。
