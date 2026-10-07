@@ -11,6 +11,11 @@ interface EventEditorShellProps {
   activeStep: EventEditorStepId
   onStepChange: (step: EventEditorStepId) => void
   onBackToEvents: () => void
+  cloudSave?: {
+    isSaving: boolean
+    feedback?: { kind: 'success' | 'error'; message: string }
+    onSave: () => void
+  }
   children: ReactNode
 }
 
@@ -19,6 +24,7 @@ export function EventEditorShell({
   activeStep,
   onStepChange,
   onBackToEvents,
+  cloudSave,
   children,
 }: EventEditorShellProps) {
   const currentStep = eventEditorSteps.find((step) => step.id === activeStep)
@@ -44,9 +50,31 @@ export function EventEditorShell({
               <p className="event-editor__eyebrow">イベント編集</p>
               <h1>{eventName}</h1>
             </div>
-            <span className="event-editor__status" aria-label="編集状態: 下書き">
-              下書き
-            </span>
+            <div className="event-editor__header-actions">
+              {cloudSave && (
+                <div className="event-editor__cloud-save">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={cloudSave.isSaving}
+                    onClick={cloudSave.onSave}
+                  >
+                    {cloudSave.isSaving ? 'Cloud保存中…' : 'Cloudへ保存'}
+                  </button>
+                  {cloudSave.feedback && (
+                    <span
+                      className={`event-editor__cloud-feedback event-editor__cloud-feedback--${cloudSave.feedback.kind}`}
+                      role={cloudSave.feedback.kind === 'error' ? 'alert' : 'status'}
+                    >
+                      {cloudSave.feedback.message}
+                    </span>
+                  )}
+                </div>
+              )}
+              <span className="event-editor__status" aria-label="編集状態: 下書き">
+                下書き
+              </span>
+            </div>
           </div>
         </div>
       </header>

@@ -19,9 +19,14 @@ interface EventBasicInfoProps {
   eventDays: EventDay[]
   canDeleteEventDay: (eventDayId: EventDayId) => boolean
   checkEventDeletion: (eventId: Event['id']) => EventDeletionCheck
-  onDeleteEvent: (eventId: Event['id']) => EventDeletionResult
+  onDeleteEvent: (eventId: Event['id']) => Promise<EventDeletionActionResult>
   onSave: (draft: EventBasicInfoDraft) => EventBasicInfoUpdateResult
   onSaveAndNext: () => void
+}
+
+export type EventDeletionActionResult = EventDeletionResult | {
+  ok: false
+  reason: 'CLOUD_DELETE_FAILED'
 }
 
 interface DateInput {
@@ -69,11 +74,19 @@ export function EventBasicInfo({
     label: string
   }>()
   const [eventDeletionError, setEventDeletionError] = useState('')
+  const [isDeletingEvent, setIsDeletingEvent] = useState(false)
 
-  const getEventDeletionError = (result: Exclude<EventDeletionCheck, { ok: true }>) =>
-    result.reason === 'EVENT_NOT_FOUND'
-      ? '削除するイベントが見つかりません。イベント一覧へ戻って状態を確認してください。'
-      : 'イベント間の参照に矛盾があるため削除できません。データの整合性を確認してください。'
+  const getEventDeletionError = (
+    result: Exclude<EventDeletionActionResult, { ok: true }>,
+  ) => {
+    if (result.reason === 'EVENT_NOT_FOUND') {
+      return '削除するイベントが見つかりません。イベント一覧へ戻って状態を確認してください。'
+    }
+    if (result.reason === 'CLOUD_DELETE_FAILED') {
+      return 'Cloud Eventを削除できませんでした。通信状態とワークスペース権限を確認してください。'
+    }
+    return 'イベント間の参照に矛盾があるため削除できません。データの整合性を確認してください。'
+  }
 
   const clearFeedback = () => {
     setSaveMessage('')
@@ -152,12 +165,17 @@ export function EventBasicInfo({
     })
   }
 
-  const confirmEventDeletion = () => {
-    if (!pendingEventDeletion) return
-    const result = onDeleteEvent(pendingEventDeletion.eventId)
-    if (!result.ok) {
-      setPendingEventDeletion(undefined)
-      setEventDeletionError(getEventDeletionError(result))
+  const confirmEventDeletion = async () => {
+    if (!pendingEventDeletion || isDeletingEvent) return
+    setIsDeletingEvent(true)
+    try {
+      const result = await onDeleteEvent(pendingEventDeletion.eventId)
+      if (!result.ok) {
+        setPendingEventDeletion(undefined)
+        setEventDeletionError(getEventDeletionError(result))
+      }
+    } finally {
+      setIsDeletingEvent(false)
     }
   }
 

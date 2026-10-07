@@ -1,6 +1,7 @@
 import {
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -65,7 +66,10 @@ import {
   type EventEditorStepId,
 } from './components/EventEditorShell'
 import { CreateEventDialog } from './components/CreateEventDialog'
-import { EventBasicInfo } from './components/EventBasicInfo'
+import {
+  EventBasicInfo,
+  type EventDeletionActionResult,
+} from './components/EventBasicInfo'
 import { CommonDataPage } from './components/CommonDataPage'
 import { EventMemberSettings } from './components/EventMemberSettings'
 import { EventBandSettings } from './components/EventBandSettings'
@@ -195,7 +199,6 @@ import {
   createEventDeletion,
   type EventDeletionCheck,
   type EventDeletionInput,
-  type EventDeletionResult,
 } from './domain/eventDeletion'
 import {
   createEventBandSettingsUpdate,
@@ -262,6 +265,14 @@ import {
   parseBackupJson,
 } from './persistence/dataBackup'
 import { useOptionalCloudWorkspace } from './cloud/useCloudWorkspace.ts'
+import { createSupabaseCloudEventRepository } from './cloud/cloudEventRepository.ts'
+import {
+  isCloudEventCacheWriteReady,
+  loadCloudWorkspaceEvents,
+  saveCloudEventFromState,
+  type CloudEventHydrationState,
+} from './cloud/cloudEventLifecycle.ts'
+import { createCloudWorkspaceState } from './cloud/cloudEventSnapshot.ts'
 import './App.css'
 
 type AppView = 'event-editor' | AppSection
@@ -312,6 +323,13 @@ const DEFAULT_EVENT_SETTINGS = {
 
 function App() {
   const cloudWorkspace = useOptionalCloudWorkspace()
+  const cloudSupabase = cloudWorkspace?.supabase
+  const cloudEventRepository = useMemo(
+    () => cloudSupabase
+      ? createSupabaseCloudEventRepository(cloudSupabase)
+      : undefined,
+    [cloudSupabase],
+  )
   const requestedPersistenceStorageKey = cloudWorkspace
     ? createCloudScopedStorageKey({
         userId: cloudWorkspace.user.id,
@@ -352,6 +370,27 @@ function App() {
     kind: 'success' | 'error'
     message: string
   } | null>(null)
+  const [cloudEventLoadState, setCloudEventLoadState] = useState<CloudEventHydrationState>(
+    cloudWorkspace
+      ? { scopeKey: '', kind: 'loading' }
+      : { scopeKey: STORAGE_KEY, kind: 'ready' },
+  )
+  const [cloudEventReloadToken, setCloudEventReloadToken] = useState(0)
+  const [cloudPersistedEventIds, setCloudPersistedEventIds] = useState<Set<EventId>>(
+    () => new Set(),
+  )
+  const [cloudEventSavingId, setCloudEventSavingId] = useState<EventId | null>(null)
+  const [cloudEventSaveFeedback, setCloudEventSaveFeedback] = useState<{
+    eventId: EventId
+    kind: 'success' | 'error'
+    message: string
+  } | null>(null)
+  const currentPersistenceScopeRef = useRef(requestedPersistenceStorageKey)
+  const [breakDuration, setBreakDuration] = useState<number>(10)
+
+  useLayoutEffect(() => {
+    currentPersistenceScopeRef.current = requestedPersistenceStorageKey
+  }, [requestedPersistenceStorageKey])
 
   // ==================== 📦 各種状態（State）の管理 ====================
 
@@ -631,6 +670,12 @@ function App() {
     activePersistenceStorageKey,
     requestedPersistenceStorageKey,
   )
+  const cloudEventScopeReady = isCloudEventCacheWriteReady({
+    cloudEnabled: Boolean(cloudWorkspace),
+    persistenceScopeReady,
+    requestedScopeKey: requestedPersistenceStorageKey,
+    hydration: cloudEventLoadState,
+  })
 
   const domainState = useMemo<PersistedDomainState>(() => ({
     members,
@@ -666,9 +711,13 @@ function App() {
     timetableOrderConstraints,
   ])
   useEffect(() => {
-    if (!persistenceScopeReady) return
+    if (!cloudEventScopeReady) return
     savePersistedState(domainState, undefined, activePersistenceStorageKey)
-  }, [activePersistenceStorageKey, domainState, persistenceScopeReady])
+  }, [
+    activePersistenceStorageKey,
+    cloudEventScopeReady,
+    domainState,
+  ])
 
   const timetableHistoryActive = activeView === 'event-editor' &&
     activeStep === 6 && selectedEventId.length > 0
@@ -726,7 +775,7 @@ function App() {
     timetableOrderConstraints,
   ])
 
-  const applyPersistedSnapshot = (snapshot: PersistedAppStateV5) => {
+  function applyPersistedSnapshot(snapshot: PersistedAppStateV5) {
     timetableHistoryController.reset()
     timetableHistorySessionEventIdRef.current = null
     timetableHistoryReplayRef.current = false
@@ -739,6 +788,8 @@ function App() {
     setDutyAutoAssignmentDialog(null)
     setGridAssignmentDeletion(null)
     setGridAssignmentFeedback(null)
+    setCloudEventSaveFeedback(null)
+    setCloudEventSavingId(null)
     setMembers(snapshot.members)
     setBands(snapshot.bands)
     setEvents(snapshot.events)
@@ -765,6 +816,66 @@ function App() {
     setIsCreateEventDialogOpen(false)
     setActiveView('events')
   }
+
+  const loadCloudEventScope = useEffectEvent(async (
+    workspaceId: string,
+    scopeKey: string,
+    isCancelled: () => boolean,
+  ) => {
+    if (!cloudEventRepository) return
+    if (isCancelled() || currentPersistenceScopeRef.current !== scopeKey) return
+    setCloudEventLoadState({ scopeKey, kind: 'loading' })
+    setCloudPersistedEventIds(new Set())
+    const result = await loadCloudWorkspaceEvents(
+      cloudEventRepository,
+      workspaceId,
+      domainState,
+    )
+    if (isCancelled() || currentPersistenceScopeRef.current !== scopeKey) return
+
+    if (!result.ok) {
+      const cleared = createCloudWorkspaceState(domainState, [])
+      if (cleared.ok) applyPersistedSnapshot(cleared.state)
+      setCloudPersistedEventIds(new Set())
+      setCloudEventLoadState({
+        scopeKey,
+        kind: 'error',
+        message: result.error.message,
+      })
+      return
+    }
+
+    // In Cloud mode the scoped localStorage snapshot is only a cache. Cloud
+    // Event collections replace it after every startup/workspace hydration, so
+    // edits not explicitly saved to Cloud are intentionally discarded here.
+    applyPersistedSnapshot(result.value.state)
+    setCloudPersistedEventIds(new Set(
+      result.value.records.map(record => record.eventId),
+    ))
+    setCloudEventLoadState({ scopeKey, kind: 'ready' })
+  })
+
+  useEffect(() => {
+    if (!cloudWorkspace || !cloudEventRepository || !persistenceScopeReady) return
+    let cancelled = false
+    const scopeKey = requestedPersistenceStorageKey
+    queueMicrotask(() => {
+      void loadCloudEventScope(
+        cloudWorkspace.workspace.id,
+        scopeKey,
+        () => cancelled,
+      )
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    cloudEventReloadToken,
+    cloudEventRepository,
+    cloudWorkspace,
+    persistenceScopeReady,
+    requestedPersistenceStorageKey,
+  ])
 
   const handleExportBackup = () => {
     let objectUrl: string | undefined
@@ -829,8 +940,6 @@ function App() {
   const selectedEventTimetableLocks = timetableLocks.filter(
     (lock) => lock.eventId === selectedEventId,
   )
-
-  const [breakDuration, setBreakDuration] = useState<number>(10)
 
   const selectedEventMembers = eventMembers.filter(
     (eventMember) => eventMember.eventId === selectedEventId,
@@ -973,6 +1082,7 @@ function App() {
   const handleOpenEvent = (eventId: EventId) => {
     if (!events.some((event) => event.id === eventId)) return
 
+    setCloudEventSaveFeedback(null)
     setTimetableLockFeedback(clearTimetableLockFeedback())
     setTimetableOrderConstraintFeedback(null)
     setActiveTimetableOrderBlockKey(null)
@@ -1019,7 +1129,42 @@ function App() {
     setSelectedTimetableStageId(stageId)
   }
 
+  const persistEventToCloud = async (
+    state: PersistedDomainState,
+    eventId: EventId,
+  ): Promise<boolean> => {
+    if (!cloudWorkspace || !cloudEventRepository) return true
+    const scopeKey = requestedPersistenceStorageKey
+    setCloudEventSavingId(eventId)
+    setCloudEventSaveFeedback(null)
+    const result = await saveCloudEventFromState(
+      cloudEventRepository,
+      cloudWorkspace.workspace.id,
+      state,
+      eventId,
+    )
+    if (currentPersistenceScopeRef.current !== scopeKey) return false
+
+    setCloudEventSavingId(null)
+    if (!result.ok) {
+      setCloudEventSaveFeedback({
+        eventId,
+        kind: 'error',
+        message: result.error.message,
+      })
+      return false
+    }
+    setCloudPersistedEventIds(previous => new Set(previous).add(eventId))
+    setCloudEventSaveFeedback({
+      eventId,
+      kind: 'success',
+      message: `Cloudへ保存しました（revision ${result.value.revision}）。`,
+    })
+    return true
+  }
+
   const handleCreateEvent = (draft: NewEventDraft) => {
+    setCloudEventSaveFeedback(null)
     setGenerationPreview(null)
     setGenerationOptionsScope(null)
     setResetConfirmation(null)
@@ -1048,6 +1193,13 @@ function App() {
     setActiveStep(1)
     setActiveView('event-editor')
     setIsCreateEventDialogOpen(false)
+    if (cloudWorkspace) {
+      void persistEventToCloud({
+        ...domainState,
+        events: [...events, created.event],
+        eventDays: [...eventDays, ...created.eventDays],
+      }, created.event.id)
+    }
   }
 
   const getEventDeletionInput = (eventId: EventId): EventDeletionInput => ({
@@ -1071,9 +1223,35 @@ function App() {
     eventId: EventId,
   ): EventDeletionCheck => checkEventDeletion(getEventDeletionInput(eventId))
 
-  const handleDeleteEvent = (eventId: EventId): EventDeletionResult => {
+  const handleDeleteEvent = async (
+    eventId: EventId,
+  ): Promise<EventDeletionActionResult> => {
     const result = createEventDeletion(getEventDeletionInput(eventId))
     if (!result.ok) return result
+    if (cloudEventSavingId === eventId) {
+      return { ok: false, reason: 'CLOUD_DELETE_FAILED' }
+    }
+
+    if (
+      cloudWorkspace &&
+      cloudEventRepository &&
+      cloudPersistedEventIds.has(eventId)
+    ) {
+      const scopeKey = requestedPersistenceStorageKey
+      const deleted = await cloudEventRepository.deleteEvent(
+        cloudWorkspace.workspace.id,
+        eventId,
+      )
+      if (
+        !deleted.ok ||
+        currentPersistenceScopeRef.current !== scopeKey
+      ) return { ok: false, reason: 'CLOUD_DELETE_FAILED' }
+      setCloudPersistedEventIds(previous => {
+        const next = new Set(previous)
+        next.delete(eventId)
+        return next
+      })
+    }
 
     setEvents(result.events)
     setEventDays(result.eventDays)
@@ -1102,6 +1280,7 @@ function App() {
     setDutyAutoAssignmentDialog(null)
     setGridAssignmentDeletion(null)
     setGridAssignmentFeedback(null)
+    setCloudEventSaveFeedback(null)
     setOperationsPanelRevision((revision) => revision + 1)
     setBreakDuration(10)
     setIsCreateEventDialogOpen(false)
@@ -1345,6 +1524,19 @@ function App() {
   }
 
   const hasUnsavedOperations = () => hasUnsavedOperationsChanges(paSettingsRef.current, dutySettingsRef.current)
+
+  const handleSaveSelectedEventToCloud = () => {
+    if (!selectedEvent || !cloudWorkspace) return
+    if (hasUnsavedOperations()) {
+      setCloudEventSaveFeedback({
+        eventId: selectedEvent.id,
+        kind: 'error',
+        message: 'PAまたは当日運営の未保存編集を先に保存してください。',
+      })
+      return
+    }
+    void persistEventToCloud(domainState, selectedEvent.id)
+  }
 
   const blockUnsavedOperationsNavigation = (
     target: EventEditorStepId | 'events' | 'sign-out' | 'workspace-switch',
@@ -2862,11 +3054,42 @@ function App() {
       ? gridAssignmentDeletion
       : null
 
-  if (!persistenceScopeReady) {
+  if (!persistenceScopeReady || (
+    cloudWorkspace && (
+      cloudEventLoadState.scopeKey !== requestedPersistenceStorageKey ||
+      cloudEventLoadState.kind === 'loading'
+    )
+  )) {
     return (
       <main className="app-loading" aria-busy="true">
-        <p role="status">ワークスペースのデータを読み込んでいます…</p>
+        <p role="status">ワークスペースのCloud Eventを読み込んでいます…</p>
       </main>
+    )
+  }
+
+  if (
+    cloudWorkspace &&
+    cloudEventLoadState.scopeKey === requestedPersistenceStorageKey &&
+    cloudEventLoadState.kind === 'error'
+  ) {
+    return (
+      <AppShell
+        activeSection="events"
+        onNavigate={handleAppNavigation}
+        onBeforeSignOut={handleBeforeSignOut}
+        onBeforeWorkspaceChange={handleBeforeWorkspaceChange}
+      >
+        <main className="app-loading">
+          <p role="alert">{cloudEventLoadState.message}</p>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => setCloudEventReloadToken(token => token + 1)}
+          >
+            Cloud Eventを再読み込み
+          </button>
+        </main>
+      </AppShell>
     )
   }
 
@@ -2891,6 +3114,13 @@ function App() {
           activeStep={activeStep}
           onStepChange={handleEventEditorStepChange}
           onBackToEvents={handleLeaveEventEditor}
+          cloudSave={cloudWorkspace && selectedEvent ? {
+            isSaving: cloudEventSavingId === selectedEvent.id,
+            feedback: cloudEventSaveFeedback?.eventId === selectedEvent.id
+              ? cloudEventSaveFeedback
+              : undefined,
+            onSave: handleSaveSelectedEventToCloud,
+          } : undefined}
         >
           {activeStep === 1 && selectedEvent ? (
             <EventBasicInfo
