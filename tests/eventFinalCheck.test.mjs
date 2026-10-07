@@ -43,6 +43,17 @@ const addMembersAndPerformance = (input) => {
   return input
 }
 
+const addOperationsMember = (input) => {
+  input.members.push({ id: 'member-a', realName: 'Alice', active: true })
+  input.eventMembers.push({ id: 'event-member-a', eventId: 'event-1',
+    memberId: 'member-a', paCapabilities: { main: true, sub: true } })
+  input.eventMemberDays.push({ id: 'event-member-day-a',
+    eventMemberId: 'event-member-a', eventDayId: 'day-1',
+    participationStatus: 'participating' })
+  input.dutyTypes.push({ id: 'duty-a', eventId: 'event-1', name: '撮影', order: 0 })
+  return input
+}
+
 test('問題のないEventはfinding 0でseverity countも0になる', () => {
   assert.deepEqual(createEventFinalCheckReport(makeInput()), {
     findings: [], counts: { ERROR: 0, WARNING: 0, INFO: 0 },
@@ -98,7 +109,7 @@ test('timeline計算失敗でもreportを返し、別Dayのfindingを継続す�
 })
 
 test('Stage単位のTimeline failureを隔離し前後Stageの評価を継続する', () => {
-  const input = makeInput()
+  const input = addOperationsMember(makeInput())
   input.stages = [
     { id: 'stage-a', eventDayId: 'day-1', name: 'Stage A', order: 0,
       plannedStartTime: '10:00', plannedEndTime: '18:00' },
@@ -118,6 +129,22 @@ test('Stage単位のTimeline failureを隔離し前後Stageの評価を継続す
     { id: 'performance-c', stageId: 'stage-c', order: 0,
       kind: 'performance', eventBandId: 'band-c' },
   )
+  input.paAssignments.push(
+    { id: 'pa-invalid-stage', eventId: 'event-1', eventDayId: 'day-1',
+      stageId: 'stage-a', memberId: 'member-a', role: 'main',
+      from: { kind: 'time', time: '10:00' }, until: { kind: 'time', time: '11:00' } },
+    { id: 'pa-failed-stage', eventId: 'event-1', eventDayId: 'day-1',
+      stageId: 'stage-b', memberId: 'member-a', role: 'sub',
+      from: { kind: 'time', time: '10:00' }, until: { kind: 'time', time: '11:00' } },
+  )
+  input.dutyAssignments.push(
+    { id: 'duty-invalid-stage', dutyTypeId: 'duty-a', eventDayId: 'day-1',
+      stageId: 'stage-a', memberId: 'member-a',
+      from: { kind: 'time', time: '10:00' }, until: { kind: 'time', time: '11:00' } },
+    { id: 'duty-failed-stage', dutyTypeId: 'duty-a', eventDayId: 'day-1',
+      stageId: 'stage-b', memberId: 'member-a',
+      from: { kind: 'time', time: '10:00' }, until: { kind: 'time', time: '11:00' } },
+  )
 
   const report = createEventFinalCheckReport(input)
   assert.ok(report.findings.some(finding =>
@@ -129,6 +156,10 @@ test('Stage単位のTimeline failureを隔離し前後Stageの評価を継続す
   assert.equal(report.findings.some(finding =>
     finding.code === 'WORKSPACE_EVALUATION_FAILED' &&
     (finding.stageId === 'stage-a' || finding.stageId === 'stage-b')), false)
+  assert.equal(report.findings.some(finding =>
+    finding.code === 'PA_INVALID_BOUNDARY'), false)
+  assert.equal(report.findings.some(finding =>
+    finding.code === 'DUTY_INVALID_BOUNDARY'), false)
 })
 
 test('Section所属が不正なStageをStep 2のERRORとして反映する', () => {
@@ -214,7 +245,82 @@ test('selected EventのEventBand・PA・Dutyがmissing/foreign EventDayを参照
     assert.deepEqual([finding?.severity, finding?.targetStep],
       ['ERROR', expectedStep], `${kind}:${dayId}`)
     assert.ok(report.findings.length > 0, `${kind}:${dayId}`)
+    if (kind === 'pa') {
+      assert.equal(report.findings.some(candidate =>
+        candidate.code === 'PA_INVALID_BOUNDARY'), false, `${kind}:${dayId}: canonical`)
+    }
+    if (kind === 'duty') {
+      assert.equal(report.findings.some(candidate =>
+        candidate.code === 'DUTY_INVALID_BOUNDARY'), false, `${kind}:${dayId}: canonical`)
+    }
   }
+})
+
+test('valid EventDayのmissing・別Day Stage参照をPA/Duty boundary ERRORとして残す', () => {
+  for (const { kind, stageId } of [
+    { kind: 'pa', stageId: 'missing-stage' },
+    { kind: 'pa', stageId: 'stage-2' },
+    { kind: 'pa', stageId: 'foreign-stage' },
+    { kind: 'duty', stageId: 'missing-stage' },
+    { kind: 'duty', stageId: 'stage-2' },
+    { kind: 'duty', stageId: 'foreign-stage' },
+  ]) {
+    const input = addOperationsMember(makeInput())
+    input.eventDays.push({ id: 'day-2', eventId: 'event-1', date: '2027-11-02',
+      label: '2日目', order: 1 })
+    input.eventDays.push({ id: 'foreign-day', eventId: 'event-2', date: '2027-11-03',
+      label: '別イベント', order: 0 })
+    input.stages.push(
+      { id: 'stage-2', eventDayId: 'day-2', name: 'Day 2 Stage', order: 0,
+        plannedStartTime: '10:00', plannedEndTime: '18:00' },
+      { id: 'foreign-stage', eventDayId: 'foreign-day', name: 'Foreign Stage', order: 0,
+        plannedStartTime: '10:00', plannedEndTime: '18:00' },
+    )
+    if (kind === 'pa') input.paAssignments.push({
+      id: `pa-${stageId}`, eventId: 'event-1', eventDayId: 'day-1', stageId,
+      memberId: 'member-a', role: 'main',
+      from: { kind: 'time', time: '10:00' }, until: { kind: 'time', time: '11:00' },
+    })
+    if (kind === 'duty') input.dutyAssignments.push({
+      id: `duty-${stageId}`, dutyTypeId: 'duty-a', eventDayId: 'day-1', stageId,
+      memberId: 'member-a',
+      from: { kind: 'time', time: '10:00' }, until: { kind: 'time', time: '11:00' },
+    })
+
+    const report = createEventFinalCheckReport(input)
+    const code = kind === 'pa' ? 'PA_INVALID_BOUNDARY' : 'DUTY_INVALID_BOUNDARY'
+    const findings = report.findings.filter(finding => finding.code === code)
+    assert.equal(findings.length, 1, `${kind}:${stageId}`)
+    assert.deepEqual({
+      severity: findings[0].severity,
+      targetStep: findings[0].targetStep,
+      eventDayId: findings[0].eventDayId,
+      stageId: findings[0].stageId,
+    }, {
+      severity: 'ERROR', targetStep: 6, eventDayId: 'day-1', stageId: undefined,
+    }, `${kind}:${stageId}: safe repair scope`)
+    if (stageId === 'missing-stage') {
+      assert.match(findings[0].message, /不明なStage/, `${kind}:${stageId}: safe label`)
+    }
+  }
+})
+
+test('正常Stageの正常PA/Dutyはinvalid boundaryにならない', () => {
+  const input = addOperationsMember(makeInput())
+  input.paAssignments.push({
+    id: 'pa-valid', eventId: 'event-1', eventDayId: 'day-1', stageId: 'stage-1',
+    memberId: 'member-a', role: 'main',
+    from: { kind: 'time', time: '10:00' }, until: { kind: 'time', time: '11:00' },
+  })
+  input.dutyAssignments.push({
+    id: 'duty-valid', dutyTypeId: 'duty-a', eventDayId: 'day-1', stageId: 'stage-1',
+    memberId: 'member-a',
+    from: { kind: 'time', time: '10:00' }, until: { kind: 'time', time: '11:00' },
+  })
+
+  const report = createEventFinalCheckReport(input)
+  assert.equal(report.findings.some(finding =>
+    finding.code === 'PA_INVALID_BOUNDARY' || finding.code === 'DUTY_INVALID_BOUNDARY'), false)
 })
 
 test('invalid EventDayのEventBandはstructural findingだけをcanonicalにする', () => {

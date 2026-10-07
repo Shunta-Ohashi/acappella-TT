@@ -151,6 +151,31 @@ const scheduledOrderMessage = (
   return `出演順制約のバンドが指定順で連続していません${targets}。`
 }
 
+const shouldEvaluateOperationAssignmentForDay = ({
+  assignment,
+  eventDayId,
+  stageById,
+  evaluableStageIds,
+  invalidTimelineStageIds,
+  failedTimelineStageIds,
+}: {
+  assignment: Pick<PaAssignment | DutyAssignment, 'eventDayId' | 'stageId'>
+  eventDayId: EventDayId
+  stageById: ReadonlyMap<StageId, Stage>
+  evaluableStageIds: ReadonlySet<StageId>
+  invalidTimelineStageIds: ReadonlySet<StageId>
+  failedTimelineStageIds: ReadonlySet<StageId>
+}): boolean => {
+  if (assignment.eventDayId !== eventDayId) return false
+
+  const stage = stageById.get(assignment.stageId)
+  if (!stage || stage.eventDayId !== assignment.eventDayId) return true
+  if (invalidTimelineStageIds.has(stage.id) || failedTimelineStageIds.has(stage.id)) {
+    return false
+  }
+  return evaluableStageIds.has(stage.id)
+}
+
 export const createEventFinalCheckReport = (
   input: CreateEventFinalCheckReportInput,
 ): EventFinalCheckReport => {
@@ -182,6 +207,10 @@ export const createEventFinalCheckReport = (
   )
   const eventDayById = new Map(eventDays.map(day => [day.id, day]))
   const stageById = new Map(stages.map(stage => [stage.id, stage]))
+  const paAssignmentById = new Map(paAssignments.map(assignment => [assignment.id, assignment]))
+  const dutyAssignmentById = new Map(
+    dutyAssignments.map(assignment => [assignment.id, assignment]),
+  )
   const scheduleItemById = new Map(scheduleItems.map(item => [item.id, item]))
   const eventBandById = new Map(eventBands.map(band => [band.id, band]))
   const dayOrder = new Map(eventDays.map((day, index) => [day.id, index]))
@@ -202,10 +231,22 @@ export const createEventFinalCheckReport = (
     const stage = stageById.get(stageId)
     return stage ? { eventDayId: stage.eventDayId, stageId: stage.id } : {}
   }
-  const resolveScope = (issue: ScheduleIssue): {
+  const resolveScope = (issue: ScheduleIssue, evaluatedEventDayId?: EventDayId): {
     eventDayId?: EventDayId
     stageId?: StageId
   } => {
+    const boundaryAssignment = issue.code === 'PA_INVALID_BOUNDARY'
+      ? issue.paAssignmentIds?.map(id => paAssignmentById.get(id)).find(Boolean)
+      : issue.code === 'DUTY_INVALID_BOUNDARY'
+        ? issue.dutyAssignmentIds?.map(id => dutyAssignmentById.get(id)).find(Boolean)
+        : undefined
+    if (boundaryAssignment && boundaryAssignment.eventDayId === evaluatedEventDayId) {
+      const referencedStage = stageById.get(boundaryAssignment.stageId)
+      if (!referencedStage || referencedStage.eventDayId !== boundaryAssignment.eventDayId) {
+        return { eventDayId: evaluatedEventDayId }
+      }
+    }
+
     const candidateStageIds = uniqueSorted([
       ...(issue.stageIds ?? []),
       ...(issue.scheduleItemIds ?? []).flatMap(itemId => {
@@ -317,6 +358,8 @@ export const createEventFinalCheckReport = (
       typeof calculateEventDayTimelines
     >['calculatedItems'] = []
     const evaluableStages: Stage[] = []
+    const invalidTimelineStageIds = new Set<StageId>()
+    const failedTimelineStageIds = new Set<StageId>()
     for (const stage of dayStages) {
       let stageTimelines
       try {
@@ -328,6 +371,7 @@ export const createEventFinalCheckReport = (
           eventBands,
         })
       } catch {
+        failedTimelineStageIds.add(stage.id)
         addFinding({
           key: `structure|timeline-failure|${stage.id}`,
           severity: 'ERROR', category: 'structure', code: 'TIMELINE_CALCULATION_FAILED',
@@ -338,6 +382,7 @@ export const createEventFinalCheckReport = (
       }
 
       if (stageTimelines.invalidStages.length > 0) {
+        invalidTimelineStageIds.add(stage.id)
         for (const invalid of stageTimelines.invalidStages) {
           addFinding({
             key: `structure|invalid-stage|${invalid.stageId}`,
@@ -370,19 +415,31 @@ export const createEventFinalCheckReport = (
         stages: evaluableStages,
         sections: evaluableSections,
         paAssignments: paAssignments.filter(assignment =>
-          assignment.eventDayId === eventDay.id &&
-          evaluableStageIds.has(assignment.stageId),
+          shouldEvaluateOperationAssignmentForDay({
+            assignment,
+            eventDayId: eventDay.id,
+            stageById,
+            evaluableStageIds,
+            invalidTimelineStageIds,
+            failedTimelineStageIds,
+          }),
         ),
         dutyTypes,
         dutyAssignments: dutyAssignments.filter(assignment =>
-          assignment.eventDayId === eventDay.id &&
-          evaluableStageIds.has(assignment.stageId),
+          shouldEvaluateOperationAssignmentForDay({
+            assignment,
+            eventDayId: eventDay.id,
+            stageById,
+            evaluableStageIds,
+            invalidTimelineStageIds,
+            failedTimelineStageIds,
+          }),
         ),
         calculatedItems,
       }).filter(issue => issue.code !== 'EVENT_BAND_DAY_MISMATCH' ||
         !issue.eventBandIds?.some(eventBandId => invalidEventDayBandIds.has(eventBandId)))
       for (const issue of dayIssues) {
-        const scope = resolveScope(issue)
+        const scope = resolveScope(issue, eventDay.id)
         const details = [
           issue.gapBands !== undefined ? `バンド間隔: ${issue.gapBands}` : undefined,
           issue.restMinutes !== undefined ? `休憩時間: ${issue.restMinutes}分` : undefined,
