@@ -248,8 +248,10 @@ import {
 } from './ui/timetableOrderConstraintLinkPresentation'
 import { createDemoData } from './data/demoData'
 import {
+  createCloudScopedStorageKey,
   loadPersistedStateOrFallback,
   savePersistedState,
+  STORAGE_KEY,
   type PersistedAppStateV5,
   type PersistedDomainState,
 } from './persistence/localPersistence'
@@ -258,6 +260,7 @@ import {
   createBackupJson,
   parseBackupJson,
 } from './persistence/dataBackup'
+import { useOptionalCloudWorkspace } from './cloud/useCloudWorkspace.ts'
 import './App.css'
 
 type AppView = 'event-editor' | AppSection
@@ -307,8 +310,15 @@ const DEFAULT_EVENT_SETTINGS = {
 >
 
 function App() {
+  const cloudWorkspace = useOptionalCloudWorkspace()
+  const persistenceStorageKey = cloudWorkspace
+    ? createCloudScopedStorageKey({
+        userId: cloudWorkspace.user.id,
+        workspaceId: cloudWorkspace.workspace.id,
+      })
+    : STORAGE_KEY
   const [initialAppState] = useState(() =>
-    loadPersistedStateOrFallback(createDemoData),
+    loadPersistedStateOrFallback(createDemoData, undefined, persistenceStorageKey),
   )
   const initialEventId = initialAppState.events[0]?.id ?? ''
   const initialEventDayId = getEventDaysForEvent(
@@ -578,8 +588,8 @@ function App() {
     timetableOrderConstraints,
   ])
   useEffect(() => {
-    savePersistedState(domainState)
-  }, [domainState])
+    savePersistedState(domainState, undefined, persistenceStorageKey)
+  }, [domainState, persistenceStorageKey])
 
   const timetableHistoryActive = activeView === 'event-editor' &&
     activeStep === 6 && selectedEventId.length > 0
@@ -717,7 +727,7 @@ function App() {
         return
       }
       if (!window.confirm('バックアップを復元すると、現在のデータはすべて置き換わり、未保存の編集も失われます。復元しますか？')) return
-      if (!savePersistedState(snapshot)) {
+      if (!savePersistedState(snapshot, undefined, persistenceStorageKey)) {
         setBackupFeedback({ kind: 'error', message: 'バックアップを保存できませんでした。現在のデータは変更されていません。' })
         return
       }
@@ -1255,7 +1265,7 @@ function App() {
   const hasUnsavedOperations = () => hasUnsavedOperationsChanges(paSettingsRef.current, dutySettingsRef.current)
 
   const blockUnsavedOperationsNavigation = (
-    target: EventEditorStepId | 'events' | 'sign-out',
+    target: EventEditorStepId | 'events' | 'sign-out' | 'workspace-switch',
   ): boolean => {
     const message = getUnsavedOperationsNavigationMessage({
       activeStep,
@@ -1288,6 +1298,9 @@ function App() {
 
   const handleBeforeSignOut = (): boolean =>
     activeView !== 'event-editor' || !blockUnsavedOperationsNavigation('sign-out')
+
+  const handleBeforeWorkspaceChange = (): boolean =>
+    activeView !== 'event-editor' || !blockUnsavedOperationsNavigation('workspace-switch')
 
   const clearTimetableHistoryEphemeralState = () => {
     setGenerationOptionsScope(null)
@@ -2772,6 +2785,7 @@ function App() {
       activeSection={activeView === 'event-editor' ? 'events' : activeView}
       onNavigate={handleAppNavigation}
       onBeforeSignOut={handleBeforeSignOut}
+      onBeforeWorkspaceChange={handleBeforeWorkspaceChange}
     >
       {backupFeedback && (
         <div

@@ -425,11 +425,18 @@ function EnabledCloudAppGate({
       </CloudGateLayout>
     )
   }
-  if (!contextValue) {
+  if (!contextValue || !selectedAccess) {
     return <CloudGateLayout title="クラウド接続エラー"><p role="alert">ワークスペースを選択できませんでした。</p></CloudGateLayout>
   }
 
-  return <CloudWorkspaceProvider key={authRevision} value={contextValue}>{children}</CloudWorkspaceProvider>
+  return (
+    <CloudWorkspaceProvider
+      key={`${authRevision}:${user.id}:${selectedAccess.workspace.id}`}
+      value={contextValue}
+    >
+      {children}
+    </CloudWorkspaceProvider>
+  )
 }
 
 export function CloudAppGate({

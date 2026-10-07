@@ -11,6 +11,7 @@ import {
   CURRENT_STORAGE_VERSION,
   STORAGE_KEY,
   clearPersistedState,
+  createCloudScopedStorageKey,
   createPersistedAppState,
   isPersistedAppStateV5,
   loadPersistedState,
@@ -566,6 +567,88 @@ test('saveは1つのkeyへatomic snapshotを書きclearで削除する', () => {
   assert.deepEqual([...storage.values.keys()], [STORAGE_KEY])
   assert.equal(clearPersistedState(storage), true)
   assert.equal(storage.getItem(STORAGE_KEY), null)
+})
+
+test('Cloud storage keyはuserとWorkspaceの両方をcollisionなくnamespaceする', () => {
+  const first = createCloudScopedStorageKey({
+    userId: 'user:a',
+    workspaceId: 'workspace/x',
+  })
+
+  assert.equal(first, createCloudScopedStorageKey({
+    userId: 'user:a',
+    workspaceId: 'workspace/x',
+  }))
+  assert.notEqual(first, createCloudScopedStorageKey({
+    userId: 'user:b',
+    workspaceId: 'workspace/x',
+  }))
+  assert.notEqual(first, createCloudScopedStorageKey({
+    userId: 'user:a',
+    workspaceId: 'workspace/y',
+  }))
+  assert.notEqual(
+    createCloudScopedStorageKey({ userId: 'user:a', workspaceId: 'workspace' }),
+    createCloudScopedStorageKey({ userId: 'user', workspaceId: 'a:workspace' }),
+  )
+  assert.match(first, new RegExp(`^${STORAGE_KEY}:cloud:`))
+})
+
+test('local-only・user・Workspaceごとのsnapshotを混在させず保存・復元する', () => {
+  const storage = new MemoryStorage()
+  const localState = { ...createEmptyState(), members: [
+    { id: 'local', realName: 'Local', active: true },
+  ] }
+  const userAWorkspaceA = { ...createEmptyState(), members: [
+    { id: 'a-a', realName: 'A-A', active: true },
+  ] }
+  const userBWorkspaceA = { ...createEmptyState(), members: [
+    { id: 'b-a', realName: 'B-A', active: true },
+  ] }
+  const userAWorkspaceB = { ...createEmptyState(), members: [
+    { id: 'a-b', realName: 'A-B', active: true },
+  ] }
+  const keyAA = createCloudScopedStorageKey({ userId: 'user-a', workspaceId: 'workspace-a' })
+  const keyBA = createCloudScopedStorageKey({ userId: 'user-b', workspaceId: 'workspace-a' })
+  const keyAB = createCloudScopedStorageKey({ userId: 'user-a', workspaceId: 'workspace-b' })
+
+  assert.equal(savePersistedState(localState, storage), true)
+  assert.equal(savePersistedState(userAWorkspaceA, storage, keyAA), true)
+  assert.equal(savePersistedState(userBWorkspaceA, storage, keyBA), true)
+  assert.equal(savePersistedState(userAWorkspaceB, storage, keyAB), true)
+  assert.deepEqual(loadPersistedState(storage), createPersistedAppState(localState))
+  assert.deepEqual(loadPersistedState(storage, keyAA), createPersistedAppState(userAWorkspaceA))
+  assert.deepEqual(loadPersistedState(storage, keyBA), createPersistedAppState(userBWorkspaceA))
+  assert.deepEqual(loadPersistedState(storage, keyAB), createPersistedAppState(userAWorkspaceB))
+
+  assert.equal(clearPersistedState(storage, keyAA), true)
+  assert.equal(storage.getItem(keyAA), null)
+  assert.notEqual(storage.getItem(STORAGE_KEY), null)
+  assert.notEqual(storage.getItem(keyBA), null)
+  assert.notEqual(storage.getItem(keyAB), null)
+})
+
+test('Cloud scopeが未保存ならlegacy keyをcopy・削除せずfallbackを使う', () => {
+  const storage = new MemoryStorage()
+  const legacy = { ...createEmptyState(), members: [
+    { id: 'legacy', realName: 'Legacy', active: true },
+  ] }
+  const fallback = { ...createEmptyState(), members: [
+    { id: 'fallback', realName: 'Fallback', active: true },
+  ] }
+  const cloudKey = createCloudScopedStorageKey({
+    userId: 'user-a',
+    workspaceId: 'workspace-a',
+  })
+  savePersistedState(legacy, storage)
+  const legacySerialized = storage.getItem(STORAGE_KEY)
+
+  assert.deepEqual(
+    loadPersistedStateOrFallback(() => fallback, storage, cloudKey),
+    createPersistedAppState(fallback),
+  )
+  assert.equal(storage.getItem(cloudKey), null)
+  assert.equal(storage.getItem(STORAGE_KEY), legacySerialized)
 })
 
 test('localStorageへの保存失敗を外へ投げずstate更新を継続できる', () => {

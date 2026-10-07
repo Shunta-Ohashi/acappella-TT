@@ -50,6 +50,11 @@ test('Step 6の未保存PA/Dutyは全Step移動・イベント編集離脱・log
   }), 'PAまたは当日運営に未保存の変更があります。保存してからログアウトしてください。')
   assert.equal(getUnsavedOperationsNavigationMessage({
     activeStep: 6,
+    target: 'workspace-switch',
+    hasUnsavedChanges: true,
+  }), 'PAまたは当日運営に未保存の変更があります。保存してからワークスペースを切り替えてください。')
+  assert.equal(getUnsavedOperationsNavigationMessage({
+    activeStep: 6,
     target: 6,
     hasUnsavedChanges: true,
   }), undefined)
@@ -59,8 +64,18 @@ test('Step 6の未保存PA/Dutyは全Step移動・イベント編集離脱・log
     hasUnsavedChanges: false,
   }), undefined)
   assert.equal(getUnsavedOperationsNavigationMessage({
+    activeStep: 6,
+    target: 'workspace-switch',
+    hasUnsavedChanges: false,
+  }), undefined)
+  assert.equal(getUnsavedOperationsNavigationMessage({
     activeStep: 5,
     target: 'sign-out',
+    hasUnsavedChanges: true,
+  }), undefined)
+  assert.equal(getUnsavedOperationsNavigationMessage({
+    activeStep: 5,
+    target: 'workspace-switch',
     hasUnsavedChanges: true,
   }), undefined)
 })

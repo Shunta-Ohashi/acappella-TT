@@ -72,4 +72,4 @@ Magic Linkのredirect先は、実行中ページのoriginから通常App rootを
 
 Auth/Workspaceへログインしても、Event・Timetable・PA・DutyなどはCloudへ保存されません。端末間共有、共同編集、Realtime、revision conflict処理は後続実装です。
 
-現在のlocalStorageはユーザー・Workspace別には分割されていません。同じブラウザでアカウントやWorkspaceを切り替えても、保存済みの編集データは共通です。
+Cloud modeの編集データは、同じブラウザ内でも認証ユーザーとWorkspaceの組み合わせごとに分離して`localStorage`へ保存されます。local-only modeで既存keyへ保存したデータは削除されず、Cloud Workspaceへ自動移行もされません。既存データを対象Workspaceへ移す場合は、local-only modeでバックアップを書き出し、対象Workspaceへログインしてから復元してください。

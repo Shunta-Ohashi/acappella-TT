@@ -3,7 +3,8 @@ import type { DutySettingsDraft } from '../domain/dutyAssignments'
 import type { ScheduleBoundary } from '../domain/models'
 import type { EventEditorStepId } from './eventEditorSteps'
 
-export type EventEditorNavigationTarget = EventEditorStepId | 'events' | 'sign-out'
+export type EventEditorNavigationTarget = EventEditorStepId | 'events' | 'sign-out' |
+  'workspace-switch'
 
 export const getUnsavedOperationsNavigationMessage = ({
   activeStep,
@@ -16,6 +17,8 @@ export const getUnsavedOperationsNavigationMessage = ({
 }): string | undefined => activeStep === 6 && target !== 6 && hasUnsavedChanges
   ? target === 'sign-out'
     ? 'PAまたは当日運営に未保存の変更があります。保存してからログアウトしてください。'
+    : target === 'workspace-switch'
+      ? 'PAまたは当日運営に未保存の変更があります。保存してからワークスペースを切り替えてください。'
     : 'PAまたは当日運営に未保存の変更があります。保存してから移動してください。'
   : undefined
 

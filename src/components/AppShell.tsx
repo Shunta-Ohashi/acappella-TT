@@ -7,6 +7,7 @@ interface AppShellProps {
   activeSection: AppSection
   onNavigate: (section: AppSection) => void
   onBeforeSignOut?: () => boolean
+  onBeforeWorkspaceChange?: () => boolean
   children: ReactNode
 }
 
@@ -18,8 +19,10 @@ const navigationItems: Array<{ id: AppSection; label: string }> = [
 
 function CloudAccountControls({
   onBeforeSignOut,
+  onBeforeWorkspaceChange,
 }: {
   onBeforeSignOut?: () => boolean
+  onBeforeWorkspaceChange?: () => boolean
 }) {
   const cloud = useOptionalCloudWorkspace()
   const [signOutError, setSignOutError] = useState('')
@@ -39,13 +42,19 @@ function CloudAccountControls({
     }
   }
 
+  const selectWorkspace = (workspaceId: string) => {
+    if (workspaceId === cloud.workspace.id) return
+    if (onBeforeWorkspaceChange && !onBeforeWorkspaceChange()) return
+    cloud.selectWorkspace(workspaceId)
+  }
+
   return (
     <div className="top-navigation__cloud-account">
       {cloud.availableWorkspaces.length > 1 ? (
         <select
           aria-label="ワークスペース"
           value={cloud.workspace.id}
-          onChange={event => cloud.selectWorkspace(event.target.value)}
+          onChange={event => selectWorkspace(event.target.value)}
         >
           {cloud.availableWorkspaces.map(access => (
             <option key={access.workspace.id} value={access.workspace.id}>
@@ -69,6 +78,7 @@ export function AppShell({
   activeSection,
   onNavigate,
   onBeforeSignOut,
+  onBeforeWorkspaceChange,
   children,
 }: AppShellProps) {
   return (
@@ -99,7 +109,10 @@ export function AppShell({
                 </button>
               ))}
             </nav>
-            <CloudAccountControls onBeforeSignOut={onBeforeSignOut} />
+            <CloudAccountControls
+              onBeforeSignOut={onBeforeSignOut}
+              onBeforeWorkspaceChange={onBeforeWorkspaceChange}
+            />
           </div>
         </div>
       </header>
