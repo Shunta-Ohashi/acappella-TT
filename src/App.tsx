@@ -53,7 +53,7 @@ import {
   resolveTimetableSelection,
   type ScheduleLane,
 } from './domain/schedule'
-import { calculateEventDayTimelines } from './domain/timetable'
+import { evaluateEventDayTimelinesSafely } from './domain/timetable'
 import { formatMinuteAsLocalTime } from './domain/timeline'
 import { detectScheduleIssues } from './domain/issues'
 import {
@@ -110,7 +110,10 @@ import { createScheduleItemsForTimetableGeneration, DEFAULT_TIMETABLE_GENERATION
   hasValidTimetableGenerationPreprocessingInput, validateTimetableGenerationBreakRemoval,
   type TimetableGenerationUiOptions } from './domain/timetableGenerationOptions'
 import { resetEventDayTimetable } from './domain/timetableReset'
-import { hasUnsavedOperationsChanges } from './ui/operationsDraftChanges'
+import {
+  getUnsavedOperationsNavigationMessage,
+  hasUnsavedOperationsChanges,
+} from './ui/operationsDraftChanges'
 import {
   cloneTimetableEditSnapshot,
   createTimetableHistoryController,
@@ -135,7 +138,13 @@ import {
 import { EventList } from './components/EventList'
 import { DataBackupSettings } from './components/DataBackupSettings'
 import { EventOutputPage } from './components/EventOutputPage'
+import { EventFinalCheckPage } from './components/EventFinalCheckPage'
 import { IssuePanel } from './components/IssuePanel'
+import { createEventFinalCheckReport } from './ui/eventFinalCheckReport'
+import {
+  resolveEventFinalCheckRepairNavigation,
+  type EventFinalCheckRepairTarget,
+} from './ui/eventFinalCheckPresentation'
 import {
   createEventData,
   type NewEventDraft,
@@ -417,6 +426,10 @@ function App() {
     eventId: EventId
     entry: TimetableHistoryEntry
     kind: 'success' | 'error'
+    message: string
+  } | null>(null)
+  const [step6NavigationFeedback, setStep6NavigationFeedback] = useState<{
+    eventId: EventId
     message: string
   } | null>(null)
   const paSettingsRef = useRef<PaSettingsHandle>(null)
@@ -752,8 +765,8 @@ function App() {
         dutyAssignments,
       })
     : []
-  const selectedEventCalculatedItems = selectedEvent
-    ? selectedEventDays.flatMap((eventDay) => calculateEventDayTimelines({
+  const selectedEventCalculatedItems = selectedEvent && activeStep !== 7
+    ? selectedEventDays.flatMap((eventDay) => evaluateEventDayTimelinesSafely({
         eventDayId: eventDay.id,
         stages: selectedStages,
         sections: selectedSections,
@@ -761,6 +774,44 @@ function App() {
         eventBands: selectedEventBands,
       }).calculatedItems)
     : []
+  const finalCheckReport = useMemo(() => {
+    if (activeStep !== 7) return undefined
+    const event = events.find(candidate => candidate.id === selectedEventId)
+    return event
+      ? createEventFinalCheckReport({
+        event,
+        eventDays,
+        stages,
+        sections,
+        members,
+        eventMembers,
+        eventMemberDays,
+        eventBands,
+        scheduleItems,
+        paAssignments,
+        dutyTypes,
+        dutyAssignments,
+        timetableLocks,
+        timetableOrderConstraints,
+      }) : undefined
+  }, [
+    activeStep,
+    selectedEventId,
+    events,
+    eventDays,
+    stages,
+    sections,
+    members,
+    eventMembers,
+    eventMemberDays,
+    eventBands,
+    scheduleItems,
+    paAssignments,
+    dutyTypes,
+    dutyAssignments,
+    timetableLocks,
+    timetableOrderConstraints,
+  ])
   const startTime = currentStage?.plannedStartTime ?? ''
   const currentStageScheduleItems = currentStage
     ? getStageScheduleItems(selectedScheduleItems, currentStage.id)
@@ -841,6 +892,7 @@ function App() {
     setDutyAutoAssignmentDialog(null)
     setGridAssignmentDeletion(null)
     setGridAssignmentFeedback(null)
+    setStep6NavigationFeedback(null)
     setSelectedEventId(eventId)
     setSelectedTimetableEventDayId(undefined)
     setSelectedTimetableStageId(undefined)
@@ -1186,6 +1238,7 @@ function App() {
   }
 
   const handleSaveStep6AndNext = () => {
+    setStep6NavigationFeedback(null)
     const paResult = paSettingsRef.current?.prepareDraft()
     if (!paResult?.ok) return
 
@@ -1200,6 +1253,38 @@ function App() {
   }
 
   const hasUnsavedOperations = () => hasUnsavedOperationsChanges(paSettingsRef.current, dutySettingsRef.current)
+
+  const blockUnsavedOperationsNavigation = (
+    target: EventEditorStepId | 'events',
+  ): boolean => {
+    const message = getUnsavedOperationsNavigationMessage({
+      activeStep,
+      target,
+      hasUnsavedChanges: hasUnsavedOperations(),
+    })
+    if (!message) {
+      setStep6NavigationFeedback(null)
+      return false
+    }
+    setStep6NavigationFeedback({ eventId: selectedEventId, message })
+    return true
+  }
+
+  const handleEventEditorStepChange = (step: EventEditorStepId) => {
+    if (blockUnsavedOperationsNavigation(step)) return
+    if (step !== 6) setTimetableHistoryFeedback(null)
+    setActiveStep(step)
+  }
+
+  const handleLeaveEventEditor = () => {
+    if (blockUnsavedOperationsNavigation('events')) return
+    setActiveView('events')
+  }
+
+  const handleAppNavigation = (section: AppSection) => {
+    if (activeView === 'event-editor' && blockUnsavedOperationsNavigation('events')) return
+    setActiveView(section)
+  }
 
   const clearTimetableHistoryEphemeralState = () => {
     setGenerationOptionsScope(null)
@@ -2022,34 +2107,62 @@ function App() {
   }
 
   // 選択日の全StageをIssue判定へ渡し、表示は選択中Stageだけに絞る
-  const eventDayTimelines = selectedEvent && timetableSelection.eventDayId
-    ? calculateEventDayTimelines({
+  const eventDayTimelines = selectedEvent && timetableSelection.eventDayId && activeStep !== 7
+    ? evaluateEventDayTimelinesSafely({
         eventDayId: timetableSelection.eventDayId,
         stages: timetableStages,
         sections: timetableSections,
         scheduleItems: currentEventDayScheduleItems,
         eventBands: selectedEventBands,
       })
-    : { calculatedItems: [], invalidStages: [] }
+    : { calculatedItems: [], invalidStages: [], failedStages: [] }
   const calculatedItems = eventDayTimelines.calculatedItems
+  const invalidTimelineStageIds = new Set(
+    eventDayTimelines.invalidStages.map(stage => stage.stageId),
+  )
+  const failedTimelineStageIds = new Set(
+    eventDayTimelines.failedStages.map(stage => stage.stageId),
+  )
+  const evaluableTimetableStages = timetableStages.filter(stage =>
+    !invalidTimelineStageIds.has(stage.id) && !failedTimelineStageIds.has(stage.id),
+  )
+  const evaluableTimetableStageIds = new Set(
+    evaluableTimetableStages.map(stage => stage.id),
+  )
+  const evaluableTimetableSections = timetableSections.filter(section =>
+    evaluableTimetableStageIds.has(section.stageId),
+  )
+  const selectedStageById = new Map(selectedStages.map(stage => [stage.id, stage]))
+  const shouldEvaluateOperationsAssignment = (assignment: {
+    eventDayId: EventDayId
+    stageId: StageId
+  }): boolean => {
+    if (assignment.eventDayId !== timetableSelection.eventDayId) return false
+    const stage = selectedStageById.get(assignment.stageId)
+    if (!stage || stage.eventDayId !== assignment.eventDayId) return true
+    return evaluableTimetableStageIds.has(stage.id)
+  }
+  const currentStageTimelineFailed = currentStage
+    ? failedTimelineStageIds.has(currentStage.id)
+    : false
   const currentStageCalculatedItems = currentStage
     ? calculatedItems.filter(item => item.stageId === currentStage.id)
     : []
-  const scheduleIssues = selectedEvent
+  const scheduleIssues = selectedEvent && activeStep !== 7
     ? detectScheduleIssues({
         event: selectedEvent,
         members,
         eventMembers: selectedEventMembers,
         eventMemberDays: selectedEventMemberDays,
         eventBands: selectedEventBands,
-        stages: timetableStages,
-        sections: timetableSections,
-        paAssignments: selectedEventPaAssignments.filter((assignment) =>
-          assignment.eventDayId === timetableSelection.eventDayId,
+        stages: evaluableTimetableStages,
+        sections: evaluableTimetableSections,
+        paAssignments: selectedEventPaAssignments.filter(
+          shouldEvaluateOperationsAssignment,
         ),
         dutyTypes: selectedEventDutyTypes,
-        dutyAssignments: selectedEventDutyAssignments.filter((assignment) =>
-          assignment.eventDayId === timetableSelection.eventDayId,
+        dutyAssignments: selectedEventDutyAssignments.filter(
+          shouldEvaluateOperationsAssignment,
         ),
         calculatedItems,
       })
@@ -2062,7 +2175,9 @@ function App() {
       )
     : []
   const currentStageIssueCounts = countIssuesBySeverity(currentStageIssues)
-  const timetableWorkspaceRows = currentStage && timetableSelection.eventDayId
+  const timetableWorkspaceRows = currentStage && timetableSelection.eventDayId &&
+    activeStep !== 7 && !currentStageTimelineFailed &&
+    !currentStageHasInvalidSectionAssignments
     ? createTimetableWorkspaceRows({
         eventDayId: timetableSelection.eventDayId,
         stageId: currentStage.id,
@@ -2618,6 +2733,27 @@ function App() {
     timetableGridSelection
       ? gridAssignmentDialog
       : null
+  const handleFinalCheckNavigation = (target: EventFinalCheckRepairTarget) => {
+    if (!selectedEvent) return
+    const navigation = resolveEventFinalCheckRepairNavigation({
+      target,
+      eventId: selectedEvent.id,
+      eventDays: selectedEventDays,
+      stages: selectedStages,
+      currentEventDayId: timetableSelection.eventDayId,
+      currentStageId: timetableSelection.stageId,
+    })
+    if (navigation.step === 6) {
+      setSelectedTimetableEventDayId(navigation.eventDayId)
+      setSelectedTimetableStageId(navigation.stageId)
+      setTimetableOrderConstraintFeedback(null)
+      setActiveTimetableOrderBlockKey(null)
+    } else {
+      setTimetableHistoryFeedback(null)
+    }
+    setActiveStep(navigation.step)
+  }
+
   const activeDutyAutoAssignmentDialog =
     dutyAutoAssignmentDialog?.eventId === selectedEvent?.id &&
     timetableGridSelection
@@ -2631,7 +2767,7 @@ function App() {
   return (
     <AppShell
       activeSection={activeView === 'event-editor' ? 'events' : activeView}
-      onNavigate={(section) => setActiveView(section)}
+      onNavigate={handleAppNavigation}
     >
       {backupFeedback && (
         <div
@@ -2645,11 +2781,8 @@ function App() {
         <EventEditorShell
           eventName={selectedEvent?.name ?? 'イベント'}
           activeStep={activeStep}
-          onStepChange={(step) => {
-            if (step !== 6) setTimetableHistoryFeedback(null)
-            setActiveStep(step)
-          }}
-          onBackToEvents={() => setActiveView('events')}
+          onStepChange={handleEventEditorStepChange}
+          onBackToEvents={handleLeaveEventEditor}
         >
           {activeStep === 1 && selectedEvent ? (
             <EventBasicInfo
@@ -2768,6 +2901,11 @@ function App() {
                   performTimetableHistoryTransition('redo')
                 }}
                 historyFeedback={visibleTimetableHistoryFeedback}
+                navigationFeedback={
+                  step6NavigationFeedback?.eventId === selectedEvent.id
+                    ? step6NavigationFeedback.message
+                    : null
+                }
                 generationAction={(
                   <div className="timetable-generation-action">
                     <div className="timetable-generation-action__buttons">
@@ -2825,10 +2963,19 @@ function App() {
                     <button
                       type="button"
                       className="secondary-button"
-                      onClick={() => setActiveStep(2)}
+                      onClick={() => handleEventEditorStepChange(2)}
                     >
                       Step 2 会場・Stageへ
                     </button>
+                  </section>
+                ) : currentStageTimelineFailed ? (
+                  <section className="timetable-data-error" role="alert">
+                    <h3>このStageのタイムテーブルを計算できません</h3>
+                    <p>
+                      参照切れの出演項目があります。Step 4の出演バンドと配置内容を確認してください。
+                    </p>
+                    {unavailableTimetableLockRepair}
+                    {unavailableTimetableOrderConstraintRepair}
                   </section>
                 ) : currentStageHasInvalidSectionAssignments ? (
                   <section className="timetable-data-error" role="alert">
@@ -3038,7 +3185,10 @@ function App() {
                     createDraftId={() => createId('pa-assignment-draft')}
                     formId={`pa-settings-${selectedEvent.id}`}
                     onCreateUpdate={handleCreatePaAssignmentsUpdate}
-                    onCommit={(result) => setPaAssignments(result.paAssignments)}
+                    onCommit={(result) => {
+                      setPaAssignments(result.paAssignments)
+                      setStep6NavigationFeedback(null)
+                    }}
                     onSaveAndNext={handleSaveStep6AndNext}
                   />
                 ) : null}
@@ -3073,6 +3223,7 @@ function App() {
                     onCommit={(result) => {
                       setDutyTypes(result.dutyTypes)
                       setDutyAssignments(result.dutyAssignments)
+                      setStep6NavigationFeedback(null)
                     }}
                   />
                 ) : null}
@@ -3087,6 +3238,15 @@ function App() {
                 )}
               />
             </DragDropContext>
+          ) : activeStep === 7 && selectedEvent && finalCheckReport ? (
+            <EventFinalCheckPage
+              key={selectedEvent.id}
+              report={finalCheckReport}
+              eventDays={selectedEventDays}
+              stages={selectedStages}
+              onNavigateToRepair={handleFinalCheckNavigation}
+              onProceed={() => setActiveStep(8)}
+            />
           ) : activeStep === 8 && selectedEvent ? (
             <EventOutputPage
               event={selectedEvent}

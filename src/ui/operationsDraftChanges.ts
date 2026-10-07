@@ -1,6 +1,21 @@
 import type { PaAssignmentsDraft } from '../domain/paAssignments'
 import type { DutySettingsDraft } from '../domain/dutyAssignments'
 import type { ScheduleBoundary } from '../domain/models'
+import type { EventEditorStepId } from './eventEditorSteps'
+
+export type EventEditorNavigationTarget = EventEditorStepId | 'events'
+
+export const getUnsavedOperationsNavigationMessage = ({
+  activeStep,
+  target,
+  hasUnsavedChanges,
+}: {
+  activeStep: EventEditorStepId
+  target: EventEditorNavigationTarget
+  hasUnsavedChanges: boolean
+}): string | undefined => activeStep === 6 && target !== 6 && hasUnsavedChanges
+  ? 'PAまたは当日運営に未保存の変更があります。保存してから移動してください。'
+  : undefined
 
 /** Shared guard for generation setup, preview apply, and destructive TT reset. */
 export const hasUnsavedOperationsChanges = (

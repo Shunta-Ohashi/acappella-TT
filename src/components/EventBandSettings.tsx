@@ -31,6 +31,7 @@ import { CsvFileButton } from './CsvFileButton'
 import { CsvImportPreviewDialog, type CsvImportPreview } from './CsvImportPreviewDialog'
 import { EVENT_BAND_CSV_HELP } from '../csv/csvHelp'
 import { CsvImportHelpPopover } from './CsvImportHelpPopover'
+import { getEventBandItemsWithInvalidEventDay } from '../ui/eventBandPresentation.ts'
 
 interface EventBandSettingsProps {
   event: Event
@@ -103,6 +104,10 @@ export function EventBandSettings({
   const selectedItems = selectedEventDayId
     ? draft.items.filter((item) => item.eventDayId === selectedEventDayId)
     : []
+  const invalidEventDayItems = getEventBandItemsWithInvalidEventDay(
+    draft.items,
+    orderedEventDays,
+  )
   const editorItem = editor?.mode === 'edit'
     ? draft.items.find((item) => item.draftId === editor.draftId)
     : undefined
@@ -177,7 +182,12 @@ export function EventBandSettings({
     const firstInvalidItem = draft.items.find((item) =>
       validationErrors.items[item.draftId],
     )
-    if (firstInvalidItem) setSelectedEventDayId(firstInvalidItem.eventDayId)
+    if (
+      firstInvalidItem &&
+      orderedEventDays.some(eventDay => eventDay.id === firstInvalidItem.eventDayId)
+    ) {
+      setSelectedEventDayId(firstInvalidItem.eventDayId)
+    }
   }
 
   const save = (moveToNext: boolean) => {
@@ -295,6 +305,58 @@ export function EventBandSettings({
         <p className="csv-id-help">
           出演バンドIDは既存データの更新に使用します。新規追加する行では空欄にしてください。
         </p>
+
+        {invalidEventDayItems.length > 0 && (
+          <section
+            className="event-band-settings__repair"
+            aria-labelledby="event-band-day-repair-title"
+          >
+            <h3 id="event-band-day-repair-title">修復が必要な出演バンド</h3>
+            <p>出演日の参照が見つかりません。編集して有効な出演日へ変更するか、削除してください。</p>
+            <ul className="operations-assignment-list">
+              {invalidEventDayItems.map((item) => {
+                const itemErrors = errors.items[item.draftId]
+                return (
+                  <li className="operations-assignment-card" key={item.draftId}>
+                    <header>
+                      <strong>{item.name || '名称未入力'}</strong>
+                      <span>{getEventBandSourceLabel(item)}</span>
+                    </header>
+                    <p className="form-error" role="status">
+                      不正な出演日: {item.eventDayId}
+                    </p>
+                    <div className="operations-assignment-card__actions">
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        aria-label={`${item.name || '名称未入力の出演バンド'}の出演日を修正`}
+                        onClick={() => {
+                          clearFeedback()
+                          setEditor({ mode: 'edit', draftId: item.draftId })
+                        }}
+                      >
+                        編集
+                      </button>
+                      <button
+                        type="button"
+                        className="event-band-settings__delete"
+                        aria-label={`${item.name || '名称未入力の出演バンド'}を削除`}
+                        onClick={() => handleDelete(item)}
+                      >
+                        削除
+                      </button>
+                    </div>
+                    {itemErrors && (
+                      <p className="form-error" role="alert">
+                        {Object.values(itemErrors).filter(Boolean).join(' ')}
+                      </p>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
+        )}
 
         {selectedItems.length === 0 ? (
           <div className="event-band-settings__empty">

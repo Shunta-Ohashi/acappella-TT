@@ -19,6 +19,7 @@ interface TimetableOperationsWorkspaceProps {
   onUndo: () => void
   onRedo: () => void
   historyFeedback: { kind: 'success' | 'error'; message: string } | null
+  navigationFeedback: string | null
   generationAction?: ReactNode
   unavailableContent?: ReactNode
   pool: ReactNode
@@ -58,6 +59,7 @@ export function TimetableOperationsWorkspace({
   onUndo,
   onRedo,
   historyFeedback,
+  navigationFeedback,
   generationAction,
   unavailableContent,
   pool,
@@ -176,7 +178,15 @@ export function TimetableOperationsWorkspace({
             </div>
           </div>
           <div className="timetable-history-feedback-slot">
-            {historyFeedback && (
+            {navigationFeedback ? (
+              <p
+                className="timetable-history-feedback timetable-history-feedback--error"
+                role="alert"
+                aria-live="polite"
+              >
+                {navigationFeedback}
+              </p>
+            ) : historyFeedback && (
               <p
                 className={`timetable-history-feedback timetable-history-feedback--${historyFeedback.kind}`}
                 role={historyFeedback.kind === 'error' ? 'alert' : 'status'}

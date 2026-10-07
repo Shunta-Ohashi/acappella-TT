@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { calculateStageTimeline, isValidLocalTime } from '../src/domain/timeline.ts'
-import { calculateEventDayTimelines } from '../src/domain/timetable.ts'
+import {
+  calculateEventDayTimelines,
+  evaluateEventDayTimelinesSafely,
+} from '../src/domain/timetable.ts'
 
 const eventDays = [
   {
@@ -495,4 +498,36 @@ test('不正なSection所属を持つStageは集約時に記録し、他Stageの
     stageId: invalidStage.id,
     scheduleItemIds: ['item-invalid'],
   }])
+})
+
+test('安全なEventDay Timeline評価はthrowするStageだけを隔離し正常Stageを保持する', () => {
+  const stages = [
+    createStage({ id: 'stage-a', order: 0, plannedStartTime: '10:00' }),
+    createStage({ id: 'stage-b', order: 1, plannedStartTime: '11:00' }),
+    createStage({ id: 'stage-c', order: 2, plannedStartTime: '12:00' }),
+  ]
+  const scheduleItems = [
+    performance('item-a', 'event-band-1', 0, { stageId: 'stage-a' }),
+    performance('item-b', 'missing-band', 0, { stageId: 'stage-b' }),
+    performance('item-c', 'event-band-2', 0, { stageId: 'stage-c' }),
+  ]
+  const input = {
+    eventDayId: eventDays[0].id,
+    stages,
+    sections: [],
+    scheduleItems,
+    eventBands,
+  }
+  const before = structuredClone(input)
+
+  assert.throws(() => calculateEventDayTimelines(input))
+  const result = evaluateEventDayTimelinesSafely(input)
+
+  assert.deepEqual(result.calculatedItems.map(item => item.scheduleItemId), [
+    'item-a',
+    'item-c',
+  ])
+  assert.deepEqual(result.invalidStages, [])
+  assert.deepEqual(result.failedStages, [{ stageId: 'stage-b' }])
+  assert.deepEqual(input, before)
 })

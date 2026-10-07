@@ -9,6 +9,7 @@ import type {
 import type { CalculatedScheduleItem } from '../domain/timeline'
 import {
   countIssuesBySeverity,
+  formatScheduleIssueMessage,
   ISSUE_SEVERITIES,
 } from '../ui/issuePresentation'
 
@@ -53,43 +54,6 @@ export function IssuePanel({
   const calculatedItemById = new Map(
     calculatedItems.map((item) => [item.scheduleItemId, item]),
   )
-
-  const getDisplayMessage = (issue: ScheduleIssue) => {
-    let message = issue.message
-
-    issue.memberIds?.forEach((memberId) => {
-      const memberName = memberNameById.get(memberId) ?? '不明なメンバー'
-      message = message
-        .replaceAll(`メンバー ${memberId}`, `メンバー「${memberName}」`)
-        .replaceAll(memberId, memberName)
-    })
-    issue.eventBandIds?.forEach((eventBandId) => {
-      const bandName = eventBandNameById.get(eventBandId) ?? '不明なバンド'
-      message = message
-        .replaceAll(`EventBand ${eventBandId}`, `バンド「${bandName}」`)
-        .replaceAll(eventBandId, bandName)
-    })
-    issue.stageIds?.forEach((stageId) => {
-      const stageName = stageNameById.get(stageId) ?? '不明なStage'
-      message = message.replaceAll(`Stage ${stageId}`, `Stage「${stageName}」`)
-    })
-    issue.dutyTypeIds?.forEach((dutyTypeId) => {
-      const dutyTypeName = dutyTypeNameById.get(dutyTypeId) ?? '不明な仕事'
-      message = message.replaceAll(
-        `DutyType ${dutyTypeId}`,
-        `仕事「${dutyTypeName}」`,
-      )
-    })
-    issue.sectionIds?.forEach((sectionId) => {
-      const sectionName = sectionNameById.get(sectionId) ?? '不明なSection'
-      message = message.replaceAll(
-        `Section ${sectionId}`,
-        `Section「${sectionName}」`,
-      )
-    })
-
-    return message
-  }
 
   return (
     <section className="issue-panel" aria-labelledby="issue-panel-title">
@@ -201,7 +165,13 @@ export function IssuePanel({
                     {issue.severity}
                   </span>
                   <span className="issue-list__message">
-                    {getDisplayMessage(issue)}
+                    {formatScheduleIssueMessage(issue, {
+                      members,
+                      eventBands,
+                      dutyTypes,
+                      stages,
+                      sections,
+                    })}
                   </span>
                 </div>
                 {targets.length > 0 && (

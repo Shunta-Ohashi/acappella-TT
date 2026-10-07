@@ -1,6 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { hasPaDraftChanges, hasDutyDraftChanges, hasUnsavedOperationsChanges } from '../src/ui/operationsDraftChanges.ts'
+import {
+  getUnsavedOperationsNavigationMessage,
+  hasPaDraftChanges,
+  hasDutyDraftChanges,
+  hasUnsavedOperationsChanges,
+} from '../src/ui/operationsDraftChanges.ts'
 import { createPaAssignmentsDraft } from '../src/domain/paAssignments.ts'
 import { createDutySettingsDraft } from '../src/domain/dutyAssignments.ts'
 import { createGenerationUiInput } from './fixtures/timetableGenerationUi.mjs'
@@ -27,6 +32,32 @@ test('生成設定・適用・TT初期化は同じPA/Duty dirty guardを利用�
   current.duty = structuredClone(saved.duty)
   assert.equal(hasUnsavedOperationsChanges(paHandle, dutyHandle), false)
   assert.equal(hasUnsavedOperationsChanges(null, null), false)
+})
+
+test('Step 6の未保存PA/Dutyは全Step移動とイベント編集離脱をblockする', () => {
+  const expected = 'PAまたは当日運営に未保存の変更があります。保存してから移動してください。'
+  for (const target of [1, 2, 3, 4, 5, 7, 8, 'events']) {
+    assert.equal(getUnsavedOperationsNavigationMessage({
+      activeStep: 6,
+      target,
+      hasUnsavedChanges: true,
+    }), expected, String(target))
+  }
+  assert.equal(getUnsavedOperationsNavigationMessage({
+    activeStep: 6,
+    target: 6,
+    hasUnsavedChanges: true,
+  }), undefined)
+  assert.equal(getUnsavedOperationsNavigationMessage({
+    activeStep: 6,
+    target: 7,
+    hasUnsavedChanges: false,
+  }), undefined)
+  assert.equal(getUnsavedOperationsNavigationMessage({
+    activeStep: 5,
+    target: 6,
+    hasUnsavedChanges: true,
+  }), undefined)
 })
 
 test('初期PA/Duty draftと同値の再構築draftは未保存変更なし', () => {

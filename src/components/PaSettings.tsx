@@ -23,6 +23,7 @@ import { formatMinuteAsLocalTime } from '../domain/timeline'
 import {
   createPaAssignmentDraftItem,
   createPaAssignmentsDraft,
+  getPaAssignmentScopeStatus,
   hasPaAssignmentsErrors,
   resolvePaAssignmentInterval,
   validatePaAssignmentsDraft,
@@ -118,6 +119,25 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
       stage.eventDayId === selectedEventDayId && stage.id === selectedStageId,
     )
     .sort((first, second) => first.order - second.order)
+  const assignmentsWithScopeStatus = draft.items.map((assignment) => ({
+    assignment,
+    scopeStatus: getPaAssignmentScopeStatus({
+      assignment,
+      event,
+      eventDays,
+      stages,
+    }),
+  }))
+  const selectedAssignments = assignmentsWithScopeStatus
+    .filter(({ assignment, scopeStatus }) =>
+      scopeStatus.valid &&
+      assignment.eventDayId === selectedEventDayId &&
+      assignment.stageId === selectedStageId,
+    )
+    .map(({ assignment }) => assignment)
+  const invalidScopeAssignments = assignmentsWithScopeStatus.filter(
+    ({ scopeStatus }) => !scopeStatus.valid,
+  )
 
   const getBoundaryLabel = (item: PaAssignmentDraftItem) => {
     const describe = (boundary: PaAssignmentDraftItem['from']) =>
@@ -168,13 +188,26 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
     setSaveMessage('')
   }
 
+  const removeAssignment = (draftId: string) => {
+    setDraft((previous) => ({
+      items: previous.items.filter(candidate => candidate.draftId !== draftId),
+    }))
+    setErrors(emptyErrors())
+    setSaveMessage('')
+  }
+
   const presentErrors = (validationErrors: PaAssignmentsValidationErrors) => {
     setErrors(validationErrors)
     onValidationFailed()
     const firstInvalid = draft.items.find((item) =>
       validationErrors.items[item.draftId],
     )
-    if (firstInvalid) {
+    if (firstInvalid && getPaAssignmentScopeStatus({
+      assignment: firstInvalid,
+      event,
+      eventDays,
+      stages,
+    }).valid) {
       onSelectScope(firstInvalid.eventDayId, firstInvalid.stageId)
     }
   }
@@ -239,6 +272,75 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
   return (
     <section className="pa-settings" aria-label="PA設定">
       <form id={formId} noValidate onSubmit={handleSubmit}>
+        {invalidScopeAssignments.length > 0 && (
+          <section
+            className="pa-settings__repair"
+            aria-labelledby="pa-assignment-repair-title"
+          >
+            <h4 id="pa-assignment-repair-title">修復が必要なPA担当</h4>
+            <ul className="operations-assignment-list">
+              {invalidScopeAssignments.map(({ assignment, scopeStatus }) => {
+                const memberName = memberById.get(assignment.memberId)?.realName ?? '未設定'
+                const repairStage = selectedStages[0]
+                return (
+                  <li className="operations-assignment-card" key={assignment.draftId}>
+                    <header>
+                      <strong>{roleLabel(assignment.role)}</strong>
+                      <span>{memberName}</span>
+                    </header>
+                    {!scopeStatus.valid && (
+                      <p className="form-error" role="status">
+                        {scopeStatus.message} 修正または削除してください。
+                      </p>
+                    )}
+                    <dl>
+                      <div><dt>担当範囲</dt><dd>{getBoundaryLabel(assignment)}</dd></div>
+                      <div><dt>実時間</dt><dd>{getTimeLabel(assignment)}</dd></div>
+                    </dl>
+                    <div className="operations-assignment-card__actions">
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={!repairStage}
+                        aria-label={`${memberName}の${roleLabel(assignment.role)}担当を修正`}
+                        onClick={() => {
+                          if (!repairStage) return
+                          setEditor({
+                            item: {
+                              ...assignment,
+                              eventDayId: repairStage.eventDayId,
+                              stageId: repairStage.id,
+                              from: { ...assignment.from },
+                              until: { ...assignment.until },
+                            },
+                            isNew: false,
+                          })
+                        }}
+                      >
+                        修正
+                      </button>
+                      <button
+                        type="button"
+                        className="danger-button"
+                        aria-label={`${memberName}の${roleLabel(assignment.role)}担当を削除`}
+                        onClick={() => removeAssignment(assignment.draftId)}
+                      >
+                        削除
+                      </button>
+                    </div>
+                    {errors.items[assignment.draftId] && (
+                      <p className="form-error" role="alert">
+                        {Object.values(errors.items[assignment.draftId])
+                          .filter(Boolean)
+                          .join(' ')}
+                      </p>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
+        )}
         {selectedStages.length === 0 ? (
           <div className="pa-settings__empty">
             <p>選択中のStageがありません。</p>
@@ -248,7 +350,7 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
           const stageItems = calculatedItems.filter((item) =>
             item.stageId === stage.id && item.eventDayId === stage.eventDayId,
           )
-          const assignments = draft.items.filter((item) =>
+          const assignments = selectedAssignments.filter((item) =>
             item.stageId === stage.id && item.eventDayId === stage.eventDayId,
           )
           return (
@@ -327,15 +429,7 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
                           type="button"
                           className="danger-button"
                           aria-label={`${stage.name}の${roleLabel(item.role)}担当を削除`}
-                          onClick={() => {
-                            setDraft((previous) => ({
-                              items: previous.items.filter((candidate) =>
-                                candidate.draftId !== item.draftId,
-                              ),
-                            }))
-                            setErrors(emptyErrors())
-                            setSaveMessage('')
-                          }}
+                          onClick={() => removeAssignment(item.draftId)}
                         >
                           削除
                         </button>

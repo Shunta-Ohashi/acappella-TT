@@ -7,6 +7,7 @@ import {
   createPaAssignmentsDraft,
   createPaAssignmentDraftItem,
   createPaAssignmentsUpdate,
+  getPaAssignmentScopeStatus,
   getPaAssignmentParticipationWarning,
   getPaMemberCandidates,
   resolvePaAssignmentInterval,
@@ -149,6 +150,31 @@ const validate = (item, eventMemberDays = createMemberDays(), sections = []) =>
     eventBands,
     calculatedItems,
   })
+
+test('PA担当のEventDayとStage参照をscope別に検証する', () => {
+  const scopeInput = { event, eventDays, stages }
+
+  assert.deepEqual(getPaAssignmentScopeStatus({
+    ...scopeInput,
+    assignment: createItem(),
+  }), { valid: true })
+  assert.equal(getPaAssignmentScopeStatus({
+    ...scopeInput,
+    assignment: createItem({ eventDayId: 'missing-day' }),
+  }).problem, 'EVENT_DAY_NOT_FOUND')
+  assert.equal(getPaAssignmentScopeStatus({
+    ...scopeInput,
+    assignment: createItem({ stageId: 'missing-stage' }),
+  }).problem, 'STAGE_NOT_FOUND')
+  assert.equal(getPaAssignmentScopeStatus({
+    ...scopeInput,
+    assignment: createItem({ eventDayId: 'missing-day', stageId: 'missing-stage' }),
+  }).problem, 'EVENT_DAY_AND_STAGE_NOT_FOUND')
+  assert.equal(getPaAssignmentScopeStatus({
+    ...scopeInput,
+    assignment: createItem({ stageId: 'stage-day-2' }),
+  }).problem, 'STAGE_EVENT_DAY_MISMATCH')
+})
 
 const assignment = (id, overrides = {}) => ({
   id,
