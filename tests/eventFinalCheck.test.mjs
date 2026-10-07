@@ -200,6 +200,54 @@ test('EventBand day mismatchはStep 4へ案内する', () => {
   assert.equal(finding?.targetStep, 4)
 })
 
+test('FIXED_STAGE_MISMATCHは固定先ではなく実配置ScheduleItemのlaneへ案内する', () => {
+  const input = makeInput()
+  input.stages[0].id = 'stage-a'
+  input.eventDays.push({ id: 'day-2', eventId: 'event-1', date: '2027-11-02',
+    label: '2日目', order: 1 })
+  input.stages.push({ id: 'stage-b', eventDayId: 'day-2', name: 'Stage B', order: 0,
+    plannedStartTime: '10:00', plannedEndTime: '18:00' })
+  input.eventBands.push({
+    id: 'band-alpha', eventId: 'event-1', eventDayId: 'day-2', name: 'Alpha',
+    memberIds: [], durationMinutes: 10, fixedPlacement: { stageId: 'stage-a' },
+  })
+  input.scheduleItems.push({
+    id: 'performance-alpha', stageId: 'stage-b', order: 0,
+    kind: 'performance', eventBandId: 'band-alpha',
+  })
+
+  const report = createEventFinalCheckReport(input)
+  const finding = report.findings.find(candidate => candidate.code === 'FIXED_STAGE_MISMATCH')
+  assert.deepEqual({
+    eventDayId: finding?.eventDayId,
+    stageId: finding?.stageId,
+    targetStep: finding?.targetStep,
+  }, { eventDayId: 'day-2', stageId: 'stage-b', targetStep: 6 })
+
+  const groups = groupEventFinalCheckFindingsForDisplay({
+    findings: finding ? [finding] : [],
+    eventDays: input.eventDays.filter(day => day.eventId === input.event.id),
+    stages: input.stages,
+  })
+  assert.deepEqual(groups.dayGroups.map(group => ({
+    eventDayId: group.eventDay.id,
+    stageIds: group.stageGroups.map(stageGroup => stageGroup.stage.id),
+  })), [{ eventDayId: 'day-2', stageIds: ['stage-b'] }])
+
+  assert.deepEqual(resolveEventFinalCheckRepairNavigation({
+    target: {
+      step: finding?.targetStep ?? 6,
+      eventDayId: finding?.eventDayId,
+      stageId: finding?.stageId,
+    },
+    eventId: input.event.id,
+    eventDays: input.eventDays,
+    stages: input.stages,
+    currentEventDayId: 'day-1',
+    currentStageId: 'stage-a',
+  }), { step: 6, eventDayId: 'day-2', stageId: 'stage-b' })
+})
+
 test('selected EventのEventBand・PA・Dutyがmissing/foreign EventDayを参照したらERRORにする', () => {
   const cases = [
     { kind: 'band', dayId: 'missing-day', expectedCode: 'EVENT_BAND_EVENT_DAY_NOT_FOUND',
@@ -713,6 +761,12 @@ test('Grid外PA/DutyをWARNINGにし、参照切れは既存ERRORと重複表示
     finding.code === 'OFF_GRID_DUTY_ASSIGNMENT' && finding.severity === 'WARNING'))
   assert.ok(report.findings.some(finding => finding.code === 'PA_INVALID_BOUNDARY'))
   assert.ok(report.findings.some(finding => finding.code === 'DUTY_INVALID_BOUNDARY'))
+  assert.ok(report.findings.some(finding =>
+    finding.code === 'PA_INVALID_BOUNDARY' && finding.eventDayId === 'day-1' &&
+    finding.stageId === 'stage-1'))
+  assert.ok(report.findings.some(finding =>
+    finding.code === 'DUTY_INVALID_BOUNDARY' && finding.eventDayId === 'day-1' &&
+    finding.stageId === 'stage-1'))
   assert.equal(report.findings.some(finding =>
     finding.key === 'operations|unresolved-pa|pa-broken'), false)
   assert.equal(report.findings.some(finding =>

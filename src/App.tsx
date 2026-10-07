@@ -2933,7 +2933,7 @@ function App() {
                     <button
                       type="button"
                       className="secondary-button"
-                      onClick={() => setActiveStep(2)}
+                      onClick={() => handleEventEditorStepChange(2)}
                     >
                       Step 2 会場・Stageへ
                     </button>

@@ -247,16 +247,22 @@ export const createEventFinalCheckReport = (
       }
     }
 
-    const candidateStageIds = uniqueSorted([
-      ...(issue.stageIds ?? []),
-      ...(issue.scheduleItemIds ?? []).flatMap(itemId => {
+    const orderValidStageIds = (stageIds: StageId[]): StageId[] =>
+      uniqueSorted(stageIds).filter(stageId => stageById.has(stageId))
+        .sort((left, right) => (stageOrder.get(left) ?? Number.MAX_SAFE_INTEGER) -
+          (stageOrder.get(right) ?? Number.MAX_SAFE_INTEGER) || compareStableText(left, right))
+    const scheduleItemStageIds = orderValidStageIds(
+      (issue.scheduleItemIds ?? []).flatMap(itemId => {
         const stageId = scheduleItemById.get(itemId)?.stageId
         return stageId ? [stageId] : []
       }),
-    ]).filter(stageId => stageById.has(stageId))
-      .sort((left, right) => (stageOrder.get(left) ?? Number.MAX_SAFE_INTEGER) -
-        (stageOrder.get(right) ?? Number.MAX_SAFE_INTEGER) || compareStableText(left, right))
-    const stageId = candidateStageIds[0]
+    )
+    const issueStageIds = orderValidStageIds(issue.stageIds ?? [])
+    const stageId = (scheduleItemStageIds.length > 0 ? scheduleItemStageIds : issueStageIds)[0]
+    if (scheduleItemStageIds.length > 0 && stageId) {
+      return { eventDayId: stageById.get(stageId)?.eventDayId, stageId }
+    }
+
     const candidateDayIds = uniqueSorted([
       ...(issue.eventDayIds ?? []),
       ...(stageId ? [stageById.get(stageId)?.eventDayId ?? ''] : []),
