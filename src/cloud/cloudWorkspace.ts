@@ -23,6 +23,11 @@ export interface CloudWorkspaceAccess {
   membership: CloudWorkspaceMembership
 }
 
+export const createCloudAppBoundaryKey = (
+  authRevision: number,
+  userId: string,
+): string => `${authRevision}:${userId}`
+
 const compareStableText = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0
 

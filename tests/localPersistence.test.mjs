@@ -14,6 +14,7 @@ import {
   createCloudScopedStorageKey,
   createPersistedAppState,
   isPersistedAppStateV5,
+  isPersistenceScopeReady,
   loadPersistedState,
   loadPersistedStateOrFallback,
   parsePersistedState,
@@ -649,6 +650,47 @@ test('Cloud scopeが未保存ならlegacy keyをcopy・削除せずfallbackを�
   )
   assert.equal(storage.getItem(cloudKey), null)
   assert.equal(storage.getItem(STORAGE_KEY), legacySerialized)
+})
+
+test('Workspace scope transition中は旧stateを新keyへautosaveせずrehydrate後だけ保存する', () => {
+  const storage = new MemoryStorage()
+  const stateA = { ...createEmptyState(), members: [
+    { id: 'member-a', realName: 'Workspace A', active: true },
+  ] }
+  const stateB = { ...createEmptyState(), members: [
+    { id: 'member-b', realName: 'Workspace B', active: true },
+  ] }
+  const keyA = createCloudScopedStorageKey({ userId: 'user-a', workspaceId: 'workspace-a' })
+  const keyB = createCloudScopedStorageKey({ userId: 'user-a', workspaceId: 'workspace-b' })
+  savePersistedState(stateA, storage, keyA)
+  savePersistedState(stateB, storage, keyB)
+  const serializedA = storage.getItem(keyA)
+  const serializedB = storage.getItem(keyB)
+
+  let activeKey = keyA
+  const requestedKey = keyB
+  const displayedBeforeHydration = loadPersistedState(storage, activeKey)
+  assert.ok(displayedBeforeHydration)
+  assert.equal(isPersistenceScopeReady(activeKey, requestedKey), false)
+  if (isPersistenceScopeReady(activeKey, requestedKey)) {
+    savePersistedState(displayedBeforeHydration, storage, requestedKey)
+  }
+  assert.equal(storage.getItem(keyB), serializedB)
+
+  const hydratedB = loadPersistedState(storage, requestedKey)
+  assert.ok(hydratedB)
+  activeKey = requestedKey
+  assert.equal(isPersistenceScopeReady(activeKey, requestedKey), true)
+  savePersistedState(hydratedB, storage, activeKey)
+  assert.equal(storage.getItem(keyA), serializedA)
+  assert.equal(storage.getItem(keyB), serializedB)
+  const requestedAgain = keyA
+  assert.equal(isPersistenceScopeReady(activeKey, requestedAgain), false)
+  const hydratedA = loadPersistedState(storage, requestedAgain)
+  assert.deepEqual(hydratedA, createPersistedAppState(stateA))
+  activeKey = requestedAgain
+  assert.equal(isPersistenceScopeReady(activeKey, requestedAgain), true)
+  assert.deepEqual(loadPersistedState(storage, keyB), createPersistedAppState(stateB))
 })
 
 test('localStorageへの保存失敗を外へ投げずstate更新を継続できる', () => {

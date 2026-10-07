@@ -13,6 +13,7 @@ import { cloudConfig, type CloudConfig } from './cloudConfig.ts'
 import type { CloudWorkspaceContextValue } from './CloudWorkspaceContext.ts'
 import { CloudWorkspaceProvider } from './CloudWorkspaceProvider.tsx'
 import {
+  createCloudAppBoundaryKey,
   parseCloudProfile,
   parseCloudWorkspace,
   parseCloudWorkspaceMembership,
@@ -431,7 +432,7 @@ function EnabledCloudAppGate({
 
   return (
     <CloudWorkspaceProvider
-      key={`${authRevision}:${user.id}:${selectedAccess.workspace.id}`}
+      key={createCloudAppBoundaryKey(authRevision, user.id)}
       value={contextValue}
     >
       {children}

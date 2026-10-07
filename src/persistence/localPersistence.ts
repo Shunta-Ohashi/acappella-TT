@@ -50,6 +50,11 @@ export const createCloudScopedStorageKey = ({
 }: CloudPersistenceScope): string =>
   `${STORAGE_KEY}:cloud:${encodeURIComponent(userId)}:${encodeURIComponent(workspaceId)}`
 
+export const isPersistenceScopeReady = (
+  activeStorageKey: string,
+  requestedStorageKey: string,
+): boolean => activeStorageKey === requestedStorageKey
+
 export interface PersistedDomainState {
   members: Member[]
   bands: Band[]

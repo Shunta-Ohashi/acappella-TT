@@ -5,6 +5,7 @@ import test from 'node:test'
 import { createCloudAuthRedirectUrl } from '../src/cloud/cloudAuth.ts'
 import { resolveCloudConfig } from '../src/cloud/cloudConfig.ts'
 import {
+  createCloudAppBoundaryKey,
   isWorkspaceRole,
   sortCloudWorkspaceAccesses,
 } from '../src/cloud/cloudWorkspace.ts'
@@ -25,6 +26,31 @@ test('Supabase envが両方設定済みなら正規化してCloudをenabledに�
     supabaseUrl: 'https://project.supabase.co',
     supabasePublishableKey: 'publishable-key',
   })
+})
+
+test('Supabase URLはHTTPSと開発用loopback HTTPだけを許可する', () => {
+  for (const supabaseUrl of [
+    'https://project.supabase.co',
+    'http://127.0.0.1:54321',
+    'http://localhost:54321',
+    'http://[::1]:54321',
+  ]) {
+    assert.equal(resolveCloudConfig({
+      supabaseUrl,
+      supabasePublishableKey: 'publishable-key',
+    }).status, 'enabled', supabaseUrl)
+  }
+
+  for (const supabaseUrl of [
+    'http://example.com',
+    'ftp://127.0.0.1/resource',
+    'not-a-url',
+  ]) {
+    assert.equal(resolveCloudConfig({
+      supabaseUrl,
+      supabasePublishableKey: 'publishable-key',
+    }).status, 'invalid', supabaseUrl)
+  }
 })
 
 test('Supabase URLまたはkeyの片方だけならCloud設定をinvalidにする', () => {
@@ -81,6 +107,16 @@ test('Workspace accessは入力順やruntime localeに依存せずname・id順�
     ['workspace-a', 'workspace-b', 'workspace-c'],
   )
   assert.deepEqual(firstInput, firstSnapshot)
+})
+
+test('Cloud App identityはWorkspace切替では変わらずuser・auth revisionで変わる', () => {
+  const current = createCloudAppBoundaryKey(3, 'user-a')
+  assert.deepEqual(
+    ['workspace-a', 'workspace-b'].map(() => createCloudAppBoundaryKey(3, 'user-a')),
+    [current, current],
+  )
+  assert.notEqual(createCloudAppBoundaryKey(4, 'user-a'), current)
+  assert.notEqual(createCloudAppBoundaryKey(3, 'user-b'), current)
 })
 
 test('Auth Workspace migrationはprofilesとworkspacesのupdated_atだけをUPDATE時に更新する', async () => {

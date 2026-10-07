@@ -15,10 +15,13 @@ export interface CloudConfigInput {
 const normalizeEnvValue = (value: unknown): string =>
   typeof value === 'string' ? value.trim() : ''
 
-const isHttpUrl = (value: string): boolean => {
+const LOOPBACK_HTTP_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]'])
+
+const isAllowedCloudUrl = (value: string): boolean => {
   try {
     const url = new URL(value)
-    return url.protocol === 'https:' || url.protocol === 'http:'
+    return url.protocol === 'https:' ||
+      (url.protocol === 'http:' && LOOPBACK_HTTP_HOSTNAMES.has(url.hostname))
   } catch {
     return false
   }
@@ -38,10 +41,10 @@ export const resolveCloudConfig = ({
       message: 'SupabaseのURLとPublishable Keyを両方設定してください。',
     }
   }
-  if (!isHttpUrl(normalizedUrl)) {
+  if (!isAllowedCloudUrl(normalizedUrl)) {
     return {
       status: 'invalid',
-      message: 'VITE_SUPABASE_URLに有効なHTTP(S) URLを設定してください。',
+      message: 'VITE_SUPABASE_URLにHTTPS URL（ローカル開発ではloopback HTTP）を設定してください。',
     }
   }
 
