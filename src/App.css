@@ -4644,6 +4644,12 @@
   font-size: 14px;
 }
 
+.timetable-generation-failure__message {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
 .timetable-generation-failure__disclosure {
   min-width: 0;
 }

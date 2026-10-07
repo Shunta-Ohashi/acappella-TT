@@ -8,9 +8,11 @@ export function TimetableGenerationFailureGuidance({
   guidance,
 }: TimetableGenerationFailureGuidanceProps) {
   return (
-    <section className="timetable-generation-failure" role="alert">
-      <h3>{guidance.title}</h3>
-      <p>{guidance.summary}</p>
+    <section className="timetable-generation-failure">
+      <div className="timetable-generation-failure__message" role="alert">
+        <h3>{guidance.title}</h3>
+        <p>{guidance.summary}</p>
+      </div>
       <details className="timetable-generation-failure__disclosure">
         <summary>詳細を表示</summary>
         <div className="timetable-generation-failure__disclosure-content">
