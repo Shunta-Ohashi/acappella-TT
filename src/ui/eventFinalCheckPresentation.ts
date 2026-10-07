@@ -6,7 +6,7 @@ import type {
   StageId,
 } from '../domain/models'
 import type { EventFinalCheckFinding } from '../domain/eventFinalCheck.ts'
-import { resolveTimetableSelection } from '../domain/schedule.ts'
+import { getStagesForEventDay, resolveTimetableSelection } from '../domain/schedule.ts'
 import type { EventEditorStepId } from './eventEditorSteps.ts'
 
 export interface EventFinalCheckRepairTarget {
@@ -75,7 +75,7 @@ export const groupEventFinalCheckFindingsForDisplay = ({
     const dayFindings = findings.filter(finding => finding.eventDayId === eventDay.id)
     if (dayFindings.length === 0) return []
     const dayOnly = dayFindings.filter(finding => !finding.stageId)
-    const stageGroups = stages.filter(stage => stage.eventDayId === eventDay.id)
+    const stageGroups = getStagesForEventDay(stages, eventDay.id)
       .flatMap((stage): EventFinalCheckStageDisplayGroup[] => {
         const stageFindings = dayFindings.filter(finding => finding.stageId === stage.id)
         return stageFindings.length > 0 ? [{ stage, findings: stageFindings }] : []

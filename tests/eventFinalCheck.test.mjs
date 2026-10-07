@@ -454,6 +454,35 @@ test('DayとStageが不一致のfindingもfallback groupへ残す', () => {
   ]).length, 1)
 })
 
+test('Final CheckのStage groupは入力順に依存せずorder・ID順になる', () => {
+  const eventDays = [{ id: 'day-1', eventId: 'event-1', date: '2027-11-01',
+    label: '1日目', order: 0 }]
+  const stageA = { id: 'stage-a', eventDayId: 'day-1', name: 'Stage A', order: 1,
+    plannedStartTime: '10:00', plannedEndTime: '18:00' }
+  const stageB = { id: 'stage-b', eventDayId: 'day-1', name: 'Stage B', order: 0,
+    plannedStartTime: '10:00', plannedEndTime: '18:00' }
+  const stageC = { id: 'stage-c', eventDayId: 'day-1', name: 'Stage C', order: 1,
+    plannedStartTime: '10:00', plannedEndTime: '18:00' }
+  const findings = [stageA, stageB, stageC].map(stage => ({
+    key: `finding-${stage.id}`, severity: 'ERROR', category: 'schedule',
+    code: 'TEST', message: `${stage.name}の問題`, targetStep: 6,
+    eventDayId: 'day-1', stageId: stage.id,
+  }))
+  const firstStages = [stageA, stageC, stageB]
+  const secondStages = [stageC, stageB, stageA]
+  const firstBefore = structuredClone(firstStages)
+  const secondBefore = structuredClone(secondStages)
+
+  const stageIds = stages => groupEventFinalCheckFindingsForDisplay({
+    findings, eventDays, stages,
+  }).dayGroups[0].stageGroups.map(group => group.stage.id)
+
+  assert.deepEqual(stageIds(firstStages), ['stage-b', 'stage-a', 'stage-c'])
+  assert.deepEqual(stageIds(secondStages), ['stage-b', 'stage-a', 'stage-c'])
+  assert.deepEqual(firstStages, firstBefore)
+  assert.deepEqual(secondStages, secondBefore)
+})
+
 test('Step 2〜5への修復移動ではTimetable scopeを変更対象に含めない', () => {
   const input = makeInput()
   for (const step of [2, 3, 4, 5]) {
