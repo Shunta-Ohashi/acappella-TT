@@ -1,4 +1,8 @@
 import type { EventId } from '../domain/models.ts'
+import {
+  createEventDeletion,
+  type EventDeletionResult,
+} from '../domain/eventDeletion.ts'
 import type {
   PersistedAppStateV5,
   PersistedDomainState,
@@ -22,79 +26,119 @@ export type CloudEventHydrationState =
   | { scopeKey: string; kind: 'ready' }
   | { scopeKey: string; kind: 'error'; message: string }
 
-const createCloudEventSaveKey = (
+const createCloudEventOperationKey = (
   scopeKey: string,
   eventId: EventId,
 ): string => JSON.stringify([scopeKey, eventId])
 
-export interface CloudEventSaveRegistry {
-  tryStart: (scopeKey: string, eventId: EventId) => boolean
-  finish: (scopeKey: string, eventId: EventId) => void
-  isSaving: (scopeKey: string, eventId: EventId) => boolean
-  snapshot: () => ReadonlySet<string>
+export type CloudEventOperationKind = 'save' | 'delete'
+
+interface CloudEventOperationLease {
+  key: string
+  kind: CloudEventOperationKind
+  token: symbol
 }
 
-export const createCloudEventSaveRegistry = (): CloudEventSaveRegistry => {
-  const inFlightSaveKeys = new Set<string>()
+export interface CloudEventOperationRegistry {
+  tryStart: (
+    scopeKey: string,
+    eventId: EventId,
+    kind: CloudEventOperationKind,
+  ) => CloudEventOperationLease | undefined
+  finish: (lease: CloudEventOperationLease) => void
+  get: (scopeKey: string, eventId: EventId) => CloudEventOperationKind | undefined
+  snapshot: () => ReadonlyMap<string, CloudEventOperationKind>
+}
+
+export const createCloudEventOperationRegistry = (): CloudEventOperationRegistry => {
+  const inFlightOperations = new Map<string, {
+    kind: CloudEventOperationKind
+    token: symbol
+  }>()
 
   return {
-    tryStart(scopeKey, eventId) {
-      const key = createCloudEventSaveKey(scopeKey, eventId)
-      if (inFlightSaveKeys.has(key)) return false
-      inFlightSaveKeys.add(key)
-      return true
+    tryStart(scopeKey, eventId, kind) {
+      const key = createCloudEventOperationKey(scopeKey, eventId)
+      if (inFlightOperations.has(key)) return undefined
+      const lease = { key, kind, token: Symbol(kind) }
+      inFlightOperations.set(key, { kind, token: lease.token })
+      return lease
     },
-    finish(scopeKey, eventId) {
-      inFlightSaveKeys.delete(createCloudEventSaveKey(scopeKey, eventId))
+    finish(lease) {
+      if (inFlightOperations.get(lease.key)?.token === lease.token) {
+        inFlightOperations.delete(lease.key)
+      }
     },
-    isSaving(scopeKey, eventId) {
-      return inFlightSaveKeys.has(createCloudEventSaveKey(scopeKey, eventId))
+    get(scopeKey, eventId) {
+      return inFlightOperations.get(
+        createCloudEventOperationKey(scopeKey, eventId),
+      )?.kind
     },
     snapshot() {
-      return new Set(inFlightSaveKeys)
+      return new Map([...inFlightOperations].map(([key, operation]) => [
+        key,
+        operation.kind,
+      ]))
     },
   }
 }
 
-export const isCloudEventSaving = (
-  inFlightSaveKeys: ReadonlySet<string>,
+export const getCloudEventOperation = (
+  inFlightOperations: ReadonlyMap<string, CloudEventOperationKind>,
   scopeKey: string,
   eventId: EventId,
-): boolean => inFlightSaveKeys.has(createCloudEventSaveKey(scopeKey, eventId))
+): CloudEventOperationKind | undefined => inFlightOperations.get(
+  createCloudEventOperationKey(scopeKey, eventId),
+)
 
-export const canStartCloudEventDelete = (
-  registry: CloudEventSaveRegistry,
-  scopeKey: string,
-  eventId: EventId,
-): boolean => !registry.isSaving(scopeKey, eventId)
-
-export type CloudEventSaveExecution<T> =
+export type CloudEventOperationExecution<T> =
   | { started: false }
   | { started: true; value: T }
 
-export const runExclusiveCloudEventSave = async <T>({
+export const runExclusiveCloudEventOperation = async <T>({
   registry,
   scopeKey,
   eventId,
+  kind,
   operation,
   onChange,
 }: {
-  registry: CloudEventSaveRegistry
+  registry: CloudEventOperationRegistry
   scopeKey: string
   eventId: EventId
+  kind: CloudEventOperationKind
   operation: () => Promise<T>
-  onChange?: (inFlightSaveKeys: ReadonlySet<string>) => void
-}): Promise<CloudEventSaveExecution<T>> => {
-  if (!registry.tryStart(scopeKey, eventId)) return { started: false }
+  onChange?: (
+    inFlightOperations: ReadonlyMap<string, CloudEventOperationKind>,
+  ) => void
+}): Promise<CloudEventOperationExecution<T>> => {
+  const lease = registry.tryStart(scopeKey, eventId, kind)
+  if (!lease) return { started: false }
 
   try {
     onChange?.(registry.snapshot())
     return { started: true, value: await operation() }
   } finally {
-    registry.finish(scopeKey, eventId)
+    registry.finish(lease)
     onChange?.(registry.snapshot())
   }
 }
+
+export const runExclusiveCloudEventSave = async <T>(input: Omit<
+  Parameters<typeof runExclusiveCloudEventOperation<T>>[0],
+  'kind'
+>): Promise<CloudEventOperationExecution<T>> => runExclusiveCloudEventOperation({
+  ...input,
+  kind: 'save',
+})
+
+export const runExclusiveCloudEventDelete = async <T>(input: Omit<
+  Parameters<typeof runExclusiveCloudEventOperation<T>>[0],
+  'kind'
+>): Promise<CloudEventOperationExecution<T>> => runExclusiveCloudEventOperation({
+  ...input,
+  kind: 'delete',
+})
 
 export const isCloudEventCacheWriteReady = ({
   cloudEnabled,
@@ -144,6 +188,51 @@ export const deleteCloudEvent = async (
   }
   return { ok: true, value: { deleted: true } }
 }
+
+export type CloudEventDeletionResult = EventDeletionResult | {
+  ok: false
+  reason: 'CLOUD_DELETE_FAILED'
+}
+
+export const runExclusiveCloudEventDeletion = ({
+  registry,
+  scopeKey,
+  workspaceId,
+  eventId,
+  repository,
+  isScopeCurrent,
+  getLatestState,
+  commit,
+  onChange,
+}: {
+  registry: CloudEventOperationRegistry
+  scopeKey: string
+  workspaceId: string
+  eventId: EventId
+  repository: CloudEventRepository
+  isScopeCurrent: () => boolean
+  getLatestState: () => PersistedDomainState
+  commit: (result: Extract<EventDeletionResult, { ok: true }>) => void
+  onChange?: (
+    inFlightOperations: ReadonlyMap<string, CloudEventOperationKind>,
+  ) => void
+}): Promise<CloudEventOperationExecution<CloudEventDeletionResult>> =>
+  runExclusiveCloudEventDelete({
+    registry,
+    scopeKey,
+    eventId,
+    onChange,
+    operation: async () => {
+      const deleted = await deleteCloudEvent(repository, workspaceId, eventId)
+      if (!deleted.ok || !isScopeCurrent()) {
+        return { ok: false, reason: 'CLOUD_DELETE_FAILED' }
+      }
+      const result = createEventDeletion({ eventId, ...getLatestState() })
+      if (!result.ok) return result
+      commit(result)
+      return result
+    },
+  })
 
 export const loadCloudWorkspaceEvents = async (
   repository: CloudEventRepository,

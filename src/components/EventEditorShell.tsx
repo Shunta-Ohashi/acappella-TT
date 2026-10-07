@@ -12,7 +12,7 @@ interface EventEditorShellProps {
   onStepChange: (step: EventEditorStepId) => void
   onBackToEvents: () => void
   cloudSave?: {
-    isSaving: boolean
+    operation?: 'save' | 'delete'
     feedback?: { kind: 'success' | 'error'; message: string }
     onSave: () => void
   }
@@ -56,10 +56,14 @@ export function EventEditorShell({
                   <button
                     type="button"
                     className="secondary-button"
-                    disabled={cloudSave.isSaving}
+                    disabled={cloudSave.operation !== undefined}
                     onClick={cloudSave.onSave}
                   >
-                    {cloudSave.isSaving ? 'Cloud保存中…' : 'Cloudへ保存'}
+                    {cloudSave.operation === 'save'
+                      ? 'Cloud保存中…'
+                      : cloudSave.operation === 'delete'
+                        ? 'Cloud削除中…'
+                        : 'Cloudへ保存'}
                   </button>
                   {cloudSave.feedback && (
                     <span

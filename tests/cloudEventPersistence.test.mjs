@@ -7,12 +7,13 @@ import {
   createCloudEventRepository,
 } from '../src/cloud/cloudEventRepository.ts'
 import {
-  canStartCloudEventDelete,
-  createCloudEventSaveRegistry,
+  createCloudEventOperationRegistry,
   deleteCloudEvent,
+  getCloudEventOperation,
   isCloudEventCacheWriteReady,
-  isCloudEventSaving,
   loadCloudWorkspaceEvents,
+  runExclusiveCloudEventDelete,
+  runExclusiveCloudEventDeletion,
   runExclusiveCloudEventSave,
   saveCloudEventFromState,
 } from '../src/cloud/cloudEventLifecycle.ts'
@@ -135,6 +136,26 @@ const createSnapshot = (state, eventId) => {
   return result.snapshot
 }
 
+const createSnapshotContainingEveryEventOwnedCollection = () => {
+  const state = createDemoData()
+  const eventId = 'event-demo-generation'
+  const eventDay = state.eventDays.find(day => day.eventId === eventId)
+  const stage = state.stages.find(candidate => candidate.eventDayId === eventDay?.id)
+  const eventBands = state.eventBands.filter(band =>
+    band.eventId === eventId && band.eventDayId === eventDay?.id)
+  assert.ok(eventDay)
+  assert.ok(stage)
+  assert.ok(eventBands.length >= 2)
+  state.timetableOrderConstraints.push({
+    id: 'constraint-cloud-duplicate-test',
+    eventId,
+    eventDayId: eventDay.id,
+    stageId: stage.id,
+    eventBandIds: eventBands.slice(0, 2).map(band => band.id),
+  })
+  return { state, eventId, snapshot: createSnapshot(state, eventId) }
+}
+
 const loadSnapshotsInOrder = (
   snapshots,
   order,
@@ -205,6 +226,59 @@ test('unsupportedまたはmalformed Cloud Event snapshotを拒否する', () => 
   assert.ok(withDuplicateMember.appState.members[0])
   withDuplicateMember.appState.members.push(withDuplicateMember.appState.members[0])
   assert.equal(parseCloudEventSnapshot(withDuplicateMember), undefined)
+})
+
+test('全Event配下collectionの同一ID重複をbuilderとparserでfail closedする', () => {
+  const collectionKeys = [
+    'events', 'eventDays', 'stages', 'sections', 'eventMembers',
+    'eventMemberDays', 'eventBands', 'scheduleItems', 'paAssignments',
+    'dutyTypes', 'dutyAssignments', 'timetableLocks',
+    'timetableOrderConstraints',
+  ]
+  const { state, eventId, snapshot } = createSnapshotContainingEveryEventOwnedCollection()
+
+  for (const key of collectionKeys) {
+    const source = snapshot.appState[key][0]
+    assert.ok(source, `${key} fixture must not be empty`)
+
+    for (const duplicate of [
+      structuredClone(source),
+      { ...structuredClone(source), duplicateVariant: 'different-content' },
+    ]) {
+      const malformedSnapshot = structuredClone(snapshot)
+      malformedSnapshot.appState[key].push(duplicate)
+      assert.equal(
+        parseCloudEventSnapshot(malformedSnapshot),
+        undefined,
+        `${key} parser duplicate`,
+      )
+
+      const malformedState = structuredClone(state)
+      const stateSource = malformedState[key].find(item => item.id === source.id)
+      assert.ok(stateSource, `${key} builder source`)
+      malformedState[key].push({ ...stateSource, ...duplicate })
+      assert.equal(
+        createCloudEventSnapshot(malformedState, eventId).ok,
+        false,
+        `${key} builder duplicate`,
+      )
+    }
+  }
+})
+
+test('repositoryはEvent配下collection重複snapshotをDBアクセス前に拒否する', async () => {
+  const gateway = new MemoryCloudEventGateway(['workspace-a'])
+  const repository = createCloudEventRepository(gateway)
+  const { snapshot } = createSnapshotContainingEveryEventOwnedCollection()
+  snapshot.appState.scheduleItems.push(
+    structuredClone(snapshot.appState.scheduleItems[0]),
+  )
+
+  const result = await repository.saveEvent('workspace-a', snapshot)
+  assert.equal(result.ok, false)
+  assert.equal(!result.ok && result.error.code, 'INVALID_SNAPSHOT')
+  assert.equal(gateway.accessCalls, 0)
+  assert.equal(gateway.saveCalls, 0)
 })
 
 test('Cloud Event snapshotは直接参照するMemberとBandを欠落なく要求する', () => {
@@ -667,11 +741,12 @@ test('Event作成はCloudへ自動保存せず明示保存操作だけがsaveを
 
   assert.doesNotMatch(createHandler, /persistEventToCloud|saveCloudEventFromState/)
   assert.match(explicitSaveHandler, /persistEventToCloud\(domainState, selectedEvent\.id\)/)
-  assert.match(deleteHandler, /deleteCloudEvent\(/)
-  assert.doesNotMatch(deleteHandler, /cloudPersistedEventIds\.has/)
+  assert.match(explicitSaveHandler, /eventBasicInfoRef\.current\?\.hasUnsavedChanges\(\)/)
+  assert.match(deleteHandler, /runExclusiveCloudEventDeletion\(/)
+  assert.match(deleteHandler, /latestDomainStateRef\.current/)
   assert.match(
     deleteHandler,
-    /const deleted = await deleteCloudEvent\([\s\S]*!deleted\.ok[\s\S]*return \{ ok: false, reason: 'CLOUD_DELETE_FAILED' \}[\s\S]*setEvents\(result\.events\)/,
+    /getLatestState: \(\) => latestDomainStateRef\.current,[\s\S]*commit: commitEventDeletion/,
   )
 })
 
@@ -743,13 +818,13 @@ test('Cloud local cacheはrequested scopeのrehydrate完了後だけ書き込み
   }), true)
 })
 
-test('Event別の並行saveは一方の完了で他方のsaving状態を解除しない', async () => {
-  const registry = createCloudEventSaveRegistry()
+test('Event別の並行操作は一方の完了で他方の占有を解除しない', async () => {
+  const registry = createCloudEventOperationRegistry()
   const eventA = createDeferred()
   const eventB = createDeferred()
-  let visibleKeys = new Set()
-  const onChange = keys => {
-    visibleKeys = new Set(keys)
+  let visibleOperations = new Map()
+  const onChange = operations => {
+    visibleOperations = new Map(operations)
   }
 
   const savingA = runExclusiveCloudEventSave({
@@ -767,21 +842,23 @@ test('Event別の並行saveは一方の完了で他方のsaving状態を解除�
     onChange,
   })
 
-  assert.equal(isCloudEventSaving(visibleKeys, 'scope-a', 'event-a'), true)
-  assert.equal(isCloudEventSaving(visibleKeys, 'scope-a', 'event-b'), true)
+  assert.equal(getCloudEventOperation(
+    visibleOperations, 'scope-a', 'event-a'), 'save')
+  assert.equal(getCloudEventOperation(
+    visibleOperations, 'scope-a', 'event-b'), 'save')
 
   eventB.resolve('saved-b')
   assert.deepEqual(await savingB, { started: true, value: 'saved-b' })
-  assert.equal(registry.isSaving('scope-a', 'event-a'), true)
-  assert.equal(registry.isSaving('scope-a', 'event-b'), false)
+  assert.equal(registry.get('scope-a', 'event-a'), 'save')
+  assert.equal(registry.get('scope-a', 'event-b'), undefined)
 
   eventA.resolve('saved-a')
   assert.deepEqual(await savingA, { started: true, value: 'saved-a' })
-  assert.equal(registry.isSaving('scope-a', 'event-a'), false)
+  assert.equal(registry.get('scope-a', 'event-a'), undefined)
 })
 
 test('A/B save中にAだけ完了してもBのsaving状態を維持する', async () => {
-  const registry = createCloudEventSaveRegistry()
+  const registry = createCloudEventOperationRegistry()
   const eventA = createDeferred()
   const eventB = createDeferred()
   const savingA = runExclusiveCloudEventSave({
@@ -799,16 +876,16 @@ test('A/B save中にAだけ完了してもBのsaving状態を維持する', asyn
 
   eventA.resolve('saved-a')
   await savingA
-  assert.equal(registry.isSaving('scope-a', 'event-a'), false)
-  assert.equal(registry.isSaving('scope-a', 'event-b'), true)
+  assert.equal(registry.get('scope-a', 'event-a'), undefined)
+  assert.equal(registry.get('scope-a', 'event-b'), 'save')
 
   eventB.resolve('saved-b')
   await savingB
-  assert.equal(registry.isSaving('scope-a', 'event-b'), false)
+  assert.equal(registry.get('scope-a', 'event-b'), undefined)
 })
 
 test('同一Eventの重複saveを開始せずfailureでも必ずregistryを解除する', async () => {
-  const registry = createCloudEventSaveRegistry()
+  const registry = createCloudEventOperationRegistry()
   const deferred = createDeferred()
   let duplicateRequestCount = 0
   const first = runExclusiveCloudEventSave({
@@ -829,36 +906,199 @@ test('同一Eventの重複saveを開始せずfailureでも必ずregistryを解�
 
   assert.deepEqual(duplicate, { started: false })
   assert.equal(duplicateRequestCount, 0)
-  assert.equal(registry.isSaving('scope-a', 'event-a'), true)
+  assert.equal(registry.get('scope-a', 'event-a'), 'save')
 
   deferred.reject(new Error('save failed'))
   await assert.rejects(first, /save failed/)
-  assert.equal(registry.isSaving('scope-a', 'event-a'), false)
+  assert.equal(registry.get('scope-a', 'event-a'), undefined)
 })
 
-test('save/delete排他はEventとWorkspace scopeごとでglobal blockしない', () => {
-  const registry = createCloudEventSaveRegistry()
-  assert.equal(registry.tryStart('scope-a', 'event-a'), true)
+test('save/deleteは同じEventで両方向に排他し、別Event・別scopeをblockしない', async () => {
+  for (const firstKind of ['save', 'delete']) {
+    const registry = createCloudEventOperationRegistry()
+    const pending = createDeferred()
+    const runFirst = firstKind === 'save'
+      ? runExclusiveCloudEventSave
+      : runExclusiveCloudEventDelete
+    const first = runFirst({
+      registry,
+      scopeKey: 'scope-a',
+      eventId: 'event-a',
+      operation: () => pending.promise,
+    })
+    let sameEventCalls = 0
+    const blockedSave = await runExclusiveCloudEventSave({
+      registry,
+      scopeKey: 'scope-a',
+      eventId: 'event-a',
+      operation: async () => { sameEventCalls += 1 },
+    })
+    const blockedDelete = await runExclusiveCloudEventDelete({
+      registry,
+      scopeKey: 'scope-a',
+      eventId: 'event-a',
+      operation: async () => { sameEventCalls += 1 },
+    })
+    assert.deepEqual(blockedSave, { started: false })
+    assert.deepEqual(blockedDelete, { started: false })
+    assert.equal(sameEventCalls, 0)
 
-  let cloudDeleteCount = 0
-  let localCascadeCount = 0
-  const attemptDelete = (scopeKey, eventId) => {
-    if (!canStartCloudEventDelete(registry, scopeKey, eventId)) return false
-    cloudDeleteCount += 1
-    localCascadeCount += 1
-    return true
+    assert.equal((await runExclusiveCloudEventDelete({
+      registry,
+      scopeKey: 'scope-a',
+      eventId: 'event-b',
+      operation: async () => 'deleted-b',
+    })).started, true)
+    assert.equal((await runExclusiveCloudEventSave({
+      registry,
+      scopeKey: 'scope-b',
+      eventId: 'event-a',
+      operation: async () => 'saved-other-scope',
+    })).started, true)
+
+    pending.resolve('completed')
+    await first
+    assert.equal(registry.get('scope-a', 'event-a'), undefined)
   }
+})
 
-  assert.equal(attemptDelete('scope-a', 'event-a'), false)
-  assert.equal(cloudDeleteCount, 0)
-  assert.equal(localCascadeCount, 0)
-  assert.equal(attemptDelete('scope-a', 'event-b'), true)
-  assert.equal(attemptDelete('scope-b', 'event-a'), true)
+test('operation leaseはsuccess・failure result・throwで解除され再試行できる', async () => {
+  const registry = createCloudEventOperationRegistry()
+  for (const operation of [
+    async () => ({ ok: true }),
+    async () => ({ ok: false, error: 'NOT_FOUND' }),
+  ]) {
+    const result = await runExclusiveCloudEventDelete({
+      registry,
+      scopeKey: 'scope-a',
+      eventId: 'event-a',
+      operation,
+    })
+    assert.equal(result.started, true)
+    assert.equal(registry.get('scope-a', 'event-a'), undefined)
+  }
+  await assert.rejects(runExclusiveCloudEventDelete({
+    registry,
+    scopeKey: 'scope-a',
+    eventId: 'event-a',
+    operation: async () => { throw new Error('network') },
+  }), /network/)
+  assert.equal(registry.get('scope-a', 'event-a'), undefined)
+  assert.equal((await runExclusiveCloudEventDelete({
+    registry,
+    scopeKey: 'scope-a',
+    eventId: 'event-a',
+    operation: async () => 'retry succeeded',
+  })).started, true)
+})
 
-  registry.finish('scope-a', 'event-a')
-  assert.equal(attemptDelete('scope-a', 'event-a'), true)
-  assert.equal(cloudDeleteCount, 3)
-  assert.equal(localCascadeCount, 3)
+test('token付きleaseは古いcleanupで新しい占有や別scopeを解除しない', () => {
+  const registry = createCloudEventOperationRegistry()
+  const oldLease = registry.tryStart('scope-a', 'event-a', 'delete')
+  assert.ok(oldLease)
+  registry.finish(oldLease)
+  const currentLease = registry.tryStart('scope-a', 'event-a', 'save')
+  const otherScopeLease = registry.tryStart('scope-b', 'event-a', 'delete')
+  assert.ok(currentLease)
+  assert.ok(otherScopeLease)
+
+  registry.finish(oldLease)
+  assert.equal(registry.get('scope-a', 'event-a'), 'save')
+  assert.equal(registry.get('scope-b', 'event-a'), 'delete')
+  registry.finish(currentLease)
+  assert.equal(registry.get('scope-b', 'event-a'), 'delete')
+  registry.finish(otherScopeLease)
+})
+
+test('App利用delete経路は待機中saveを防ぎ、最新stateへcascadeして別Event更新を保持する', async () => {
+  const registry = createCloudEventOperationRegistry()
+  const deferredDelete = createDeferred()
+  const initialState = createDemoData()
+  const deletedEventId = initialState.events[0].id
+  const retainedEventId = initialState.events[1].id
+  let latestState = structuredClone(initialState)
+  let saveCalls = 0
+  const deletion = runExclusiveCloudEventDeletion({
+    registry,
+    scopeKey: 'scope-a',
+    workspaceId: 'workspace-a',
+    eventId: deletedEventId,
+    repository: {
+      async deleteEvent() { return deferredDelete.promise },
+    },
+    isScopeCurrent: () => true,
+    getLatestState: () => latestState,
+    commit: result => {
+      latestState = {
+        members: latestState.members,
+        bands: latestState.bands,
+        ...result,
+      }
+    },
+  })
+  assert.equal(registry.get('scope-a', deletedEventId), 'delete')
+
+  const saveDuringDelete = await runExclusiveCloudEventSave({
+    registry,
+    scopeKey: 'scope-a',
+    eventId: deletedEventId,
+    operation: async () => { saveCalls += 1 },
+  })
+  assert.deepEqual(saveDuringDelete, { started: false })
+  assert.equal(saveCalls, 0)
+
+  latestState = {
+    ...latestState,
+    events: latestState.events.map(event => event.id === retainedEventId
+      ? { ...event, name: 'DELETE待機中に更新したEvent B' }
+      : event),
+  }
+  deferredDelete.resolve({ ok: true, value: { eventId: deletedEventId } })
+  const completed = await deletion
+  assert.equal(completed.started, true)
+  assert.equal(completed.started && completed.value.ok, true)
+  assert.equal(latestState.events.some(event => event.id === deletedEventId), false)
+  assert.equal(
+    latestState.events.find(event => event.id === retainedEventId)?.name,
+    'DELETE待機中に更新したEvent B',
+  )
+  assert.equal(registry.get('scope-a', deletedEventId), undefined)
+  assert.equal(latestState.events.some(event => event.id === deletedEventId), false)
+})
+
+test('scope切替後の遅延delete結果はcommitせず別scopeの占有も解除しない', async () => {
+  const registry = createCloudEventOperationRegistry()
+  const deferredDelete = createDeferred()
+  const state = createDemoData()
+  const eventId = state.events[0].id
+  let activeScope = 'scope-a'
+  let commitCalls = 0
+  const deletion = runExclusiveCloudEventDeletion({
+    registry,
+    scopeKey: 'scope-a',
+    workspaceId: 'workspace-a',
+    eventId,
+    repository: {
+      async deleteEvent() { return deferredDelete.promise },
+    },
+    isScopeCurrent: () => activeScope === 'scope-a',
+    getLatestState: () => state,
+    commit: () => { commitCalls += 1 },
+  })
+  activeScope = 'scope-b'
+  const scopeBLease = registry.tryStart('scope-b', eventId, 'save')
+  assert.ok(scopeBLease)
+  deferredDelete.resolve({ ok: true, value: { eventId } })
+
+  const completed = await deletion
+  assert.deepEqual(completed, {
+    started: true,
+    value: { ok: false, reason: 'CLOUD_DELETE_FAILED' },
+  })
+  assert.equal(commitCalls, 0)
+  assert.equal(registry.get('scope-a', eventId), undefined)
+  assert.equal(registry.get('scope-b', eventId), 'save')
+  registry.finish(scopeBLease)
 })
 
 test('Cloud load失敗はbase stateを変更せず別Event stateを返さない', async () => {
@@ -900,8 +1140,20 @@ test('Cloud Event migrationはWorkspace ownership・RLS・revision・移管防�
   assert.match(sql, /primary key \(workspace_id, event_id\)/i)
   assert.match(sql, /event_snapshot jsonb not null/i)
   assert.match(sql, /revision bigint not null default 1/i)
-  assert.match(sql, /event_snapshot ->> 'format' is not distinct from 'acappella-tt-cloud-event'/i)
-  assert.match(sql, /event_snapshot #>> '\{appState,events,0,id\}' is not distinct from event_id/i)
+  assert.match(sql, /\(event_snapshot -> 'format'\) is not distinct from\s+to_jsonb\('acappella-tt-cloud-event'::text\)/i)
+  assert.match(sql, /\(event_snapshot -> 'version'\) is not distinct from '1'::jsonb/i)
+  assert.match(sql, /\(event_snapshot #> '\{appState,version\}'\) is not distinct from '5'::jsonb/i)
+  assert.match(sql, /jsonb_typeof\(event_snapshot -> 'appState'\) = 'object'/i)
+  assert.match(sql, /case\s+when jsonb_typeof\(event_snapshot #> '\{appState,events\}'\) = 'array'/i)
+  assert.match(sql, /jsonb_array_length\(event_snapshot #> '\{appState,events\}'\) = 1/i)
+  assert.match(sql, /jsonb_typeof\(event_snapshot #> '\{appState,events,0\}'\) = 'object'/i)
+  assert.match(sql, /jsonb_typeof\(event_snapshot #> '\{appState,events,0,id\}'\) = 'string'/i)
+  assert.match(sql, /\(event_snapshot #> '\{appState,events,0,id\}'\) is not distinct from\s+to_jsonb\(event_id\)/i)
+  assert.match(sql, /jsonb_typeof\(event_snapshot #> '\{appState,events,0,name\}'\) = 'string'/i)
+  assert.match(sql, /\(event_snapshot #> '\{appState,events,0,name\}'\) is not distinct from\s+to_jsonb\(event_name\)/i)
+  assert.match(sql, /else false\s+end\s+\) is true/i)
+  assert.doesNotMatch(sql, /event_snapshot\s*->>\s*'version'/i)
+  assert.doesNotMatch(sql, /event_snapshot\s*#>>\s*'\{appState,version\}'/i)
   assert.match(sql, /alter table public\.cloud_events enable row level security/i)
   assert.match(sql, /for select to authenticated[\s\S]*workspace_members\.user_id = \(select auth\.uid\(\)\)/i)
   assert.match(sql, /for insert to authenticated[\s\S]*role in \('owner', 'editor'\)/i)

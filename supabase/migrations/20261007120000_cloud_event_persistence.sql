@@ -8,14 +8,26 @@ create table public.cloud_events (
   updated_at timestamptz not null default now(),
   primary key (workspace_id, event_id),
   constraint cloud_events_snapshot_shape_check check (
-    jsonb_typeof(event_snapshot) = 'object'
-    and event_snapshot ->> 'format' is not distinct from 'acappella-tt-cloud-event'
-    and event_snapshot ->> 'version' is not distinct from '1'
-    and event_snapshot #>> '{appState,version}' is not distinct from '5'
-    and jsonb_typeof(event_snapshot #> '{appState,events}') is not distinct from 'array'
-    and jsonb_array_length(event_snapshot #> '{appState,events}') = 1
-    and event_snapshot #>> '{appState,events,0,id}' is not distinct from event_id
-    and event_snapshot #>> '{appState,events,0,name}' is not distinct from event_name
+    (
+      jsonb_typeof(event_snapshot) = 'object'
+      and (event_snapshot -> 'format') is not distinct from
+        to_jsonb('acappella-tt-cloud-event'::text)
+      and (event_snapshot -> 'version') is not distinct from '1'::jsonb
+      and jsonb_typeof(event_snapshot -> 'appState') = 'object'
+      and (event_snapshot #> '{appState,version}') is not distinct from '5'::jsonb
+      and case
+        when jsonb_typeof(event_snapshot #> '{appState,events}') = 'array'
+          then jsonb_array_length(event_snapshot #> '{appState,events}') = 1
+            and jsonb_typeof(event_snapshot #> '{appState,events,0}') = 'object'
+            and jsonb_typeof(event_snapshot #> '{appState,events,0,id}') = 'string'
+            and (event_snapshot #> '{appState,events,0,id}') is not distinct from
+              to_jsonb(event_id)
+            and jsonb_typeof(event_snapshot #> '{appState,events,0,name}') = 'string'
+            and (event_snapshot #> '{appState,events,0,name}') is not distinct from
+              to_jsonb(event_name)
+        else false
+      end
+    ) is true
   )
 );
 

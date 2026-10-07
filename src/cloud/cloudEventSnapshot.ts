@@ -131,6 +131,10 @@ const hasExactReferencedMasters = (state: PersistedAppStateV5): boolean => {
 const hasUniqueIds = (items: readonly { id: string }[]): boolean =>
   new Set(items.map(item => item.id)).size === items.length
 
+const hasUniqueEventOwnedCollectionIds = (
+  state: Pick<PersistedDomainState, EventOwnedCollectionKey>,
+): boolean => eventOwnedCollectionKeys.every(key => hasUniqueIds(state[key]))
+
 const hasOnlyOneEvent = (state: PersistedAppStateV5): boolean => {
   if (state.events.length !== 1) return false
   const deletion = createEventDeletion(createDeletionInput(state, state.events[0].id))
@@ -187,6 +191,7 @@ export const createCloudEventSnapshot = (
     !isPersistedAppStateV5(appState) ||
     !hasUniqueIds(appState.members) ||
     !hasUniqueIds(appState.bands) ||
+    !hasUniqueEventOwnedCollectionIds(appState) ||
     !hasOnlyOneEvent(appState) ||
     !hasValidCloudEventIdentity(appState) ||
     !hasExactReferencedMasters(appState)
@@ -217,6 +222,7 @@ export const parseCloudEventSnapshot = (
   if (
     !hasUniqueIds(snapshot.appState.members) ||
     !hasUniqueIds(snapshot.appState.bands) ||
+    !hasUniqueEventOwnedCollectionIds(snapshot.appState) ||
     !hasOnlyOneEvent(snapshot.appState) ||
     !hasValidCloudEventIdentity(snapshot.appState) ||
     !hasExactReferencedMasters(snapshot.appState)

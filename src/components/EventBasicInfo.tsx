@@ -1,7 +1,14 @@
-import { useState, type FormEvent } from 'react'
+import {
+  forwardRef,
+  useImperativeHandle,
+  useMemo,
+  useState,
+  type FormEvent,
+} from 'react'
 import type { Event, EventDay, EventDayId, LocalDate } from '../domain/models'
 import {
   createEventBasicInfoDraft,
+  hasEventBasicInfoDraftChanges,
   validateEventBasicInfoDraft,
   type EventBasicInfoDraft,
   type EventBasicInfoUpdateResult,
@@ -28,9 +35,14 @@ interface EventBasicInfoProps {
   onSaveAndNext: () => void
 }
 
+export interface EventBasicInfoHandle {
+  hasUnsavedChanges: () => boolean
+  reportUnsavedChanges: () => void
+}
+
 export type EventDeletionActionResult = EventDeletionResult | {
   ok: false
-  reason: 'CLOUD_DELETE_FAILED' | 'CLOUD_SAVE_IN_PROGRESS'
+  reason: 'CLOUD_DELETE_FAILED' | 'CLOUD_OPERATION_IN_PROGRESS'
 }
 
 interface DateInput {
@@ -41,6 +53,8 @@ interface DateInput {
 
 const DELETE_BLOCKED_MESSAGE =
   'この開催日にはStage・出演バンドなどの設定があるため削除できません。関連する設定を先に削除してください。'
+const UNSAVED_CHANGES_MESSAGE =
+  'イベント基本情報に未保存の変更があります。先に基本情報を保存してください。'
 
 const createDateInputs = (eventDays: EventDay[]): DateInput[] => eventDays.map(
   (eventDay) => ({
@@ -50,7 +64,7 @@ const createDateInputs = (eventDays: EventDay[]): DateInput[] => eventDays.map(
   }),
 )
 
-export function EventBasicInfo({
+export const EventBasicInfo = forwardRef<EventBasicInfoHandle, EventBasicInfoProps>(function EventBasicInfo({
   event,
   eventDays,
   canDeleteEventDay,
@@ -59,7 +73,7 @@ export function EventBasicInfo({
   isCloudSavePending = false,
   onSave,
   onSaveAndNext,
-}: EventBasicInfoProps) {
+}: EventBasicInfoProps, ref) {
   const initialDraft = createEventBasicInfoDraft(event, eventDays)
   const initialEventDays = eventDays
     .filter((eventDay) => eventDay.eventId === event.id)
@@ -73,6 +87,7 @@ export function EventBasicInfo({
   const [nextDateInputKey, setNextDateInputKey] = useState(0)
   const [errors, setErrors] = useState<EventBasicInfoValidationErrors>({})
   const [saveMessage, setSaveMessage] = useState('')
+  const [savedDraft, setSavedDraft] = useState(initialDraft)
   const [pendingDeletion, setPendingDeletion] = useState<Pick<DateInput, 'key' | 'value'>>()
   const [pendingEventDeletion, setPendingEventDeletion] = useState<{
     eventId: Event['id']
@@ -80,6 +95,29 @@ export function EventBasicInfo({
   }>()
   const [eventDeletionError, setEventDeletionError] = useState('')
   const [isDeletingEvent, setIsDeletingEvent] = useState(false)
+  const currentDraft = useMemo<EventBasicInfoDraft>(() => ({
+    name: eventName,
+    eventDays: dateInputs.map((dateInput) => ({
+      eventDayId: dateInput.eventDayId,
+      date: dateInput.value,
+    })),
+    description,
+    notes,
+  }), [dateInputs, description, eventName, notes])
+
+  useImperativeHandle(ref, () => ({
+    hasUnsavedChanges: () => hasEventBasicInfoDraftChanges(
+      currentDraft,
+      savedDraft,
+    ),
+    reportUnsavedChanges: () => {
+      setErrors((previous) => ({
+        ...previous,
+        form: UNSAVED_CHANGES_MESSAGE,
+      }))
+      setSaveMessage('')
+    },
+  }), [currentDraft, savedDraft])
 
   const getEventDeletionError = (
     result: Exclude<EventDeletionActionResult, { ok: true }>,
@@ -90,8 +128,8 @@ export function EventBasicInfo({
     if (result.reason === 'CLOUD_DELETE_FAILED') {
       return 'Cloud Eventを削除できませんでした。通信状態とワークスペース権限を確認してください。'
     }
-    if (result.reason === 'CLOUD_SAVE_IN_PROGRESS') {
-      return 'Cloud Eventの保存中は削除できません。保存完了後にもう一度お試しください。'
+    if (result.reason === 'CLOUD_OPERATION_IN_PROGRESS') {
+      return 'Cloud Eventの保存または削除処理中です。完了後にもう一度お試しください。'
     }
     return 'イベント間の参照に矛盾があるため削除できません。データの整合性を確認してください。'
   }
@@ -195,15 +233,7 @@ export function EventBasicInfo({
   }
 
   const save = (moveToNext: boolean) => {
-    const draft: EventBasicInfoDraft = {
-      name: eventName,
-      eventDays: dateInputs.map((dateInput) => ({
-        eventDayId: dateInput.eventDayId,
-        date: dateInput.value,
-      })),
-      description,
-      notes,
-    }
+    const draft = currentDraft
     const validationErrors = validateEventBasicInfoDraft(draft)
     setErrors(validationErrors)
     setSaveMessage('')
@@ -220,6 +250,7 @@ export function EventBasicInfo({
     setDescription(result.event.description ?? '')
     setNotes(result.event.notes ?? '')
     setDateInputs(createDateInputs(result.eventDays))
+    setSavedDraft(createEventBasicInfoDraft(result.event, result.eventDays))
 
     if (moveToNext) {
       onSaveAndNext()
@@ -435,4 +466,4 @@ export function EventBasicInfo({
       })()}
     </section>
   )
-}
+})

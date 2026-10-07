@@ -1,9 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 
 import {
   canDeleteEventDay,
+  createEventBasicInfoDraft,
   createEventBasicInfoUpdate,
+  hasEventBasicInfoDraftChanges,
   validateEventBasicInfoDraft,
 } from '../src/domain/eventBasicInfo.ts'
 
@@ -41,6 +44,96 @@ const noReferences = {
   dutyAssignments: [],
   timetableOrderConstraints: [],
 }
+
+test('基本情報dirty判定はname・日付・説明・メモ・開催日順をsemanticに比較する', () => {
+  const saved = createEventBasicInfoDraft({
+    ...event,
+    description: '説明',
+    notes: 'メモ',
+  }, eventDays)
+  assert.equal(hasEventBasicInfoDraftChanges(structuredClone(saved), saved), false)
+
+  const changes = [
+    { ...structuredClone(saved), name: '変更後イベント' },
+    {
+      ...structuredClone(saved),
+      eventDays: saved.eventDays.map((day, index) =>
+        index === 0 ? { ...day, date: '2027-11-07' } : day),
+    },
+    { ...structuredClone(saved), description: '変更後説明' },
+    { ...structuredClone(saved), notes: '変更後メモ' },
+    { ...structuredClone(saved), eventDays: [...saved.eventDays].reverse() },
+    { ...structuredClone(saved), eventDays: saved.eventDays.slice(0, 1) },
+    { ...structuredClone(saved), eventDays: [...saved.eventDays, { date: '2027-11-09' }] },
+  ]
+  for (const changed of changes) {
+    assert.equal(hasEventBasicInfoDraftChanges(changed, saved), true)
+  }
+
+  const changedThenRestored = structuredClone(saved)
+  changedThenRestored.name = '一時変更'
+  assert.equal(hasEventBasicInfoDraftChanges(changedThenRestored, saved), true)
+  changedThenRestored.name = saved.name
+  assert.equal(hasEventBasicInfoDraftChanges(changedThenRestored, saved), false)
+})
+
+test('基本情報保存の失敗はdirtyを維持し、成功結果をbaselineにするとcleanになる', () => {
+  const saved = createEventBasicInfoDraft(event, eventDays)
+  const changed = {
+    ...saved,
+    name: '保存後イベント',
+    description: '保存後説明',
+    notes: '保存後メモ',
+  }
+  assert.equal(hasEventBasicInfoDraftChanges(changed, saved), true)
+
+  const failed = createEventBasicInfoUpdate({
+    event,
+    eventDays,
+    draft: { ...changed, name: '   ' },
+    newEventDayIds: [],
+    ...noReferences,
+  })
+  assert.equal(failed.ok, false)
+  assert.equal(hasEventBasicInfoDraftChanges(changed, saved), true)
+
+  const succeeded = createEventBasicInfoUpdate({
+    event,
+    eventDays,
+    draft: changed,
+    newEventDayIds: [],
+    ...noReferences,
+  })
+  assert.equal(succeeded.ok, true)
+  if (!succeeded.ok) return
+  const nextSaved = createEventBasicInfoDraft(succeeded.event, succeeded.eventDays)
+  assert.equal(hasEventBasicInfoDraftChanges(nextSaved, nextSaved), false)
+})
+
+test('AppのCloud保存と画面遷移はEventBasicInfoの同期dirty handleを通る', async () => {
+  const [appSource, componentSource] = await Promise.all([
+    readFile(new URL('../src/App.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/components/EventBasicInfo.tsx', import.meta.url), 'utf8'),
+  ])
+  const cloudSaveHandler = appSource.slice(
+    appSource.indexOf('const handleSaveSelectedEventToCloud'),
+    appSource.indexOf('const blockUnsavedOperationsNavigation'),
+  )
+  assert.match(cloudSaveHandler, /eventBasicInfoRef\.current\?\.hasUnsavedChanges\(\)/)
+  assert.ok(
+    cloudSaveHandler.indexOf('hasUnsavedChanges()') <
+      cloudSaveHandler.indexOf('persistEventToCloud(domainState, selectedEvent.id)'),
+  )
+  assert.match(appSource, /const blockUnsavedEditorNavigation[\s\S]*reportUnsavedChanges\(\)/)
+  assert.match(appSource, /handleEventEditorStepChange[\s\S]*blockUnsavedEditorNavigation\(step\)/)
+  assert.match(appSource, /handleBeforeWorkspaceChange[\s\S]*blockUnsavedEditorNavigation\('workspace-switch'\)/)
+  assert.match(componentSource, /useImperativeHandle\(ref/)
+  assert.match(componentSource, /hasEventBasicInfoDraftChanges\([\s\S]*currentDraft,[\s\S]*savedDraft/)
+  assert.ok(
+    componentSource.indexOf('if (validationErrors.name || validationErrors.dates) return') <
+      componentSource.indexOf('setSavedDraft('),
+  )
+})
 
 test('基本情報更新で既存EventDay IDを維持し、新規日と日付順のorderを反映する', () => {
   const result = createEventBasicInfoUpdate({

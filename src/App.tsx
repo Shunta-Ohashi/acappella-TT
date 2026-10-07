@@ -68,6 +68,7 @@ import {
 import { CreateEventDialog } from './components/CreateEventDialog'
 import {
   EventBasicInfo,
+  type EventBasicInfoHandle,
   type EventDeletionActionResult,
 } from './components/EventBasicInfo'
 import { CommonDataPage } from './components/CommonDataPage'
@@ -199,6 +200,7 @@ import {
   createEventDeletion,
   type EventDeletionCheck,
   type EventDeletionInput,
+  type EventDeletionResult,
 } from './domain/eventDeletion'
 import {
   createEventBandSettingsUpdate,
@@ -267,12 +269,11 @@ import {
 import { useOptionalCloudWorkspace } from './cloud/useCloudWorkspace.ts'
 import { createSupabaseCloudEventRepository } from './cloud/cloudEventRepository.ts'
 import {
-  canStartCloudEventDelete,
-  createCloudEventSaveRegistry,
-  deleteCloudEvent,
-  isCloudEventSaving,
+  createCloudEventOperationRegistry,
+  getCloudEventOperation,
   isCloudEventCacheWriteReady,
   loadCloudWorkspaceEvents,
+  runExclusiveCloudEventDeletion,
   runExclusiveCloudEventSave,
   saveCloudEventFromState,
   type CloudEventHydrationState,
@@ -381,9 +382,12 @@ function App() {
       : { scopeKey: STORAGE_KEY, kind: 'ready' },
   )
   const [cloudEventReloadToken, setCloudEventReloadToken] = useState(0)
-  const [cloudEventSaveRegistry] = useState(createCloudEventSaveRegistry)
-  const [cloudEventSavingKeys, setCloudEventSavingKeys] = useState<ReadonlySet<string>>(
-    () => new Set(),
+  const [cloudEventOperationRegistry] = useState(createCloudEventOperationRegistry)
+  const [cloudEventOperations, setCloudEventOperations] = useState<ReadonlyMap<
+    string,
+    'save' | 'delete'
+  >>(
+    () => new Map(),
   )
   const [cloudEventSaveFeedback, setCloudEventSaveFeedback] = useState<{
     eventId: EventId
@@ -496,6 +500,7 @@ function App() {
   } | null>(null)
   const paSettingsRef = useRef<PaSettingsHandle>(null)
   const dutySettingsRef = useRef<DutySettingsHandle>(null)
+  const eventBasicInfoRef = useRef<EventBasicInfoHandle>(null)
   const [generationPreview, setGenerationPreview] = useState<GenerationPreviewState | null>(null)
   const [operationsPanelRevision, setOperationsPanelRevision] = useState(0)
   const [generationOptions, setGenerationOptions] = useState<TimetableGenerationUiOptions>(
@@ -715,6 +720,10 @@ function App() {
     timetableLocks,
     timetableOrderConstraints,
   ])
+  const latestDomainStateRef = useRef(domainState)
+  useLayoutEffect(() => {
+    latestDomainStateRef.current = domainState
+  }, [domainState])
   useEffect(() => {
     if (!cloudEventScopeReady) return
     savePersistedState(domainState, undefined, activePersistenceStorageKey)
@@ -1134,11 +1143,15 @@ function App() {
   ): Promise<boolean> => {
     if (!cloudWorkspace || !cloudEventRepository) return true
     const scopeKey = requestedPersistenceStorageKey
+    if (
+      currentPersistenceScopeRef.current !== scopeKey ||
+      !latestDomainStateRef.current.events.some(event => event.id === eventId)
+    ) return false
     setCloudEventSaveFeedback(null)
     let execution
     try {
       execution = await runExclusiveCloudEventSave({
-        registry: cloudEventSaveRegistry,
+        registry: cloudEventOperationRegistry,
         scopeKey,
         eventId,
         operation: () => saveCloudEventFromState(
@@ -1147,7 +1160,7 @@ function App() {
           state,
           eventId,
         ),
-        onChange: setCloudEventSavingKeys,
+        onChange: setCloudEventOperations,
       })
     } catch {
       if (currentPersistenceScopeRef.current === scopeKey) {
@@ -1159,7 +1172,19 @@ function App() {
       }
       return false
     }
-    if (!execution.started) return false
+    if (!execution.started) {
+      if (currentPersistenceScopeRef.current === scopeKey) {
+        const operation = cloudEventOperationRegistry.get(scopeKey, eventId)
+        setCloudEventSaveFeedback({
+          eventId,
+          kind: 'error',
+          message: operation === 'delete'
+            ? 'Cloud Eventの削除中は保存できません。削除完了後に状態を確認してください。'
+            : 'Cloud Eventの保存処理がすでに進行中です。',
+        })
+      }
+      return false
+    }
     if (currentPersistenceScopeRef.current !== scopeKey) return false
 
     const result = execution.value
@@ -1228,31 +1253,27 @@ function App() {
     timetableOrderConstraints,
   })
 
-  const handleCheckEventDeletion = (
-    eventId: EventId,
-  ): EventDeletionCheck => checkEventDeletion(getEventDeletionInput(eventId))
-
-  const handleDeleteEvent = async (
-    eventId: EventId,
-  ): Promise<EventDeletionActionResult> => {
-    const result = createEventDeletion(getEventDeletionInput(eventId))
-    if (!result.ok) return result
-    const scopeKey = requestedPersistenceStorageKey
-    if (!canStartCloudEventDelete(cloudEventSaveRegistry, scopeKey, eventId)) {
-      return { ok: false, reason: 'CLOUD_SAVE_IN_PROGRESS' }
+  const commitEventDeletion = (
+    result: Extract<EventDeletionResult, { ok: true }>,
+  ) => {
+    const nextDomainState: PersistedDomainState = {
+      events: result.events,
+      eventDays: result.eventDays,
+      stages: result.stages,
+      sections: result.sections,
+      eventMembers: result.eventMembers,
+      eventMemberDays: result.eventMemberDays,
+      eventBands: result.eventBands,
+      scheduleItems: result.scheduleItems,
+      paAssignments: result.paAssignments,
+      dutyTypes: result.dutyTypes,
+      dutyAssignments: result.dutyAssignments,
+      timetableLocks: result.timetableLocks,
+      timetableOrderConstraints: result.timetableOrderConstraints,
+      members: latestDomainStateRef.current.members,
+      bands: latestDomainStateRef.current.bands,
     }
-
-    if (cloudWorkspace && cloudEventRepository) {
-      const deleted = await deleteCloudEvent(
-        cloudEventRepository,
-        cloudWorkspace.workspace.id,
-        eventId,
-      )
-      if (
-        !deleted.ok ||
-        currentPersistenceScopeRef.current !== scopeKey
-      ) return { ok: false, reason: 'CLOUD_DELETE_FAILED' }
-    }
+    latestDomainStateRef.current = nextDomainState
 
     setEvents(result.events)
     setEventDays(result.eventDays)
@@ -1267,6 +1288,45 @@ function App() {
     setDutyAssignments(result.dutyAssignments)
     setTimetableLocks(result.timetableLocks)
     setTimetableOrderConstraints(result.timetableOrderConstraints)
+  }
+
+  const handleCheckEventDeletion = (
+    eventId: EventId,
+  ): EventDeletionCheck => checkEventDeletion(getEventDeletionInput(eventId))
+
+  const handleDeleteEvent = async (
+    eventId: EventId,
+  ): Promise<EventDeletionActionResult> => {
+    const initialResult = createEventDeletion(getEventDeletionInput(eventId))
+    if (!initialResult.ok) return initialResult
+    const scopeKey = requestedPersistenceStorageKey
+
+    let result = initialResult
+    if (cloudWorkspace && cloudEventRepository) {
+      try {
+        const execution = await runExclusiveCloudEventDeletion({
+          registry: cloudEventOperationRegistry,
+          scopeKey,
+          workspaceId: cloudWorkspace.workspace.id,
+          eventId,
+          repository: cloudEventRepository,
+          isScopeCurrent: () => currentPersistenceScopeRef.current === scopeKey,
+          getLatestState: () => latestDomainStateRef.current,
+          commit: commitEventDeletion,
+          onChange: setCloudEventOperations,
+        })
+        if (!execution.started) {
+          return { ok: false, reason: 'CLOUD_OPERATION_IN_PROGRESS' }
+        }
+        if (!execution.value.ok) return execution.value
+        result = execution.value
+      } catch {
+        return { ok: false, reason: 'CLOUD_DELETE_FAILED' }
+      }
+    } else {
+      commitEventDeletion(result)
+    }
+
     setSelectedEventId('')
     setSelectedTimetableEventDayId(undefined)
     setSelectedTimetableStageId(undefined)
@@ -1528,6 +1588,14 @@ function App() {
 
   const handleSaveSelectedEventToCloud = () => {
     if (!selectedEvent || !cloudWorkspace) return
+    if (eventBasicInfoRef.current?.hasUnsavedChanges()) {
+      setCloudEventSaveFeedback({
+        eventId: selectedEvent.id,
+        kind: 'error',
+        message: 'イベント基本情報に未保存の変更があります。先に基本情報を保存してから「Cloudへ保存」を実行してください。',
+      })
+      return
+    }
     if (hasUnsavedOperations()) {
       setCloudEventSaveFeedback({
         eventId: selectedEvent.id,
@@ -1555,27 +1623,37 @@ function App() {
     return true
   }
 
+  const blockUnsavedEditorNavigation = (
+    target: EventEditorStepId | 'events' | 'sign-out' | 'workspace-switch',
+  ): boolean => {
+    if (eventBasicInfoRef.current?.hasUnsavedChanges()) {
+      eventBasicInfoRef.current.reportUnsavedChanges()
+      return true
+    }
+    return blockUnsavedOperationsNavigation(target)
+  }
+
   const handleEventEditorStepChange = (step: EventEditorStepId) => {
-    if (blockUnsavedOperationsNavigation(step)) return
+    if (blockUnsavedEditorNavigation(step)) return
     if (step !== 6) setTimetableHistoryFeedback(null)
     setActiveStep(step)
   }
 
   const handleLeaveEventEditor = () => {
-    if (blockUnsavedOperationsNavigation('events')) return
+    if (blockUnsavedEditorNavigation('events')) return
     setActiveView('events')
   }
 
   const handleAppNavigation = (section: AppSection) => {
-    if (activeView === 'event-editor' && blockUnsavedOperationsNavigation('events')) return
+    if (activeView === 'event-editor' && blockUnsavedEditorNavigation('events')) return
     setActiveView(section)
   }
 
   const handleBeforeSignOut = (): boolean =>
-    activeView !== 'event-editor' || !blockUnsavedOperationsNavigation('sign-out')
+    activeView !== 'event-editor' || !blockUnsavedEditorNavigation('sign-out')
 
   const handleBeforeWorkspaceChange = (): boolean =>
-    activeView !== 'event-editor' || !blockUnsavedOperationsNavigation('workspace-switch')
+    activeView !== 'event-editor' || !blockUnsavedEditorNavigation('workspace-switch')
 
   const clearTimetableHistoryEphemeralState = () => {
     setGenerationOptionsScope(null)
@@ -3116,8 +3194,8 @@ function App() {
           onStepChange={handleEventEditorStepChange}
           onBackToEvents={handleLeaveEventEditor}
           cloudSave={cloudWorkspace && selectedEvent ? {
-            isSaving: isCloudEventSaving(
-              cloudEventSavingKeys,
+            operation: getCloudEventOperation(
+              cloudEventOperations,
               requestedPersistenceStorageKey,
               selectedEvent.id,
             ),
@@ -3129,6 +3207,7 @@ function App() {
         >
           {activeStep === 1 && selectedEvent ? (
             <EventBasicInfo
+              ref={eventBasicInfoRef}
               key={selectedEvent.id}
               event={selectedEvent}
               eventDays={selectedEventDays}
@@ -3145,11 +3224,11 @@ function App() {
               )}
               checkEventDeletion={handleCheckEventDeletion}
               onDeleteEvent={handleDeleteEvent}
-              isCloudSavePending={isCloudEventSaving(
-                cloudEventSavingKeys,
+              isCloudSavePending={getCloudEventOperation(
+                cloudEventOperations,
                 requestedPersistenceStorageKey,
                 selectedEvent.id,
-              )}
+              ) !== undefined}
               onSave={handleSaveEventBasicInfo}
               onSaveAndNext={() => setActiveStep(2)}
             />
