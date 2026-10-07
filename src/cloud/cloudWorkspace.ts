@@ -23,6 +23,20 @@ export interface CloudWorkspaceAccess {
   membership: CloudWorkspaceMembership
 }
 
+const compareStableText = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0
+
+export const compareCloudWorkspaceAccess = (
+  left: CloudWorkspaceAccess,
+  right: CloudWorkspaceAccess,
+): number =>
+  compareStableText(left.workspace.name, right.workspace.name) ||
+  compareStableText(left.workspace.id, right.workspace.id)
+
+export const sortCloudWorkspaceAccesses = (
+  accesses: readonly CloudWorkspaceAccess[],
+): CloudWorkspaceAccess[] => [...accesses].sort(compareCloudWorkspaceAccess)
+
 export const isWorkspaceRole = (value: unknown): value is WorkspaceRole =>
   typeof value === 'string' && WORKSPACE_ROLES.includes(value as WorkspaceRole)
 

@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 import { createCloudAuthRedirectUrl } from '../src/cloud/cloudAuth.ts'
 import { resolveCloudConfig } from '../src/cloud/cloudConfig.ts'
-import { isWorkspaceRole } from '../src/cloud/cloudWorkspace.ts'
+import {
+  isWorkspaceRole,
+  sortCloudWorkspaceAccesses,
+} from '../src/cloud/cloudWorkspace.ts'
 
 test('Supabase envが両方未設定ならCloudをdisabledにする', () => {
   assert.deepEqual(resolveCloudConfig({}), { status: 'disabled' })
@@ -52,4 +56,44 @@ test('Workspace roleはowner・editor・viewerだけを許可する', () => {
   assert.equal(isWorkspaceRole('viewer'), true)
   assert.equal(isWorkspaceRole('admin'), false)
   assert.equal(isWorkspaceRole(undefined), false)
+})
+
+const workspaceAccess = (id, name) => ({
+  workspace: { id, name },
+  membership: { workspaceId: id, userId: 'user-a', role: 'editor' },
+})
+
+test('Workspace accessは入力順やruntime localeに依存せずname・id順で整列する', () => {
+  const firstInput = [
+    workspaceAccess('workspace-c', '乙'),
+    workspaceAccess('workspace-b', 'Alpha'),
+    workspaceAccess('workspace-a', 'Alpha'),
+  ]
+  const secondInput = [...firstInput].reverse()
+  const firstSnapshot = structuredClone(firstInput)
+
+  assert.deepEqual(
+    sortCloudWorkspaceAccesses(firstInput).map(candidate => candidate.workspace.id),
+    ['workspace-a', 'workspace-b', 'workspace-c'],
+  )
+  assert.deepEqual(
+    sortCloudWorkspaceAccesses(secondInput).map(candidate => candidate.workspace.id),
+    ['workspace-a', 'workspace-b', 'workspace-c'],
+  )
+  assert.deepEqual(firstInput, firstSnapshot)
+})
+
+test('Auth Workspace migrationはprofilesとworkspacesのupdated_atだけをUPDATE時に更新する', async () => {
+  const sql = await readFile(
+    new URL('../supabase/migrations/20261007_auth_workspace.sql', import.meta.url),
+    'utf8',
+  )
+
+  assert.match(sql, /new\.updated_at\s*=\s*now\(\)/)
+  assert.match(sql, /before update on public\.profiles/)
+  assert.match(sql, /before update on public\.workspaces/)
+  assert.doesNotMatch(sql, /before update on public\.workspace_members/)
+  assert.doesNotMatch(sql, /new\.created_at\s*=/)
+  assert.match(sql, /revoke all on function public\.set_current_updated_at\(\) from public/)
+  assert.doesNotMatch(sql, /security definer/i)
 })

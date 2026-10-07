@@ -16,6 +16,7 @@ import {
   parseCloudProfile,
   parseCloudWorkspace,
   parseCloudWorkspaceMembership,
+  sortCloudWorkspaceAccesses,
   type CloudProfile,
   type CloudWorkspaceAccess,
 } from './cloudWorkspace.ts'
@@ -105,12 +106,9 @@ const loadCloudAccess = async (
   return {
     kind: 'ready',
     profile,
-    accesses: accesses
-      .filter(access => access !== undefined)
-      .sort((first, second) =>
-        first.workspace.name.localeCompare(second.workspace.name) ||
-        first.workspace.id.localeCompare(second.workspace.id),
-      ),
+    accesses: sortCloudWorkspaceAccesses(
+      accesses.filter(access => access !== undefined),
+    ),
   }
 }
 
