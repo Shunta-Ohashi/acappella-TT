@@ -52,7 +52,7 @@ test('Issue messageの内部IDを既存表示名へ置き換える', () => {
   const message = formatScheduleIssueMessage({
     severity: 'ERROR',
     code: 'DUTY_MEMBER_PERFORMANCE_OVERLAP',
-    message: 'member-a / band-a / stage-a / section-a / duty-a',
+    message: 'メンバー member-a / EventBand band-a / Stage stage-a / Section section-a / DutyType duty-a',
     memberIds: ['member-a'],
     eventBandIds: ['band-a'],
     stageIds: ['stage-a'],
@@ -69,7 +69,28 @@ test('Issue messageの内部IDを既存表示名へ置き換える', () => {
       plannedStartTime: '10:00', plannedEndTime: '12:00' }],
   })
 
-  assert.equal(message, 'Alice / Alpha / Main / 第1部 / 撮影')
+  assert.equal(message,
+    'メンバー「Alice」 / バンド「Alpha」 / Stage「Main」 / Section「第1部」 / 仕事「撮影」')
+})
+
+test('置換済みの表示名に含まれる別entity IDを後続置換で壊さない', () => {
+  const message = formatScheduleIssueMessage({
+    severity: 'ERROR',
+    code: 'FIXED_PLACEMENT_STAGE_MISMATCH',
+    message: 'EventBand band-a は Stage stage-a に配置されています',
+    eventBandIds: ['band-a'],
+    stageIds: ['stage-a'],
+  }, {
+    members: [],
+    eventBands: [{ id: 'band-a', eventId: 'event-a', eventDayId: 'day-a',
+      name: 'Choir stage-a', memberIds: [], durationMinutes: 10 }],
+    stages: [{ id: 'stage-a', eventDayId: 'day-a', name: 'Main', order: 0,
+      plannedStartTime: '10:00', plannedEndTime: '18:00' }],
+    sections: [],
+  })
+
+  assert.equal(message,
+    'バンド「Choir stage-a」 は Stage「Main」 に配置されています')
 })
 
 test('Issue一覧を選択中Stageとの関連で絞り込む', () => {

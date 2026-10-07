@@ -48,6 +48,20 @@ export interface ScheduleIssueMessageContext {
   sections: Section[]
 }
 
+const escapeRegExp = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const replaceEntityTokens = (
+  message: string,
+  replacements: ReadonlyArray<readonly [token: string, replacement: string]>,
+): string => {
+  const replacementByToken = new Map(replacements)
+  const tokens = [...replacementByToken.keys()].sort((left, right) => right.length - left.length)
+  if (tokens.length === 0) return message
+  const tokenPattern = new RegExp(tokens.map(escapeRegExp).join('|'), 'g')
+  return message.replace(tokenPattern, token => replacementByToken.get(token) ?? token)
+}
+
 export const formatScheduleIssueMessage = (
   issue: ScheduleIssue,
   {
@@ -63,34 +77,28 @@ export const formatScheduleIssueMessage = (
   const dutyTypeNameById = new Map(dutyTypes.map(type => [type.id, type.name]))
   const stageNameById = new Map(stages.map(stage => [stage.id, stage.name]))
   const sectionNameById = new Map(sections.map(section => [section.id, section.name]))
-  let message = issue.message
-
+  const replacements: Array<readonly [string, string]> = []
   issue.memberIds?.forEach((memberId) => {
     const name = memberNameById.get(memberId) ?? '不明なメンバー'
-    message = message.replaceAll(`メンバー ${memberId}`, `メンバー「${name}」`)
-      .replaceAll(memberId, name)
+    replacements.push([`メンバー ${memberId}`, `メンバー「${name}」`])
   })
   issue.eventBandIds?.forEach((eventBandId) => {
     const name = eventBandNameById.get(eventBandId) ?? '不明なバンド'
-    message = message.replaceAll(`EventBand ${eventBandId}`, `バンド「${name}」`)
-      .replaceAll(eventBandId, name)
+    replacements.push([`EventBand ${eventBandId}`, `バンド「${name}」`])
   })
   issue.stageIds?.forEach((stageId) => {
     const name = stageNameById.get(stageId) ?? '不明なStage'
-    message = message.replaceAll(`Stage ${stageId}`, `Stage「${name}」`)
-      .replaceAll(stageId, name)
+    replacements.push([`Stage ${stageId}`, `Stage「${name}」`])
   })
   issue.dutyTypeIds?.forEach((dutyTypeId) => {
     const name = dutyTypeNameById.get(dutyTypeId) ?? '不明な仕事'
-    message = message.replaceAll(`DutyType ${dutyTypeId}`, `仕事「${name}」`)
-      .replaceAll(dutyTypeId, name)
+    replacements.push([`DutyType ${dutyTypeId}`, `仕事「${name}」`])
   })
   issue.sectionIds?.forEach((sectionId) => {
     const name = sectionNameById.get(sectionId) ?? '不明なSection'
-    message = message.replaceAll(`Section ${sectionId}`, `Section「${name}」`)
-      .replaceAll(sectionId, name)
+    replacements.push([`Section ${sectionId}`, `Section「${name}」`])
   })
-  return message
+  return replaceEntityTokens(issue.message, replacements)
 }
 
 export const getHighestSeverityByScheduleItem = (

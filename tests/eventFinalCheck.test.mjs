@@ -7,6 +7,7 @@ import {
   getFinalCheckRepairTargetForIssue,
 } from '../src/domain/eventFinalCheck.ts'
 import {
+  getEventFinalCheckStatusMessage,
   groupEventFinalCheckFindingsForDisplay,
   resolveEventFinalCheckRepairNavigation,
 } from '../src/ui/eventFinalCheckPresentation.ts'
@@ -180,6 +181,45 @@ test('selected EventのEventBand・PA・Dutyがmissing/foreign EventDayを参照
       ['ERROR', expectedStep], `${kind}:${dayId}`)
     assert.ok(report.findings.length > 0, `${kind}:${dayId}`)
   }
+})
+
+test('invalid EventDayのEventBandはstructural findingだけをcanonicalにする', () => {
+  for (const { dayId, expectedCode } of [
+    { dayId: 'missing-day', expectedCode: 'EVENT_BAND_EVENT_DAY_NOT_FOUND' },
+    { dayId: 'foreign-day', expectedCode: 'EVENT_BAND_EVENT_DAY_MISMATCH' },
+  ]) {
+    const input = makeInput()
+    input.eventDays.push({ id: 'foreign-day', eventId: 'event-2',
+      date: '2027-11-02', label: '別イベント', order: 0 })
+    input.eventBands.push({
+      id: `band-${dayId}`, eventId: 'event-1', eventDayId: dayId,
+      name: 'Alpha', memberIds: [], durationMinutes: 10,
+    })
+    input.scheduleItems.push({
+      id: `performance-${dayId}`, stageId: 'stage-1', order: 0,
+      kind: 'performance', eventBandId: `band-${dayId}`,
+    })
+
+    const report = createEventFinalCheckReport(input)
+    assert.equal(report.findings.filter(finding => finding.code === expectedCode).length, 1,
+      `${dayId}: structural finding`)
+    assert.equal(report.findings.some(finding =>
+      finding.code === 'EVENT_BAND_DAY_MISMATCH'), false,
+    `${dayId}: secondary mismatch`)
+  }
+})
+
+test('Final Check status本文はfindingのseverity構成を区別する', () => {
+  assert.equal(getEventFinalCheckStatusMessage({ ERROR: 0, WARNING: 0, INFO: 0 }),
+    '問題は見つかりませんでした。')
+  assert.equal(getEventFinalCheckStatusMessage({ ERROR: 1, WARNING: 1, INFO: 1 }),
+    'ERRORの項目を確認し、各Stepで修正してください。')
+  assert.equal(getEventFinalCheckStatusMessage({ ERROR: 0, WARNING: 1, INFO: 0 }),
+    '致命的な問題はありません。警告を確認してください。')
+  assert.equal(getEventFinalCheckStatusMessage({ ERROR: 0, WARNING: 0, INFO: 1 }),
+    '致命的な問題はありません。情報を確認してください。')
+  assert.equal(getEventFinalCheckStatusMessage({ ERROR: 0, WARNING: 1, INFO: 1 }),
+    '致命的な問題はありません。警告・情報を確認してください。')
 })
 
 test('PREFERENCE_NOT_METはMember由来をStep 3、Band由来をStep 5へ案内する', () => {

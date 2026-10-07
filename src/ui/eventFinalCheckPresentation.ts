@@ -39,6 +39,26 @@ export interface EventFinalCheckDisplayGroups {
   ungrouped: EventFinalCheckFinding[]
 }
 
+export const getEventFinalCheckStatusMessage = (counts: {
+  ERROR: number
+  WARNING: number
+  INFO: number
+}): string => {
+  if (counts.ERROR > 0) {
+    return 'ERRORの項目を確認し、各Stepで修正してください。'
+  }
+  if (counts.WARNING > 0 && counts.INFO > 0) {
+    return '致命的な問題はありません。警告・情報を確認してください。'
+  }
+  if (counts.WARNING > 0) {
+    return '致命的な問題はありません。警告を確認してください。'
+  }
+  if (counts.INFO > 0) {
+    return '致命的な問題はありません。情報を確認してください。'
+  }
+  return '問題は見つかりませんでした。'
+}
+
 export const groupEventFinalCheckFindingsForDisplay = ({
   findings,
   eventDays,

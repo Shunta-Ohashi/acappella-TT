@@ -8,6 +8,7 @@ import type { EventDay, Stage } from '../domain/models'
 import { ISSUE_SEVERITIES } from '../ui/issuePresentation'
 import { eventEditorSteps, type EventEditorStepId } from '../ui/eventEditorSteps'
 import {
+  getEventFinalCheckStatusMessage,
   groupEventFinalCheckFindingsForDisplay,
   type EventFinalCheckRepairTarget,
 } from '../ui/eventFinalCheckPresentation'
@@ -84,6 +85,7 @@ export function EventFinalCheckPage({
     }), [eventDays, stages, visibleFindings])
   const totalCount = report.findings.length
   const hasErrors = report.counts.ERROR > 0
+  const statusMessage = getEventFinalCheckStatusMessage(report.counts)
 
   return (
     <div className="event-final-check">
@@ -96,11 +98,7 @@ export function EventFinalCheckPage({
             {hasErrors ? '公開前に修正が必要な項目があります' : totalCount === 0
               ? '問題は見つかりませんでした' : '公開・出力へ進めます'}
           </h3>
-          <p>{hasErrors
-            ? 'ERRORの項目を確認し、各Stepで修正してください。'
-            : report.counts.WARNING > 0
-              ? '致命的な問題はありません。警告を確認してください。'
-              : '致命的な問題はありません。'}</p>
+          <p>{statusMessage}</p>
         </div>
         <div className="event-final-check__summary" aria-label="問題件数">
           {ISSUE_SEVERITIES.map(severity => (

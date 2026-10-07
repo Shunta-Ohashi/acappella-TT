@@ -190,6 +190,7 @@ export const createEventFinalCheckReport = (
     (dayOrder.get(stage.eventDayId) ?? Number.MAX_SAFE_INTEGER) * 1_000_000 + stage.order,
   ]))
   const findings = new Map<string, EventFinalCheckFinding>()
+  const invalidEventDayBandIds = new Set<string>()
   const addFinding = (finding: EventFinalCheckFinding) => {
     if (!findings.has(finding.key)) findings.set(finding.key, finding)
   }
@@ -238,6 +239,7 @@ export const createEventFinalCheckReport = (
   for (const band of eventBands) {
     const invalidReference = getInvalidEventDayReference(band.eventDayId)
     if (!invalidReference) continue
+    invalidEventDayBandIds.add(band.id)
     addFinding({
       key: `structure|event-band-${invalidReference}-day|${band.id}`,
       severity: 'ERROR', category: 'structure',
@@ -359,7 +361,8 @@ export const createEventFinalCheckReport = (
           assignment.eventDayId === eventDay.id,
         ),
         calculatedItems: timelines.calculatedItems,
-      })
+      }).filter(issue => issue.code !== 'EVENT_BAND_DAY_MISMATCH' ||
+        !issue.eventBandIds?.some(eventBandId => invalidEventDayBandIds.has(eventBandId)))
       for (const issue of dayIssues) {
         const scope = resolveScope(issue)
         const details = [
