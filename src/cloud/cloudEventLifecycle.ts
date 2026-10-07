@@ -127,6 +127,24 @@ export interface LoadedCloudWorkspaceEvents {
   records: CloudEventRecord[]
 }
 
+export interface DeletedCloudEvent {
+  deleted: boolean
+}
+
+export const deleteCloudEvent = async (
+  repository: CloudEventRepository,
+  workspaceId: string,
+  eventId: EventId,
+): Promise<CloudEventLifecycleResult<DeletedCloudEvent>> => {
+  const deleted = await repository.deleteEvent(workspaceId, eventId)
+  if (!deleted.ok) {
+    return deleted.error.code === 'NOT_FOUND'
+      ? { ok: true, value: { deleted: false } }
+      : deleted
+  }
+  return { ok: true, value: { deleted: true } }
+}
+
 export const loadCloudWorkspaceEvents = async (
   repository: CloudEventRepository,
   workspaceId: string,

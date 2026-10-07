@@ -118,10 +118,14 @@ const collectReferencedMasterIds = (
   return { memberIds, bandIds }
 }
 
-const hasOnlyReferencedMasters = (state: PersistedAppStateV5): boolean => {
+const hasExactReferencedMasters = (state: PersistedAppStateV5): boolean => {
   const referenced = collectReferencedMasterIds(state, state.bands)
+  const includedMemberIds = new Set(state.members.map(member => member.id))
+  const includedBandIds = new Set(state.bands.map(band => band.id))
   return state.members.every(member => referenced.memberIds.has(member.id)) &&
-    state.bands.every(band => referenced.bandIds.has(band.id))
+    state.bands.every(band => referenced.bandIds.has(band.id)) &&
+    [...referenced.memberIds].every(memberId => includedMemberIds.has(memberId)) &&
+    [...referenced.bandIds].every(bandId => includedBandIds.has(bandId))
 }
 
 const hasUniqueIds = (items: readonly { id: string }[]): boolean =>
@@ -132,6 +136,13 @@ const hasOnlyOneEvent = (state: PersistedAppStateV5): boolean => {
   const deletion = createEventDeletion(createDeletionInput(state, state.events[0].id))
   if (!deletion.ok) return false
   return eventOwnedCollectionKeys.every(key => deletion[key].length === 0)
+}
+
+const hasValidCloudEventIdentity = (state: PersistedAppStateV5): boolean => {
+  const event = state.events[0]
+  return event !== undefined &&
+    event.id.trim().length > 0 &&
+    event.name.trim().length > 0
 }
 
 export const createCloudEventSnapshot = (
@@ -176,7 +187,9 @@ export const createCloudEventSnapshot = (
     !isPersistedAppStateV5(appState) ||
     !hasUniqueIds(appState.members) ||
     !hasUniqueIds(appState.bands) ||
-    !hasOnlyOneEvent(appState)
+    !hasOnlyOneEvent(appState) ||
+    !hasValidCloudEventIdentity(appState) ||
+    !hasExactReferencedMasters(appState)
   ) {
     return { ok: false, reason: 'INVALID_SNAPSHOT' }
   }
@@ -205,7 +218,8 @@ export const parseCloudEventSnapshot = (
     !hasUniqueIds(snapshot.appState.members) ||
     !hasUniqueIds(snapshot.appState.bands) ||
     !hasOnlyOneEvent(snapshot.appState) ||
-    !hasOnlyReferencedMasters(snapshot.appState)
+    !hasValidCloudEventIdentity(snapshot.appState) ||
+    !hasExactReferencedMasters(snapshot.appState)
   ) {
     return undefined
   }

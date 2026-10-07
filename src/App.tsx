@@ -269,6 +269,7 @@ import { createSupabaseCloudEventRepository } from './cloud/cloudEventRepository
 import {
   canStartCloudEventDelete,
   createCloudEventSaveRegistry,
+  deleteCloudEvent,
   isCloudEventSaving,
   isCloudEventCacheWriteReady,
   loadCloudWorkspaceEvents,
@@ -380,9 +381,6 @@ function App() {
       : { scopeKey: STORAGE_KEY, kind: 'ready' },
   )
   const [cloudEventReloadToken, setCloudEventReloadToken] = useState(0)
-  const [cloudPersistedEventIds, setCloudPersistedEventIds] = useState<Set<EventId>>(
-    () => new Set(),
-  )
   const [cloudEventSaveRegistry] = useState(createCloudEventSaveRegistry)
   const [cloudEventSavingKeys, setCloudEventSavingKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -831,7 +829,6 @@ function App() {
     if (!cloudEventRepository) return
     if (isCancelled() || currentPersistenceScopeRef.current !== scopeKey) return
     setCloudEventLoadState({ scopeKey, kind: 'loading' })
-    setCloudPersistedEventIds(new Set())
     const result = await loadCloudWorkspaceEvents(
       cloudEventRepository,
       workspaceId,
@@ -842,7 +839,6 @@ function App() {
     if (!result.ok) {
       const cleared = createCloudWorkspaceState(domainState, [])
       if (cleared.ok) applyPersistedSnapshot(cleared.state)
-      setCloudPersistedEventIds(new Set())
       setCloudEventLoadState({
         scopeKey,
         kind: 'error',
@@ -855,9 +851,6 @@ function App() {
     // Event collections replace it after every startup/workspace hydration, so
     // edits not explicitly saved to Cloud are intentionally discarded here.
     applyPersistedSnapshot(result.value.state)
-    setCloudPersistedEventIds(new Set(
-      result.value.records.map(record => record.eventId),
-    ))
     setCloudEventLoadState({ scopeKey, kind: 'ready' })
   })
 
@@ -1178,7 +1171,6 @@ function App() {
       })
       return false
     }
-    setCloudPersistedEventIds(previous => new Set(previous).add(eventId))
     setCloudEventSaveFeedback({
       eventId,
       kind: 'success',
@@ -1217,13 +1209,6 @@ function App() {
     setActiveStep(1)
     setActiveView('event-editor')
     setIsCreateEventDialogOpen(false)
-    if (cloudWorkspace) {
-      void persistEventToCloud({
-        ...domainState,
-        events: [...events, created.event],
-        eventDays: [...eventDays, ...created.eventDays],
-      }, created.event.id)
-    }
   }
 
   const getEventDeletionInput = (eventId: EventId): EventDeletionInput => ({
@@ -1257,12 +1242,9 @@ function App() {
       return { ok: false, reason: 'CLOUD_SAVE_IN_PROGRESS' }
     }
 
-    if (
-      cloudWorkspace &&
-      cloudEventRepository &&
-      cloudPersistedEventIds.has(eventId)
-    ) {
-      const deleted = await cloudEventRepository.deleteEvent(
+    if (cloudWorkspace && cloudEventRepository) {
+      const deleted = await deleteCloudEvent(
+        cloudEventRepository,
         cloudWorkspace.workspace.id,
         eventId,
       )
@@ -1270,11 +1252,6 @@ function App() {
         !deleted.ok ||
         currentPersistenceScopeRef.current !== scopeKey
       ) return { ok: false, reason: 'CLOUD_DELETE_FAILED' }
-      setCloudPersistedEventIds(previous => {
-        const next = new Set(previous)
-        next.delete(eventId)
-        return next
-      })
     }
 
     setEvents(result.events)

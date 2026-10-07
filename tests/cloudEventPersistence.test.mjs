@@ -9,6 +9,7 @@ import {
 import {
   canStartCloudEventDelete,
   createCloudEventSaveRegistry,
+  deleteCloudEvent,
   isCloudEventCacheWriteReady,
   isCloudEventSaving,
   loadCloudWorkspaceEvents,
@@ -45,6 +46,9 @@ class MemoryCloudEventGateway {
   rows = new Map()
   allowedWorkspaces = new Set()
   clock = 0
+  accessCalls = 0
+  saveCalls = 0
+  deleteCalls = 0
 
   constructor(allowedWorkspaces) {
     this.allowedWorkspaces = new Set(allowedWorkspaces)
@@ -66,6 +70,7 @@ class MemoryCloudEventGateway {
   }
 
   async getWorkspaceRole(workspaceId) {
+    this.accessCalls += 1
     return this.allowedWorkspaces.has(workspaceId)
       ? { data: { role: 'editor' }, error: null }
       : { data: null, error: null }
@@ -92,6 +97,7 @@ class MemoryCloudEventGateway {
   }
 
   async saveRow({ workspaceId, eventId, eventName, snapshot }) {
+    this.saveCalls += 1
     const denied = this.deny(workspaceId)
     if (denied) return denied
     const key = this.key(workspaceId, eventId)
@@ -111,6 +117,7 @@ class MemoryCloudEventGateway {
   }
 
   async deleteRow(workspaceId, eventId) {
+    this.deleteCalls += 1
     const denied = this.deny(workspaceId)
     if (denied) return denied
     const key = this.key(workspaceId, eventId)
@@ -198,6 +205,80 @@ test('unsupportedまたはmalformed Cloud Event snapshotを拒否する', () => 
   assert.ok(withDuplicateMember.appState.members[0])
   withDuplicateMember.appState.members.push(withDuplicateMember.appState.members[0])
   assert.equal(parseCloudEventSnapshot(withDuplicateMember), undefined)
+})
+
+test('Cloud Event snapshotは直接参照するMemberとBandを欠落なく要求する', () => {
+  const state = createDemoData()
+  const snapshot = createSnapshot(state, state.events[0].id)
+  const eventMember = snapshot.appState.eventMembers[0]
+  const eventBand = snapshot.appState.eventBands.find(candidate => candidate.bandId)
+  assert.ok(eventMember)
+  assert.ok(eventBand?.bandId)
+  assert.ok(snapshot.appState.members.some(member => member.id === eventMember.memberId))
+  assert.ok(snapshot.appState.bands.some(band => band.id === eventBand.bandId))
+  assert.ok(parseCloudEventSnapshot(snapshot))
+
+  const missingMember = structuredClone(snapshot)
+  missingMember.appState.members = missingMember.appState.members.filter(
+    member => member.id !== eventMember.memberId,
+  )
+  assert.equal(parseCloudEventSnapshot(missingMember), undefined)
+
+  const missingBand = structuredClone(snapshot)
+  missingBand.appState.bands = missingBand.appState.bands.filter(
+    band => band.id !== eventBand.bandId,
+  )
+  assert.equal(parseCloudEventSnapshot(missingBand), undefined)
+})
+
+test('snapshot builderはBandからtransitiveに参照するMemberまでclosureへ含める', () => {
+  const state = structuredClone(createDemoData())
+  const eventId = state.events[0].id
+  const eventBand = state.eventBands.find(candidate =>
+    candidate.eventId === eventId && candidate.bandId)
+  const band = state.bands.find(candidate => candidate.id === eventBand?.bandId)
+  assert.ok(band)
+  const transitiveMember = {
+    id: 'member-cloud-transitive',
+    realName: 'Cloud Closure Member',
+    active: true,
+  }
+  state.members.push(transitiveMember)
+  band.defaultMemberIds.push(transitiveMember.id)
+
+  const created = createCloudEventSnapshot(state, eventId)
+  assert.equal(created.ok, true)
+  if (!created.ok) return
+  assert.ok(created.snapshot.appState.members.some(
+    member => member.id === transitiveMember.id,
+  ))
+  assert.ok(parseCloudEventSnapshot(created.snapshot))
+
+  const missingTransitiveMember = structuredClone(created.snapshot)
+  missingTransitiveMember.appState.members = missingTransitiveMember.appState.members.filter(
+    member => member.id !== transitiveMember.id,
+  )
+  assert.equal(parseCloudEventSnapshot(missingTransitiveMember), undefined)
+})
+
+test('snapshotは不要なMember/Bandも従来どおりrejectする', () => {
+  const snapshot = createSnapshot(createDemoData(), 'event-demo-main')
+  const withExtraMember = structuredClone(snapshot)
+  withExtraMember.appState.members.push({
+    id: 'unused-member',
+    realName: 'Unused Member',
+    active: true,
+  })
+  assert.equal(parseCloudEventSnapshot(withExtraMember), undefined)
+
+  const withExtraBand = structuredClone(snapshot)
+  withExtraBand.appState.bands.push({
+    id: 'unused-band',
+    name: 'Unused Band',
+    defaultMemberIds: [],
+    active: true,
+  })
+  assert.equal(parseCloudEventSnapshot(withExtraBand), undefined)
 })
 
 test('複数Event snapshotからWorkspace stateを構築しlocal-only masterを維持する', () => {
@@ -348,6 +429,85 @@ test('repositoryでWorkspace Eventを作成・一覧・取得・更新・削除�
   assert.equal((await repository.loadEvent('workspace-a', eventId)).ok, false)
 })
 
+test('server commit後のsave応答失敗でもCloud deleteを必ず試行してrowを削除する', async () => {
+  const gateway = new MemoryCloudEventGateway(['workspace-a'])
+  const committedSaveRow = gateway.saveRow.bind(gateway)
+  gateway.saveRow = async input => {
+    await committedSaveRow(input)
+    return { data: null, error: { code: 'NETWORK' } }
+  }
+  const repository = createCloudEventRepository(gateway)
+  const state = createDemoData()
+  const eventId = state.events[0].id
+  const saved = await saveCloudEventFromState(
+    repository,
+    'workspace-a',
+    state,
+    eventId,
+  )
+  assert.equal(saved.ok, false)
+  assert.ok(gateway.rows.has(`workspace-a:${eventId}`))
+
+  const deleted = await deleteCloudEvent(repository, 'workspace-a', eventId)
+  assert.deepEqual(deleted, { ok: true, value: { deleted: true } })
+  assert.equal(gateway.deleteCalls, 1)
+  assert.equal(gateway.rows.has(`workspace-a:${eventId}`), false)
+})
+
+test('Cloud deleteはrow不存在だけをidempotent successとして扱う', async () => {
+  const gateway = new MemoryCloudEventGateway(['workspace-a'])
+  const repository = createCloudEventRepository(gateway)
+  const missing = await deleteCloudEvent(repository, 'workspace-a', 'missing-event')
+  assert.deepEqual(missing, { ok: true, value: { deleted: false } })
+  assert.equal(gateway.deleteCalls, 1)
+
+  gateway.deleteRow = async () => ({
+    data: null,
+    error: { code: 'NETWORK' },
+  })
+  const failed = await deleteCloudEvent(repository, 'workspace-a', 'event-a')
+  assert.equal(failed.ok, false)
+  assert.equal(!failed.ok && failed.error.code, 'SUPABASE_ERROR')
+
+  gateway.getWorkspaceRole = async () => ({
+    data: { role: 'viewer' },
+    error: null,
+  })
+  const denied = await deleteCloudEvent(repository, 'workspace-a', 'event-a')
+  assert.equal(denied.ok, false)
+  assert.equal(!denied.ok && denied.error.code, 'ACCESS_DENIED')
+})
+
+test('blank Event ID/nameはCloud DB access前にINVALID_SNAPSHOTとなる', async () => {
+  const gateway = new MemoryCloudEventGateway(['workspace-a'])
+  const repository = createCloudEventRepository(gateway)
+  const validSnapshot = createSnapshot(createDemoData(), 'event-demo-main')
+  const invalidSnapshots = [
+    ['id', ''],
+    ['id', '   '],
+    ['name', ''],
+    ['name', '   '],
+  ].map(([field, value]) => {
+    const snapshot = structuredClone(validSnapshot)
+    snapshot.appState.events[0][field] = value
+    return snapshot
+  })
+
+  for (const snapshot of invalidSnapshots) {
+    assert.equal(parseCloudEventSnapshot(snapshot), undefined)
+    const result = await repository.saveEvent('workspace-a', snapshot)
+    assert.equal(result.ok, false)
+    assert.equal(!result.ok && result.error.code, 'INVALID_SNAPSHOT')
+  }
+  assert.equal(gateway.accessCalls, 0)
+  assert.equal(gateway.saveCalls, 0)
+
+  const valid = await repository.saveEvent('workspace-a', validSnapshot)
+  assert.equal(valid.ok, true)
+  assert.equal(gateway.accessCalls, 1)
+  assert.equal(gateway.saveCalls, 1)
+})
+
 test('repositoryはWorkspaceを明示的にscopeし越境accessを拒否する', async () => {
   const gateway = new MemoryCloudEventGateway(['workspace-a'])
   const repositoryA = createCloudEventRepository(gateway)
@@ -473,6 +633,45 @@ test('Cloud hydrateは同scopeの未保存local Event cacheよりCloud snapshot�
   assert.equal(
     loaded.ok && loaded.value.state.events.find(candidate => candidate.id === event.id)?.name,
     event.name,
+  )
+})
+
+test('Cloud未保存の新規Eventはreload相当のhydrateで正式Eventとして復元しない', async () => {
+  const gateway = new MemoryCloudEventGateway(['workspace-a'])
+  const repository = createCloudEventRepository(gateway)
+  const localCacheWithUnsavedEvents = createDemoData()
+  const loaded = await loadCloudWorkspaceEvents(
+    repository,
+    'workspace-a',
+    localCacheWithUnsavedEvents,
+  )
+
+  assert.equal(loaded.ok, true)
+  assert.deepEqual(loaded.ok && loaded.value.state.events, [])
+})
+
+test('Event作成はCloudへ自動保存せず明示保存操作だけがsaveを開始する', async () => {
+  const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  const createHandler = appSource.slice(
+    appSource.indexOf('const handleCreateEvent'),
+    appSource.indexOf('const getEventDeletionInput'),
+  )
+  const explicitSaveHandler = appSource.slice(
+    appSource.indexOf('const handleSaveSelectedEventToCloud'),
+    appSource.indexOf('const blockUnsavedOperationsNavigation'),
+  )
+  const deleteHandler = appSource.slice(
+    appSource.indexOf('const handleDeleteEvent'),
+    appSource.indexOf('const handleSaveEventBasicInfo'),
+  )
+
+  assert.doesNotMatch(createHandler, /persistEventToCloud|saveCloudEventFromState/)
+  assert.match(explicitSaveHandler, /persistEventToCloud\(domainState, selectedEvent\.id\)/)
+  assert.match(deleteHandler, /deleteCloudEvent\(/)
+  assert.doesNotMatch(deleteHandler, /cloudPersistedEventIds\.has/)
+  assert.match(
+    deleteHandler,
+    /const deleted = await deleteCloudEvent\([\s\S]*!deleted\.ok[\s\S]*return \{ ok: false, reason: 'CLOUD_DELETE_FAILED' \}[\s\S]*setEvents\(result\.events\)/,
   )
 })
 
@@ -696,6 +895,8 @@ test('Cloud Event migrationはWorkspace ownership・RLS・revision・移管防�
 
   assert.match(sql, /create table public\.cloud_events/i)
   assert.match(sql, /workspace_id uuid not null references public\.workspaces\(id\)/i)
+  assert.match(sql, /event_id text not null check \(btrim\(event_id\) <> ''\)/i)
+  assert.match(sql, /event_name text not null check \(btrim\(event_name\) <> ''\)/i)
   assert.match(sql, /primary key \(workspace_id, event_id\)/i)
   assert.match(sql, /event_snapshot jsonb not null/i)
   assert.match(sql, /revision bigint not null default 1/i)
