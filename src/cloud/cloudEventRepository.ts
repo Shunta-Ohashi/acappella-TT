@@ -23,10 +23,19 @@ export interface CloudEventRecord extends CloudEventSummary {
   snapshot: CloudEventSnapshotV1
 }
 
+export type CloudEventDeletionStatus = 'deleted' | 'already_absent'
+
+export interface CloudEventDeletionConfirmation {
+  status: CloudEventDeletionStatus
+  workspaceId: string
+  eventId: EventId
+}
+
 export type CloudEventRepositoryErrorCode =
   | 'NOT_FOUND'
   | 'ACCESS_DENIED'
   | 'INVALID_SNAPSHOT'
+  | 'INVALID_RESPONSE'
   | 'SHARED_MASTER_CONFLICT'
   | 'SUPABASE_ERROR'
   | 'INVALID_ARGUMENT'
@@ -65,7 +74,7 @@ export interface CloudEventDatabaseGateway {
     eventName: string
     snapshot: CloudEventSnapshotV1
   }) => Promise<CloudEventDatabaseResult<unknown>>
-  deleteRow: (
+  deleteAuthorizedEvent: (
     workspaceId: string,
     eventId: EventId,
   ) => Promise<CloudEventDatabaseResult<unknown>>
@@ -86,7 +95,7 @@ export interface CloudEventRepository {
   deleteEvent: (
     workspaceId: string,
     eventId: EventId,
-  ) => Promise<CloudEventRepositoryResult<CloudEventSummary>>
+  ) => Promise<CloudEventRepositoryResult<CloudEventDeletionConfirmation>>
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -133,6 +142,27 @@ const parseRecord = (value: unknown): CloudEventRecord | undefined => {
   return { ...summary, snapshot }
 }
 
+const parseDeletionConfirmation = (
+  value: unknown,
+  workspaceId: string,
+  eventId: EventId,
+): CloudEventDeletionConfirmation | undefined => {
+  if (
+    !isRecord(value) ||
+    (value.status !== 'deleted' && value.status !== 'already_absent') ||
+    !isNonEmptyString(value.workspace_id) ||
+    !isNonEmptyString(value.event_id) ||
+    value.workspace_id !== workspaceId ||
+    value.event_id !== eventId
+  ) return undefined
+
+  return {
+    status: value.status as CloudEventDeletionStatus,
+    workspaceId: value.workspace_id,
+    eventId: value.event_id,
+  }
+}
+
 const invalidArgument = (message: string): CloudEventRepositoryResult<never> => ({
   ok: false,
   error: { code: 'INVALID_ARGUMENT', message },
@@ -150,6 +180,11 @@ const databaseFailure = (
 const invalidSnapshot = (): CloudEventRepositoryResult<never> => ({
   ok: false,
   error: { code: 'INVALID_SNAPSHOT', message: 'Cloud Eventのデータ形式が正しくありません。' },
+})
+
+const invalidResponse = (): CloudEventRepositoryResult<never> => ({
+  ok: false,
+  error: { code: 'INVALID_RESPONSE', message: 'Cloud Event削除結果を確認できませんでした。' },
 })
 
 const notFound = (): CloudEventRepositoryResult<never> => ({
@@ -275,16 +310,16 @@ export const createCloudEventRepository = (
     const access = await requireWorkspaceAccess(gateway, workspaceId, 'write')
     if (!access.ok) return access
     try {
-      const result = await gateway.deleteRow(workspaceId, eventId)
+      const result = await gateway.deleteAuthorizedEvent(workspaceId, eventId)
       if (result.error) return databaseFailure(result.error)
-      if (result.data === null) return notFound()
-      const summary = parseSummary(result.data)
-      if (
-        !summary ||
-        summary.workspaceId !== workspaceId ||
-        summary.eventId !== eventId
-      ) return invalidSnapshot()
-      return { ok: true, value: summary }
+      const confirmation = parseDeletionConfirmation(
+        result.data,
+        workspaceId,
+        eventId,
+      )
+      return confirmation
+        ? { ok: true, value: confirmation }
+        : invalidResponse()
     } catch {
       return databaseFailure({})
     }
@@ -337,14 +372,12 @@ export const createSupabaseCloudEventGateway = (
     return { data: result.data, error: result.error }
   },
 
-  async deleteRow(workspaceId, eventId) {
+  async deleteAuthorizedEvent(workspaceId, eventId) {
     const result = await client
-      .from('cloud_events')
-      .delete()
-      .eq('workspace_id', workspaceId)
-      .eq('event_id', eventId)
-      .select(CLOUD_EVENT_LIST_COLUMNS)
-      .maybeSingle()
+      .rpc('delete_cloud_event_authorized', {
+        p_workspace_id: workspaceId,
+        p_event_id: eventId,
+      })
     return { data: result.data, error: result.error }
   },
 })

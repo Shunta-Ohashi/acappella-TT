@@ -288,6 +288,10 @@ export const createCloudWorkspaceState = (
   localState: PersistedDomainState,
   snapshots: readonly CloudEventSnapshotV1[],
 ): CloudWorkspaceSnapshotResult => {
+  if (
+    !hasUniqueIds(localState.members) ||
+    !hasUniqueIds(localState.bands)
+  ) return { ok: false, reason: 'INVALID_SNAPSHOT' }
   if (snapshots.some(snapshot => !parseCloudEventSnapshot(snapshot))) {
     return { ok: false, reason: 'INVALID_SNAPSHOT' }
   }

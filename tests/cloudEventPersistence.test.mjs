@@ -117,16 +117,21 @@ class MemoryCloudEventGateway {
     return { data: structuredClone(row), error: null }
   }
 
-  async deleteRow(workspaceId, eventId) {
+  async deleteAuthorizedEvent(workspaceId, eventId) {
     this.deleteCalls += 1
     const denied = this.deny(workspaceId)
     if (denied) return denied
     const key = this.key(workspaceId, eventId)
     const row = this.rows.get(key)
-    if (!row) return { data: null, error: null }
-    this.rows.delete(key)
-    const { event_snapshot: _snapshot, ...summary } = row
-    return { data: structuredClone(summary), error: null }
+    if (row) this.rows.delete(key)
+    return {
+      data: {
+        status: row ? 'deleted' : 'already_absent',
+        workspace_id: workspaceId,
+        event_id: eventId,
+      },
+      error: null,
+    }
   }
 }
 
@@ -412,6 +417,47 @@ test('Event snapshotの参照masterは同IDのlocal cacheより優先して復�
   )
 })
 
+test('Cloud hydrateはMap変換前にlocal Member/Bandのduplicate IDをfail closedする', async () => {
+  const base = createDemoData()
+  const duplicateCases = [
+    ['members', structuredClone(base.members[0])],
+    ['members', { ...structuredClone(base.members[0]), realName: '異なる重複Member' }],
+    ['bands', structuredClone(base.bands[0])],
+    ['bands', { ...structuredClone(base.bands[0]), name: '異なる重複Band' }],
+  ]
+
+  for (const [collection, duplicate] of duplicateCases) {
+    const localState = structuredClone(base)
+    localState[collection].push(duplicate)
+    const before = structuredClone(localState)
+
+    assert.deepEqual(createCloudWorkspaceState(localState, []), {
+      ok: false,
+      reason: 'INVALID_SNAPSHOT',
+    })
+
+    const loaded = await loadCloudWorkspaceEvents({
+      async listEvents() { return { ok: true, value: [] } },
+      async loadEvent() { throw new Error('not called') },
+      async saveEvent() { throw new Error('not called') },
+      async deleteEvent() { throw new Error('not called') },
+    }, 'workspace-a', localState)
+    assert.equal(loaded.ok, false)
+    assert.equal(!loaded.ok && loaded.error.code, 'INVALID_SNAPSHOT')
+    assert.deepEqual(localState, before)
+    assert.equal(isCloudEventCacheWriteReady({
+      cloudEnabled: true,
+      persistenceScopeReady: true,
+      requestedScopeKey: 'scope-a',
+      hydration: {
+        scopeKey: 'scope-a',
+        kind: 'error',
+        message: !loaded.ok ? loaded.error.message : '',
+      },
+    }), false)
+  }
+})
+
 test('異なるshared Member snapshotは取得順・updatedAtに関係なくhydrateを拒否する', async () => {
   const state = createDemoData()
   const first = createSnapshot(state, state.events[0].id)
@@ -523,19 +569,25 @@ test('server commit後のsave応答失敗でもCloud deleteを必ず試行して
   assert.ok(gateway.rows.has(`workspace-a:${eventId}`))
 
   const deleted = await deleteCloudEvent(repository, 'workspace-a', eventId)
-  assert.deepEqual(deleted, { ok: true, value: { deleted: true } })
+  assert.deepEqual(deleted, {
+    ok: true,
+    value: { deleted: true, status: 'deleted' },
+  })
   assert.equal(gateway.deleteCalls, 1)
   assert.equal(gateway.rows.has(`workspace-a:${eventId}`), false)
 })
 
-test('Cloud deleteはrow不存在だけをidempotent successとして扱う', async () => {
+test('Cloud deleteはRPCが認可済みと明示したrow不存在だけをidempotent successとして扱う', async () => {
   const gateway = new MemoryCloudEventGateway(['workspace-a'])
   const repository = createCloudEventRepository(gateway)
   const missing = await deleteCloudEvent(repository, 'workspace-a', 'missing-event')
-  assert.deepEqual(missing, { ok: true, value: { deleted: false } })
+  assert.deepEqual(missing, {
+    ok: true,
+    value: { deleted: false, status: 'already_absent' },
+  })
   assert.equal(gateway.deleteCalls, 1)
 
-  gateway.deleteRow = async () => ({
+  gateway.deleteAuthorizedEvent = async () => ({
     data: null,
     error: { code: 'NETWORK' },
   })
@@ -550,6 +602,60 @@ test('Cloud deleteはrow不存在だけをidempotent successとして扱う', as
   const denied = await deleteCloudEvent(repository, 'workspace-a', 'event-a')
   assert.equal(denied.ok, false)
   assert.equal(!denied.ok && denied.error.code, 'ACCESS_DENIED')
+})
+
+test('Cloud deleteは曖昧・不一致・未知のRPC responseを成功へ変換しない', async () => {
+  const gateway = new MemoryCloudEventGateway(['workspace-a'])
+  const repository = createCloudEventRepository(gateway)
+  const invalidResponses = [
+    null,
+    undefined,
+    {},
+    { status: 'unknown', workspace_id: 'workspace-a', event_id: 'event-a' },
+    { status: 'deleted', workspace_id: 'workspace-b', event_id: 'event-a' },
+    { status: 'deleted', workspace_id: 'workspace-a', event_id: 'event-b' },
+  ]
+
+  for (const data of invalidResponses) {
+    gateway.deleteAuthorizedEvent = async () => ({ data, error: null })
+    const result = await deleteCloudEvent(repository, 'workspace-a', 'event-a')
+    assert.equal(result.ok, false)
+    assert.equal(!result.ok && result.error.code, 'INVALID_RESPONSE')
+  }
+
+  gateway.deleteAuthorizedEvent = async () => ({
+    data: {
+      status: 'deleted',
+      workspace_id: 'workspace-a',
+      event_id: 'event-a',
+    },
+    error: { code: 'NETWORK' },
+  })
+  const ambiguous = await deleteCloudEvent(repository, 'workspace-a', 'event-a')
+  assert.equal(ambiguous.ok, false)
+  assert.equal(!ambiguous.ok && ambiguous.error.code, 'SUPABASE_ERROR')
+
+  gateway.deleteAuthorizedEvent = async () => { throw new Error('network') }
+  const thrown = await deleteCloudEvent(repository, 'workspace-a', 'event-a')
+  assert.equal(thrown.ok, false)
+  assert.equal(!thrown.ok && thrown.error.code, 'SUPABASE_ERROR')
+})
+
+test('client事前確認後にRPCで権限取消されたCloud deleteはACCESS_DENIEDとなる', async () => {
+  const gateway = new MemoryCloudEventGateway(['workspace-a'])
+  let rpcCalls = 0
+  gateway.deleteAuthorizedEvent = async () => {
+    rpcCalls += 1
+    return { data: null, error: { code: '42501' } }
+  }
+  const result = await deleteCloudEvent(
+    createCloudEventRepository(gateway),
+    'workspace-a',
+    'event-a',
+  )
+  assert.equal(rpcCalls, 1)
+  assert.equal(result.ok, false)
+  assert.equal(!result.ok && result.error.code, 'ACCESS_DENIED')
 })
 
 test('blank Event ID/nameはCloud DB access前にINVALID_SNAPSHOTとなる', async () => {
@@ -595,7 +701,7 @@ test('repositoryはWorkspaceを明示的にscopeし越境accessを拒否する',
     listRows: gateway.listRows.bind(gateway),
     loadRow: gateway.loadRow.bind(gateway),
     saveRow: gateway.saveRow.bind(gateway),
-    deleteRow: gateway.deleteRow.bind(gateway),
+    deleteAuthorizedEvent: gateway.deleteAuthorizedEvent.bind(gateway),
   })
   gateway.allowedWorkspaces = new Set(['workspace-b'])
 
@@ -633,7 +739,7 @@ test('repositoryはDB responseのinvalid snapshotとscope mismatchを拒否す�
     async saveRow() {
       return { data: null, error: null }
     },
-    async deleteRow() {
+    async deleteAuthorizedEvent() {
       return { data: null, error: null }
     },
   })
@@ -747,6 +853,25 @@ test('Event作成はCloudへ自動保存せず明示保存操作だけがsaveを
   assert.match(
     deleteHandler,
     /getLatestState: \(\) => latestDomainStateRef\.current,[\s\S]*commit: commitEventDeletion/,
+  )
+})
+
+test('Cloud delete権限エラー後はDialogを残してpendingを解除しCancel/retry可能にする', async () => {
+  const source = await readFile(new URL(
+    '../src/components/EventBasicInfo.tsx',
+    import.meta.url,
+  ), 'utf8')
+  const confirmHandler = source.slice(
+    source.indexOf('const confirmEventDeletion'),
+    source.indexOf('const save ='),
+  )
+
+  assert.match(confirmHandler, /if \(!result\.ok\) \{[\s\S]*setEventDeletionError[\s\S]*return/)
+  assert.match(confirmHandler, /setPendingEventDeletion\(undefined\)/)
+  assert.match(confirmHandler, /finally \{[\s\S]*setIsDeletingEvent\(false\)/)
+  assert.ok(
+    confirmHandler.indexOf('setPendingEventDeletion(undefined)') >
+      confirmHandler.indexOf('if (!result.ok)'),
   )
 })
 
@@ -1010,6 +1135,97 @@ test('token付きleaseは古いcleanupで新しい占有や別scopeを解除し�
   registry.finish(otherScopeLease)
 })
 
+test('認可済みdeleted/already_absentだけがlocal cascadeし、失敗時はleaseを解除して再試行できる', async () => {
+  for (const status of ['deleted', 'already_absent']) {
+    const registry = createCloudEventOperationRegistry()
+    let state = createDemoData()
+    const eventId = state.events[0].id
+    let commitCalls = 0
+    let saveCalls = 0
+    const completed = await runExclusiveCloudEventDeletion({
+      registry,
+      scopeKey: 'scope-a',
+      workspaceId: 'workspace-a',
+      eventId,
+      repository: {
+        async deleteEvent() {
+          return {
+            ok: true,
+            value: { status, workspaceId: 'workspace-a', eventId },
+          }
+        },
+        async saveEvent() { saveCalls += 1 },
+      },
+      isScopeCurrent: () => true,
+      getLatestState: () => state,
+      commit: result => {
+        commitCalls += 1
+        state = { members: state.members, bands: state.bands, ...result }
+      },
+    })
+    assert.equal(completed.started, true)
+    assert.equal(completed.started && completed.value.ok, true)
+    assert.equal(commitCalls, 1)
+    assert.equal(saveCalls, 0)
+    assert.equal(state.events.some(event => event.id === eventId), false)
+    assert.equal(registry.get('scope-a', eventId), undefined)
+  }
+
+  for (const code of ['ACCESS_DENIED', 'SUPABASE_ERROR', 'INVALID_RESPONSE']) {
+    const registry = createCloudEventOperationRegistry()
+    const state = createDemoData()
+    const before = structuredClone(state)
+    const eventId = state.events[0].id
+    let commitCalls = 0
+    const failed = await runExclusiveCloudEventDeletion({
+      registry,
+      scopeKey: 'scope-a',
+      workspaceId: 'workspace-a',
+      eventId,
+      repository: {
+        async deleteEvent() {
+          return { ok: false, error: { code, message: code } }
+        },
+      },
+      isScopeCurrent: () => true,
+      getLatestState: () => state,
+      commit: () => { commitCalls += 1 },
+    })
+    assert.deepEqual(failed, {
+      started: true,
+      value: { ok: false, reason: 'CLOUD_DELETE_FAILED' },
+    })
+    assert.equal(commitCalls, 0)
+    assert.deepEqual(state, before)
+    assert.equal(registry.get('scope-a', eventId), undefined)
+
+    const retry = await runExclusiveCloudEventDeletion({
+      registry,
+      scopeKey: 'scope-a',
+      workspaceId: 'workspace-a',
+      eventId,
+      repository: {
+        async deleteEvent() {
+          return {
+            ok: true,
+            value: {
+              status: 'already_absent',
+              workspaceId: 'workspace-a',
+              eventId,
+            },
+          }
+        },
+      },
+      isScopeCurrent: () => true,
+      getLatestState: () => state,
+      commit: () => { commitCalls += 1 },
+    })
+    assert.equal(retry.started, true)
+    assert.equal(retry.started && retry.value.ok, true)
+    assert.equal(commitCalls, 1)
+  }
+})
+
 test('App利用delete経路は待機中saveを防ぎ、最新stateへcascadeして別Event更新を保持する', async () => {
   const registry = createCloudEventOperationRegistry()
   const deferredDelete = createDeferred()
@@ -1053,7 +1269,14 @@ test('App利用delete経路は待機中saveを防ぎ、最新stateへcascadeし�
       ? { ...event, name: 'DELETE待機中に更新したEvent B' }
       : event),
   }
-  deferredDelete.resolve({ ok: true, value: { eventId: deletedEventId } })
+  deferredDelete.resolve({
+    ok: true,
+    value: {
+      status: 'deleted',
+      workspaceId: 'workspace-a',
+      eventId: deletedEventId,
+    },
+  })
   const completed = await deletion
   assert.equal(completed.started, true)
   assert.equal(completed.started && completed.value.ok, true)
@@ -1088,7 +1311,14 @@ test('scope切替後の遅延delete結果はcommitせず別scopeの占有も解�
   activeScope = 'scope-b'
   const scopeBLease = registry.tryStart('scope-b', eventId, 'save')
   assert.ok(scopeBLease)
-  deferredDelete.resolve({ ok: true, value: { eventId } })
+  deferredDelete.resolve({
+    ok: true,
+    value: {
+      status: 'deleted',
+      workspaceId: 'workspace-a',
+      eventId,
+    },
+  })
 
   const completed = await deletion
   assert.deepEqual(completed, {
@@ -1117,7 +1347,7 @@ test('Cloud load失敗はbase stateを変更せず別Event stateを返さない'
     async saveRow() {
       throw new Error('not called')
     },
-    async deleteRow() {
+    async deleteAuthorizedEvent() {
       throw new Error('not called')
     },
   })
@@ -1165,4 +1395,84 @@ test('Cloud Event migrationはWorkspace ownership・RLS・revision・移管防�
   assert.match(sql, /new\.event_id is distinct from old\.event_id/i)
   assert.match(sql, /new\.created_at = old\.created_at/i)
   assert.match(sql, /new\.revision = old\.revision \+ 1/i)
+})
+
+test('authorized delete migrationはMembershipをlockして認可済み結果だけを返す', async () => {
+  const sql = await readFile(new URL(
+    '../supabase/migrations/20261008120000_cloud_event_authorized_delete.sql',
+    import.meta.url,
+  ), 'utf8')
+  const repositorySource = await readFile(new URL(
+    '../src/cloud/cloudEventRepository.ts',
+    import.meta.url,
+  ), 'utf8')
+
+  assert.match(sql, /create function public\.delete_cloud_event_authorized\s*\(/i)
+  assert.match(sql, /language plpgsql\s+security definer\s+set search_path = ''/i)
+  assert.match(sql, /caller_id uuid := auth\.uid\(\)/i)
+  assert.match(sql, /from public\.workspace_members/i)
+  assert.match(sql, /workspace_members\.workspace_id = p_workspace_id/i)
+  assert.match(sql, /workspace_members\.user_id = caller_id/i)
+  assert.match(sql, /for share/i)
+  assert.match(sql, /membership_role not in \('owner', 'editor'\)/i)
+  assert.match(sql, /using errcode = '42501'/i)
+  assert.match(sql, /p_workspace_id is null/i)
+  assert.match(sql, /p_event_id is null or btrim\(p_event_id\) = ''/i)
+  assert.match(sql, /delete from public\.cloud_events/i)
+  assert.match(sql, /cloud_events\.workspace_id = p_workspace_id/i)
+  assert.match(sql, /cloud_events\.event_id = p_event_id/i)
+  assert.match(sql, /'deleted' else 'already_absent'/i)
+  assert.match(sql, /'workspace_id', p_workspace_id/i)
+  assert.match(sql, /'event_id', p_event_id/i)
+  assert.match(sql, /revoke all on function public\.delete_cloud_event_authorized\(uuid, text\) from public/i)
+  assert.match(sql, /revoke all on function public\.delete_cloud_event_authorized\(uuid, text\) from anon/i)
+  assert.match(sql, /revoke all on function public\.delete_cloud_event_authorized\(uuid, text\) from service_role/i)
+  assert.match(sql, /grant execute on function public\.delete_cloud_event_authorized\(uuid, text\) to authenticated/i)
+
+  assert.match(repositorySource, /\.rpc\('delete_cloud_event_authorized'/)
+  const gatewayDelete = repositorySource.slice(
+    repositorySource.indexOf('async deleteAuthorizedEvent'),
+    repositorySource.indexOf('export const createSupabaseCloudEventRepository'),
+  )
+  assert.doesNotMatch(gatewayDelete, /\.from\('cloud_events'\)/)
+  assert.doesNotMatch(gatewayDelete, /\.delete\(\)/)
+})
+
+test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検証する', async () => {
+  const coreSql = await readFile(new URL(
+    '../supabase/tests/cloud_event_authorized_delete.sql',
+    import.meta.url,
+  ), 'utf8')
+  const concurrencySql = await readFile(new URL(
+    '../supabase/tests/cloud_event_authorized_delete_concurrency.sql',
+    import.meta.url,
+  ), 'utf8')
+  const instructions = await readFile(new URL(
+    '../supabase/tests/README.md',
+    import.meta.url,
+  ), 'utf8')
+
+  assert.match(coreSql, /set local role authenticated/i)
+  assert.match(coreSql, /set local role anon/i)
+  assert.match(coreSql, /request\.jwt\.claim\.sub/i)
+  assert.match(coreSql, /has_function_privilege/i)
+  assert.match(coreSql, /viewer delete unexpectedly succeeded/i)
+  assert.match(coreSql, /non-member delete unexpectedly succeeded/i)
+  assert.match(coreSql, /cross-workspace delete unexpectedly succeeded/i)
+  assert.match(coreSql, /revoked membership delete unexpectedly succeeded/i)
+  assert.match(coreSql, /downgraded membership delete unexpectedly succeeded/i)
+  assert.match(coreSql, /invalid-version-string/i)
+  assert.match(coreSql, /invalid-app-version-string/i)
+  assert.match(coreSql, /missing-version/i)
+  assert.match(coreSql, /null-version/i)
+  assert.match(coreSql, /rollback;/i)
+
+  assert.match(concurrencySql, /extensions\.dblink_send_query/i)
+  assert.match(concurrencySql, /wait_event_type = 'Lock'/i)
+  assert.match(concurrencySql, /membership role UPDATE did not wait/i)
+  assert.match(concurrencySql, /membership DELETE did not wait/i)
+  assert.match(concurrencySql, /RPC succeeded after committed downgrade/i)
+  assert.match(instructions, /disposable/i)
+  assert.match(instructions, /psql/i)
+  assert.match(instructions, /not a passing database test/i)
 })

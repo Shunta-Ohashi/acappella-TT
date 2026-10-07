@@ -12,6 +12,7 @@ import {
   createCloudWorkspaceState,
 } from './cloudEventSnapshot.ts'
 import type {
+  CloudEventDeletionStatus,
   CloudEventRecord,
   CloudEventRepository,
   CloudEventRepositoryError,
@@ -173,6 +174,7 @@ export interface LoadedCloudWorkspaceEvents {
 
 export interface DeletedCloudEvent {
   deleted: boolean
+  status: CloudEventDeletionStatus
 }
 
 export const deleteCloudEvent = async (
@@ -181,12 +183,14 @@ export const deleteCloudEvent = async (
   eventId: EventId,
 ): Promise<CloudEventLifecycleResult<DeletedCloudEvent>> => {
   const deleted = await repository.deleteEvent(workspaceId, eventId)
-  if (!deleted.ok) {
-    return deleted.error.code === 'NOT_FOUND'
-      ? { ok: true, value: { deleted: false } }
-      : deleted
+  if (!deleted.ok) return deleted
+  return {
+    ok: true,
+    value: {
+      deleted: deleted.value.status === 'deleted',
+      status: deleted.value.status,
+    },
   }
-  return { ok: true, value: { deleted: true } }
 }
 
 export type CloudEventDeletionResult = EventDeletionResult | {
