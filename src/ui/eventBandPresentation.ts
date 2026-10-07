@@ -1,4 +1,4 @@
-import type { EventBand, Member } from '../domain/models'
+import type { EventBand, EventDay, EventDayId, Member } from '../domain/models'
 
 export const getMemberDisplayName = (
   member: Pick<Member, 'acaName' | 'realName'>,
@@ -14,4 +14,14 @@ export const getEventBandMemberDisplayNames = (
     const member = memberById.get(memberId)
     return member ? getMemberDisplayName(member) : '不明なメンバー'
   })
+}
+
+export const getEventBandItemsWithInvalidEventDay = <T extends {
+  eventDayId: EventDayId
+}>(
+  items: readonly T[],
+  eventDays: readonly Pick<EventDay, 'id'>[],
+): T[] => {
+  const validEventDayIds = new Set(eventDays.map(eventDay => eventDay.id))
+  return items.filter(item => !validEventDayIds.has(item.eventDayId))
 }

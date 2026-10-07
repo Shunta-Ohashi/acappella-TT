@@ -24,7 +24,7 @@ import {
   getStagesForEventDay,
   getUnscheduledEventBandsForEventDay,
 } from '../domain/schedule.ts'
-import { calculateEventDayTimelines } from '../domain/timetable.ts'
+import { evaluateEventDayTimelinesSafely } from '../domain/timetable.ts'
 import { evaluateTimetableLocks } from '../domain/timetableLocks.ts'
 import {
   evaluateScheduledTimetableOrderConstraints,
@@ -360,50 +360,45 @@ export const createEventFinalCheckReport = (
       targetStep: 6, eventDayId: eventDay.id,
     })
 
-    const calculatedItems: ReturnType<
-      typeof calculateEventDayTimelines
-    >['calculatedItems'] = []
-    const evaluableStages: Stage[] = []
-    const invalidTimelineStageIds = new Set<StageId>()
-    const failedTimelineStageIds = new Set<StageId>()
-    for (const stage of dayStages) {
-      let stageTimelines
-      try {
-        stageTimelines = calculateEventDayTimelines({
-          eventDayId: eventDay.id,
-          stages: [stage],
-          sections,
-          scheduleItems,
-          eventBands,
-        })
-      } catch {
-        failedTimelineStageIds.add(stage.id)
-        addFinding({
-          key: `structure|timeline-failure|${stage.id}`,
-          severity: 'ERROR', category: 'structure', code: 'TIMELINE_CALCULATION_FAILED',
-          message: `${stage.name}のタイムテーブルを計算できません。`,
-          targetStep: 6, eventDayId: eventDay.id, stageId: stage.id,
-        })
-        continue
-      }
+    const stageTimelines = evaluateEventDayTimelinesSafely({
+      eventDayId: eventDay.id,
+      stages: dayStages,
+      sections,
+      scheduleItems,
+      eventBands,
+    })
+    const calculatedItems = stageTimelines.calculatedItems
+    const invalidTimelineStageIds = new Set(
+      stageTimelines.invalidStages.map(stage => stage.stageId),
+    )
+    const failedTimelineStageIds = new Set(
+      stageTimelines.failedStages.map(stage => stage.stageId),
+    )
+    const evaluableStages = dayStages.filter(stage =>
+      !invalidTimelineStageIds.has(stage.id) && !failedTimelineStageIds.has(stage.id),
+    )
 
-      if (stageTimelines.invalidStages.length > 0) {
-        invalidTimelineStageIds.add(stage.id)
-        for (const invalid of stageTimelines.invalidStages) {
-          addFinding({
-            key: `structure|invalid-stage|${invalid.stageId}`,
-            severity: 'ERROR', category: 'structure', code: 'INVALID_STAGE_TIMELINE',
-            message: `${stage.name}のSection設定と出演項目の所属を確認してください。`,
-            details: invalid.scheduleItemIds.length > 0
-              ? [`対象項目: ${invalid.scheduleItemIds.length}件`] : undefined,
-            targetStep: 2, eventDayId: eventDay.id, stageId: stage.id,
-          })
-        }
-        continue
-      }
-
-      calculatedItems.push(...stageTimelines.calculatedItems)
-      evaluableStages.push(stage)
+    for (const failed of stageTimelines.failedStages) {
+      const stage = stageById.get(failed.stageId)
+      if (!stage) continue
+      addFinding({
+        key: `structure|timeline-failure|${stage.id}`,
+        severity: 'ERROR', category: 'structure', code: 'TIMELINE_CALCULATION_FAILED',
+        message: `${stage.name}のタイムテーブルを計算できません。`,
+        targetStep: 6, eventDayId: eventDay.id, stageId: stage.id,
+      })
+    }
+    for (const invalid of stageTimelines.invalidStages) {
+      const stage = stageById.get(invalid.stageId)
+      if (!stage) continue
+      addFinding({
+        key: `structure|invalid-stage|${invalid.stageId}`,
+        severity: 'ERROR', category: 'structure', code: 'INVALID_STAGE_TIMELINE',
+        message: `${stage.name}のSection設定と出演項目の所属を確認してください。`,
+        details: invalid.scheduleItemIds.length > 0
+          ? [`対象項目: ${invalid.scheduleItemIds.length}件`] : undefined,
+        targetStep: 2, eventDayId: eventDay.id, stageId: stage.id,
+      })
     }
     const evaluableStageIds = new Set(evaluableStages.map(stage => stage.id))
     const evaluableSections = sections.filter(section =>

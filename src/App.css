@@ -6006,6 +6006,24 @@
   border-radius: 6px;
 }
 
+.event-band-settings__repair,
+.pa-settings__repair {
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid #d9a38f;
+  border-radius: 12px;
+  background: #fff8f5;
+}
+
+.event-band-settings__repair > h3,
+.pa-settings__repair > h4 {
+  margin: 0 0 6px;
+}
+
+.event-band-settings__repair > p {
+  margin: 0 0 10px;
+}
+
 .duty-settings__repair h4 {
   margin: 0;
   color: #713522;

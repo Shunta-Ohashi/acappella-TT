@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  getEventBandItemsWithInvalidEventDay,
   getEventBandMemberDisplayNames,
   getMemberDisplayName,
 } from '../src/ui/eventBandPresentation.ts'
@@ -40,4 +41,18 @@ test('固定BandのdefaultMemberIdsを使わず、missing Memberも安全に表�
     getEventBandMemberDisplayNames(eventBand, members),
     ['こてつ', '不明なメンバー'],
   )
+})
+
+test('有効な開催日tabへ表示できない出演バンドを修復対象として抽出する', () => {
+  const items = [
+    { draftId: 'valid', eventDayId: 'day-1', name: '正常' },
+    { draftId: 'missing', eventDayId: 'missing-day', name: '参照切れ' },
+    { draftId: 'foreign', eventDayId: 'foreign-day', name: '別イベント日' },
+  ]
+
+  assert.deepEqual(getEventBandItemsWithInvalidEventDay(
+    items,
+    [{ id: 'day-1' }],
+  ), [items[1], items[2]])
+  assert.deepEqual(items.map(item => item.draftId), ['valid', 'missing', 'foreign'])
 })

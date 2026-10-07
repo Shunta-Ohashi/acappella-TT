@@ -27,6 +27,14 @@ export interface CalculatedEventDayTimelines {
   invalidStages: InvalidStageTimeline[]
 }
 
+export interface FailedStageTimeline {
+  stageId: StageId
+}
+
+export interface SafelyEvaluatedEventDayTimelines extends CalculatedEventDayTimelines {
+  failedStages: FailedStageTimeline[]
+}
+
 export const calculateEventDayTimelines = ({
   eventDayId,
   stages,
@@ -69,4 +77,40 @@ export const calculateEventDayTimelines = ({
   }
 
   return { calculatedItems, invalidStages }
+}
+
+export const evaluateEventDayTimelinesSafely = ({
+  eventDayId,
+  stages,
+  sections,
+  scheduleItems,
+  eventBands,
+}: {
+  eventDayId: EventDayId
+  stages: Stage[]
+  sections: Section[]
+  scheduleItems: ScheduleItem[]
+  eventBands: EventBand[]
+}): SafelyEvaluatedEventDayTimelines => {
+  const calculatedItems: CalculatedScheduleItem[] = []
+  const invalidStages: InvalidStageTimeline[] = []
+  const failedStages: FailedStageTimeline[] = []
+
+  for (const stage of getStagesForEventDay(stages, eventDayId)) {
+    try {
+      const result = calculateEventDayTimelines({
+        eventDayId,
+        stages: [stage],
+        sections,
+        scheduleItems,
+        eventBands,
+      })
+      calculatedItems.push(...result.calculatedItems)
+      invalidStages.push(...result.invalidStages)
+    } catch {
+      failedStages.push({ stageId: stage.id })
+    }
+  }
+
+  return { calculatedItems, invalidStages, failedStages }
 }

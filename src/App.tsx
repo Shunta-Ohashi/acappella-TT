@@ -53,7 +53,7 @@ import {
   resolveTimetableSelection,
   type ScheduleLane,
 } from './domain/schedule'
-import { calculateEventDayTimelines } from './domain/timetable'
+import { evaluateEventDayTimelinesSafely } from './domain/timetable'
 import { formatMinuteAsLocalTime } from './domain/timeline'
 import { detectScheduleIssues } from './domain/issues'
 import {
@@ -766,7 +766,7 @@ function App() {
       })
     : []
   const selectedEventCalculatedItems = selectedEvent && activeStep !== 7
-    ? selectedEventDays.flatMap((eventDay) => calculateEventDayTimelines({
+    ? selectedEventDays.flatMap((eventDay) => evaluateEventDayTimelinesSafely({
         eventDayId: eventDay.id,
         stages: selectedStages,
         sections: selectedSections,
@@ -2108,15 +2108,43 @@ function App() {
 
   // 選択日の全StageをIssue判定へ渡し、表示は選択中Stageだけに絞る
   const eventDayTimelines = selectedEvent && timetableSelection.eventDayId && activeStep !== 7
-    ? calculateEventDayTimelines({
+    ? evaluateEventDayTimelinesSafely({
         eventDayId: timetableSelection.eventDayId,
         stages: timetableStages,
         sections: timetableSections,
         scheduleItems: currentEventDayScheduleItems,
         eventBands: selectedEventBands,
       })
-    : { calculatedItems: [], invalidStages: [] }
+    : { calculatedItems: [], invalidStages: [], failedStages: [] }
   const calculatedItems = eventDayTimelines.calculatedItems
+  const invalidTimelineStageIds = new Set(
+    eventDayTimelines.invalidStages.map(stage => stage.stageId),
+  )
+  const failedTimelineStageIds = new Set(
+    eventDayTimelines.failedStages.map(stage => stage.stageId),
+  )
+  const evaluableTimetableStages = timetableStages.filter(stage =>
+    !invalidTimelineStageIds.has(stage.id) && !failedTimelineStageIds.has(stage.id),
+  )
+  const evaluableTimetableStageIds = new Set(
+    evaluableTimetableStages.map(stage => stage.id),
+  )
+  const evaluableTimetableSections = timetableSections.filter(section =>
+    evaluableTimetableStageIds.has(section.stageId),
+  )
+  const selectedStageById = new Map(selectedStages.map(stage => [stage.id, stage]))
+  const shouldEvaluateOperationsAssignment = (assignment: {
+    eventDayId: EventDayId
+    stageId: StageId
+  }): boolean => {
+    if (assignment.eventDayId !== timetableSelection.eventDayId) return false
+    const stage = selectedStageById.get(assignment.stageId)
+    if (!stage || stage.eventDayId !== assignment.eventDayId) return true
+    return evaluableTimetableStageIds.has(stage.id)
+  }
+  const currentStageTimelineFailed = currentStage
+    ? failedTimelineStageIds.has(currentStage.id)
+    : false
   const currentStageCalculatedItems = currentStage
     ? calculatedItems.filter(item => item.stageId === currentStage.id)
     : []
@@ -2127,14 +2155,14 @@ function App() {
         eventMembers: selectedEventMembers,
         eventMemberDays: selectedEventMemberDays,
         eventBands: selectedEventBands,
-        stages: timetableStages,
-        sections: timetableSections,
-        paAssignments: selectedEventPaAssignments.filter((assignment) =>
-          assignment.eventDayId === timetableSelection.eventDayId,
+        stages: evaluableTimetableStages,
+        sections: evaluableTimetableSections,
+        paAssignments: selectedEventPaAssignments.filter(
+          shouldEvaluateOperationsAssignment,
         ),
         dutyTypes: selectedEventDutyTypes,
-        dutyAssignments: selectedEventDutyAssignments.filter((assignment) =>
-          assignment.eventDayId === timetableSelection.eventDayId,
+        dutyAssignments: selectedEventDutyAssignments.filter(
+          shouldEvaluateOperationsAssignment,
         ),
         calculatedItems,
       })
@@ -2147,7 +2175,9 @@ function App() {
       )
     : []
   const currentStageIssueCounts = countIssuesBySeverity(currentStageIssues)
-  const timetableWorkspaceRows = currentStage && timetableSelection.eventDayId && activeStep !== 7
+  const timetableWorkspaceRows = currentStage && timetableSelection.eventDayId &&
+    activeStep !== 7 && !currentStageTimelineFailed &&
+    !currentStageHasInvalidSectionAssignments
     ? createTimetableWorkspaceRows({
         eventDayId: timetableSelection.eventDayId,
         stageId: currentStage.id,
@@ -2937,6 +2967,15 @@ function App() {
                     >
                       Step 2 会場・Stageへ
                     </button>
+                  </section>
+                ) : currentStageTimelineFailed ? (
+                  <section className="timetable-data-error" role="alert">
+                    <h3>このStageのタイムテーブルを計算できません</h3>
+                    <p>
+                      参照切れの出演項目があります。Step 4の出演バンドと配置内容を確認してください。
+                    </p>
+                    {unavailableTimetableLockRepair}
+                    {unavailableTimetableOrderConstraintRepair}
                   </section>
                 ) : currentStageHasInvalidSectionAssignments ? (
                   <section className="timetable-data-error" role="alert">
