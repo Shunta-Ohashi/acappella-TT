@@ -503,9 +503,15 @@
   font-weight: 700;
 }
 
-.delete-confirmation-dialog__confirm:hover {
+.delete-confirmation-dialog__confirm:hover:not(:disabled) {
   background: #8f1c14;
   border-color: #8f1c14;
+}
+
+.delete-confirmation-dialog__actions button:disabled,
+.event-basic-info__delete-event:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .delete-confirmation-dialog__confirm:focus-visible {
@@ -1323,7 +1329,7 @@
   font-weight: 700;
 }
 
-.event-basic-info__delete-event:hover {
+.event-basic-info__delete-event:hover:not(:disabled) {
   background: #8f1c14;
   border-color: #8f1c14;
 }

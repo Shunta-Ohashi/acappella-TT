@@ -7,8 +7,12 @@ import {
   createCloudEventRepository,
 } from '../src/cloud/cloudEventRepository.ts'
 import {
+  canStartCloudEventDelete,
+  createCloudEventSaveRegistry,
   isCloudEventCacheWriteReady,
+  isCloudEventSaving,
   loadCloudWorkspaceEvents,
+  runExclusiveCloudEventSave,
   saveCloudEventFromState,
 } from '../src/cloud/cloudEventLifecycle.ts'
 import {
@@ -26,6 +30,16 @@ const createEmptyState = () => ({
   paAssignments: [], dutyTypes: [], dutyAssignments: [], timetableLocks: [],
   timetableOrderConstraints: [],
 })
+
+const createDeferred = () => {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
 
 class MemoryCloudEventGateway {
   rows = new Map()
@@ -528,6 +542,124 @@ test('Cloud local cacheはrequested scopeのrehydrate完了後だけ書き込み
     cloudEnabled: false,
     hydration: { scopeKey: 'other', kind: 'loading' },
   }), true)
+})
+
+test('Event別の並行saveは一方の完了で他方のsaving状態を解除しない', async () => {
+  const registry = createCloudEventSaveRegistry()
+  const eventA = createDeferred()
+  const eventB = createDeferred()
+  let visibleKeys = new Set()
+  const onChange = keys => {
+    visibleKeys = new Set(keys)
+  }
+
+  const savingA = runExclusiveCloudEventSave({
+    registry,
+    scopeKey: 'scope-a',
+    eventId: 'event-a',
+    operation: () => eventA.promise,
+    onChange,
+  })
+  const savingB = runExclusiveCloudEventSave({
+    registry,
+    scopeKey: 'scope-a',
+    eventId: 'event-b',
+    operation: () => eventB.promise,
+    onChange,
+  })
+
+  assert.equal(isCloudEventSaving(visibleKeys, 'scope-a', 'event-a'), true)
+  assert.equal(isCloudEventSaving(visibleKeys, 'scope-a', 'event-b'), true)
+
+  eventB.resolve('saved-b')
+  assert.deepEqual(await savingB, { started: true, value: 'saved-b' })
+  assert.equal(registry.isSaving('scope-a', 'event-a'), true)
+  assert.equal(registry.isSaving('scope-a', 'event-b'), false)
+
+  eventA.resolve('saved-a')
+  assert.deepEqual(await savingA, { started: true, value: 'saved-a' })
+  assert.equal(registry.isSaving('scope-a', 'event-a'), false)
+})
+
+test('A/B save中にAだけ完了してもBのsaving状態を維持する', async () => {
+  const registry = createCloudEventSaveRegistry()
+  const eventA = createDeferred()
+  const eventB = createDeferred()
+  const savingA = runExclusiveCloudEventSave({
+    registry,
+    scopeKey: 'scope-a',
+    eventId: 'event-a',
+    operation: () => eventA.promise,
+  })
+  const savingB = runExclusiveCloudEventSave({
+    registry,
+    scopeKey: 'scope-a',
+    eventId: 'event-b',
+    operation: () => eventB.promise,
+  })
+
+  eventA.resolve('saved-a')
+  await savingA
+  assert.equal(registry.isSaving('scope-a', 'event-a'), false)
+  assert.equal(registry.isSaving('scope-a', 'event-b'), true)
+
+  eventB.resolve('saved-b')
+  await savingB
+  assert.equal(registry.isSaving('scope-a', 'event-b'), false)
+})
+
+test('同一Eventの重複saveを開始せずfailureでも必ずregistryを解除する', async () => {
+  const registry = createCloudEventSaveRegistry()
+  const deferred = createDeferred()
+  let duplicateRequestCount = 0
+  const first = runExclusiveCloudEventSave({
+    registry,
+    scopeKey: 'scope-a',
+    eventId: 'event-a',
+    operation: () => deferred.promise,
+  })
+  const duplicate = await runExclusiveCloudEventSave({
+    registry,
+    scopeKey: 'scope-a',
+    eventId: 'event-a',
+    operation: async () => {
+      duplicateRequestCount += 1
+      return 'duplicate'
+    },
+  })
+
+  assert.deepEqual(duplicate, { started: false })
+  assert.equal(duplicateRequestCount, 0)
+  assert.equal(registry.isSaving('scope-a', 'event-a'), true)
+
+  deferred.reject(new Error('save failed'))
+  await assert.rejects(first, /save failed/)
+  assert.equal(registry.isSaving('scope-a', 'event-a'), false)
+})
+
+test('save/delete排他はEventとWorkspace scopeごとでglobal blockしない', () => {
+  const registry = createCloudEventSaveRegistry()
+  assert.equal(registry.tryStart('scope-a', 'event-a'), true)
+
+  let cloudDeleteCount = 0
+  let localCascadeCount = 0
+  const attemptDelete = (scopeKey, eventId) => {
+    if (!canStartCloudEventDelete(registry, scopeKey, eventId)) return false
+    cloudDeleteCount += 1
+    localCascadeCount += 1
+    return true
+  }
+
+  assert.equal(attemptDelete('scope-a', 'event-a'), false)
+  assert.equal(cloudDeleteCount, 0)
+  assert.equal(localCascadeCount, 0)
+  assert.equal(attemptDelete('scope-a', 'event-b'), true)
+  assert.equal(attemptDelete('scope-b', 'event-a'), true)
+
+  registry.finish('scope-a', 'event-a')
+  assert.equal(attemptDelete('scope-a', 'event-a'), true)
+  assert.equal(cloudDeleteCount, 3)
+  assert.equal(localCascadeCount, 3)
 })
 
 test('Cloud load失敗はbase stateを変更せず別Event stateを返さない', async () => {

@@ -1,7 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 
-import { getDeleteConfirmationCopy } from '../src/ui/deleteConfirmation.ts'
+import {
+  canDismissDeleteConfirmation,
+  getDeleteConfirmationCopy,
+} from '../src/ui/deleteConfirmation.ts'
 
 test('開催日の削除確認に対象日と保存前の変更であることを示す', () => {
   const copy = getDeleteConfirmationCopy('event-day', '2026-10-03')
@@ -78,4 +82,32 @@ test('削除確認の操作ラベルを全対象で共通化する', () => {
     getDeleteConfirmationCopy('event', '対象').confirmLabel,
     'イベントを削除',
   )
+})
+
+test('非同期削除中だけCancel・Escape等のdismissを禁止する', () => {
+  assert.equal(canDismissDeleteConfirmation(false), true)
+  assert.equal(canDismissDeleteConfirmation(true), false)
+})
+
+test('共通Dialogはpending中にCancel・ConfirmをdisabledにしEscapeもguardする', async () => {
+  const source = await readFile(new URL(
+    '../src/components/DeleteConfirmationDialog.tsx',
+    import.meta.url,
+  ), 'utf8')
+
+  assert.match(source, /onCancel=\{\(event\) => \{[\s\S]*event\.preventDefault\(\)[\s\S]*canDismissDeleteConfirmation\(isPending\)/)
+  assert.equal((source.match(/disabled=\{isPending\}/g) ?? []).length, 2)
+  assert.match(source, /aria-busy=\{isPending \|\| undefined\}/)
+})
+
+test('Event削除は成功時だけDialogを閉じ、失敗時はerror付きで再試行可能にする', async () => {
+  const source = await readFile(new URL(
+    '../src/components/EventBasicInfo.tsx',
+    import.meta.url,
+  ), 'utf8')
+
+  assert.match(source, /if \(!result\.ok\) \{[\s\S]*setEventDeletionError\([\s\S]*return[\s\S]*\}[\s\S]*setPendingEventDeletion\(undefined\)/)
+  assert.match(source, /finally \{\s*setIsDeletingEvent\(false\)/)
+  assert.match(source, /isPending=\{isDeletingEvent\}/)
+  assert.match(source, /errorMessage=\{eventDeletionError\}/)
 })

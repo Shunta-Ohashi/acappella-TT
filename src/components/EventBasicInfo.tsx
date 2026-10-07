@@ -7,7 +7,10 @@ import {
   type EventBasicInfoUpdateResult,
   type EventBasicInfoValidationErrors,
 } from '../domain/eventBasicInfo'
-import { getDeleteConfirmationCopy } from '../ui/deleteConfirmation'
+import {
+  canDismissDeleteConfirmation,
+  getDeleteConfirmationCopy,
+} from '../ui/deleteConfirmation'
 import type {
   EventDeletionCheck,
   EventDeletionResult,
@@ -20,13 +23,14 @@ interface EventBasicInfoProps {
   canDeleteEventDay: (eventDayId: EventDayId) => boolean
   checkEventDeletion: (eventId: Event['id']) => EventDeletionCheck
   onDeleteEvent: (eventId: Event['id']) => Promise<EventDeletionActionResult>
+  isCloudSavePending?: boolean
   onSave: (draft: EventBasicInfoDraft) => EventBasicInfoUpdateResult
   onSaveAndNext: () => void
 }
 
 export type EventDeletionActionResult = EventDeletionResult | {
   ok: false
-  reason: 'CLOUD_DELETE_FAILED'
+  reason: 'CLOUD_DELETE_FAILED' | 'CLOUD_SAVE_IN_PROGRESS'
 }
 
 interface DateInput {
@@ -52,6 +56,7 @@ export function EventBasicInfo({
   canDeleteEventDay,
   checkEventDeletion,
   onDeleteEvent,
+  isCloudSavePending = false,
   onSave,
   onSaveAndNext,
 }: EventBasicInfoProps) {
@@ -84,6 +89,9 @@ export function EventBasicInfo({
     }
     if (result.reason === 'CLOUD_DELETE_FAILED') {
       return 'Cloud Eventを削除できませんでした。通信状態とワークスペース権限を確認してください。'
+    }
+    if (result.reason === 'CLOUD_SAVE_IN_PROGRESS') {
+      return 'Cloud Eventの保存中は削除できません。保存完了後にもう一度お試しください。'
     }
     return 'イベント間の参照に矛盾があるため削除できません。データの整合性を確認してください。'
   }
@@ -153,6 +161,7 @@ export function EventBasicInfo({
   }
 
   const requestEventDeletion = () => {
+    if (isCloudSavePending) return
     const result = checkEventDeletion(event.id)
     if (!result.ok) {
       setEventDeletionError(getEventDeletionError(result))
@@ -168,12 +177,18 @@ export function EventBasicInfo({
   const confirmEventDeletion = async () => {
     if (!pendingEventDeletion || isDeletingEvent) return
     setIsDeletingEvent(true)
+    setEventDeletionError('')
     try {
       const result = await onDeleteEvent(pendingEventDeletion.eventId)
       if (!result.ok) {
-        setPendingEventDeletion(undefined)
         setEventDeletionError(getEventDeletionError(result))
+        return
       }
+      setPendingEventDeletion(undefined)
+    } catch {
+      setEventDeletionError(
+        'イベントを削除できませんでした。通信状態を確認して、もう一度お試しください。',
+      )
     } finally {
       setIsDeletingEvent(false)
     }
@@ -370,7 +385,7 @@ export function EventBasicInfo({
           <p>
             このイベントとイベント内の設定を完全に削除します。共通データのメンバーと固定バンドは残ります。
           </p>
-          {eventDeletionError && (
+          {eventDeletionError && !pendingEventDeletion && (
             <p className="form-error" role="alert">
               {eventDeletionError}
             </p>
@@ -379,6 +394,7 @@ export function EventBasicInfo({
         <button
           type="button"
           className="event-basic-info__delete-event"
+          disabled={isCloudSavePending}
           onClick={requestEventDeletion}
         >
           このイベントを削除
@@ -405,7 +421,14 @@ export function EventBasicInfo({
         return (
           <DeleteConfirmationDialog
             {...copy}
-            onCancel={() => setPendingEventDeletion(undefined)}
+            isPending={isDeletingEvent}
+            pendingLabel="削除中…"
+            errorMessage={eventDeletionError}
+            onCancel={() => {
+              if (canDismissDeleteConfirmation(isDeletingEvent)) {
+                setPendingEventDeletion(undefined)
+              }
+            }}
             onConfirm={confirmEventDeletion}
           />
         )

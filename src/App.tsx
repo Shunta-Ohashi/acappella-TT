@@ -267,8 +267,12 @@ import {
 import { useOptionalCloudWorkspace } from './cloud/useCloudWorkspace.ts'
 import { createSupabaseCloudEventRepository } from './cloud/cloudEventRepository.ts'
 import {
+  canStartCloudEventDelete,
+  createCloudEventSaveRegistry,
+  isCloudEventSaving,
   isCloudEventCacheWriteReady,
   loadCloudWorkspaceEvents,
+  runExclusiveCloudEventSave,
   saveCloudEventFromState,
   type CloudEventHydrationState,
 } from './cloud/cloudEventLifecycle.ts'
@@ -379,7 +383,10 @@ function App() {
   const [cloudPersistedEventIds, setCloudPersistedEventIds] = useState<Set<EventId>>(
     () => new Set(),
   )
-  const [cloudEventSavingId, setCloudEventSavingId] = useState<EventId | null>(null)
+  const [cloudEventSaveRegistry] = useState(createCloudEventSaveRegistry)
+  const [cloudEventSavingKeys, setCloudEventSavingKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  )
   const [cloudEventSaveFeedback, setCloudEventSaveFeedback] = useState<{
     eventId: EventId
     kind: 'success' | 'error'
@@ -789,7 +796,6 @@ function App() {
     setGridAssignmentDeletion(null)
     setGridAssignmentFeedback(null)
     setCloudEventSaveFeedback(null)
-    setCloudEventSavingId(null)
     setMembers(snapshot.members)
     setBands(snapshot.bands)
     setEvents(snapshot.events)
@@ -1135,17 +1141,35 @@ function App() {
   ): Promise<boolean> => {
     if (!cloudWorkspace || !cloudEventRepository) return true
     const scopeKey = requestedPersistenceStorageKey
-    setCloudEventSavingId(eventId)
     setCloudEventSaveFeedback(null)
-    const result = await saveCloudEventFromState(
-      cloudEventRepository,
-      cloudWorkspace.workspace.id,
-      state,
-      eventId,
-    )
+    let execution
+    try {
+      execution = await runExclusiveCloudEventSave({
+        registry: cloudEventSaveRegistry,
+        scopeKey,
+        eventId,
+        operation: () => saveCloudEventFromState(
+          cloudEventRepository,
+          cloudWorkspace.workspace.id,
+          state,
+          eventId,
+        ),
+        onChange: setCloudEventSavingKeys,
+      })
+    } catch {
+      if (currentPersistenceScopeRef.current === scopeKey) {
+        setCloudEventSaveFeedback({
+          eventId,
+          kind: 'error',
+          message: 'Cloud Eventの保存中に予期しないエラーが発生しました。',
+        })
+      }
+      return false
+    }
+    if (!execution.started) return false
     if (currentPersistenceScopeRef.current !== scopeKey) return false
 
-    setCloudEventSavingId(null)
+    const result = execution.value
     if (!result.ok) {
       setCloudEventSaveFeedback({
         eventId,
@@ -1228,8 +1252,9 @@ function App() {
   ): Promise<EventDeletionActionResult> => {
     const result = createEventDeletion(getEventDeletionInput(eventId))
     if (!result.ok) return result
-    if (cloudEventSavingId === eventId) {
-      return { ok: false, reason: 'CLOUD_DELETE_FAILED' }
+    const scopeKey = requestedPersistenceStorageKey
+    if (!canStartCloudEventDelete(cloudEventSaveRegistry, scopeKey, eventId)) {
+      return { ok: false, reason: 'CLOUD_SAVE_IN_PROGRESS' }
     }
 
     if (
@@ -1237,7 +1262,6 @@ function App() {
       cloudEventRepository &&
       cloudPersistedEventIds.has(eventId)
     ) {
-      const scopeKey = requestedPersistenceStorageKey
       const deleted = await cloudEventRepository.deleteEvent(
         cloudWorkspace.workspace.id,
         eventId,
@@ -3115,7 +3139,11 @@ function App() {
           onStepChange={handleEventEditorStepChange}
           onBackToEvents={handleLeaveEventEditor}
           cloudSave={cloudWorkspace && selectedEvent ? {
-            isSaving: cloudEventSavingId === selectedEvent.id,
+            isSaving: isCloudEventSaving(
+              cloudEventSavingKeys,
+              requestedPersistenceStorageKey,
+              selectedEvent.id,
+            ),
             feedback: cloudEventSaveFeedback?.eventId === selectedEvent.id
               ? cloudEventSaveFeedback
               : undefined,
@@ -3140,6 +3168,11 @@ function App() {
               )}
               checkEventDeletion={handleCheckEventDeletion}
               onDeleteEvent={handleDeleteEvent}
+              isCloudSavePending={isCloudEventSaving(
+                cloudEventSavingKeys,
+                requestedPersistenceStorageKey,
+                selectedEvent.id,
+              )}
               onSave={handleSaveEventBasicInfo}
               onSaveAndNext={() => setActiveStep(2)}
             />

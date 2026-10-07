@@ -22,6 +22,80 @@ export type CloudEventHydrationState =
   | { scopeKey: string; kind: 'ready' }
   | { scopeKey: string; kind: 'error'; message: string }
 
+const createCloudEventSaveKey = (
+  scopeKey: string,
+  eventId: EventId,
+): string => JSON.stringify([scopeKey, eventId])
+
+export interface CloudEventSaveRegistry {
+  tryStart: (scopeKey: string, eventId: EventId) => boolean
+  finish: (scopeKey: string, eventId: EventId) => void
+  isSaving: (scopeKey: string, eventId: EventId) => boolean
+  snapshot: () => ReadonlySet<string>
+}
+
+export const createCloudEventSaveRegistry = (): CloudEventSaveRegistry => {
+  const inFlightSaveKeys = new Set<string>()
+
+  return {
+    tryStart(scopeKey, eventId) {
+      const key = createCloudEventSaveKey(scopeKey, eventId)
+      if (inFlightSaveKeys.has(key)) return false
+      inFlightSaveKeys.add(key)
+      return true
+    },
+    finish(scopeKey, eventId) {
+      inFlightSaveKeys.delete(createCloudEventSaveKey(scopeKey, eventId))
+    },
+    isSaving(scopeKey, eventId) {
+      return inFlightSaveKeys.has(createCloudEventSaveKey(scopeKey, eventId))
+    },
+    snapshot() {
+      return new Set(inFlightSaveKeys)
+    },
+  }
+}
+
+export const isCloudEventSaving = (
+  inFlightSaveKeys: ReadonlySet<string>,
+  scopeKey: string,
+  eventId: EventId,
+): boolean => inFlightSaveKeys.has(createCloudEventSaveKey(scopeKey, eventId))
+
+export const canStartCloudEventDelete = (
+  registry: CloudEventSaveRegistry,
+  scopeKey: string,
+  eventId: EventId,
+): boolean => !registry.isSaving(scopeKey, eventId)
+
+export type CloudEventSaveExecution<T> =
+  | { started: false }
+  | { started: true; value: T }
+
+export const runExclusiveCloudEventSave = async <T>({
+  registry,
+  scopeKey,
+  eventId,
+  operation,
+  onChange,
+}: {
+  registry: CloudEventSaveRegistry
+  scopeKey: string
+  eventId: EventId
+  operation: () => Promise<T>
+  onChange?: (inFlightSaveKeys: ReadonlySet<string>) => void
+}): Promise<CloudEventSaveExecution<T>> => {
+  if (!registry.tryStart(scopeKey, eventId)) return { started: false }
+
+  try {
+    onChange?.(registry.snapshot())
+    return { started: true, value: await operation() }
+  } finally {
+    registry.finish(scopeKey, eventId)
+    onChange?.(registry.snapshot())
+  }
+}
+
 export const isCloudEventCacheWriteReady = ({
   cloudEnabled,
   persistenceScopeReady,
