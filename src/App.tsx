@@ -2922,19 +2922,21 @@ function App() {
                         : 'この開催日の全Stageの出演配置・PA・当日運営担当・TT固定を削除します。休憩と出演条件は残します。'}
                       onClick={handleOpenTimetableReset}>この開催日のTTを初期化</button>
                     </div>
-                    {generationFeedback?.eventId === selectedEvent.id &&
-                      generationFeedback.eventDayId === timetableEventDay?.id && (
-                        generationFeedback.kind === 'error' && generationFeedback.guidance
-                          ? <TimetableGenerationFailureGuidance guidance={generationFeedback.guidance} />
-                          : (
-                            <p role={generationFeedback.kind === 'error' ? 'alert' : 'status'}
-                              className={generationFeedback.kind === 'error' ? 'form-error' : 'timetable-generation-feedback'}>
-                              {generationFeedback.message}
-                            </p>
-                          )
-                      )}
                   </div>
                 )}
+                generationFeedback={generationFeedback?.eventId === selectedEvent.id &&
+                  generationFeedback.eventDayId === timetableEventDay?.id
+                  ? (
+                      generationFeedback.kind === 'error' && generationFeedback.guidance
+                        ? <TimetableGenerationFailureGuidance guidance={generationFeedback.guidance} />
+                        : (
+                          <p role={generationFeedback.kind === 'error' ? 'alert' : 'status'}
+                            className={generationFeedback.kind === 'error' ? 'form-error' : 'timetable-generation-feedback'}>
+                            {generationFeedback.message}
+                          </p>
+                        )
+                    )
+                  : null}
                 settings={currentStage ? (
                   <div className="timetable-toolbar-settings">
                     <label>
