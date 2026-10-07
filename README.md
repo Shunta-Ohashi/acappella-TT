@@ -1,75 +1,62 @@
-# React + TypeScript + Vite
+# acappella-TT
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+## 概要
 
-Currently, two official plugins are available:
+アカペラライブのタイムテーブル作成・当日運営を支援するWebアプリです。
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## 主な機能
 
-## React Compiler
+- Event・開催日・Stage・Sectionの設定
+- Member・固定Band・イベント出演情報の管理
+- タイムテーブルの作成、ドラッグ＆ドロップ、自動生成
+- PA担当・当日運営担当の設定
+- TT固定・出演順制約
+- イベント最終チェック
+- CSV入出力・XLSX出力・JSONバックアップ
+- 閲覧用タイムテーブルの事前共有URL
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## 開発
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## 検証
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```bash
+npm test
+npx tsc -b
+npm run lint
+npm run build
 ```
+
+## Production preview
+
+```bash
+npm run build
+npm run preview
+```
+
+## Deployment
+
+Vercelではrepository rootをプロジェクトとして登録し、次の設定でデプロイします。
+
+- Framework Preset: `Vite`
+- Build Command: `npm run build`
+- Output Directory: `dist`
+- Root Directory: repository root
+
+通常画面はroot URL、事前共有タイムテーブルは`#share=...`形式のhash URLを使用します。現時点ではpath-based routingを使用していないため、SPA rewriteは不要です。
+
+## Data storage
+
+編集データは各ブラウザの`localStorage`へ保存されます。production URLへデプロイしても、別のブラウザ・端末・利用者へデータが自動共有されることはありません。未保存のPA・当日運営設定draftも共有されません。
+
+事前共有URLには閲覧用スナップショットが含まれるため、そのURLを受け取った人は共有内容を閲覧できます。
+
+## Security and privacy
+
+現時点では認証機能を実装していないため、production URLを知っている人はアプリ自体を開けます。共同編集・クラウド保存を導入するまでは、production deploymentを複数人での実データ共有基盤として使用しないでください。
+
+Supabase、認証、クラウド永続化、リアルタイム共同編集は後続対応予定です。
