@@ -21,6 +21,7 @@ interface TimetableOperationsWorkspaceProps {
   historyFeedback: { kind: 'success' | 'error'; message: string } | null
   navigationFeedback: string | null
   generationAction?: ReactNode
+  generationFeedback?: ReactNode
   unavailableContent?: ReactNode
   pool: ReactNode
   timetable: ReactNode
@@ -61,6 +62,7 @@ export function TimetableOperationsWorkspace({
   historyFeedback,
   navigationFeedback,
   generationAction,
+  generationFeedback,
   unavailableContent,
   pool,
   timetable,
@@ -198,6 +200,12 @@ export function TimetableOperationsWorkspace({
           </div>
         </div>
       </section>
+
+      {generationFeedback && (
+        <div className="timetable-generation-feedback-slot">
+          {generationFeedback}
+        </div>
+      )}
 
       {unavailableContent ?? (
         <>
