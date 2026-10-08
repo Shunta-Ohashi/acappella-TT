@@ -45,6 +45,11 @@ const createDeferred = () => {
   return { promise, resolve, reject }
 }
 
+const compareUtf8Bytes = (left, right) => Buffer.compare(
+  Buffer.from(left, 'utf8'),
+  Buffer.from(right, 'utf8'),
+)
+
 const createHydrationHarness = (
   initialState,
   scopeKey = 'scope-a',
@@ -101,16 +106,22 @@ const createHydrationHarness = (
 class MemoryCloudEventGateway {
   rows = new Map()
   allowedWorkspaces = new Set()
+  workspaceRoles = new Map()
+  authenticated = true
   clock = 0
   accessCalls = 0
   loadRowCalls = 0
   workspacePageCalls = 0
   saveCalls = 0
   deleteCalls = 0
-  serverPageSize
+  workspacePageRequests = []
 
   constructor(allowedWorkspaces) {
     this.allowedWorkspaces = new Set(allowedWorkspaces)
+    this.workspaceRoles = new Map(allowedWorkspaces.map(workspaceId => [
+      workspaceId,
+      'editor',
+    ]))
   }
 
   key(workspaceId, eventId) {
@@ -118,7 +129,11 @@ class MemoryCloudEventGateway {
   }
 
   deny(workspaceId) {
-    return this.allowedWorkspaces.has(workspaceId)
+    return this.authenticated &&
+      this.allowedWorkspaces.has(workspaceId) &&
+      ['owner', 'editor', 'viewer'].includes(
+        this.workspaceRoles.get(workspaceId) ?? 'editor',
+      )
       ? undefined
       : { data: null, error: { code: '42501' } }
   }
@@ -131,7 +146,7 @@ class MemoryCloudEventGateway {
   async getWorkspaceRole(workspaceId) {
     this.accessCalls += 1
     return this.allowedWorkspaces.has(workspaceId)
-      ? { data: { role: 'editor' }, error: null }
+      ? { data: { role: this.workspaceRoles.get(workspaceId) ?? 'editor' }, error: null }
       : { data: null, error: null }
   }
 
@@ -156,19 +171,26 @@ class MemoryCloudEventGateway {
     }
   }
 
-  async loadWorkspacePage(workspaceId, afterEventId, limit) {
+  async loadAuthorizedWorkspacePage(workspaceId, afterEventId, limit) {
     this.workspacePageCalls += 1
+    this.workspacePageRequests.push({ workspaceId, afterEventId, limit })
     const denied = this.deny(workspaceId)
     if (denied) return denied
-    const effectiveLimit = Math.min(limit, this.serverPageSize ?? limit)
+    const candidates = [...this.rows.values()]
+      .filter(row => row.workspace_id === workspaceId)
+      .sort((left, right) => compareUtf8Bytes(left.event_id, right.event_id))
+      .filter(row => afterEventId === null ||
+        compareUtf8Bytes(row.event_id, afterEventId) > 0)
+    const rows = candidates.slice(0, limit)
     return {
-      data: [...this.rows.values()]
-        .filter(row => row.workspace_id === workspaceId)
-        .sort((left, right) => left.event_id.localeCompare(right.event_id))
-        .filter(row => afterEventId === undefined ||
-          row.event_id.localeCompare(afterEventId) > 0)
-        .slice(0, effectiveLimit)
-        .map(row => structuredClone(row)),
+      data: {
+        status: 'ok',
+        workspace_id: workspaceId,
+        rows: rows.map(row => structuredClone(row)),
+        next_cursor: candidates.length > limit
+          ? rows.at(-1)?.event_id ?? null
+          : null,
+      },
       error: null,
     }
   }
@@ -215,6 +237,18 @@ const createSnapshot = (state, eventId) => {
   const result = createCloudEventSnapshot(state, eventId)
   assert.equal(result.ok, true)
   return result.snapshot
+}
+
+const createMinimalSnapshot = (eventId, eventName = eventId) => {
+  const state = createEmptyState()
+  state.events.push({
+    id: eventId,
+    name: eventName,
+    timeZone: 'Asia/Tokyo',
+    validationPolicy: { minimumGapBands: 1, minimumRestMinutes: 10 },
+    performanceSlotMinutes: [5],
+  })
+  return createSnapshot(state, eventId)
 }
 
 const createSnapshotContainingEveryEventOwnedCollection = () => {
@@ -622,10 +656,9 @@ test('repositoryでWorkspace Eventを作成・一覧・取得・更新・削除�
   assert.equal((await repository.loadEvent('workspace-a', eventId)).ok, false)
 })
 
-test('Workspace bulk loadはkeyset pageを空ページまで読みEvent単位loadを行わない', async () => {
+test('Workspace bulk loadは認可済みkeyset pageを読みEvent単位loadを行わない', async () => {
   const gateway = new MemoryCloudEventGateway(['workspace-a'])
-  gateway.serverPageSize = 1
-  const repository = createCloudEventRepository(gateway, { workspacePageSize: 2 })
+  const repository = createCloudEventRepository(gateway, { workspacePageSize: 1 })
   const state = createDemoData()
   for (const event of state.events.slice(0, 3)) {
     assert.equal((await repository.saveEvent(
@@ -644,8 +677,8 @@ test('Workspace bulk loadはkeyset pageを空ページまで読みEvent単位loa
   )
 
   assert.equal(loaded.ok, true)
-  assert.equal(gateway.accessCalls, 1)
-  assert.equal(gateway.workspacePageCalls, 4)
+  assert.equal(gateway.accessCalls, 0)
+  assert.equal(gateway.workspacePageCalls, 3)
   assert.equal(gateway.loadRowCalls, 0)
   assert.deepEqual(
     loaded.ok && loaded.value.records.map(record => record.eventId),
@@ -653,7 +686,7 @@ test('Workspace bulk loadはkeyset pageを空ページまで読みEvent単位loa
   )
 })
 
-test('Workspace bulk loadは0件・page size同件数でも空ページを終端にする', async () => {
+test('Workspace bulk loadは認可済みの0件とpage size同件数を明示cursorで終端にする', async () => {
   const emptyGateway = new MemoryCloudEventGateway(['workspace-a'])
   const emptyRepository = createCloudEventRepository(
     emptyGateway,
@@ -663,6 +696,17 @@ test('Workspace bulk loadは0件・page size同件数でも空ページを終端
     ok: true,
     value: [],
   })
+  assert.equal(emptyGateway.workspacePageCalls, 1)
+
+  assert.equal((await emptyRepository.saveEvent(
+    'workspace-a',
+    createMinimalSnapshot('only-event'),
+  )).ok, true)
+  emptyGateway.workspacePageCalls = 0
+  const single = await emptyRepository.loadWorkspaceEvents('workspace-a')
+  assert.deepEqual(single.ok && single.value.map(record => record.eventId), [
+    'only-event',
+  ])
   assert.equal(emptyGateway.workspacePageCalls, 1)
 
   const gateway = new MemoryCloudEventGateway(['workspace-a'])
@@ -678,29 +722,62 @@ test('Workspace bulk loadは0件・page size同件数でも空ページを終端
   const loaded = await repository.loadWorkspaceEvents('workspace-a')
   assert.equal(loaded.ok, true)
   assert.equal(loaded.ok && loaded.value.length, 2)
-  assert.equal(gateway.workspacePageCalls, 2)
+  assert.equal(gateway.workspacePageCalls, 1)
 })
 
 test('Workspace bulk loadは不正page・scope越境・重複・cursor進行不良を拒否する', async () => {
-  const state = createDemoData()
-  const snapshot = createSnapshot(state, state.events[0].id)
-  const row = {
-    workspace_id: 'workspace-a',
-    event_id: snapshot.appState.events[0].id,
-    event_name: snapshot.appState.events[0].name,
-    event_snapshot: snapshot,
+  const createRow = (eventId, workspaceId = 'workspace-a') => ({
+    workspace_id: workspaceId,
+    event_id: eventId,
+    event_name: eventId,
+    event_snapshot: createMinimalSnapshot(eventId),
     revision: 1,
     created_at: '2026-10-08T00:00:00.000Z',
     updated_at: '2026-10-08T00:00:00.000Z',
-  }
+  })
+  const row = createRow('event-a')
+  const otherRow = createRow('event-b')
+  const page = (rows, nextCursor = null, overrides = {}) => ({
+    status: 'ok',
+    workspace_id: 'workspace-a',
+    rows,
+    next_cursor: nextCursor,
+    ...overrides,
+  })
   const cases = [
-    [null],
-    [[{ ...row, workspace_id: 'workspace-b' }]],
-    [[row], [row]],
-    [[row, row]],
+    { pages: [null], code: 'INVALID_RESPONSE' },
+    { pages: [undefined], code: 'INVALID_RESPONSE' },
+    { pages: [[]], code: 'INVALID_RESPONSE' },
+    {
+      pages: [{ status: 'ok', workspace_id: 'workspace-a', rows: [] }],
+      code: 'INVALID_RESPONSE',
+    },
+    { pages: [page([], null, { status: 'unknown' })], code: 'INVALID_RESPONSE' },
+    { pages: [page([], null, { workspace_id: 'workspace-b' })], code: 'INVALID_RESPONSE' },
+    { pages: [page([], null, { error: 'ambiguous' })], code: 'INVALID_RESPONSE' },
+    { pages: [page([{ ...row, workspace_id: 'workspace-b' }])], code: 'INVALID_SNAPSHOT' },
+    { pages: [page([row, row])], code: 'INVALID_SNAPSHOT', pageSize: 2 },
+    { pages: [page([row], 'wrong-cursor')], code: 'INVALID_RESPONSE', pageSize: 1 },
+    { pages: [page([row], '   ')], code: 'INVALID_RESPONSE', pageSize: 1 },
+    {
+      pages: [page([row], row.event_id), page([row])],
+      code: 'INVALID_SNAPSHOT',
+      pageSize: 1,
+    },
+    {
+      pages: [page([row], row.event_id), page([otherRow], row.event_id)],
+      code: 'INVALID_RESPONSE',
+      pageSize: 1,
+    },
+    {
+      pages: [page([])],
+      code: 'SUPABASE_ERROR',
+      databaseError: { code: 'NETWORK' },
+    },
+    { pages: [], code: 'SUPABASE_ERROR', throws: true },
   ]
 
-  for (const pages of cases) {
+  for (const fixture of cases) {
     let pageIndex = 0
     const repository = createCloudEventRepository({
       async getWorkspaceRole() {
@@ -708,18 +785,147 @@ test('Workspace bulk loadは不正page・scope越境・重複・cursor進行不�
       },
       async listRows() { throw new Error('not called') },
       async loadRow() { throw new Error('not called') },
-      async loadWorkspacePage() {
-        const data = pageIndex < pages.length ? pages[pageIndex] : []
+      async loadAuthorizedWorkspacePage() {
+        if (fixture.throws) throw new Error('network')
+        const data = pageIndex < fixture.pages.length
+          ? fixture.pages[pageIndex]
+          : page([])
         pageIndex += 1
-        return { data, error: null }
+        return { data, error: fixture.databaseError ?? null }
       },
       async saveRow() { throw new Error('not called') },
       async deleteAuthorizedEvent() { throw new Error('not called') },
-    }, { workspacePageSize: 2 })
+    }, { workspacePageSize: fixture.pageSize ?? 2 })
     const result = await repository.loadWorkspaceEvents('workspace-a')
     assert.equal(result.ok, false)
-    assert.equal(!result.ok && result.error.code, 'INVALID_SNAPSHOT')
+    assert.equal(!result.ok && result.error.code, fixture.code)
   }
+})
+
+test('Workspace pageは各requestでowner・editor・viewerを許可し権限消失を部分成功にしない', async () => {
+  const gateway = new MemoryCloudEventGateway(['workspace-a'])
+  const repository = createCloudEventRepository(gateway, { workspacePageSize: 1 })
+  for (const eventId of ['event-a', 'event-b', 'event-c']) {
+    assert.equal((await repository.saveEvent(
+      'workspace-a',
+      createMinimalSnapshot(eventId),
+    )).ok, true)
+  }
+
+  for (const role of ['owner', 'editor', 'viewer']) {
+    gateway.workspaceRoles.set('workspace-a', role)
+    const result = await repository.loadWorkspaceEvents('workspace-a')
+    assert.equal(result.ok, true, role)
+    assert.deepEqual(result.ok && result.value.map(record => record.eventId), [
+      'event-a', 'event-b', 'event-c',
+    ])
+  }
+
+  gateway.allowedWorkspaces.delete('workspace-a')
+  const nonMember = await repository.loadWorkspaceEvents('workspace-a')
+  assert.equal(nonMember.ok, false)
+  assert.equal(!nonMember.ok && nonMember.error.code, 'ACCESS_DENIED')
+  const deniedHarness = createHydrationHarness(createDemoData())
+  const deniedBefore = structuredClone(deniedHarness.domainState)
+  const deniedCompletion = await deniedHarness.run(() => loadCloudWorkspaceEvents(
+    repository,
+    'workspace-a',
+    deniedHarness.domainState,
+  ))
+  assert.equal(deniedCompletion.kind, 'error')
+  assert.deepEqual(deniedHarness.domainState, deniedBefore)
+  assert.deepEqual(deniedHarness.latestDomainState, deniedBefore)
+  assert.equal(deniedHarness.hydration.kind, 'error')
+  assert.equal(deniedHarness.storageSetCalls, 0)
+  assert.equal(deniedHarness.storageRemoveCalls, 0)
+
+  gateway.allowedWorkspaces.add('workspace-a')
+  gateway.workspaceRoles.set('workspace-a', 'editor')
+  gateway.authenticated = false
+  const unauthenticated = await repository.loadWorkspaceEvents('workspace-a')
+  assert.equal(unauthenticated.ok, false)
+  assert.equal(!unauthenticated.ok && unauthenticated.error.code, 'ACCESS_DENIED')
+  gateway.authenticated = true
+
+  gateway.workspaceRoles.set('workspace-a', 'unknown')
+  const unknownRole = await repository.loadWorkspaceEvents('workspace-a')
+  assert.equal(unknownRole.ok, false)
+  assert.equal(!unknownRole.ok && unknownRole.error.code, 'ACCESS_DENIED')
+  gateway.workspaceRoles.set('workspace-a', 'editor')
+
+  const loadPage = gateway.loadAuthorizedWorkspacePage.bind(gateway)
+  let pageCalls = 0
+  gateway.loadAuthorizedWorkspacePage = async (...args) => {
+    pageCalls += 1
+    const result = await loadPage(...args)
+    if (pageCalls === 1) gateway.allowedWorkspaces.delete('workspace-a')
+    return result
+  }
+  const revoked = await repository.loadWorkspaceEvents('workspace-a')
+  assert.equal(revoked.ok, false)
+  assert.equal(!revoked.ok && revoked.error.code, 'ACCESS_DENIED')
+  assert.equal(pageCalls, 2)
+
+  gateway.allowedWorkspaces.add('workspace-a')
+  gateway.workspaceRoles.set('workspace-a', 'editor')
+  assert.equal(revoked.ok, false)
+  assert.equal(!revoked.ok && revoked.error.code, 'ACCESS_DENIED')
+  pageCalls = 0
+  gateway.loadAuthorizedWorkspacePage = async (...args) => {
+    pageCalls += 1
+    const result = await loadPage(...args)
+    if (pageCalls === 2) gateway.allowedWorkspaces.delete('workspace-a')
+    return result
+  }
+  const revokedBeforeTerminal = await repository.loadWorkspaceEvents('workspace-a')
+  assert.equal(revokedBeforeTerminal.ok, false)
+  assert.equal(
+    !revokedBeforeTerminal.ok && revokedBeforeTerminal.error.code,
+    'ACCESS_DENIED',
+  )
+  assert.equal(pageCalls, 3)
+
+  gateway.allowedWorkspaces.add('workspace-a')
+  gateway.workspaceRoles.set('workspace-a', 'editor')
+  gateway.loadAuthorizedWorkspacePage = loadPage
+  gateway.workspacePageRequests = []
+  const retried = await repository.loadWorkspaceEvents('workspace-a')
+  assert.equal(retried.ok, true)
+  assert.equal(gateway.workspacePageRequests[0]?.afterEventId, null)
+
+  pageCalls = 0
+  gateway.workspaceRoles.set('workspace-a', 'editor')
+  gateway.loadAuthorizedWorkspacePage = async (...args) => {
+    pageCalls += 1
+    const result = await loadPage(...args)
+    if (pageCalls === 1) gateway.workspaceRoles.set('workspace-a', 'viewer')
+    return result
+  }
+  const downgraded = await repository.loadWorkspaceEvents('workspace-a')
+  assert.equal(downgraded.ok, true)
+  assert.equal(gateway.workspaceRoles.get('workspace-a'), 'viewer')
+})
+
+test('Workspace pageのC照合順cursorをclientは変更せずUnicode IDも欠落なく取得する', async () => {
+  const gateway = new MemoryCloudEventGateway(['workspace-a'])
+  const repository = createCloudEventRepository(gateway, { workspacePageSize: 2 })
+  const eventIds = ['a', 'A', '!mark', 'あ', '😀', '𠮷']
+  for (const eventId of eventIds) {
+    assert.equal((await repository.saveEvent(
+      'workspace-a',
+      createMinimalSnapshot(eventId),
+    )).ok, true)
+  }
+
+  gateway.workspacePageRequests = []
+  const loaded = await repository.loadWorkspaceEvents('workspace-a')
+  const expected = [...eventIds].sort(compareUtf8Bytes)
+  assert.equal(loaded.ok, true)
+  assert.deepEqual(loaded.ok && loaded.value.map(record => record.eventId), expected)
+  assert.deepEqual(
+    gateway.workspacePageRequests.map(request => request.afterEventId),
+    [null, expected[1], expected[3]],
+  )
 })
 
 test('Workspace bulk loadの途中失敗はhydrate stateを部分commitしない', async () => {
@@ -732,9 +938,9 @@ test('Workspace bulk loadの途中失敗はhydrate stateを部分commitしない
       createSnapshot(state, event.id),
     )).ok, true)
   }
-  const loadPage = gateway.loadWorkspacePage.bind(gateway)
+  const loadPage = gateway.loadAuthorizedWorkspacePage.bind(gateway)
   let pageCalls = 0
-  gateway.loadWorkspacePage = async (...args) => {
+  gateway.loadAuthorizedWorkspacePage = async (...args) => {
     pageCalls += 1
     return pageCalls === 2
       ? { data: null, error: { code: 'NETWORK' } }
@@ -917,7 +1123,7 @@ test('repositoryはWorkspaceを明示的にscopeし越境accessを拒否する',
     getWorkspaceRole: gateway.getWorkspaceRole.bind(gateway),
     listRows: gateway.listRows.bind(gateway),
     loadRow: gateway.loadRow.bind(gateway),
-    loadWorkspacePage: gateway.loadWorkspacePage.bind(gateway),
+    loadAuthorizedWorkspacePage: gateway.loadAuthorizedWorkspacePage.bind(gateway),
     saveRow: gateway.saveRow.bind(gateway),
     deleteAuthorizedEvent: gateway.deleteAuthorizedEvent.bind(gateway),
   })
@@ -954,7 +1160,7 @@ test('repositoryはDB responseのinvalid snapshotとscope mismatchを拒否す�
     async loadRow() {
       return { data: { workspace_id: 'workspace-a', event_id: 'event-a' }, error: null }
     },
-    async loadWorkspacePage() {
+    async loadAuthorizedWorkspacePage() {
       return { data: [{ workspace_id: 'workspace-b' }], error: null }
     },
     async saveRow() {
@@ -975,11 +1181,15 @@ test('repositoryはDB responseのinvalid snapshotとscope mismatchを拒否す�
 
 test('viewerはCloud Eventを参照できるが保存・削除はrepository境界でも拒否する', async () => {
   const gateway = new MemoryCloudEventGateway(['workspace-a'])
-  gateway.getWorkspaceRole = async () => ({ data: { role: 'viewer' }, error: null })
+  gateway.workspaceRoles.set('workspace-a', 'viewer')
   const repository = createCloudEventRepository(gateway)
   const snapshot = createSnapshot(createDemoData(), 'event-demo-main')
 
   assert.deepEqual(await repository.listEvents('workspace-a'), {
+    ok: true,
+    value: [],
+  })
+  assert.deepEqual(await repository.loadWorkspaceEvents('workspace-a'), {
     ok: true,
     value: [],
   })
@@ -1001,6 +1211,8 @@ test('viewer read-only判定はmutationを塞ぎ閲覧・検索・出力入口�
     memberSettingsSource,
     bandSettingsSource,
     stageSettingsSource,
+    orderConstraintSettingsSource,
+    orderConstraintRepairSource,
   ] =
     await Promise.all([
       readFile(new URL('../src/App.tsx', import.meta.url), 'utf8'),
@@ -1011,6 +1223,14 @@ test('viewer read-only判定はmutationを塞ぎ閲覧・検索・出力入口�
       readFile(new URL('../src/components/EventMemberSettings.tsx', import.meta.url), 'utf8'),
       readFile(new URL('../src/components/EventBandSettings.tsx', import.meta.url), 'utf8'),
       readFile(new URL('../src/components/EventStageSettings.tsx', import.meta.url), 'utf8'),
+      readFile(new URL(
+        '../src/components/TimetableOrderConstraintSettings.tsx',
+        import.meta.url,
+      ), 'utf8'),
+      readFile(new URL(
+        '../src/components/TimetableOrderConstraintRepairPanel.tsx',
+        import.meta.url,
+      ), 'utf8'),
     ])
 
   assert.match(appSource, /const canEditWorkspace = cloudWorkspace === null \|\|[\s\S]*canEditCloudWorkspace/)
@@ -1047,6 +1267,16 @@ test('viewer read-only判定はmutationを塞ぎ閲覧・検索・出力入口�
   assert.match(memberSettingsSource, /CSV書き出し/)
   assert.match(bandSettingsSource, /CSV書き出し/)
   assert.match(stageSettingsSource, /if \(readOnly\)[\s\S]*setSelectedEventDayId/)
+  assert.match(appSource, /TimetableOrderConstraintRepairPanel[\s\S]*readOnly=\{!canEditWorkspace\}/)
+  assert.match(appSource,
+    /key=\{`\$\{selectedEvent\.id\}:\$\{canEditWorkspace \? 'editable' : 'read-only'\}`\}/)
+  assert.match(orderConstraintSettingsSource,
+    /TimetableOrderConstraintRepairPanel[\s\S]*readOnly=\{readOnly\}/)
+  assert.match(orderConstraintSettingsSource,
+    /key=\{readOnly \? 'read-only' : 'editable'\}/)
+  assert.match(orderConstraintRepairSource,
+    /!readOnly && <div className="timetable-order-settings__actions">/)
+  assert.match(orderConstraintRepairSource, /!readOnly && pendingDeletion/)
 })
 
 test('Workspace loadはCloud一覧を取得して全EventをV5 domain stateへrehydrateする', async () => {
@@ -1658,7 +1888,7 @@ test('Cloud load失敗はbase stateを変更せず別Event stateを返さない'
     async loadRow() {
       throw new Error('not called')
     },
-    async loadWorkspacePage() {
+    async loadAuthorizedWorkspacePage() {
       return { data: null, error: { code: 'NETWORK' } }
     },
     async saveRow() {
@@ -1676,6 +1906,11 @@ test('Cloud load失敗はbase stateを変更せず別Event stateを返さない'
 
 test('App hydration完了処理は全failureでdomain・latest ref・storageを保持する', async () => {
   const cases = [
+    {
+      code: 'ACCESS_DENIED',
+      message: 'ワークスペースのEventへアクセスできません。',
+      createState: createDemoData,
+    },
     {
       code: 'SUPABASE_ERROR',
       message: 'Cloud Eventの通信に失敗しました。',
@@ -1901,6 +2136,62 @@ test('authorized delete migrationはMembershipをlockして認可済み結果だ
   assert.doesNotMatch(gatewayDelete, /\.delete\(\)/)
 })
 
+test('authorized page migrationは各pageでMembershipをlockしC照合順envelopeを返す', async () => {
+  const sql = await readFile(new URL(
+    '../supabase/migrations/20261008140000_cloud_event_authorized_page.sql',
+    import.meta.url,
+  ), 'utf8')
+  const repositorySource = await readFile(new URL(
+    '../src/cloud/cloudEventRepository.ts',
+    import.meta.url,
+  ), 'utf8')
+
+  assert.match(sql, /create function public\.load_cloud_events_page_authorized\s*\(/i)
+  assert.match(sql,
+    /create index cloud_events_workspace_event_id_c_idx[\s\S]*workspace_id, event_id collate "C"/i)
+  assert.match(sql, /language plpgsql\s+volatile\s+security definer\s+set search_path = ''/i)
+  assert.match(sql, /caller_id uuid := auth\.uid\(\)/i)
+  assert.match(sql, /from public\.workspace_members/i)
+  assert.match(sql, /workspace_members\.workspace_id = p_workspace_id/i)
+  assert.match(sql, /workspace_members\.user_id = caller_id/i)
+  assert.match(sql, /for share/i)
+  assert.match(sql, /membership_role not in \('owner', 'editor', 'viewer'\)/i)
+  assert.match(sql, /using errcode = '42501'/i)
+  assert.match(sql, /p_page_size < 1/i)
+  assert.match(sql, /p_page_size > 100/i)
+  assert.match(sql, /btrim\(p_after_event_id\) = ''/i)
+  assert.match(sql, /event_id collate "C"\) >/i)
+  assert.match(sql, /order by cloud_events\.event_id collate "C"/i)
+  assert.match(sql, /limit \(p_page_size \+ 1\)/i)
+  assert.match(sql, /'status', 'ok'/i)
+  assert.match(sql, /'workspace_id', p_workspace_id/i)
+  assert.match(sql, /'rows', page_rows/i)
+  assert.match(sql, /'next_cursor', next_cursor/i)
+  assert.match(sql,
+    /revoke all on function public\.load_cloud_events_page_authorized\(uuid, text, integer\)[\s\S]*from public/i)
+  assert.match(sql,
+    /revoke all on function public\.load_cloud_events_page_authorized\(uuid, text, integer\)[\s\S]*from anon/i)
+  assert.match(sql,
+    /revoke all on function public\.load_cloud_events_page_authorized\(uuid, text, integer\)[\s\S]*from service_role/i)
+  assert.match(sql,
+    /grant execute on function public\.load_cloud_events_page_authorized\(uuid, text, integer\)[\s\S]*to authenticated/i)
+
+  const gatewayPageRead = repositorySource.slice(
+    repositorySource.indexOf('async loadAuthorizedWorkspacePage'),
+    repositorySource.indexOf('async loadRow'),
+  )
+  assert.match(gatewayPageRead, /\.rpc\('load_cloud_events_page_authorized'/)
+  assert.match(gatewayPageRead, /p_after_event_id: afterEventId/)
+  assert.doesNotMatch(gatewayPageRead, /\.from\('cloud_events'\)/)
+  assert.doesNotMatch(gatewayPageRead, /\.order\(/)
+  const repositoryWorkspaceLoad = repositorySource.slice(
+    repositorySource.indexOf('async loadWorkspaceEvents'),
+    repositorySource.indexOf('async saveEvent'),
+  )
+  assert.doesNotMatch(repositoryWorkspaceLoad, /localeCompare/)
+  assert.doesNotMatch(repositoryWorkspaceLoad, /\.sort\(/)
+})
+
 test('upgrade migrationはCloud Event直接DELETEだけを全client roleから取り消す', async () => {
   const sql = await readFile(new URL(
     '../supabase/migrations/20261008130000_cloud_event_rpc_only_delete.sql',
@@ -1923,6 +2214,10 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
     '../supabase/tests/cloud_event_authorized_delete_concurrency.sql',
     import.meta.url,
   ), 'utf8')
+  const pageConcurrencySql = await readFile(new URL(
+    '../supabase/tests/cloud_event_authorized_page_concurrency.sql',
+    import.meta.url,
+  ), 'utf8')
   const instructions = await readFile(new URL(
     '../supabase/tests/README.md',
     import.meta.url,
@@ -1941,6 +2236,14 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   assert.match(coreSql, /cross-workspace delete unexpectedly succeeded/i)
   assert.match(coreSql, /revoked membership delete unexpectedly succeeded/i)
   assert.match(coreSql, /downgraded membership delete unexpectedly succeeded/i)
+  assert.match(coreSql, /authenticated must be able to execute page RPC/i)
+  assert.match(coreSql, /editor could not read an authorized page/i)
+  assert.match(coreSql, /viewer could not read an authorized page/i)
+  assert.match(coreSql, /downgraded viewer could not read an authorized empty page/i)
+  assert.match(coreSql, /non-member page read unexpectedly succeeded/i)
+  assert.match(coreSql, /cross-workspace page read unexpectedly succeeded/i)
+  assert.match(coreSql, /anonymous page read unexpectedly succeeded/i)
+  assert.match(coreSql, /C-collated page order is unexpected/i)
   assert.match(coreSql, /invalid-version-string/i)
   assert.match(coreSql, /invalid-app-version-string/i)
   assert.match(coreSql, /missing-version/i)
@@ -1952,7 +2255,12 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   assert.match(concurrencySql, /membership role UPDATE did not wait/i)
   assert.match(concurrencySql, /membership DELETE did not wait/i)
   assert.match(concurrencySql, /RPC succeeded after committed downgrade/i)
+  assert.match(pageConcurrencySql, /extensions\.dblink_send_query/i)
+  assert.match(pageConcurrencySql, /wait_event_type = 'Lock'/i)
+  assert.match(pageConcurrencySql, /revocation did not wait for page RPC FOR SHARE lock/i)
+  assert.match(pageConcurrencySql, /page RPC succeeded after committed membership revocation/i)
   assert.match(instructions, /disposable/i)
   assert.match(instructions, /psql/i)
+  assert.match(instructions, /cloud_event_authorized_page_concurrency\.sql/i)
   assert.match(instructions, /not a passing database test/i)
 })

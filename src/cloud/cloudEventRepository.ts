@@ -66,11 +66,11 @@ export interface CloudEventDatabaseGateway {
     workspaceId: string,
   ) => Promise<CloudEventDatabaseResult<unknown>>
   listRows: (workspaceId: string) => Promise<CloudEventDatabaseResult<unknown[]>>
-  loadWorkspacePage: (
+  loadAuthorizedWorkspacePage: (
     workspaceId: string,
-    afterEventId: EventId | undefined,
+    afterEventId: EventId | null,
     limit: number,
-  ) => Promise<CloudEventDatabaseResult<unknown[]>>
+  ) => Promise<CloudEventDatabaseResult<unknown>>
   loadRow: (
     workspaceId: string,
     eventId: EventId,
@@ -177,6 +177,36 @@ const parseDeletionConfirmation = (
   }
 }
 
+interface AuthorizedWorkspacePage {
+  rows: unknown[]
+  nextCursor: EventId | null
+}
+
+const parseAuthorizedWorkspacePage = (
+  value: unknown,
+  workspaceId: string,
+  pageSize: number,
+): AuthorizedWorkspacePage | undefined => {
+  if (
+    !isRecord(value) ||
+    value.status !== 'ok' ||
+    value.workspace_id !== workspaceId ||
+    !Array.isArray(value.rows) ||
+    !('next_cursor' in value) ||
+    ('error' in value) ||
+    value.rows.length > pageSize ||
+    (value.next_cursor !== null && !isNonEmptyString(value.next_cursor))
+  ) return undefined
+
+  const nextCursor = value.next_cursor as EventId | null
+  if (
+    (value.rows.length === 0 && nextCursor !== null) ||
+    (nextCursor !== null && value.rows.length !== pageSize)
+  ) return undefined
+
+  return { rows: value.rows, nextCursor }
+}
+
 const invalidArgument = (message: string): CloudEventRepositoryResult<never> => ({
   ok: false,
   error: { code: 'INVALID_ARGUMENT', message },
@@ -198,7 +228,7 @@ const invalidSnapshot = (): CloudEventRepositoryResult<never> => ({
 
 const invalidResponse = (): CloudEventRepositoryResult<never> => ({
   ok: false,
-  error: { code: 'INVALID_RESPONSE', message: 'Cloud Event削除結果を確認できませんでした。' },
+  error: { code: 'INVALID_RESPONSE', message: 'Cloud Eventの応答を確認できませんでした。' },
 })
 
 const notFound = (): CloudEventRepositoryResult<never> => ({
@@ -242,7 +272,8 @@ export const createCloudEventRepository = (
   options: CloudEventRepositoryOptions = {},
 ): CloudEventRepository => {
   const workspacePageSize = Number.isSafeInteger(options.workspacePageSize) &&
-    Number(options.workspacePageSize) > 0
+    Number(options.workspacePageSize) > 0 &&
+    Number(options.workspacePageSize) <= CLOUD_EVENT_WORKSPACE_PAGE_SIZE
     ? Number(options.workspacePageSize)
     : CLOUD_EVENT_WORKSPACE_PAGE_SIZE
 
@@ -296,49 +327,57 @@ export const createCloudEventRepository = (
 
   async loadWorkspaceEvents(workspaceId) {
     if (!hasValidScope(workspaceId)) return invalidArgument('Workspace IDが必要です。')
-    const access = await requireWorkspaceAccess(gateway, workspaceId, 'read')
-    if (!access.ok) return access
 
     const records: CloudEventRecord[] = []
     const seenEventIds = new Set<EventId>()
-    let afterEventId: EventId | undefined
+    const requestedCursors = new Set<EventId>()
+    let afterEventId: EventId | null = null
 
     try {
       while (true) {
-        const result = await gateway.loadWorkspacePage(
+        const result = await gateway.loadAuthorizedWorkspacePage(
           workspaceId,
           afterEventId,
           workspacePageSize,
         )
         if (result.error) return databaseFailure(result.error)
-        if (!Array.isArray(result.data)) return invalidSnapshot()
-        if (result.data.length === 0) break
+        const page = parseAuthorizedWorkspacePage(
+          result.data,
+          workspaceId,
+          workspacePageSize,
+        )
+        if (!page) return invalidResponse()
 
-        const pageRecords = result.data.map(parseRecord)
+        // The authorized RPC owns the C-collated keyset order. Do not re-sort
+        // or compare Unicode IDs with JavaScript locale/UTF-16 semantics here.
+        const pageRecords = page.rows.map(parseRecord)
         if (pageRecords.some(record => !record)) return invalidSnapshot()
 
-        let previousEventId = afterEventId
         for (const record of pageRecords) {
           if (
             !record ||
             record.workspaceId !== workspaceId ||
-            seenEventIds.has(record.eventId) ||
-            (previousEventId !== undefined &&
-              record.eventId.localeCompare(previousEventId) <= 0)
+            seenEventIds.has(record.eventId)
           ) return invalidSnapshot()
 
           seenEventIds.add(record.eventId)
           records.push(record)
-          previousEventId = record.eventId
         }
 
-        if (previousEventId === undefined || previousEventId === afterEventId) {
-          return invalidSnapshot()
+        if (page.nextCursor === null) return { ok: true, value: records }
+
+        const lastRecord = pageRecords.at(-1)
+        if (
+          !lastRecord ||
+          page.nextCursor !== lastRecord.eventId ||
+          page.nextCursor === afterEventId ||
+          requestedCursors.has(page.nextCursor)
+        ) {
+          return invalidResponse()
         }
-        afterEventId = previousEventId
+        requestedCursors.add(page.nextCursor)
+        afterEventId = page.nextCursor
       }
-
-      return { ok: true, value: records }
     } catch {
       return databaseFailure({})
     }
@@ -420,19 +459,12 @@ export const createSupabaseCloudEventGateway = (
     return { data: result.data, error: result.error }
   },
 
-  async loadWorkspacePage(workspaceId, afterEventId, limit) {
-    let query = client
-      .from('cloud_events')
-      .select(CLOUD_EVENT_COLUMNS)
-      .eq('workspace_id', workspaceId)
-
-    if (afterEventId !== undefined) {
-      query = query.gt('event_id', afterEventId)
-    }
-
-    const result = await query
-      .order('event_id', { ascending: true })
-      .limit(limit)
+  async loadAuthorizedWorkspacePage(workspaceId, afterEventId, limit) {
+    const result = await client.rpc('load_cloud_events_page_authorized', {
+      p_workspace_id: workspaceId,
+      p_after_event_id: afterEventId,
+      p_page_size: limit,
+    })
     return { data: result.data, error: result.error }
   },
 

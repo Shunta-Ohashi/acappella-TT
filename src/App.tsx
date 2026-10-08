@@ -3203,7 +3203,7 @@ function App() {
   )
   const unavailableTimetableOrderConstraintRepair = selectedEvent ? (
     <TimetableOrderConstraintRepairPanel
-      key={selectedEvent.id}
+      key={`${selectedEvent.id}:${canEditWorkspace ? 'editable' : 'read-only'}`}
       event={selectedEvent}
       eventDays={selectedEventDays}
       stages={selectedStages}
@@ -3211,6 +3211,7 @@ function App() {
       eventBands={selectedEventBands}
       timetableOrderConstraints={timetableOrderConstraints}
       onCommit={handleCommitTimetableOrderConstraints}
+      readOnly={!canEditWorkspace}
     />
   ) : null
   const activeGridAssignmentDialog =

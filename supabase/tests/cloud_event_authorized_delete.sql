@@ -40,12 +40,14 @@ insert into auth.users (
 
 insert into public.workspaces (id, name) values
   ('10000000-0000-0000-0000-000000000001', 'Cloud delete workspace A'),
-  ('10000000-0000-0000-0000-000000000002', 'Cloud delete workspace B');
+  ('10000000-0000-0000-0000-000000000002', 'Cloud delete workspace B'),
+  ('10000000-0000-0000-0000-000000000003', 'Cloud page order workspace');
 
 insert into public.workspace_members (workspace_id, user_id, role) values
   ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'owner'),
   ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002', 'editor'),
-  ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000003', 'viewer');
+  ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000003', 'viewer'),
+  ('10000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'owner');
 
 do $$
 begin
@@ -69,6 +71,24 @@ begin
     'execute'
   ) then
     raise exception 'service_role must not be able to execute delete RPC';
+  end if;
+  if not has_function_privilege(
+    'authenticated',
+    'public.load_cloud_events_page_authorized(uuid,text,integer)',
+    'execute'
+  ) then
+    raise exception 'authenticated must be able to execute page RPC';
+  end if;
+  if has_function_privilege(
+    'anon',
+    'public.load_cloud_events_page_authorized(uuid,text,integer)',
+    'execute'
+  ) or has_function_privilege(
+    'service_role',
+    'public.load_cloud_events_page_authorized(uuid,text,integer)',
+    'execute'
+  ) then
+    raise exception 'anon and service_role must not be able to execute page RPC';
   end if;
   if has_table_privilege('authenticated', 'public.cloud_events', 'delete') then
     raise exception 'authenticated must not have direct cloud_events DELETE';
@@ -94,6 +114,224 @@ insert into public.cloud_events (
    pg_temp.cloud_event_test_snapshot('owner-direct-event', 'Owner Direct Event')),
   ('10000000-0000-0000-0000-000000000001', 'editor-direct-event', 'Editor Direct Event',
    pg_temp.cloud_event_test_snapshot('editor-direct-event', 'Editor Direct Event'));
+
+insert into public.cloud_events (
+  workspace_id, event_id, event_name, event_snapshot
+) values
+  ('10000000-0000-0000-0000-000000000003', '!mark', '!mark',
+   pg_temp.cloud_event_test_snapshot('!mark', '!mark')),
+  ('10000000-0000-0000-0000-000000000003', 'A', 'A',
+   pg_temp.cloud_event_test_snapshot('A', 'A')),
+  ('10000000-0000-0000-0000-000000000003', 'a', 'a',
+   pg_temp.cloud_event_test_snapshot('a', 'a')),
+  ('10000000-0000-0000-0000-000000000003', 'あ', 'あ',
+   pg_temp.cloud_event_test_snapshot('あ', 'あ')),
+  ('10000000-0000-0000-0000-000000000003', '😀', '😀',
+   pg_temp.cloud_event_test_snapshot('😀', '😀')),
+  ('10000000-0000-0000-0000-000000000003', '𠮷', '𠮷',
+   pg_temp.cloud_event_test_snapshot('𠮷', '𠮷'));
+
+-- The read RPC authorizes every page and owns the keyset ordering. It returns
+-- an envelope even when the authorized page is empty.
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-0000-0000-000000000001',
+  true
+);
+do $$
+declare
+  first_page jsonb;
+  final_page jsonb;
+  ordered_ids jsonb;
+begin
+  first_page := public.load_cloud_events_page_authorized(
+    '10000000-0000-0000-0000-000000000001', null, 2
+  );
+  if first_page ->> 'status' <> 'ok'
+    or first_page ->> 'workspace_id' <>
+      '10000000-0000-0000-0000-000000000001'
+    or jsonb_array_length(first_page -> 'rows') <> 2
+    or first_page ->> 'next_cursor' is null
+    or first_page ->> 'next_cursor' <>
+      first_page #>> '{rows,1,event_id}' then
+    raise exception 'unexpected authorized first page: %', first_page;
+  end if;
+
+  final_page := public.load_cloud_events_page_authorized(
+    '10000000-0000-0000-0000-000000000001',
+    first_page ->> 'next_cursor',
+    100
+  );
+  if final_page ->> 'status' <> 'ok'
+    or final_page ->> 'next_cursor' is not null
+    or jsonb_array_length(final_page -> 'rows') = 0 then
+    raise exception 'unexpected authorized final page: %', final_page;
+  end if;
+
+  final_page := public.load_cloud_events_page_authorized(
+    '10000000-0000-0000-0000-000000000001', 'zzzz', 100
+  );
+  if final_page ->> 'status' <> 'ok'
+    or jsonb_array_length(final_page -> 'rows') <> 0
+    or final_page ->> 'next_cursor' is not null then
+    raise exception 'authorized empty page did not return an envelope: %', final_page;
+  end if;
+
+  final_page := public.load_cloud_events_page_authorized(
+    '10000000-0000-0000-0000-000000000003', null, 100
+  );
+  select jsonb_agg(page_entry.value ->> 'event_id' order by page_entry.ordinality)
+    into ordered_ids
+    from jsonb_array_elements(final_page -> 'rows') with ordinality
+      as page_entry(value, ordinality);
+  if ordered_ids is distinct from '["!mark", "A", "a", "あ", "😀", "𠮷"]'::jsonb then
+    raise exception 'C-collated page order is unexpected: %', ordered_ids;
+  end if;
+
+  begin
+    perform public.load_cloud_events_page_authorized(
+      '10000000-0000-0000-0000-000000000001', '   ', 100
+    );
+    raise exception 'blank page cursor unexpectedly succeeded';
+  exception when sqlstate '22023' then
+    null;
+  end;
+  begin
+    perform public.load_cloud_events_page_authorized(
+      '10000000-0000-0000-0000-000000000001', null, 101
+    );
+    raise exception 'oversized page unexpectedly succeeded';
+  exception when sqlstate '22023' then
+    null;
+  end;
+end
+$$;
+reset role;
+
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-0000-0000-000000000002',
+  true
+);
+do $$
+declare
+  result jsonb;
+begin
+  result := public.load_cloud_events_page_authorized(
+    '10000000-0000-0000-0000-000000000001', null, 1
+  );
+  if result ->> 'status' <> 'ok' or jsonb_array_length(result -> 'rows') <> 1 then
+    raise exception 'editor could not read an authorized page: %', result;
+  end if;
+end
+$$;
+reset role;
+
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-0000-0000-000000000003',
+  true
+);
+do $$
+declare
+  result jsonb;
+begin
+  result := public.load_cloud_events_page_authorized(
+    '10000000-0000-0000-0000-000000000001', null, 1
+  );
+  if result ->> 'status' <> 'ok' or jsonb_array_length(result -> 'rows') <> 1 then
+    raise exception 'viewer could not read an authorized page: %', result;
+  end if;
+end
+$$;
+reset role;
+
+-- editor -> viewer remains readable because viewer is a read role.
+update public.workspace_members
+  set role = 'viewer'
+  where workspace_id = '10000000-0000-0000-0000-000000000001'
+    and user_id = '00000000-0000-0000-0000-000000000002';
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-0000-0000-000000000002',
+  true
+);
+do $$
+declare
+  result jsonb;
+begin
+  result := public.load_cloud_events_page_authorized(
+    '10000000-0000-0000-0000-000000000001', 'zzzz', 100
+  );
+  if result ->> 'status' <> 'ok' or jsonb_array_length(result -> 'rows') <> 0 then
+    raise exception 'downgraded viewer could not read an authorized empty page: %', result;
+  end if;
+end
+$$;
+reset role;
+update public.workspace_members
+  set role = 'editor'
+  where workspace_id = '10000000-0000-0000-0000-000000000001'
+    and user_id = '00000000-0000-0000-0000-000000000002';
+
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-0000-0000-000000000004',
+  true
+);
+do $$
+begin
+  begin
+    perform public.load_cloud_events_page_authorized(
+      '10000000-0000-0000-0000-000000000001', null, 100
+    );
+    raise exception 'non-member page read unexpectedly succeeded';
+  exception when sqlstate '42501' then
+    null;
+  end;
+end
+$$;
+reset role;
+
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-0000-0000-000000000002',
+  true
+);
+do $$
+begin
+  begin
+    perform public.load_cloud_events_page_authorized(
+      '10000000-0000-0000-0000-000000000002', null, 100
+    );
+    raise exception 'cross-workspace page read unexpectedly succeeded';
+  exception when sqlstate '42501' then
+    null;
+  end;
+end
+$$;
+reset role;
+
+set local role anon;
+do $$
+begin
+  begin
+    perform public.load_cloud_events_page_authorized(
+      '10000000-0000-0000-0000-000000000001', null, 100
+    );
+    raise exception 'anonymous page read unexpectedly succeeded';
+  exception when sqlstate '42501' then
+    null;
+  end;
+end
+$$;
+reset role;
 
 -- Owner keeps SELECT/INSERT/UPDATE through the table API, but direct DELETE is
 -- denied even though the row is visible and owned by an editable Workspace.

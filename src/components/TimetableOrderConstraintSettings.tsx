@@ -291,6 +291,7 @@ export function TimetableOrderConstraintSettings({
       )}
 
       <TimetableOrderConstraintRepairPanel
+        key={readOnly ? 'read-only' : 'editable'}
         event={event}
         eventDays={eventDays}
         stages={stages}
@@ -299,6 +300,7 @@ export function TimetableOrderConstraintSettings({
         timetableOrderConstraints={timetableOrderConstraints}
         constraintOccurrences={constraintOccurrences}
         onCommit={onCommit}
+        readOnly={readOnly}
       />
 
       {actionError && <p className="form-error" role="alert">{actionError}</p>}

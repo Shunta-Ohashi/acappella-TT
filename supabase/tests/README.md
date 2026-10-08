@@ -2,14 +2,14 @@
 
 These scripts exercise the real `cloud_events` checks, table privileges, RLS, RPC permissions,
 membership authorization, and the membership-lock ordering used by Cloud Event
-deletion. Run them only against a disposable local Supabase/PostgreSQL database.
+reads and deletion. Run them only against a disposable local Supabase/PostgreSQL database.
 They create rows in `auth.users` and require an administrator connection.
 
 ## Prerequisites
 
 1. Start a disposable Supabase-compatible PostgreSQL database.
 2. Apply every file in `supabase/migrations` in filename order.
-3. Install `psql`. The concurrency test also needs the server-side `dblink`
+3. Install `psql`. The concurrency tests also need the server-side `dblink`
    extension and permission to inspect `pg_stat_activity`.
 4. Set an administrator URL for that disposable database. Do not use a shared,
    staging, or production database.
@@ -27,23 +27,28 @@ psql $env:ACAPPELLA_TT_TEST_DATABASE_URL -f supabase/tests/cloud_event_authorize
 psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
   -v "test_db_url=$env:ACAPPELLA_TT_TEST_DATABASE_URL" `
   -f supabase/tests/cloud_event_authorized_delete_concurrency.sql
+psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
+  -v "test_db_url=$env:ACAPPELLA_TT_TEST_DATABASE_URL" `
+  -f supabase/tests/cloud_event_authorized_page_concurrency.sql
 ```
 
 The first script is wrapped in a transaction and rolls back all fixtures. The
-concurrency script must commit between two database connections to prove lock
-ordering, so it cleans up its fixed-ID fixtures when successful. Use a disposable
+concurrency scripts must commit between two database connections to prove lock
+ordering, so they clean up their fixed-ID fixtures when successful. Use a disposable
 database because an interrupted run can leave those fixtures behind.
 
-The concurrency test uses a bounded polling loop only to observe the second
+The concurrency tests use a bounded polling loop only to observe the second
 connection waiting on a PostgreSQL lock; ordering is established by the RPC call
 and asynchronous membership mutation, not by assuming a fixed sleep duration.
 
-Expected result: both `psql` commands exit with status 0. A skipped command is
+Expected result: all `psql` commands exit with status 0. A skipped command is
 not a passing database test.
 
 The core script verifies that `authenticated` retains direct
 `SELECT`/`INSERT`/`UPDATE`, while direct `DELETE` is revoked for owner, editor,
 viewer, and anonymous clients. Owner/editor deletion is exercised only through
 `delete_cloud_event_authorized`, including its idempotent `already_absent`
-result. Applying every migration in order also covers the upgrade-safe revoke
-that follows the original table grant.
+result. It also exercises authorized owner/editor/viewer page reads, denied
+non-member/anonymous/cross-Workspace reads, empty-page envelopes, and the
+database-owned `COLLATE "C"` keyset order. Applying every migration in order
+also covers the upgrade-safe DELETE revoke that follows the original table grant.

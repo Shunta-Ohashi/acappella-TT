@@ -18,6 +18,9 @@ import {
   getTimetableOrderConstraintScheduleStatus,
   isTimetableOrderConstraintScopeReachable,
 } from '../src/ui/timetableOrderConstraintPresentation.ts'
+import {
+  commitTimetableOrderConstraintRepairDeletion,
+} from '../src/ui/timetableOrderConstraintRepair.ts'
 
 const eventDays = [
   { id: 'day-1', eventId: 'event-1', date: '2027-01-01', order: 0 },
@@ -805,4 +808,32 @@ test('semantic invalidな出演順制約はschedule状態にかかわらず要�
       semanticViolations: targetOccurrence.semanticViolations,
     }), { kind: 'invalid', label: '出演順制約：要修正' })
   }
+})
+
+test('出演順制約のrepair削除はread-onlyとrole downgrade時にcommitしない', () => {
+  const target = constraint()
+  const timetableOrderConstraints = [target, constraint({ id: 'order-2' })]
+  const before = structuredClone(timetableOrderConstraints)
+  const commits = []
+
+  for (const pendingDeletion of [target, null]) {
+    assert.deepEqual(commitTimetableOrderConstraintRepairDeletion({
+      readOnly: true,
+      pendingDeletion,
+      timetableOrderConstraints,
+      onCommit: next => commits.push(next),
+    }), { kind: 'blocked' })
+  }
+  assert.deepEqual(commits, [])
+  assert.deepEqual(timetableOrderConstraints, before)
+
+  assert.deepEqual(commitTimetableOrderConstraintRepairDeletion({
+    readOnly: false,
+    pendingDeletion: target,
+    timetableOrderConstraints,
+    onCommit: next => commits.push(next),
+  }), { kind: 'committed' })
+  assert.equal(commits.length, 1)
+  assert.deepEqual(commits[0].map(item => item.id), ['order-2'])
+  assert.deepEqual(timetableOrderConstraints, before)
 })
