@@ -70,6 +70,14 @@ begin
   ) then
     raise exception 'service_role must not be able to execute delete RPC';
   end if;
+  if has_table_privilege('authenticated', 'public.cloud_events', 'delete') then
+    raise exception 'authenticated must not have direct cloud_events DELETE';
+  end if;
+  if not has_table_privilege('authenticated', 'public.cloud_events', 'select')
+    or not has_table_privilege('authenticated', 'public.cloud_events', 'insert')
+    or not has_table_privilege('authenticated', 'public.cloud_events', 'update') then
+    raise exception 'authenticated must retain cloud_events SELECT/INSERT/UPDATE';
+  end if;
 end
 $$;
 
@@ -81,7 +89,123 @@ insert into public.cloud_events (
   ('10000000-0000-0000-0000-000000000001', 'editor-event', 'Editor Event',
    pg_temp.cloud_event_test_snapshot('editor-event', 'Editor Event')),
   ('10000000-0000-0000-0000-000000000001', 'viewer-rls-event', 'Viewer RLS Event',
-   pg_temp.cloud_event_test_snapshot('viewer-rls-event', 'Viewer RLS Event'));
+   pg_temp.cloud_event_test_snapshot('viewer-rls-event', 'Viewer RLS Event')),
+  ('10000000-0000-0000-0000-000000000001', 'owner-direct-event', 'Owner Direct Event',
+   pg_temp.cloud_event_test_snapshot('owner-direct-event', 'Owner Direct Event')),
+  ('10000000-0000-0000-0000-000000000001', 'editor-direct-event', 'Editor Direct Event',
+   pg_temp.cloud_event_test_snapshot('editor-direct-event', 'Editor Direct Event'));
+
+-- Owner keeps SELECT/INSERT/UPDATE through the table API, but direct DELETE is
+-- denied even though the row is visible and owned by an editable Workspace.
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-0000-0000-000000000001',
+  true
+);
+do $$
+declare
+  affected integer;
+begin
+  if not exists (
+    select 1 from public.cloud_events
+    where workspace_id = '10000000-0000-0000-0000-000000000001'
+      and event_id = 'owner-direct-event'
+  ) then
+    raise exception 'owner could not SELECT cloud event';
+  end if;
+
+  insert into public.cloud_events (
+    workspace_id, event_id, event_name, event_snapshot
+  ) values (
+    '10000000-0000-0000-0000-000000000001',
+    'owner-write-event',
+    'Owner Write Event',
+    pg_temp.cloud_event_test_snapshot('owner-write-event', 'Owner Write Event')
+  );
+  update public.cloud_events
+    set event_name = 'Owner Updated Event',
+        event_snapshot = pg_temp.cloud_event_test_snapshot(
+          'owner-write-event', 'Owner Updated Event'
+        )
+    where workspace_id = '10000000-0000-0000-0000-000000000001'
+      and event_id = 'owner-write-event';
+  get diagnostics affected = row_count;
+  if affected <> 1 then
+    raise exception 'owner UPDATE did not affect exactly one row';
+  end if;
+
+  begin
+    delete from public.cloud_events
+      where workspace_id = '10000000-0000-0000-0000-000000000001'
+        and event_id = 'owner-direct-event';
+    raise exception 'owner direct DELETE unexpectedly succeeded';
+  exception when sqlstate '42501' then
+    null;
+  end;
+end
+$$;
+reset role;
+
+-- Editor has the same direct write capabilities except DELETE, which remains
+-- available only through the authorized RPC below.
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-0000-0000-000000000002',
+  true
+);
+do $$
+declare
+  affected integer;
+begin
+  insert into public.cloud_events (
+    workspace_id, event_id, event_name, event_snapshot
+  ) values (
+    '10000000-0000-0000-0000-000000000001',
+    'editor-write-event',
+    'Editor Write Event',
+    pg_temp.cloud_event_test_snapshot('editor-write-event', 'Editor Write Event')
+  );
+  update public.cloud_events
+    set event_name = 'Editor Updated Event',
+        event_snapshot = pg_temp.cloud_event_test_snapshot(
+          'editor-write-event', 'Editor Updated Event'
+        )
+    where workspace_id = '10000000-0000-0000-0000-000000000001'
+      and event_id = 'editor-write-event';
+  get diagnostics affected = row_count;
+  if affected <> 1 then
+    raise exception 'editor UPDATE did not affect exactly one row';
+  end if;
+
+  begin
+    delete from public.cloud_events
+      where workspace_id = '10000000-0000-0000-0000-000000000001'
+        and event_id = 'editor-direct-event';
+    raise exception 'editor direct DELETE unexpectedly succeeded';
+  exception when sqlstate '42501' then
+    null;
+  end;
+end
+$$;
+reset role;
+
+do $$
+begin
+  if not exists (
+    select 1 from public.cloud_events
+    where workspace_id = '10000000-0000-0000-0000-000000000001'
+      and event_id = 'owner-direct-event'
+  ) or not exists (
+    select 1 from public.cloud_events
+    where workspace_id = '10000000-0000-0000-0000-000000000001'
+      and event_id = 'editor-direct-event'
+  ) then
+    raise exception 'direct DELETE test unexpectedly removed a row';
+  end if;
+end
+$$;
 
 set local role authenticated;
 select set_config(
@@ -144,7 +268,9 @@ end
 $$;
 reset role;
 
--- Viewer RLS must also keep the row when using the direct table API.
+-- Viewer can SELECT, but INSERT/UPDATE/DELETE all remain unavailable. DELETE is
+-- rejected by the table privilege boundary before RLS can silently affect zero
+-- rows.
 set local role authenticated;
 select set_config(
   'request.jwt.claim.sub',
@@ -155,13 +281,45 @@ do $$
 declare
   affected integer;
 begin
-  delete from public.cloud_events
+  if not exists (
+    select 1 from public.cloud_events
+    where workspace_id = '10000000-0000-0000-0000-000000000001'
+      and event_id = 'viewer-rls-event'
+  ) then
+    raise exception 'viewer could not SELECT visible cloud event';
+  end if;
+
+  begin
+    insert into public.cloud_events (
+      workspace_id, event_id, event_name, event_snapshot
+    ) values (
+      '10000000-0000-0000-0000-000000000001',
+      'viewer-write-event',
+      'Viewer Write Event',
+      pg_temp.cloud_event_test_snapshot('viewer-write-event', 'Viewer Write Event')
+    );
+    raise exception 'viewer INSERT unexpectedly succeeded';
+  exception when sqlstate '42501' then
+    null;
+  end;
+
+  update public.cloud_events
+    set event_name = 'Viewer Updated Event'
     where workspace_id = '10000000-0000-0000-0000-000000000001'
       and event_id = 'viewer-rls-event';
   get diagnostics affected = row_count;
   if affected <> 0 then
-    raise exception 'viewer bypassed cloud_events delete RLS';
+    raise exception 'viewer UPDATE unexpectedly changed a row';
   end if;
+
+  begin
+    delete from public.cloud_events
+      where workspace_id = '10000000-0000-0000-0000-000000000001'
+        and event_id = 'viewer-rls-event';
+    raise exception 'viewer direct DELETE unexpectedly succeeded';
+  exception when sqlstate '42501' then
+    null;
+  end;
 end
 $$;
 reset role;

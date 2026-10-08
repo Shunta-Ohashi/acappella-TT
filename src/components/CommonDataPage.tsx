@@ -50,6 +50,7 @@ interface CommonDataPageProps {
   onImportBands: (bands: Band[]) => void
   createMemberId: () => MemberId
   createBandId: () => BandId
+  readOnly?: boolean
 }
 
 type CommonDataSection = 'members' | 'bands'
@@ -82,6 +83,7 @@ export function CommonDataPage({
   onImportBands,
   createMemberId,
   createBandId,
+  readOnly = false,
 }: CommonDataPageProps) {
   const [activeSection, setActiveSection] =
     useState<CommonDataSection>('members')
@@ -173,7 +175,7 @@ export function CommonDataPage({
               <p>イベントで使用する共通の人物情報を管理します。</p>
             </div>
             <div className="csv-action-buttons">
-              <div className="csv-import-control">
+              {!readOnly && <div className="csv-import-control">
                 <CsvFileButton
                   onRead={(fileName, text) => {
                     const plan = planCommonMemberCsvImport({
@@ -191,18 +193,18 @@ export function CommonDataPage({
                   })}
                 />
                 <CsvImportHelpPopover content={COMMON_MEMBER_CSV_HELP} />
-              </div>
+              </div>}
               <button type="button" className="secondary-button"
                 onClick={() => downloadCsv(createCommonMemberCsv(members), 'acappella-tt-members.csv')}>
                 CSV書き出し
               </button>
-              <button
+              {!readOnly && <button
                 type="button"
                 className="primary-button"
                 onClick={() => setMemberEditor({ mode: 'create' })}
               >
                 <span aria-hidden="true">＋</span> メンバーを追加
-              </button>
+              </button>}
             </div>
           </header>
           <p className="csv-id-help">
@@ -278,7 +280,7 @@ export function CommonDataPage({
                           )}
                         </td>
                         <td>
-                          <div className="common-data-list__actions">
+                          {!readOnly && <div className="common-data-list__actions">
                             <button
                               type="button"
                               className="common-member-list__edit"
@@ -298,7 +300,7 @@ export function CommonDataPage({
                             >
                               削除
                             </button>
-                          </div>
+                          </div>}
                         </td>
                       </tr>
                     )
@@ -329,10 +331,11 @@ export function CommonDataPage({
           onDeleteBand={onDeleteBand}
           onImportBands={onImportBands}
           createBandId={createBandId}
+          readOnly={readOnly}
         />
       )}
 
-      {memberEditor && (
+      {!readOnly && memberEditor && (
         <MemberEditorDialog
           key={memberEditor.mode === 'edit'
             ? memberEditor.memberId
@@ -342,7 +345,7 @@ export function CommonDataPage({
           onSave={handleSaveMember}
         />
       )}
-      {memberCsvImport && (
+      {!readOnly && memberCsvImport && (
         <CsvImportPreviewDialog
           preview={memberCsvImport.preview}
           onCancel={() => setMemberCsvImport(undefined)}
@@ -352,7 +355,7 @@ export function CommonDataPage({
           } : undefined}
         />
       )}
-      {pendingDeletion && (() => {
+      {!readOnly && pendingDeletion && (() => {
         const copy = getDeleteConfirmationCopy(
           'common-member',
           pendingDeletion.label,

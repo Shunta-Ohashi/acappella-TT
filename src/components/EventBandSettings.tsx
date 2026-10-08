@@ -46,6 +46,7 @@ interface EventBandSettingsProps {
   createDraftId: () => string
   onSave: (draft: EventBandSettingsDraft) => EventBandSettingsUpdateResult
   onSaveAndNext: () => void
+  readOnly?: boolean
 }
 
 type EditorState =
@@ -78,6 +79,7 @@ export function EventBandSettings({
   createDraftId,
   onSave,
   onSaveAndNext,
+  readOnly = false,
 }: EventBandSettingsProps) {
   const orderedEventDays = [...eventDays].sort((first, second) =>
     first.order - second.order ||
@@ -256,30 +258,32 @@ export function EventBandSettings({
             </div>
           </div>
           <div className="csv-action-buttons">
-            <div className="csv-import-control">
-              <CsvFileButton
-                onRead={(fileName, text) => {
-                  const plan = planEventBandCsvImport({
-                    csv: text, event, eventDays, bands, members, eventMembers,
-                    eventMemberDays, eventBands, draft, createDraftId,
-                  })
-                  setCsvImport(plan.ok
-                    ? { candidate: plan.candidate, preview: {
-                        datasetName: '出演バンド', eventName: event.name,
-                        fileName, errors: [], draftOnly: true, ...plan,
-                      } }
-                    : { preview: {
-                        datasetName: '出演バンド', eventName: event.name,
-                        fileName, errors: plan.errors,
-                      } })
-                }}
-                onError={(fileName, csvErrors) => setCsvImport({ preview: {
-                  datasetName: '出演バンド', eventName: event.name,
-                  fileName, errors: csvErrors,
-                } })}
-              />
-              <CsvImportHelpPopover content={EVENT_BAND_CSV_HELP} />
-            </div>
+            {!readOnly && (
+              <div className="csv-import-control">
+                <CsvFileButton
+                  onRead={(fileName, text) => {
+                    const plan = planEventBandCsvImport({
+                      csv: text, event, eventDays, bands, members, eventMembers,
+                      eventMemberDays, eventBands, draft, createDraftId,
+                    })
+                    setCsvImport(plan.ok
+                      ? { candidate: plan.candidate, preview: {
+                          datasetName: '出演バンド', eventName: event.name,
+                          fileName, errors: [], draftOnly: true, ...plan,
+                        } }
+                      : { preview: {
+                          datasetName: '出演バンド', eventName: event.name,
+                          fileName, errors: plan.errors,
+                        } })
+                  }}
+                  onError={(fileName, csvErrors) => setCsvImport({ preview: {
+                    datasetName: '出演バンド', eventName: event.name,
+                    fileName, errors: csvErrors,
+                  } })}
+                />
+                <CsvImportHelpPopover content={EVENT_BAND_CSV_HELP} />
+              </div>
+            )}
             <button type="button" className="secondary-button"
               onClick={() => downloadCsv(
                 createEventBandCsv({ event, eventDays, bands, members, draft }),
@@ -287,7 +291,7 @@ export function EventBandSettings({
               )}>
               CSV書き出し
             </button>
-            {selectedEventDayId && (
+            {!readOnly && selectedEventDayId && (
               <button
                 type="button"
                 className="primary-button"
@@ -306,6 +310,7 @@ export function EventBandSettings({
           出演バンドIDは既存データの更新に使用します。新規追加する行では空欄にしてください。
         </p>
 
+        <fieldset className="read-only-form-controls" disabled={readOnly}>
         {invalidEventDayItems.length > 0 && (
           <section
             className="event-band-settings__repair"
@@ -436,9 +441,10 @@ export function EventBandSettings({
             </button>
           </div>
         </footer>
+        </fieldset>
       </form>
 
-      {editor && (
+      {!readOnly && editor && (
         <EventBandEditorDialog
           key={editor.mode === 'edit' ? editor.draftId : `new-${editor.eventDayId}`}
           event={event}
@@ -460,7 +466,7 @@ export function EventBandSettings({
           onApply={handleApplyItems}
         />
       )}
-      {csvImport && (
+      {!readOnly && csvImport && (
         <CsvImportPreviewDialog
           preview={csvImport.preview}
           onCancel={() => setCsvImport(undefined)}
@@ -474,7 +480,7 @@ export function EventBandSettings({
           } : undefined}
         />
       )}
-      {pendingDeletion && (() => {
+      {!readOnly && pendingDeletion && (() => {
         const copy = getDeleteConfirmationCopy(
           'event-band',
           pendingDeletion.label,

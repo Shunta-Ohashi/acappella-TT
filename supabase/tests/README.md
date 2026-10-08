@@ -1,6 +1,6 @@
 # Cloud Event database tests
 
-These scripts exercise the real `cloud_events` checks, RLS, RPC permissions,
+These scripts exercise the real `cloud_events` checks, table privileges, RLS, RPC permissions,
 membership authorization, and the membership-lock ordering used by Cloud Event
 deletion. Run them only against a disposable local Supabase/PostgreSQL database.
 They create rows in `auth.users` and require an administrator connection.
@@ -40,3 +40,10 @@ and asynchronous membership mutation, not by assuming a fixed sleep duration.
 
 Expected result: both `psql` commands exit with status 0. A skipped command is
 not a passing database test.
+
+The core script verifies that `authenticated` retains direct
+`SELECT`/`INSERT`/`UPDATE`, while direct `DELETE` is revoked for owner, editor,
+viewer, and anonymous clients. Owner/editor deletion is exercised only through
+`delete_cloud_event_authorized`, including its idempotent `already_absent`
+result. Applying every migration in order also covers the upgrade-safe revoke
+that follows the original table grant.

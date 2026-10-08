@@ -43,6 +43,7 @@ interface TimetableOrderConstraintSettingsProps {
   onOrderConstraintBlockHighlightChange: (blockKey: string | null) => void
   createConstraintId: () => string
   onCommit: (constraints: TimetableOrderConstraint[]) => void
+  readOnly?: boolean
 }
 
 type EditorState =
@@ -64,6 +65,7 @@ export function TimetableOrderConstraintSettings({
   onOrderConstraintBlockHighlightChange,
   createConstraintId,
   onCommit,
+  readOnly = false,
 }: TimetableOrderConstraintSettingsProps) {
   const [editor, setEditor] = useState<EditorState | null>(null)
   const [pendingDeletion, setPendingDeletion] = useState<TimetableOrderConstraint | null>(null)
@@ -164,6 +166,7 @@ export function TimetableOrderConstraintSettings({
 
   return (
     <section className="timetable-order-settings" aria-label="出演順制約設定">
+      <fieldset className="read-only-form-controls" disabled={readOnly}>
       <p className="timetable-order-settings__description">
         指定したバンドを同じStage / Section内で、この順に連続して配置します。
         休憩は間に入れられますが、別の出演バンドは間に入りません。
@@ -300,7 +303,7 @@ export function TimetableOrderConstraintSettings({
 
       {actionError && <p className="form-error" role="alert">{actionError}</p>}
 
-      {editor && (
+      {!readOnly && editor && (
         <TimetableOrderConstraintDialog
           event={event}
           eventDay={eventDay}
@@ -313,7 +316,7 @@ export function TimetableOrderConstraintSettings({
         />
       )}
 
-      {pendingDeletion && (
+      {!readOnly && pendingDeletion && (
         <DeleteConfirmationDialog
           title="出演順制約を削除しますか？"
           description={`「${formatBandOrder(pendingDeletion)}」の出演順制約を削除します。この操作は取り消せません。`}
@@ -323,6 +326,7 @@ export function TimetableOrderConstraintSettings({
           onCancel={() => setPendingDeletion(null)}
         />
       )}
+      </fieldset>
     </section>
   )
 }

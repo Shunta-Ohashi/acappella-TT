@@ -48,8 +48,11 @@ class MemoryCloudEventGateway {
   allowedWorkspaces = new Set()
   clock = 0
   accessCalls = 0
+  loadRowCalls = 0
+  workspacePageCalls = 0
   saveCalls = 0
   deleteCalls = 0
+  serverPageSize
 
   constructor(allowedWorkspaces) {
     this.allowedWorkspaces = new Set(allowedWorkspaces)
@@ -89,10 +92,28 @@ class MemoryCloudEventGateway {
   }
 
   async loadRow(workspaceId, eventId) {
+    this.loadRowCalls += 1
     const denied = this.deny(workspaceId)
     if (denied) return denied
     return {
       data: structuredClone(this.rows.get(this.key(workspaceId, eventId)) ?? null),
+      error: null,
+    }
+  }
+
+  async loadWorkspacePage(workspaceId, afterEventId, limit) {
+    this.workspacePageCalls += 1
+    const denied = this.deny(workspaceId)
+    if (denied) return denied
+    const effectiveLimit = Math.min(limit, this.serverPageSize ?? limit)
+    return {
+      data: [...this.rows.values()]
+        .filter(row => row.workspace_id === workspaceId)
+        .sort((left, right) => left.event_id.localeCompare(right.event_id))
+        .filter(row => afterEventId === undefined ||
+          row.event_id.localeCompare(afterEventId) > 0)
+        .slice(0, effectiveLimit)
+        .map(row => structuredClone(row)),
       error: null,
     }
   }
@@ -177,15 +198,11 @@ const loadSnapshotsInOrder = (
     snapshot,
   }))
   return loadCloudWorkspaceEvents({
-    async listEvents() {
-      return { ok: true, value: order.map(index => {
-        const { snapshot: _snapshot, ...summary } = records[index]
-        return summary
-      }) }
+    async loadWorkspaceEvents() {
+      return { ok: true, value: order.map(index => records[index]) }
     },
-    async loadEvent(_workspaceId, eventId) {
-      return { ok: true, value: records.find(record => record.eventId === eventId) }
-    },
+    async listEvents() { throw new Error('not called') },
+    async loadEvent() { throw new Error('not called') },
     async saveEvent() { throw new Error('not called') },
     async deleteEvent() { throw new Error('not called') },
   }, 'workspace-a', localState)
@@ -437,7 +454,8 @@ test('Cloud hydrateはMap変換前にlocal Member/Bandのduplicate IDをfail clo
     })
 
     const loaded = await loadCloudWorkspaceEvents({
-      async listEvents() { return { ok: true, value: [] } },
+      async loadWorkspaceEvents() { return { ok: true, value: [] } },
+      async listEvents() { throw new Error('not called') },
       async loadEvent() { throw new Error('not called') },
       async saveEvent() { throw new Error('not called') },
       async deleteEvent() { throw new Error('not called') },
@@ -547,6 +565,136 @@ test('repositoryでWorkspace Eventを作成・一覧・取得・更新・削除�
   const deleted = await repository.deleteEvent('workspace-a', eventId)
   assert.equal(deleted.ok, true)
   assert.equal((await repository.loadEvent('workspace-a', eventId)).ok, false)
+})
+
+test('Workspace bulk loadはkeyset pageを空ページまで読みEvent単位loadを行わない', async () => {
+  const gateway = new MemoryCloudEventGateway(['workspace-a'])
+  gateway.serverPageSize = 1
+  const repository = createCloudEventRepository(gateway, { workspacePageSize: 2 })
+  const state = createDemoData()
+  for (const event of state.events.slice(0, 3)) {
+    assert.equal((await repository.saveEvent(
+      'workspace-a',
+      createSnapshot(state, event.id),
+    )).ok, true)
+  }
+  gateway.accessCalls = 0
+  gateway.workspacePageCalls = 0
+  gateway.loadRowCalls = 0
+
+  const loaded = await loadCloudWorkspaceEvents(
+    repository,
+    'workspace-a',
+    createEmptyState(),
+  )
+
+  assert.equal(loaded.ok, true)
+  assert.equal(gateway.accessCalls, 1)
+  assert.equal(gateway.workspacePageCalls, 4)
+  assert.equal(gateway.loadRowCalls, 0)
+  assert.deepEqual(
+    loaded.ok && loaded.value.records.map(record => record.eventId),
+    state.events.slice(0, 3).map(event => event.id).sort(),
+  )
+})
+
+test('Workspace bulk loadは0件・page size同件数でも空ページを終端にする', async () => {
+  const emptyGateway = new MemoryCloudEventGateway(['workspace-a'])
+  const emptyRepository = createCloudEventRepository(
+    emptyGateway,
+    { workspacePageSize: 2 },
+  )
+  assert.deepEqual(await emptyRepository.loadWorkspaceEvents('workspace-a'), {
+    ok: true,
+    value: [],
+  })
+  assert.equal(emptyGateway.workspacePageCalls, 1)
+
+  const gateway = new MemoryCloudEventGateway(['workspace-a'])
+  const repository = createCloudEventRepository(gateway, { workspacePageSize: 2 })
+  const state = createDemoData()
+  for (const event of state.events.slice(0, 2)) {
+    assert.equal((await repository.saveEvent(
+      'workspace-a',
+      createSnapshot(state, event.id),
+    )).ok, true)
+  }
+  gateway.workspacePageCalls = 0
+  const loaded = await repository.loadWorkspaceEvents('workspace-a')
+  assert.equal(loaded.ok, true)
+  assert.equal(loaded.ok && loaded.value.length, 2)
+  assert.equal(gateway.workspacePageCalls, 2)
+})
+
+test('Workspace bulk loadは不正page・scope越境・重複・cursor進行不良を拒否する', async () => {
+  const state = createDemoData()
+  const snapshot = createSnapshot(state, state.events[0].id)
+  const row = {
+    workspace_id: 'workspace-a',
+    event_id: snapshot.appState.events[0].id,
+    event_name: snapshot.appState.events[0].name,
+    event_snapshot: snapshot,
+    revision: 1,
+    created_at: '2026-10-08T00:00:00.000Z',
+    updated_at: '2026-10-08T00:00:00.000Z',
+  }
+  const cases = [
+    [null],
+    [[{ ...row, workspace_id: 'workspace-b' }]],
+    [[row], [row]],
+    [[row, row]],
+  ]
+
+  for (const pages of cases) {
+    let pageIndex = 0
+    const repository = createCloudEventRepository({
+      async getWorkspaceRole() {
+        return { data: { role: 'editor' }, error: null }
+      },
+      async listRows() { throw new Error('not called') },
+      async loadRow() { throw new Error('not called') },
+      async loadWorkspacePage() {
+        const data = pageIndex < pages.length ? pages[pageIndex] : []
+        pageIndex += 1
+        return { data, error: null }
+      },
+      async saveRow() { throw new Error('not called') },
+      async deleteAuthorizedEvent() { throw new Error('not called') },
+    }, { workspacePageSize: 2 })
+    const result = await repository.loadWorkspaceEvents('workspace-a')
+    assert.equal(result.ok, false)
+    assert.equal(!result.ok && result.error.code, 'INVALID_SNAPSHOT')
+  }
+})
+
+test('Workspace bulk loadの途中失敗はhydrate stateを部分commitしない', async () => {
+  const gateway = new MemoryCloudEventGateway(['workspace-a'])
+  const repository = createCloudEventRepository(gateway, { workspacePageSize: 1 })
+  const state = createDemoData()
+  for (const event of state.events.slice(0, 2)) {
+    assert.equal((await repository.saveEvent(
+      'workspace-a',
+      createSnapshot(state, event.id),
+    )).ok, true)
+  }
+  const loadPage = gateway.loadWorkspacePage.bind(gateway)
+  let pageCalls = 0
+  gateway.loadWorkspacePage = async (...args) => {
+    pageCalls += 1
+    return pageCalls === 2
+      ? { data: null, error: { code: 'NETWORK' } }
+      : loadPage(...args)
+  }
+  const localState = structuredClone(state)
+  const before = structuredClone(localState)
+  const result = await loadCloudWorkspaceEvents(
+    repository,
+    'workspace-a',
+    localState,
+  )
+  assert.equal(result.ok, false)
+  assert.equal(!result.ok && result.error.code, 'SUPABASE_ERROR')
+  assert.deepEqual(localState, before)
 })
 
 test('server commit後のsave応答失敗でもCloud deleteを必ず試行してrowを削除する', async () => {
@@ -700,6 +848,7 @@ test('repositoryはWorkspaceを明示的にscopeし越境accessを拒否する',
     getWorkspaceRole: gateway.getWorkspaceRole.bind(gateway),
     listRows: gateway.listRows.bind(gateway),
     loadRow: gateway.loadRow.bind(gateway),
+    loadWorkspacePage: gateway.loadWorkspacePage.bind(gateway),
     saveRow: gateway.saveRow.bind(gateway),
     deleteAuthorizedEvent: gateway.deleteAuthorizedEvent.bind(gateway),
   })
@@ -736,6 +885,9 @@ test('repositoryはDB responseのinvalid snapshotとscope mismatchを拒否す�
     async loadRow() {
       return { data: { workspace_id: 'workspace-a', event_id: 'event-a' }, error: null }
     },
+    async loadWorkspacePage() {
+      return { data: [{ workspace_id: 'workspace-b' }], error: null }
+    },
     async saveRow() {
       return { data: null, error: null }
     },
@@ -768,6 +920,64 @@ test('viewerはCloud Eventを参照できるが保存・削除はrepository境�
   assert.equal(!saved.ok && saved.error.code, 'ACCESS_DENIED')
   assert.equal(deleted.ok, false)
   assert.equal(!deleted.ok && deleted.error.code, 'ACCESS_DENIED')
+})
+
+test('viewer read-only判定はmutationを塞ぎ閲覧・検索・出力入口を維持する', async () => {
+  const [
+    appSource,
+    shellSource,
+    eventListSource,
+    commonDataSource,
+    backupSource,
+    memberSettingsSource,
+    bandSettingsSource,
+    stageSettingsSource,
+  ] =
+    await Promise.all([
+      readFile(new URL('../src/App.tsx', import.meta.url), 'utf8'),
+      readFile(new URL('../src/components/EventEditorShell.tsx', import.meta.url), 'utf8'),
+      readFile(new URL('../src/components/EventList.tsx', import.meta.url), 'utf8'),
+      readFile(new URL('../src/components/CommonDataPage.tsx', import.meta.url), 'utf8'),
+      readFile(new URL('../src/components/DataBackupSettings.tsx', import.meta.url), 'utf8'),
+      readFile(new URL('../src/components/EventMemberSettings.tsx', import.meta.url), 'utf8'),
+      readFile(new URL('../src/components/EventBandSettings.tsx', import.meta.url), 'utf8'),
+      readFile(new URL('../src/components/EventStageSettings.tsx', import.meta.url), 'utf8'),
+    ])
+
+  assert.match(appSource, /const canEditWorkspace = cloudWorkspace === null \|\|[\s\S]*canEditCloudWorkspace/)
+  for (const handler of [
+    'handleCreateEvent',
+    'handleDeleteEvent',
+    'handleSaveEventBasicInfo',
+    'handleSaveEventStageSettings',
+    'handleOnDragEnd',
+    'handleApplyGeneratedTimetable',
+    'handleResetTimetable',
+    'handleSubmitGridAssignment',
+    'handleApplyDutyAutoAssignment',
+    'handleSaveCommonMember',
+    'handleSaveSelectedEventToCloud',
+  ]) {
+    const start = appSource.indexOf(`const ${handler}`)
+    assert.notEqual(start, -1, handler)
+    assert.match(appSource.slice(start, start + 700), /!canEditWorkspace/, handler)
+  }
+  assert.match(appSource, /readOnly=\{!canEditWorkspace\}/)
+  assert.match(shellSource, /cloudSave && !readOnly/)
+  assert.match(eventListSource, /!readOnly && <div className="event-list-page__create">/)
+  assert.match(commonDataSource, /!readOnly && <div className="csv-import-control">/)
+  assert.match(backupSource, /!readOnly && <button/)
+  assert.ok(
+    memberSettingsSource.indexOf('id="event-member-search"') <
+      memberSettingsSource.indexOf('<fieldset className="read-only-form-controls"'),
+  )
+  assert.ok(
+    bandSettingsSource.indexOf('className="event-day-tabs"') <
+      bandSettingsSource.indexOf('<fieldset className="read-only-form-controls"'),
+  )
+  assert.match(memberSettingsSource, /CSV書き出し/)
+  assert.match(bandSettingsSource, /CSV書き出し/)
+  assert.match(stageSettingsSource, /if \(readOnly\)[\s\S]*setSelectedEventDayId/)
 })
 
 test('Workspace loadはCloud一覧を取得して全EventをV5 domain stateへrehydrateする', async () => {
@@ -1344,6 +1554,9 @@ test('Cloud load失敗はbase stateを変更せず別Event stateを返さない'
     async loadRow() {
       throw new Error('not called')
     },
+    async loadWorkspacePage() {
+      return { data: null, error: { code: 'NETWORK' } }
+    },
     async saveRow() {
       throw new Error('not called')
     },
@@ -1438,6 +1651,19 @@ test('authorized delete migrationはMembershipをlockして認可済み結果だ
   assert.doesNotMatch(gatewayDelete, /\.delete\(\)/)
 })
 
+test('upgrade migrationはCloud Event直接DELETEだけを全client roleから取り消す', async () => {
+  const sql = await readFile(new URL(
+    '../supabase/migrations/20261008130000_cloud_event_rpc_only_delete.sql',
+    import.meta.url,
+  ), 'utf8')
+
+  assert.match(sql, /revoke delete on table public\.cloud_events from public/i)
+  assert.match(sql, /revoke delete on table public\.cloud_events from anon/i)
+  assert.match(sql, /revoke delete on table public\.cloud_events from authenticated/i)
+  assert.doesNotMatch(sql, /revoke all/i)
+  assert.doesNotMatch(sql, /service_role/i)
+})
+
 test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検証する', async () => {
   const coreSql = await readFile(new URL(
     '../supabase/tests/cloud_event_authorized_delete.sql',
@@ -1456,7 +1682,11 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   assert.match(coreSql, /set local role anon/i)
   assert.match(coreSql, /request\.jwt\.claim\.sub/i)
   assert.match(coreSql, /has_function_privilege/i)
-  assert.match(coreSql, /viewer delete unexpectedly succeeded/i)
+  assert.match(coreSql, /has_table_privilege\('authenticated', 'public\.cloud_events', 'delete'\)/i)
+  assert.match(coreSql, /owner direct DELETE unexpectedly succeeded/i)
+  assert.match(coreSql, /editor direct DELETE unexpectedly succeeded/i)
+  assert.match(coreSql, /viewer direct DELETE unexpectedly succeeded/i)
+  assert.match(coreSql, /viewer UPDATE unexpectedly changed a row/i)
   assert.match(coreSql, /non-member delete unexpectedly succeeded/i)
   assert.match(coreSql, /cross-workspace delete unexpectedly succeeded/i)
   assert.match(coreSql, /revoked membership delete unexpectedly succeeded/i)

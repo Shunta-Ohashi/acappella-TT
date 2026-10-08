@@ -44,6 +44,7 @@ interface EventStageSettingsProps {
     sections: SectionSettingsDraft[],
   ) => EventStageSettingsUpdateResult
   onSaveAndNext: () => void
+  readOnly?: boolean
 }
 
 const formatEventDay = (date: string): string => {
@@ -62,6 +63,7 @@ export function EventStageSettings({
   canDeleteSection,
   onSave,
   onSaveAndNext,
+  readOnly = false,
 }: EventStageSettingsProps) {
   const orderedEventDays = eventDays
     .filter((eventDay) => eventDay.eventId === event.id)
@@ -387,6 +389,7 @@ export function EventStageSettings({
   return (
     <section className="event-stage-settings" aria-label="会場とStageの設定フォーム">
       <form noValidate onSubmit={handleSubmit}>
+        <fieldset className="read-only-form-controls" disabled={readOnly}>
         <div className="event-stage-settings__overview">
           <div className="event-stage-settings__days">
             <p>開催日</p>
@@ -394,6 +397,38 @@ export function EventStageSettings({
               {orderedEventDays.map((eventDay) => {
                 const isSelected = eventDay.id === selectedEventDayId
                 const hasErrors = errorEventDayIds.has(eventDay.id)
+                const tabContent = (
+                  <>
+                    <span>{formatEventDay(eventDay.date)}</span>
+                    {isSelected && (
+                      <small>選択中</small>
+                    )}
+                    {hasErrors && (
+                      <small className="event-day-tabs__error">
+                        エラーあり
+                      </small>
+                    )}
+                  </>
+                )
+
+                if (readOnly) {
+                  return (
+                    <a
+                      key={eventDay.id}
+                      href={`#event-stage-day-${eventDay.id}`}
+                      className={isSelected
+                        ? 'event-day-tabs__button event-day-tabs__button--active'
+                        : 'event-day-tabs__button'}
+                      aria-current={isSelected ? 'page' : undefined}
+                      onClick={(clickEvent) => {
+                        clickEvent.preventDefault()
+                        setSelectedEventDayId(eventDay.id)
+                      }}
+                    >
+                      {tabContent}
+                    </a>
+                  )
+                }
 
                 return (
                   <button
@@ -405,15 +440,7 @@ export function EventStageSettings({
                     aria-pressed={isSelected}
                     onClick={() => setSelectedEventDayId(eventDay.id)}
                   >
-                    <span>{formatEventDay(eventDay.date)}</span>
-                    {isSelected && (
-                      <small>選択中</small>
-                    )}
-                    {hasErrors && (
-                      <small className="event-day-tabs__error">
-                        エラーあり
-                      </small>
-                    )}
+                    {tabContent}
                   </button>
                 )
               })}
@@ -753,8 +780,9 @@ export function EventStageSettings({
             </button>
           </div>
         </footer>
+        </fieldset>
       </form>
-      {pendingDeletion && (() => {
+      {!readOnly && pendingDeletion && (() => {
         const copy = getDeleteConfirmationCopy(
           pendingDeletion.kind,
           pendingDeletion.label,

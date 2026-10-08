@@ -243,16 +243,10 @@ export const loadCloudWorkspaceEvents = async (
   workspaceId: string,
   localState: PersistedDomainState,
 ): Promise<CloudEventLifecycleResult<LoadedCloudWorkspaceEvents>> => {
-  const listed = await repository.listEvents(workspaceId)
-  if (!listed.ok) return listed
+  const loaded = await repository.loadWorkspaceEvents(workspaceId)
+  if (!loaded.ok) return loaded
 
-  const loaded = await Promise.all(
-    listed.value.map(summary => repository.loadEvent(workspaceId, summary.eventId)),
-  )
-  const failed = loaded.find(result => !result.ok)
-  if (failed && !failed.ok) return failed
-
-  const records = loaded.flatMap(result => result.ok ? [result.value] : [])
+  const records = loaded.value
   const assembled = createCloudWorkspaceState(
     localState,
     records.map(record => record.snapshot),

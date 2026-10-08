@@ -5,6 +5,7 @@ import test from 'node:test'
 import { createCloudAuthRedirectUrl } from '../src/cloud/cloudAuth.ts'
 import { resolveCloudConfig } from '../src/cloud/cloudConfig.ts'
 import {
+  canEditCloudWorkspace,
   createCloudAppBoundaryKey,
   isWorkspaceRole,
   sortCloudWorkspaceAccesses,
@@ -82,6 +83,14 @@ test('Workspace roleはowner・editor・viewerだけを許可する', () => {
   assert.equal(isWorkspaceRole('viewer'), true)
   assert.equal(isWorkspaceRole('admin'), false)
   assert.equal(isWorkspaceRole(undefined), false)
+})
+
+test('Cloud Workspaceはowner/editorだけを書込可能とし未知roleをfail closedする', () => {
+  assert.equal(canEditCloudWorkspace('owner'), true)
+  assert.equal(canEditCloudWorkspace('editor'), true)
+  assert.equal(canEditCloudWorkspace('viewer'), false)
+  assert.equal(canEditCloudWorkspace(undefined), false)
+  assert.equal(canEditCloudWorkspace('unknown'), false)
 })
 
 const workspaceAccess = (id, name) => ({

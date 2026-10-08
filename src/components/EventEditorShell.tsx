@@ -16,6 +16,7 @@ interface EventEditorShellProps {
     feedback?: { kind: 'success' | 'error'; message: string }
     onSave: () => void
   }
+  readOnly?: boolean
   children: ReactNode
 }
 
@@ -25,6 +26,7 @@ export function EventEditorShell({
   onStepChange,
   onBackToEvents,
   cloudSave,
+  readOnly = false,
   children,
 }: EventEditorShellProps) {
   const currentStep = eventEditorSteps.find((step) => step.id === activeStep)
@@ -35,7 +37,7 @@ export function EventEditorShell({
   }
 
   return (
-    <main className="event-editor">
+    <main className={readOnly ? 'event-editor event-editor--read-only' : 'event-editor'}>
       <header className="event-editor__header">
         <div className="event-editor__header-inner">
           <button
@@ -51,7 +53,7 @@ export function EventEditorShell({
               <h1>{eventName}</h1>
             </div>
             <div className="event-editor__header-actions">
-              {cloudSave && (
+              {cloudSave && !readOnly && (
                 <div className="event-editor__cloud-save">
                   <button
                     type="button"
@@ -76,7 +78,7 @@ export function EventEditorShell({
                 </div>
               )}
               <span className="event-editor__status" aria-label="編集状態: 下書き">
-                下書き
+                {readOnly ? '閲覧のみ' : '下書き'}
               </span>
             </div>
           </div>
@@ -119,6 +121,12 @@ export function EventEditorShell({
             <h2 id="current-step-title">{currentStep.label}</h2>
             <span>{currentStep.description}</span>
           </header>
+
+          {readOnly && (
+            <p className="event-editor__read-only-notice" role="status">
+              このワークスペースは閲覧のみです。内容の確認と表示切替ができます。変更操作は利用できません。
+            </p>
+          )}
 
           {hasImplementedContent ? (
             children

@@ -34,6 +34,7 @@ interface EventBandConditionsProps {
   eventMemberDays: EventMemberDay[]
   onSave: (draft: EventBandConditionsDraft) => EventBandConditionsUpdateResult
   onSaveAndNext: () => void
+  readOnly?: boolean
 }
 
 const emptyErrors = (): EventBandConditionsValidationErrors => ({ items: {} })
@@ -55,6 +56,7 @@ export function EventBandConditions({
   eventMemberDays,
   onSave,
   onSaveAndNext,
+  readOnly = false,
 }: EventBandConditionsProps) {
   const orderedEventDays = [...eventDays].sort((first, second) =>
     first.order - second.order ||
@@ -183,6 +185,7 @@ export function EventBandConditions({
           </p>
         </div>
 
+        <fieldset className="read-only-form-controls" disabled={readOnly}>
         {selectedItems.length === 0 ? (
           <div className="event-band-conditions__empty">
             <p>この開催日には出演条件を設定するバンドがありません。</p>
@@ -269,9 +272,10 @@ export function EventBandConditions({
             </button>
           </div>
         </footer>
+        </fieldset>
       </form>
 
-      {editingItem && editingEventBand && (
+      {!readOnly && editingItem && editingEventBand && (
         <EventBandConditionDialog
           key={editingEventBand.id}
           event={event}

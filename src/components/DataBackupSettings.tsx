@@ -4,12 +4,14 @@ interface DataBackupSettingsProps {
   isImporting: boolean
   onExport: () => void
   onImportFile: (file: File) => void
+  readOnly?: boolean
 }
 
 export function DataBackupSettings({
   isImporting,
   onExport,
   onImportFile,
+  readOnly = false,
 }: DataBackupSettingsProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -24,14 +26,14 @@ export function DataBackupSettings({
           <button type="button" className="secondary-button" onClick={onExport}>
             バックアップを書き出す
           </button>
-          <button
+          {!readOnly && <button
             type="button"
             className="secondary-button"
             disabled={isImporting}
             onClick={() => fileInputRef.current?.click()}
           >
             {isImporting ? '読み込み中…' : 'バックアップから復元'}
-          </button>
+          </button>}
         </div>
         <input
           ref={fileInputRef}
@@ -46,7 +48,9 @@ export function DataBackupSettings({
           }}
         />
         <p className="data-backup-settings__notice">
-          復元すると現在のデータは置き換わります。復元前にバックアップを書き出してください。
+          {readOnly
+            ? '閲覧権限ではバックアップを書き出せますが、復元はできません。'
+            : '復元すると現在のデータは置き換わります。復元前にバックアップを書き出してください。'}
         </p>
       </section>
     </main>

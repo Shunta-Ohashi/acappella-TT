@@ -10,6 +10,8 @@ const CLOUD_EVENT_COLUMNS =
 const CLOUD_EVENT_LIST_COLUMNS =
   'workspace_id, event_id, event_name, revision, created_at, updated_at'
 
+export const CLOUD_EVENT_WORKSPACE_PAGE_SIZE = 100
+
 export interface CloudEventSummary {
   workspaceId: string
   eventId: EventId
@@ -64,6 +66,11 @@ export interface CloudEventDatabaseGateway {
     workspaceId: string,
   ) => Promise<CloudEventDatabaseResult<unknown>>
   listRows: (workspaceId: string) => Promise<CloudEventDatabaseResult<unknown[]>>
+  loadWorkspacePage: (
+    workspaceId: string,
+    afterEventId: EventId | undefined,
+    limit: number,
+  ) => Promise<CloudEventDatabaseResult<unknown[]>>
   loadRow: (
     workspaceId: string,
     eventId: EventId,
@@ -88,6 +95,9 @@ export interface CloudEventRepository {
     workspaceId: string,
     eventId: EventId,
   ) => Promise<CloudEventRepositoryResult<CloudEventRecord>>
+  loadWorkspaceEvents: (
+    workspaceId: string,
+  ) => Promise<CloudEventRepositoryResult<CloudEventRecord[]>>
   saveEvent: (
     workspaceId: string,
     snapshot: CloudEventSnapshotV1,
@@ -96,6 +106,10 @@ export interface CloudEventRepository {
     workspaceId: string,
     eventId: EventId,
   ) => Promise<CloudEventRepositoryResult<CloudEventDeletionConfirmation>>
+}
+
+export interface CloudEventRepositoryOptions {
+  workspacePageSize?: number
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -225,7 +239,14 @@ const requireWorkspaceAccess = async (
 
 export const createCloudEventRepository = (
   gateway: CloudEventDatabaseGateway,
-): CloudEventRepository => ({
+  options: CloudEventRepositoryOptions = {},
+): CloudEventRepository => {
+  const workspacePageSize = Number.isSafeInteger(options.workspacePageSize) &&
+    Number(options.workspacePageSize) > 0
+    ? Number(options.workspacePageSize)
+    : CLOUD_EVENT_WORKSPACE_PAGE_SIZE
+
+  return ({
   async listEvents(workspaceId) {
     if (!hasValidScope(workspaceId)) return invalidArgument('Workspace IDが必要です。')
     const access = await requireWorkspaceAccess(gateway, workspaceId, 'read')
@@ -268,6 +289,56 @@ export const createCloudEventRepository = (
         record.eventId !== eventId
       ) return invalidSnapshot()
       return { ok: true, value: record }
+    } catch {
+      return databaseFailure({})
+    }
+  },
+
+  async loadWorkspaceEvents(workspaceId) {
+    if (!hasValidScope(workspaceId)) return invalidArgument('Workspace IDが必要です。')
+    const access = await requireWorkspaceAccess(gateway, workspaceId, 'read')
+    if (!access.ok) return access
+
+    const records: CloudEventRecord[] = []
+    const seenEventIds = new Set<EventId>()
+    let afterEventId: EventId | undefined
+
+    try {
+      while (true) {
+        const result = await gateway.loadWorkspacePage(
+          workspaceId,
+          afterEventId,
+          workspacePageSize,
+        )
+        if (result.error) return databaseFailure(result.error)
+        if (!Array.isArray(result.data)) return invalidSnapshot()
+        if (result.data.length === 0) break
+
+        const pageRecords = result.data.map(parseRecord)
+        if (pageRecords.some(record => !record)) return invalidSnapshot()
+
+        let previousEventId = afterEventId
+        for (const record of pageRecords) {
+          if (
+            !record ||
+            record.workspaceId !== workspaceId ||
+            seenEventIds.has(record.eventId) ||
+            (previousEventId !== undefined &&
+              record.eventId.localeCompare(previousEventId) <= 0)
+          ) return invalidSnapshot()
+
+          seenEventIds.add(record.eventId)
+          records.push(record)
+          previousEventId = record.eventId
+        }
+
+        if (previousEventId === undefined || previousEventId === afterEventId) {
+          return invalidSnapshot()
+        }
+        afterEventId = previousEventId
+      }
+
+      return { ok: true, value: records }
     } catch {
       return databaseFailure({})
     }
@@ -324,7 +395,8 @@ export const createCloudEventRepository = (
       return databaseFailure({})
     }
   },
-})
+  })
+}
 
 export const createSupabaseCloudEventGateway = (
   client: SupabaseClient,
@@ -345,6 +417,22 @@ export const createSupabaseCloudEventGateway = (
       .eq('workspace_id', workspaceId)
       .order('created_at', { ascending: true })
       .order('event_id', { ascending: true })
+    return { data: result.data, error: result.error }
+  },
+
+  async loadWorkspacePage(workspaceId, afterEventId, limit) {
+    let query = client
+      .from('cloud_events')
+      .select(CLOUD_EVENT_COLUMNS)
+      .eq('workspace_id', workspaceId)
+
+    if (afterEventId !== undefined) {
+      query = query.gt('event_id', afterEventId)
+    }
+
+    const result = await query
+      .order('event_id', { ascending: true })
+      .limit(limit)
     return { data: result.data, error: result.error }
   },
 

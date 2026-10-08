@@ -267,6 +267,7 @@ import {
   parseBackupJson,
 } from './persistence/dataBackup'
 import { useOptionalCloudWorkspace } from './cloud/useCloudWorkspace.ts'
+import { canEditCloudWorkspace } from './cloud/cloudWorkspace.ts'
 import { createSupabaseCloudEventRepository } from './cloud/cloudEventRepository.ts'
 import {
   createCloudEventOperationRegistry,
@@ -327,8 +328,17 @@ const DEFAULT_EVENT_SETTINGS = {
   'timeZone' | 'validationPolicy'
 >
 
+const READ_ONLY_WORKSPACE_MESSAGE =
+  '閲覧権限のワークスペースではデータを変更できません。'
+
 function App() {
   const cloudWorkspace = useOptionalCloudWorkspace()
+  const canEditWorkspace = cloudWorkspace === null ||
+    canEditCloudWorkspace(cloudWorkspace.membership.role)
+  const canEditWorkspaceRef = useRef(canEditWorkspace)
+  useLayoutEffect(() => {
+    canEditWorkspaceRef.current = canEditWorkspace
+  }, [canEditWorkspace])
   const cloudSupabase = cloudWorkspace?.supabase
   const cloudEventRepository = useMemo(
     () => cloudSupabase
@@ -591,9 +601,29 @@ function App() {
   const timetableGridSelection = selectionContextMatches
     ? timetableGridSelectionState.selection
     : null
+
+  useEffect(() => {
+    if (canEditWorkspace) return
+    const timeoutId = window.setTimeout(() => {
+      setIsCreateEventDialogOpen(false)
+      setGenerationPreview(null)
+      setGenerationOptionsScope(null)
+      setResetConfirmation(null)
+      setGridAssignmentDialog(null)
+      setDutyAutoAssignmentDialog(null)
+      setGridAssignmentDeletion(null)
+      setTimetableGridSelectionState((current) => ({
+        ...current,
+        selection: null,
+      }))
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [canEditWorkspace])
+
   const handleTimetableGridSelectionChange = (
     selection: TimetableGridRangeSelection | null,
   ) => {
+    if (!canEditWorkspace && selection !== null) return
     setGridAssignmentDialog(null)
     setDutyAutoAssignmentDialog(null)
     setGridAssignmentDeletion(null)
@@ -733,7 +763,7 @@ function App() {
     domainState,
   ])
 
-  const timetableHistoryActive = activeView === 'event-editor' &&
+  const timetableHistoryActive = canEditWorkspace && activeView === 'event-editor' &&
     activeStep === 6 && selectedEventId.length > 0
   useEffect(() => {
     if (!timetableHistoryActive) {
@@ -911,6 +941,10 @@ function App() {
   }
 
   const handleImportBackup = async (file: File) => {
+    if (!canEditWorkspace) {
+      setBackupFeedback({ kind: 'error', message: READ_ONLY_WORKSPACE_MESSAGE })
+      return
+    }
     if (importingBackupRef.current) return
     importingBackupRef.current = true
     setIsImportingBackup(true)
@@ -924,7 +958,15 @@ function App() {
         })
         return
       }
+      if (!canEditWorkspaceRef.current) {
+        setBackupFeedback({ kind: 'error', message: READ_ONLY_WORKSPACE_MESSAGE })
+        return
+      }
       if (!window.confirm('バックアップを復元すると、現在のデータはすべて置き換わり、未保存の編集も失われます。復元しますか？')) return
+      if (!canEditWorkspaceRef.current) {
+        setBackupFeedback({ kind: 'error', message: READ_ONLY_WORKSPACE_MESSAGE })
+        return
+      }
       if (!isPersistenceScopeReady(
         activePersistenceStorageKey,
         requestedPersistenceStorageKey,
@@ -1076,6 +1118,7 @@ function App() {
 
   const handleStageStartTimeChange = (value: string) => {
     if (
+      !canEditWorkspace ||
       !currentStage ||
       !canSetStageStartTime(currentStage, currentStageSections, value)
     ) return
@@ -1142,6 +1185,7 @@ function App() {
     eventId: EventId,
   ): Promise<boolean> => {
     if (!cloudWorkspace || !cloudEventRepository) return true
+    if (!canEditWorkspace) return false
     const scopeKey = requestedPersistenceStorageKey
     if (
       currentPersistenceScopeRef.current !== scopeKey ||
@@ -1205,6 +1249,7 @@ function App() {
   }
 
   const handleCreateEvent = (draft: NewEventDraft) => {
+    if (!canEditWorkspace) return
     setCloudEventSaveFeedback(null)
     setGenerationPreview(null)
     setGenerationOptionsScope(null)
@@ -1297,6 +1342,7 @@ function App() {
   const handleDeleteEvent = async (
     eventId: EventId,
   ): Promise<EventDeletionActionResult> => {
+    if (!canEditWorkspace) return { ok: false, reason: 'READ_ONLY' }
     const initialResult = createEventDeletion(getEventDeletionInput(eventId))
     if (!initialResult.ok) return initialResult
     const scopeKey = requestedPersistenceStorageKey
@@ -1354,6 +1400,9 @@ function App() {
   const handleSaveEventBasicInfo = (
     draft: EventBasicInfoDraft,
   ): EventBasicInfoUpdateResult => {
+    if (!canEditWorkspace) {
+      return { ok: false, errors: { form: READ_ONLY_WORKSPACE_MESSAGE } }
+    }
     if (!selectedEvent) {
       return {
         ok: false,
@@ -1403,6 +1452,12 @@ function App() {
   const handleSaveEventMemberSettings = (
     draft: EventMemberSettingsDraft,
   ): EventMemberSettingsUpdateResult => {
+    if (!canEditWorkspace) {
+      return {
+        ok: false,
+        errors: { members: {}, days: {}, form: READ_ONLY_WORKSPACE_MESSAGE },
+      }
+    }
     if (!selectedEvent) {
       return {
         ok: false,
@@ -1443,6 +1498,12 @@ function App() {
   const handleSaveEventBandSettings = (
     draft: EventBandSettingsDraft,
   ): EventBandSettingsUpdateResult => {
+    if (!canEditWorkspace) {
+      return {
+        ok: false,
+        errors: { items: {}, form: READ_ONLY_WORKSPACE_MESSAGE },
+      }
+    }
     if (!selectedEvent) {
       return {
         ok: false,
@@ -1477,6 +1538,12 @@ function App() {
   const handleSaveEventBandConditions = (
     draft: EventBandConditionsDraft,
   ): EventBandConditionsUpdateResult => {
+    if (!canEditWorkspace) {
+      return {
+        ok: false,
+        errors: { items: {}, form: READ_ONLY_WORKSPACE_MESSAGE },
+      }
+    }
     if (!selectedEvent) {
       return {
         ok: false,
@@ -1508,6 +1575,12 @@ function App() {
   const handleCreatePaAssignmentsUpdate = (
     draft: PaAssignmentsDraft,
   ): PaAssignmentsUpdateResult => {
+    if (!canEditWorkspace) {
+      return {
+        ok: false,
+        errors: { items: {}, form: READ_ONLY_WORKSPACE_MESSAGE },
+      }
+    }
     if (!selectedEvent) {
       return {
         ok: false,
@@ -1536,6 +1609,16 @@ function App() {
     draft: DutySettingsDraft,
     paAssignmentsOverride: PaAssignment[] = selectedEventPaAssignments,
   ): DutySettingsUpdateResult => {
+    if (!canEditWorkspace) {
+      return {
+        ok: false,
+        errors: {
+          dutyTypes: {},
+          assignments: {},
+          form: READ_ONLY_WORKSPACE_MESSAGE,
+        },
+      }
+    }
     if (!selectedEvent) {
       return {
         ok: false,
@@ -1570,6 +1653,7 @@ function App() {
   }
 
   const handleSaveStep6AndNext = () => {
+    if (!canEditWorkspace) return
     setStep6NavigationFeedback(null)
     const paResult = paSettingsRef.current?.prepareDraft()
     if (!paResult?.ok) return
@@ -1587,6 +1671,7 @@ function App() {
   const hasUnsavedOperations = () => hasUnsavedOperationsChanges(paSettingsRef.current, dutySettingsRef.current)
 
   const handleSaveSelectedEventToCloud = () => {
+    if (!canEditWorkspace) return
     if (!selectedEvent || !cloudWorkspace) return
     if (eventBasicInfoRef.current?.hasUnsavedChanges()) {
       setCloudEventSaveFeedback({
@@ -1677,6 +1762,7 @@ function App() {
     snapshot: TimetableEditSnapshot,
     context: TimetableHistoryEntry['context'],
   ) => {
+    if (!canEditWorkspace) return
     const restored = cloneTimetableEditSnapshot(snapshot)
     setStages(restored.stages)
     setEventBands(restored.eventBands)
@@ -1778,6 +1864,7 @@ function App() {
   const timetableResetResult = timetableResetInput ? resetEventDayTimetable(timetableResetInput) : undefined
 
   const handleOpenGenerationOptions = () => {
+    if (!canEditWorkspace) return
     if (!selectedEvent || !timetableEventDay || !timetableStages.length || !currentDayEventBands.length) return
     if (hasUnsavedOperations()) {
       setGenerationFeedback({ eventId: selectedEvent.id, eventDayId: timetableEventDay.id, kind: 'error',
@@ -1789,6 +1876,7 @@ function App() {
   }
 
   const handleGenerateTimetable = () => {
+    if (!canEditWorkspace) return
     if (!selectedEvent || !timetableEventDay || !timetableStages.length || !currentDayEventBands.length) return
     const feedback = (
       message: string,
@@ -1860,6 +1948,7 @@ function App() {
   }
 
   const handleApplyGeneratedTimetable = () => {
+    if (!canEditWorkspace) return
     if (!generationPreview) return
     if (generationPreview.eventId !== selectedEvent?.id ||
       generationPreview.eventDayId !== timetableEventDay?.id ||
@@ -1884,6 +1973,7 @@ function App() {
   }
 
   const handleOpenTimetableReset = () => {
+    if (!canEditWorkspace) return
     if (!selectedEvent || !timetableEventDay || !timetableResetResult?.ok || !timetableResetResult.hasChanges) return
     if (hasUnsavedOperations()) {
       setGenerationFeedback({ eventId: selectedEvent.id, eventDayId: timetableEventDay.id, kind: 'error',
@@ -1895,6 +1985,7 @@ function App() {
   }
 
   const handleResetTimetable = () => {
+    if (!canEditWorkspace) return
     if (!resetConfirmation || !selectedEvent || !timetableEventDay) return
     setResetConfirmation(null)
     if (resetConfirmation.eventId !== selectedEvent.id || resetConfirmation.eventDayId !== timetableEventDay.id ||
@@ -1927,6 +2018,9 @@ function App() {
     memberId: MemberId | undefined,
     draft: CommonMemberDraft,
   ): CommonMemberUpdateResult => {
+    if (!canEditWorkspace) {
+      return { ok: false, errors: { form: READ_ONLY_WORKSPACE_MESSAGE } }
+    }
     const existingMember = memberId
       ? members.find((member) => member.id === memberId)
       : undefined
@@ -1955,6 +2049,9 @@ function App() {
     bandId: BandId | undefined,
     draft: CommonBandDraft,
   ): CommonBandUpdateResult => {
+    if (!canEditWorkspace) {
+      return { ok: false, errors: { form: READ_ONLY_WORKSPACE_MESSAGE } }
+    }
     const existingBand = bandId
       ? bands.find((band) => band.id === bandId)
       : undefined
@@ -1995,6 +2092,7 @@ function App() {
   const handleDeleteCommonMember = (
     memberId: MemberId,
   ): CommonMemberDeletionResult => {
+    if (!canEditWorkspace) return { ok: false, reason: 'MEMBER_NOT_FOUND' }
     const result = createCommonMemberDeletion({
       memberId,
       members,
@@ -2019,6 +2117,7 @@ function App() {
   const handleDeleteCommonBand = (
     bandId: BandId,
   ): CommonBandDeletionResult => {
+    if (!canEditWorkspace) return { ok: false, reason: 'BAND_NOT_FOUND' }
     const result = createCommonBandDeletion({ bandId, bands, eventBands })
     if (result.ok) setBands(result.bands)
     return result
@@ -2029,6 +2128,16 @@ function App() {
     stageDrafts: StageSettingsDraft[],
     sectionDrafts: SectionSettingsDraft[],
   ): EventStageSettingsUpdateResult => {
+    if (!canEditWorkspace) {
+      return {
+        ok: false,
+        errors: {
+          stages: {},
+          sections: {},
+          form: READ_ONLY_WORKSPACE_MESSAGE,
+        },
+      }
+    }
     if (!selectedEvent) {
       return {
         ok: false,
@@ -2143,6 +2252,7 @@ function App() {
   const commitScheduleItemsIfScheduleGuardsAllow = (
     candidateScheduleItems: ScheduleItem[],
   ): boolean => {
+    if (!canEditWorkspace) return false
     const evaluation = evaluateSelectedEventLocks(candidateScheduleItems)
     if (!evaluation.valid) {
       setTimetableOrderConstraintFeedback(null)
@@ -2230,6 +2340,7 @@ function App() {
     scheduleItemId: string,
     mode: TimetableLockMode,
   ) => {
+    if (!canEditWorkspace) return
     const result = applyTimetableLock({
       lockId: createId('timetable-lock'),
       eventId: selectedEventId,
@@ -2263,6 +2374,7 @@ function App() {
   }
 
   const handleUnlockTimetableLock = (lockId: TimetableLockId) => {
+    if (!canEditWorkspace) return
     setTimetableLocks((previous) => removeTimetableLock(previous, lockId))
     setTimetableLockFeedback({
       eventId: selectedEventId,
@@ -2271,6 +2383,7 @@ function App() {
   }
 
   const handleUnlockAllTimetableLocks = () => {
+    if (!canEditWorkspace) return
     setTimetableLocks((previous) =>
       removeTimetableLocksForEvent(previous, selectedEventId))
     setTimetableLockFeedback({
@@ -2282,6 +2395,7 @@ function App() {
   const handleCommitTimetableOrderConstraints = (
     nextConstraints: TimetableOrderConstraint[],
   ) => {
+    if (!canEditWorkspace) return
     setTimetableOrderConstraints(nextConstraints)
     setTimetableOrderConstraintFeedback(null)
     setActiveTimetableOrderBlockKey(null)
@@ -2290,6 +2404,7 @@ function App() {
   // ==================== 🔀 安全なドラッグ＆ドロップ処理 ====================
   const handleOnDragEnd = (result: DropResult) => {
     if (
+      !canEditWorkspace ||
       !currentStage ||
       !selectedEvent ||
       !timetableSelection.eventDayId ||
@@ -2666,6 +2781,7 @@ function App() {
   }
 
   const handleOpenGridAssignment = () => {
+    if (!canEditWorkspace) return
     const selection = getCurrentResolvedGridSelection()
     const context = getGridAssignmentContext()
     if (
@@ -2712,6 +2828,7 @@ function App() {
   }
 
   const handleSubmitGridAssignment = (memberId: string) => {
+    if (!canEditWorkspace) return
     if (!gridAssignmentDialog) return
     const currentSelection = getCurrentResolvedGridSelection()
     const context = getGridAssignmentContext()
@@ -2782,6 +2899,7 @@ function App() {
   }
 
   const handleOpenDutyAutoAssignment = () => {
+    if (!canEditWorkspace) return
     const selection = getCurrentResolvedGridSelection()
     const context = getGridAssignmentContext()
     if (
@@ -2822,6 +2940,7 @@ function App() {
   }
 
   const handleDutyAutoAssignmentCountChange = (value: string) => {
+    if (!canEditWorkspace) return
     const dialog = dutyAutoAssignmentDialog
     const selection = getCurrentResolvedGridSelection()
     const context = getGridAssignmentContext()
@@ -2839,6 +2958,7 @@ function App() {
   }
 
   const handleApplyDutyAutoAssignment = () => {
+    if (!canEditWorkspace) return
     const dialog = dutyAutoAssignmentDialog
     const selection = getCurrentResolvedGridSelection()
     const context = getGridAssignmentContext()
@@ -2924,6 +3044,7 @@ function App() {
   }
 
   const handleOpenGridAssignmentDeletion = () => {
+    if (!canEditWorkspace) return
     const selection = getCurrentResolvedGridSelection()
     const context = getGridAssignmentContext()
     const eventDayId = timetableSelection.eventDayId
@@ -2983,6 +3104,7 @@ function App() {
   }
 
   const handleConfirmGridAssignmentDeletion = () => {
+    if (!canEditWorkspace) return
     const confirmation = gridAssignmentDeletion
     const context = getGridAssignmentContext()
     if (!confirmation || !context) return
@@ -3083,6 +3205,7 @@ function App() {
       scheduleItems={selectedScheduleItems}
       eventBands={selectedEventBands}
       onUnlockTimetableLock={handleUnlockTimetableLock}
+      readOnly={!canEditWorkspace}
     />
   )
   const unavailableTimetableOrderConstraintRepair = selectedEvent ? (
@@ -3189,8 +3312,10 @@ function App() {
       )}
       {activeView === 'event-editor' ? (
         <EventEditorShell
+          key={canEditWorkspace ? 'event-editor-editable' : 'event-editor-read-only'}
           eventName={selectedEvent?.name ?? 'イベント'}
           activeStep={activeStep}
+          readOnly={!canEditWorkspace}
           onStepChange={handleEventEditorStepChange}
           onBackToEvents={handleLeaveEventEditor}
           cloudSave={cloudWorkspace && selectedEvent ? {
@@ -3231,6 +3356,7 @@ function App() {
               ) !== undefined}
               onSave={handleSaveEventBasicInfo}
               onSaveAndNext={() => setActiveStep(2)}
+              readOnly={!canEditWorkspace}
             />
           ) : activeStep === 2 && selectedEvent ? (
             <EventStageSettings
@@ -3264,6 +3390,7 @@ function App() {
               })}
               onSave={handleSaveEventStageSettings}
               onSaveAndNext={() => setActiveStep(3)}
+              readOnly={!canEditWorkspace}
             />
           ) : activeStep === 3 && selectedEvent ? (
             <EventMemberSettings
@@ -3277,6 +3404,7 @@ function App() {
               createDraftId={() => createId('event-member-draft')}
               onSave={handleSaveEventMemberSettings}
               onSaveAndNext={() => setActiveStep(4)}
+              readOnly={!canEditWorkspace}
             />
           ) : activeStep === 4 && selectedEvent ? (
             <EventBandSettings
@@ -3293,6 +3421,7 @@ function App() {
               createDraftId={() => createId('event-band-draft')}
               onSave={handleSaveEventBandSettings}
               onSaveAndNext={() => setActiveStep(5)}
+              readOnly={!canEditWorkspace}
             />
           ) : activeStep === 5 && selectedEvent ? (
             <EventBandConditions
@@ -3307,6 +3436,7 @@ function App() {
               eventMemberDays={selectedEventMemberDays}
               onSave={handleSaveEventBandConditions}
               onSaveAndNext={() => setActiveStep(6)}
+              readOnly={!canEditWorkspace}
             />
           ) : activeStep === 6 && selectedEvent ? (
             <DragDropContext onDragEnd={handleOnDragEnd}>
@@ -3319,8 +3449,8 @@ function App() {
                 onSelectStage={handleSelectTimetableStage}
                 poolCount={poolEventBands.length}
                 issueCounts={currentStageIssueCounts}
-                canUndo={canUndoTimetable}
-                canRedo={canRedoTimetable}
+                canUndo={canEditWorkspace && canUndoTimetable}
+                canRedo={canEditWorkspace && canRedoTimetable}
                 onUndo={() => {
                   performTimetableHistoryTransition('undo')
                 }}
@@ -3333,7 +3463,7 @@ function App() {
                     ? step6NavigationFeedback.message
                     : null
                 }
-                generationAction={(
+                generationAction={canEditWorkspace ? (
                   <div className="timetable-generation-action">
                     <div className="timetable-generation-action__buttons">
                     <button type="button" className="primary-button"
@@ -3350,7 +3480,7 @@ function App() {
                       onClick={handleOpenTimetableReset}>この開催日のTTを初期化</button>
                     </div>
                   </div>
-                )}
+                ) : undefined}
                 generationFeedback={generationFeedback?.eventId === selectedEvent.id &&
                   generationFeedback.eventDayId === timetableEventDay?.id
                   ? (
@@ -3371,6 +3501,7 @@ function App() {
                       <input
                         type="time"
                         value={startTime}
+                        disabled={!canEditWorkspace}
                         onChange={(event) => handleStageStartTimeChange(event.target.value)}
                       />
                     </label>
@@ -3438,6 +3569,7 @@ function App() {
                               key={eventBand.id}
                               draggableId={eventBand.id}
                               index={index}
+                              isDragDisabled={!canEditWorkspace}
                             >
                               {(provided) => (
                                 <li
@@ -3555,6 +3687,7 @@ function App() {
                     onAssignSelection={handleOpenGridAssignment}
                     onAutoAssignSelection={handleOpenDutyAutoAssignment}
                     onDeleteSelectionAssignments={handleOpenGridAssignmentDeletion}
+                    readOnly={!canEditWorkspace}
                   />
                 ) : null}
                 issuePanel={(
@@ -3585,6 +3718,7 @@ function App() {
                     onOrderConstraintBlockHighlightChange={setActiveTimetableOrderBlockKey}
                     createConstraintId={() => createId('timetable-order-constraint')}
                     onCommit={handleCommitTimetableOrderConstraints}
+                    readOnly={!canEditWorkspace}
                   />
                 ) : null}
                 renderPaPanel={(onValidationFailed) => currentStage ? (
@@ -3615,10 +3749,12 @@ function App() {
                     formId={`pa-settings-${selectedEvent.id}`}
                     onCreateUpdate={handleCreatePaAssignmentsUpdate}
                     onCommit={(result) => {
+                      if (!canEditWorkspace) return
                       setPaAssignments(result.paAssignments)
                       setStep6NavigationFeedback(null)
                     }}
                     onSaveAndNext={handleSaveStep6AndNext}
+                    readOnly={!canEditWorkspace}
                   />
                 ) : null}
                 renderOperationsPanel={(onValidationFailed) => currentStage ? (
@@ -3650,16 +3786,19 @@ function App() {
                     createDraftId={() => createId('duty-draft')}
                     onCreateUpdate={handleCreateDutySettingsUpdate}
                     onCommit={(result) => {
+                      if (!canEditWorkspace) return
                       setDutyTypes(result.dutyTypes)
                       setDutyAssignments(result.dutyAssignments)
                       setStep6NavigationFeedback(null)
                     }}
+                    readOnly={!canEditWorkspace}
                   />
                 ) : null}
                 footer={(
                   <button
                     type="button"
                     className="primary-button"
+                    disabled={!canEditWorkspace}
                     onClick={handleSaveStep6AndNext}
                   >
                     設定を保存して次へ <span aria-hidden="true">→</span>
@@ -3701,9 +3840,11 @@ function App() {
           eventBands={eventBands}
           onOpenEvent={handleOpenEvent}
           onCreateEvent={() => setIsCreateEventDialogOpen(true)}
+          readOnly={!canEditWorkspace}
         />
       ) : activeView === 'shared-data' ? (
         <CommonDataPage
+          key={canEditWorkspace ? 'common-data-editable' : 'common-data-read-only'}
           members={members}
           bands={bands}
           onSaveMember={handleSaveCommonMember}
@@ -3712,25 +3853,31 @@ function App() {
           onDeleteMember={handleDeleteCommonMember}
           checkBandDeletion={getCommonBandDeletionCheck}
           onDeleteBand={handleDeleteCommonBand}
-          onImportMembers={setMembers}
-          onImportBands={setBands}
+          onImportMembers={(nextMembers) => {
+            if (canEditWorkspace) setMembers(nextMembers)
+          }}
+          onImportBands={(nextBands) => {
+            if (canEditWorkspace) setBands(nextBands)
+          }}
           createMemberId={() => createId('member')}
           createBandId={() => createId('band')}
+          readOnly={!canEditWorkspace}
         />
       ) : (
         <DataBackupSettings
           isImporting={isImportingBackup}
           onExport={handleExportBackup}
           onImportFile={handleImportBackup}
+          readOnly={!canEditWorkspace}
         />
       )}
-      {isCreateEventDialogOpen && (
+      {canEditWorkspace && isCreateEventDialogOpen && (
         <CreateEventDialog
           onCancel={() => setIsCreateEventDialogOpen(false)}
           onCreate={handleCreateEvent}
         />
       )}
-      {generationPreview && (
+      {canEditWorkspace && generationPreview && (
         <TimetableGenerationPreviewDialog
           preview={generationPreview.presentation}
           options={generationPreview.options}
@@ -3738,18 +3885,18 @@ function App() {
           onApply={handleApplyGeneratedTimetable}
         />
       )}
-      {generationOptionsScope?.eventId === selectedEvent?.id &&
+      {canEditWorkspace && generationOptionsScope?.eventId === selectedEvent?.id &&
         generationOptionsScope?.eventDayId === timetableEventDay?.id && timetableEventDay && (
         <TimetableGenerationOptionsDialog dayLabel={formatGenerationDay(timetableEventDay)}
           options={generationOptions} onChange={setGenerationOptions}
           onCancel={() => setGenerationOptionsScope(null)} onGenerate={handleGenerateTimetable} />
       )}
-      {resetConfirmation?.eventId === selectedEvent?.id &&
+      {canEditWorkspace && resetConfirmation?.eventId === selectedEvent?.id &&
         resetConfirmation?.eventDayId === timetableEventDay?.id && timetableEventDay && (
         <TimetableResetConfirmDialog dayLabel={formatGenerationDay(timetableEventDay)}
           onCancel={() => setResetConfirmation(null)} onReset={handleResetTimetable} />
       )}
-      {activeGridAssignmentDialog && (
+      {canEditWorkspace && activeGridAssignmentDialog && (
           <TimetableGridAssignmentDialog
             selection={activeGridAssignmentDialog.selection}
             targetLabel={activeGridAssignmentDialog.targetLabel}
@@ -3762,7 +3909,7 @@ function App() {
             onSubmit={handleSubmitGridAssignment}
           />
       )}
-      {activeDutyAutoAssignmentDialog && (
+      {canEditWorkspace && activeDutyAutoAssignmentDialog && (
         <TimetableDutyAutoAssignmentDialog
           selection={activeDutyAutoAssignmentDialog.selection}
           dutyTypeName={activeDutyAutoAssignmentDialog.dutyTypeName}
@@ -3776,7 +3923,7 @@ function App() {
           onSubmit={handleApplyDutyAutoAssignment}
         />
       )}
-      {activeGridAssignmentDeletion && (
+      {canEditWorkspace && activeGridAssignmentDeletion && (
         <TimetableGridAssignmentDeletionDialog
           items={activeGridAssignmentDeletion.items}
           includesOutsideSelection={activeGridAssignmentDeletion.includesOutsideSelection}

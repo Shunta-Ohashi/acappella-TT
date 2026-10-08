@@ -33,6 +33,7 @@ interface EventBasicInfoProps {
   isCloudSavePending?: boolean
   onSave: (draft: EventBasicInfoDraft) => EventBasicInfoUpdateResult
   onSaveAndNext: () => void
+  readOnly?: boolean
 }
 
 export interface EventBasicInfoHandle {
@@ -42,7 +43,7 @@ export interface EventBasicInfoHandle {
 
 export type EventDeletionActionResult = EventDeletionResult | {
   ok: false
-  reason: 'CLOUD_DELETE_FAILED' | 'CLOUD_OPERATION_IN_PROGRESS'
+  reason: 'CLOUD_DELETE_FAILED' | 'CLOUD_OPERATION_IN_PROGRESS' | 'READ_ONLY'
 }
 
 interface DateInput {
@@ -55,11 +56,15 @@ const DELETE_BLOCKED_MESSAGE =
   'この開催日にはStage・出演バンドなどの設定があるため削除できません。関連する設定を先に削除してください。'
 const UNSAVED_CHANGES_MESSAGE =
   'イベント基本情報に未保存の変更があります。先に基本情報を保存してください。'
+const READ_ONLY_MESSAGE =
+  '閲覧権限のワークスペースではイベントを削除できません。'
 
-const createDateInputs = (eventDays: EventDay[]): DateInput[] => eventDays.map(
+const createDateInputs = (
+  eventDays: EventBasicInfoDraft['eventDays'],
+): DateInput[] => eventDays.map(
   (eventDay) => ({
-    key: `event-day-${eventDay.id}`,
-    eventDayId: eventDay.id,
+    key: `event-day-${eventDay.eventDayId}`,
+    eventDayId: eventDay.eventDayId,
     value: eventDay.date,
   }),
 )
@@ -73,16 +78,14 @@ export const EventBasicInfo = forwardRef<EventBasicInfoHandle, EventBasicInfoPro
   isCloudSavePending = false,
   onSave,
   onSaveAndNext,
+  readOnly = false,
 }: EventBasicInfoProps, ref) {
   const initialDraft = createEventBasicInfoDraft(event, eventDays)
-  const initialEventDays = eventDays
-    .filter((eventDay) => eventDay.eventId === event.id)
-    .sort((first, second) => first.order - second.order)
   const [eventName, setEventName] = useState(initialDraft.name)
   const [description, setDescription] = useState(initialDraft.description)
   const [notes, setNotes] = useState(initialDraft.notes)
   const [dateInputs, setDateInputs] = useState<DateInput[]>(
-    createDateInputs(initialEventDays),
+    createDateInputs(initialDraft.eventDays),
   )
   const [nextDateInputKey, setNextDateInputKey] = useState(0)
   const [errors, setErrors] = useState<EventBasicInfoValidationErrors>({})
@@ -131,6 +134,7 @@ export const EventBasicInfo = forwardRef<EventBasicInfoHandle, EventBasicInfoPro
     if (result.reason === 'CLOUD_OPERATION_IN_PROGRESS') {
       return 'Cloud Eventの保存または削除処理中です。完了後にもう一度お試しください。'
     }
+    if (result.reason === 'READ_ONLY') return READ_ONLY_MESSAGE
     return 'イベント間の参照に矛盾があるため削除できません。データの整合性を確認してください。'
   }
 
@@ -246,11 +250,15 @@ export const EventBasicInfo = forwardRef<EventBasicInfoHandle, EventBasicInfoPro
       return
     }
 
-    setEventName(result.event.name)
-    setDescription(result.event.description ?? '')
-    setNotes(result.event.notes ?? '')
-    setDateInputs(createDateInputs(result.eventDays))
-    setSavedDraft(createEventBasicInfoDraft(result.event, result.eventDays))
+    const normalizedSavedDraft = createEventBasicInfoDraft(
+      result.event,
+      result.eventDays,
+    )
+    setEventName(normalizedSavedDraft.name)
+    setDescription(normalizedSavedDraft.description)
+    setNotes(normalizedSavedDraft.notes)
+    setDateInputs(createDateInputs(normalizedSavedDraft.eventDays))
+    setSavedDraft(normalizedSavedDraft)
 
     if (moveToNext) {
       onSaveAndNext()
@@ -267,6 +275,7 @@ export const EventBasicInfo = forwardRef<EventBasicInfoHandle, EventBasicInfoPro
   return (
     <section className="event-basic-info" aria-label="イベント基本情報フォーム">
       <form noValidate onSubmit={handleSubmit}>
+        <fieldset className="read-only-form-controls" disabled={readOnly}>
         <div className="event-basic-info__card">
           <div className="event-basic-info__field">
             <label htmlFor="event-basic-info-name">
@@ -409,8 +418,9 @@ export const EventBasicInfo = forwardRef<EventBasicInfoHandle, EventBasicInfoPro
             </button>
           </div>
         </footer>
+        </fieldset>
       </form>
-      <div className="event-basic-info__danger-zone">
+      {!readOnly && <div className="event-basic-info__danger-zone">
         <div>
           <h3>危険な操作</h3>
           <p>
@@ -430,8 +440,8 @@ export const EventBasicInfo = forwardRef<EventBasicInfoHandle, EventBasicInfoPro
         >
           このイベントを削除
         </button>
-      </div>
-      {pendingDeletion && (() => {
+      </div>}
+      {!readOnly && pendingDeletion && (() => {
         const copy = getDeleteConfirmationCopy(
           'event-day',
           pendingDeletion.value || '未入力の開催日',
@@ -444,7 +454,7 @@ export const EventBasicInfo = forwardRef<EventBasicInfoHandle, EventBasicInfoPro
           />
         )
       })()}
-      {pendingEventDeletion && (() => {
+      {!readOnly && pendingEventDeletion && (() => {
         const copy = getDeleteConfirmationCopy(
           'event',
           pendingEventDeletion.label,

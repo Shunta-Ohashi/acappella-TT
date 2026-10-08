@@ -45,6 +45,9 @@ export const sortCloudWorkspaceAccesses = (
 export const isWorkspaceRole = (value: unknown): value is WorkspaceRole =>
   typeof value === 'string' && WORKSPACE_ROLES.includes(value as WorkspaceRole)
 
+export const canEditCloudWorkspace = (role: unknown): boolean =>
+  role === 'owner' || role === 'editor'
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 

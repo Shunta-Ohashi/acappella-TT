@@ -77,6 +77,7 @@ interface DutySettingsProps {
     paAssignmentsOverride?: PaAssignment[],
   ) => DutySettingsUpdateResult
   onCommit: (result: Extract<DutySettingsUpdateResult, { ok: true }>) => void
+  readOnly?: boolean
 }
 
 interface AssignmentEditorState {
@@ -114,6 +115,7 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
     selectedEventDayId,
     selectedStageId,
     onSelectScope,
+    readOnly = false,
     onValidationFailed,
     createDraftId,
     onCreateUpdate,
@@ -352,6 +354,7 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
     return (
       <section className="duty-settings" aria-label="当日運営設定">
         <form noValidate onSubmit={handleSubmit}>
+          <fieldset className="read-only-form-controls" disabled={readOnly}>
           <section className="duty-settings__types" aria-labelledby="duty-types-title">
             <h3 id="duty-types-title">仕事の種類</h3>
             {draft.dutyTypes.length === 0 ? (
@@ -659,9 +662,10 @@ export const DutySettings = forwardRef<DutySettingsHandle, DutySettingsProps>(
               当日運営設定を保存
             </button>
           </footer>
+          </fieldset>
         </form>
 
-        {assignmentEditor && (
+        {!readOnly && assignmentEditor && (
           <DutyAssignmentEditorDialog
             event={event}
             eventDays={eventDays}
