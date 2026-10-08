@@ -26,7 +26,13 @@ import {
   createCloudWorkspaceState,
   parseCloudEventSnapshot,
 } from '../src/cloud/cloudEventSnapshot.ts'
-import { CURRENT_STORAGE_VERSION } from '../src/persistence/localPersistence.ts'
+import {
+  CURRENT_STORAGE_VERSION,
+  createCloudScopedStorageKey,
+  createPersistedAppState,
+  loadPersistedStateForScope,
+  savePersistedState,
+} from '../src/persistence/localPersistence.ts'
 
 const createEmptyState = () => ({
   members: [], bands: [], events: [], eventDays: [], stages: [], sections: [],
@@ -100,6 +106,75 @@ const createHydrationHarness = (
       storageRemoveCalls += 1
       storageValue = undefined
     },
+  }
+}
+
+class RawCacheStorage {
+  values = new Map()
+  setCalls = []
+  removeCalls = []
+  failSet = false
+
+  seed(key, value) {
+    this.values.set(key, value)
+  }
+
+  getItem(key) {
+    return this.values.get(key) ?? null
+  }
+
+  setItem(key, value) {
+    this.setCalls.push({ key, value })
+    if (this.failSet) throw new Error('quota exceeded')
+    this.values.set(key, value)
+  }
+
+  removeItem(key) {
+    this.removeCalls.push(key)
+    this.values.delete(key)
+  }
+}
+
+const createRawCacheHydrationHarness = ({
+  storage,
+  scopeKey,
+  fallback = createDemoData(),
+}) => {
+  let domainState = loadPersistedStateForScope({
+    createFallback: () => fallback,
+    cloudEnabled: true,
+    storage,
+    storageKey: scopeKey,
+  })
+  let latestDomainState = domainState
+  let hydration = { scopeKey: '', kind: 'loading' }
+
+  return {
+    run(load, isCurrent = () => true) {
+      return runCloudEventHydrationAttempt({
+        scopeKey,
+        isCurrent,
+        load,
+        apply: loaded => {
+          domainState = structuredClone(loaded.state)
+          latestDomainState = domainState
+        },
+        onStateChange: nextHydration => {
+          hydration = nextHydration
+          if (isCloudEventCacheWriteReady({
+            cloudEnabled: true,
+            persistenceScopeReady: true,
+            requestedScopeKey: scopeKey,
+            hydration,
+          })) {
+            savePersistedState(domainState, storage, scopeKey)
+          }
+        },
+      })
+    },
+    get domainState() { return domainState },
+    get latestDomainState() { return latestDomainState },
+    get hydration() { return hydration },
   }
 }
 
@@ -1902,6 +1977,184 @@ test('Cloud load失敗はbase stateを変更せず別Event stateを返さない'
   assert.equal(result.ok, false)
   assert.equal(!result.ok && result.error.code, 'SUPABASE_ERROR')
   assert.deepEqual(base, before)
+})
+
+test('Appの初回起動とscope切替は同じCloud非破壊loaderへ接続する', async () => {
+  const source = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  assert.equal(source.match(/loadPersistedStateForScope\(\{/g)?.length, 2)
+  assert.match(source,
+    /const \[initialAppState\][\s\S]*loadPersistedStateForScope\(\{[\s\S]*cloudEnabled: Boolean\(cloudWorkspace\)/)
+  assert.match(source,
+    /rehydratePersistenceScope\(loadPersistedStateForScope\(\{[\s\S]*cloudEnabled: Boolean\(cloudWorkspace\)/)
+  assert.doesNotMatch(source, /loadPersistedStateOrFallback/)
+
+  const rehydrateScope = source.slice(
+    source.indexOf('const rehydratePersistenceScope'),
+    source.indexOf('const persistenceScopeReady'),
+  )
+  assert.match(rehydrateScope,
+    /setCloudEventLoadState\(\{ scopeKey: storageKey, kind: 'loading' \}\)/)
+  assert.ok(
+    rehydrateScope.indexOf("kind: 'loading'") <
+      rehydrateScope.indexOf('setActivePersistenceStorageKey(storageKey)'),
+  )
+})
+
+test('malformed raw Cloud cacheはhydrate失敗・例外でも元文字列を保持する', async () => {
+  const raw = '{broken cloud cache\n'
+  const failures = [
+    { code: 'ACCESS_DENIED', message: 'denied' },
+    { code: 'SUPABASE_ERROR', message: 'network' },
+    { code: 'INVALID_SNAPSHOT', message: 'invalid snapshot' },
+    { code: 'SHARED_MASTER_CONFLICT', message: 'shared master conflict' },
+    { code: 'INVALID_SNAPSHOT', message: 'duplicate local master' },
+  ]
+
+  for (const failure of failures) {
+    const storage = new RawCacheStorage()
+    const scopeKey = createCloudScopedStorageKey({
+      userId: `user-${failure.message}`,
+      workspaceId: 'workspace-a',
+    })
+    storage.seed(scopeKey, raw)
+    const harness = createRawCacheHydrationHarness({ storage, scopeKey })
+    const before = structuredClone(harness.domainState)
+
+    const result = await harness.run(async () => ({ ok: false, error: failure }))
+    assert.equal(result.kind, 'error')
+    assert.deepEqual(harness.domainState, before)
+    assert.deepEqual(harness.latestDomainState, before)
+    assert.equal(storage.values.get(scopeKey), raw)
+    assert.deepEqual(storage.setCalls, [])
+    assert.deepEqual(storage.removeCalls, [])
+    assert.equal(getCloudEventHydrationView({
+      cloudEnabled: true,
+      persistenceScopeReady: true,
+      requestedScopeKey: scopeKey,
+      hydration: harness.hydration,
+    }), 'error')
+  }
+
+  const storage = new RawCacheStorage()
+  const scopeKey = createCloudScopedStorageKey({
+    userId: 'user-rejection',
+    workspaceId: 'workspace-a',
+  })
+  storage.seed(scopeKey, raw)
+  const harness = createRawCacheHydrationHarness({ storage, scopeKey })
+  const rejected = await harness.run(async () => {
+    throw new Error('unexpected')
+  })
+  assert.equal(rejected.kind, 'error')
+  assert.equal(storage.values.get(scopeKey), raw)
+  assert.deepEqual(storage.setCalls, [])
+  assert.deepEqual(storage.removeCalls, [])
+})
+
+test('Cloud scope切替・cancel・retryは成功前のcacheを変更せず成功後だけcurrent scopeを更新する', async () => {
+  const storage = new RawCacheStorage()
+  const keyA = createCloudScopedStorageKey({
+    userId: 'user-a',
+    workspaceId: 'workspace-a',
+  })
+  const keyB = createCloudScopedStorageKey({
+    userId: 'user-a',
+    workspaceId: 'workspace-b',
+  })
+  const stateA = {
+    ...createEmptyState(),
+    members: [{ id: 'member-a', realName: 'Workspace A', active: true }],
+  }
+  const rawA = JSON.stringify(createPersistedAppState(stateA))
+  const rawB = '{malformed workspace b'
+  storage.seed(keyA, rawA)
+  storage.seed(keyB, rawB)
+
+  assert.deepEqual(loadPersistedStateForScope({
+    createFallback: createDemoData,
+    cloudEnabled: true,
+    storage,
+    storageKey: keyA,
+  }), createPersistedAppState(stateA))
+  assert.deepEqual(loadPersistedStateForScope({
+    createFallback: createDemoData,
+    cloudEnabled: true,
+    storage,
+    storageKey: keyB,
+  }), createPersistedAppState(createDemoData()))
+  assert.equal(storage.values.get(keyA), rawA)
+  assert.equal(storage.values.get(keyB), rawB)
+
+  const harnessB = createRawCacheHydrationHarness({ storage, scopeKey: keyB })
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const failed = await harnessB.run(async () => ({
+      ok: false,
+      error: { code: 'SUPABASE_ERROR', message: 'network' },
+    }))
+    assert.equal(failed.kind, 'error')
+    assert.equal(storage.values.get(keyB), rawB)
+  }
+
+  const staleAttempt = createDeferred()
+  const harnessA = createRawCacheHydrationHarness({ storage, scopeKey: keyA })
+  let activeScopeKey = keyA
+  const pendingA = harnessA.run(
+    () => staleAttempt.promise,
+    () => activeScopeKey === keyA,
+  )
+  activeScopeKey = keyB
+  staleAttempt.resolve({
+    ok: true,
+    value: { state: createPersistedAppState(createEmptyState()), records: [] },
+  })
+  assert.deepEqual(await pendingA, { kind: 'ignored' })
+  assert.equal(storage.values.get(keyA), rawA)
+  assert.equal(storage.values.get(keyB), rawB)
+  assert.deepEqual(storage.setCalls, [])
+  assert.deepEqual(storage.removeCalls, [])
+
+  const successfulRetry = createDeferred()
+  const pendingB = harnessB.run(() => successfulRetry.promise)
+  assert.equal(storage.values.get(keyB), rawB)
+  assert.deepEqual(storage.setCalls, [])
+  const emptyCloudState = createPersistedAppState(createEmptyState())
+  successfulRetry.resolve({
+    ok: true,
+    value: { state: emptyCloudState, records: [] },
+  })
+  assert.deepEqual(await pendingB, { kind: 'ready' })
+  assert.equal(storage.values.get(keyA), rawA)
+  assert.equal(storage.values.get(keyB), JSON.stringify(emptyCloudState))
+  assert.deepEqual(storage.removeCalls, [])
+  assert.equal(storage.setCalls.length, 1)
+  assert.equal(storage.setCalls[0].key, keyB)
+})
+
+test('Cloud成功後のcache setItem失敗でも元のmalformed文字列を先行削除しない', async () => {
+  const storage = new RawCacheStorage()
+  const scopeKey = createCloudScopedStorageKey({
+    userId: 'user-a',
+    workspaceId: 'workspace-a',
+  })
+  const raw = '{malformed but retained'
+  storage.seed(scopeKey, raw)
+  storage.failSet = true
+  const harness = createRawCacheHydrationHarness({ storage, scopeKey })
+  const originalWarn = console.warn
+  console.warn = () => {}
+  try {
+    const result = await harness.run(async () => ({
+      ok: true,
+      value: { state: createPersistedAppState(createEmptyState()), records: [] },
+    }))
+    assert.deepEqual(result, { kind: 'ready' })
+  } finally {
+    console.warn = originalWarn
+  }
+
+  assert.equal(storage.values.get(scopeKey), raw)
+  assert.equal(storage.setCalls.length, 1)
+  assert.deepEqual(storage.removeCalls, [])
 })
 
 test('App hydration完了処理は全failureでdomain・latest ref・storageを保持する', async () => {

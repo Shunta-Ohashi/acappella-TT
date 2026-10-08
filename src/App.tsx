@@ -255,7 +255,7 @@ import { createDemoData } from './data/demoData'
 import {
   createCloudScopedStorageKey,
   isPersistenceScopeReady,
-  loadPersistedStateOrFallback,
+  loadPersistedStateForScope,
   savePersistedState,
   STORAGE_KEY,
   type PersistedAppStateV5,
@@ -357,11 +357,11 @@ function App() {
     requestedPersistenceStorageKey,
   )
   const [initialAppState] = useState(() =>
-    loadPersistedStateOrFallback(
-      createDemoData,
-      undefined,
-      requestedPersistenceStorageKey,
-    ),
+    loadPersistedStateForScope({
+      createFallback: createDemoData,
+      cloudEnabled: Boolean(cloudWorkspace),
+      storageKey: requestedPersistenceStorageKey,
+    }),
   )
   const initialEventId = initialAppState.events[0]?.id ?? ''
   const initialEventDayId = getEventDaysForEvent(
@@ -646,6 +646,11 @@ function App() {
     snapshot: PersistedAppStateV5,
     storageKey: string,
   ) => {
+    // Invalidate a previous visit's ready state before this scope becomes
+    // active, including A -> B -> A transitions that reuse the same key.
+    if (cloudWorkspace) {
+      setCloudEventLoadState({ scopeKey: storageKey, kind: 'loading' })
+    }
     const nextEventId = snapshot.events.some(event => event.id === selectedEventId)
       ? selectedEventId
       : snapshot.events[0]?.id ?? ''
@@ -696,16 +701,16 @@ function App() {
     let cancelled = false
     queueMicrotask(() => {
       if (cancelled) return
-      rehydratePersistenceScope(loadPersistedStateOrFallback(
-        createDemoData,
-        undefined,
-        requestedPersistenceStorageKey,
-      ), requestedPersistenceStorageKey)
+      rehydratePersistenceScope(loadPersistedStateForScope({
+        createFallback: createDemoData,
+        cloudEnabled: Boolean(cloudWorkspace),
+        storageKey: requestedPersistenceStorageKey,
+      }), requestedPersistenceStorageKey)
     })
     return () => {
       cancelled = true
     }
-  }, [activePersistenceStorageKey, requestedPersistenceStorageKey])
+  }, [activePersistenceStorageKey, cloudWorkspace, requestedPersistenceStorageKey])
 
   const persistenceScopeReady = isPersistenceScopeReady(
     activePersistenceStorageKey,
