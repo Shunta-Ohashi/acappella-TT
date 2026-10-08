@@ -39,6 +39,7 @@ export type CloudEventRepositoryErrorCode =
   | 'INVALID_SNAPSHOT'
   | 'INVALID_RESPONSE'
   | 'SHARED_MASTER_CONFLICT'
+  | 'CONFIGURATION_ERROR'
   | 'SUPABASE_ERROR'
   | 'INVALID_ARGUMENT'
 
@@ -77,8 +78,6 @@ export interface CloudEventDatabaseGateway {
   ) => Promise<CloudEventDatabaseResult<unknown>>
   saveRow: (input: {
     workspaceId: string
-    eventId: EventId
-    eventName: string
     snapshot: CloudEventSnapshotV1
   }) => Promise<CloudEventDatabaseResult<unknown>>
   deleteAuthorizedEvent: (
@@ -214,12 +213,36 @@ const invalidArgument = (message: string): CloudEventRepositoryResult<never> => 
 
 const databaseFailure = (
   error: CloudEventDatabaseError,
-): CloudEventRepositoryResult<never> => ({
-  ok: false,
-  error: error.code === '42501'
-    ? { code: 'ACCESS_DENIED', message: 'ワークスペースのEventへアクセスできません。' }
-    : { code: 'SUPABASE_ERROR', message: 'Cloud Eventの通信に失敗しました。' },
-})
+): CloudEventRepositoryResult<never> => {
+  if (
+    error.code === '42501' ||
+    error.code === 'ACCESS_DENIED' ||
+    error.code === 'AUTHENTICATION_REQUIRED'
+  ) {
+    return {
+      ok: false,
+      error: { code: 'ACCESS_DENIED', message: 'ワークスペースのEventへアクセスできません。' },
+    }
+  }
+  if (error.code === 'INVALID_SNAPSHOT') return invalidSnapshot()
+  if (error.code === 'INVALID_RESPONSE') return invalidResponse()
+  if (error.code === 'CONFIGURATION_ERROR') {
+    return {
+      ok: false,
+      error: {
+        code: 'CONFIGURATION_ERROR',
+        message: 'Cloud Eventの保存機能が設定されていません。',
+      },
+    }
+  }
+  return {
+    ok: false,
+    error: {
+      code: 'SUPABASE_ERROR',
+      message: 'Cloud Eventの通信に失敗しました。',
+    },
+  }
+}
 
 const invalidSnapshot = (): CloudEventRepositoryResult<never> => ({
   ok: false,
@@ -395,12 +418,10 @@ export const createCloudEventRepository = (
     try {
       const result = await gateway.saveRow({
         workspaceId,
-        eventId: event.id,
-        eventName: event.name,
         snapshot: validatedSnapshot,
       })
       if (result.error) return databaseFailure(result.error)
-      if (result.data === null) return notFound()
+      if (result.data === null) return invalidResponse()
       const record = parseRecord(result.data)
       if (
         !record ||
@@ -478,18 +499,43 @@ export const createSupabaseCloudEventGateway = (
     return { data: result.data, error: result.error }
   },
 
-  async saveRow({ workspaceId, eventId, eventName, snapshot }) {
-    const result = await client
-      .from('cloud_events')
-      .upsert({
-        workspace_id: workspaceId,
-        event_id: eventId,
-        event_name: eventName,
-        event_snapshot: snapshot,
-      }, { onConflict: 'workspace_id,event_id' })
-      .select(CLOUD_EVENT_COLUMNS)
-      .single()
-    return { data: result.data, error: result.error }
+  async saveRow({ workspaceId, snapshot }) {
+    const result = await client.functions.invoke('save-cloud-event', {
+      body: { workspaceId, snapshot },
+    })
+    if (result.error) {
+      let endpointError: CloudEventDatabaseError | undefined
+      const context = isRecord(result.error) ? result.error.context : undefined
+      if (context && typeof (context as { json?: unknown }).json === 'function') {
+        try {
+          const payload: unknown = await (context as { json: () => Promise<unknown> }).json()
+          if (
+            isRecord(payload) &&
+            payload.status === 'error' &&
+            isRecord(payload.error) &&
+            typeof payload.error.code === 'string'
+          ) {
+            endpointError = {
+              code: payload.error.code,
+              message: typeof payload.error.message === 'string'
+                ? payload.error.message
+                : undefined,
+            }
+          }
+        } catch {
+          // A non-JSON Functions error is a transport/endpoint failure.
+        }
+      }
+      return { data: null, error: endpointError ?? result.error }
+    }
+    if (
+      !isRecord(result.data) ||
+      result.data.status !== 'ok' ||
+      !('record' in result.data)
+    ) {
+      return { data: null, error: { code: 'INVALID_RESPONSE' } }
+    }
+    return { data: result.data.record, error: null }
   },
 
   async deleteAuthorizedEvent(workspaceId, eventId) {

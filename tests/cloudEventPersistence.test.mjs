@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import test from 'node:test'
 
 import { createDemoData } from '../src/data/demoData.ts'
 import {
   createCloudEventRepository,
+  createSupabaseCloudEventGateway,
 } from '../src/cloud/cloudEventRepository.ts'
+import {
+  CLOUD_EVENT_SAVE_MAX_REQUEST_BYTES,
+  handleCloudEventSaveRequest,
+} from '../src/cloud/cloudEventSaveEndpoint.ts'
 import {
   createCloudEventOperationRegistry,
   deleteCloudEvent,
@@ -270,10 +275,13 @@ class MemoryCloudEventGateway {
     }
   }
 
-  async saveRow({ workspaceId, eventId, eventName, snapshot }) {
+  async saveRow({ workspaceId, snapshot }) {
     this.saveCalls += 1
     const denied = this.deny(workspaceId)
     if (denied) return denied
+    const event = snapshot.appState.events[0]
+    const eventId = event.id
+    const eventName = event.name
     const key = this.key(workspaceId, eventId)
     const previous = this.rows.get(key)
     const now = this.timestamp()
@@ -325,6 +333,39 @@ const createMinimalSnapshot = (eventId, eventName = eventId) => {
   })
   return createSnapshot(state, eventId)
 }
+
+const createSavedRow = (
+  snapshot,
+  workspaceId = 'workspace-a',
+  revision = 1,
+) => ({
+  workspace_id: workspaceId,
+  event_id: snapshot.appState.events[0].id,
+  event_name: snapshot.appState.events[0].name,
+  event_snapshot: structuredClone(snapshot),
+  revision,
+  created_at: '2026-10-08T00:00:00.000Z',
+  updated_at: '2026-10-08T00:00:01.000Z',
+})
+
+const createSaveRequest = (snapshot, overrides = {}) => new Request(
+  'https://example.supabase.co/functions/v1/save-cloud-event',
+  {
+    method: 'POST',
+    headers: {
+      authorization: 'Bearer valid-token',
+      'content-type': 'application/json',
+      ...overrides.headers,
+    },
+    body: JSON.stringify({
+      workspaceId: 'workspace-a',
+      snapshot,
+      ...overrides.body,
+    }),
+  },
+)
+
+const readEndpointPayload = response => response.json()
 
 const createSnapshotContainingEveryEventOwnedCollection = () => {
   const state = createDemoData()
@@ -541,6 +582,249 @@ test('snapshotは不要なMember/Bandも従来どおりrejectする', () => {
   assert.equal(parseCloudEventSnapshot(withExtraBand), undefined)
 })
 
+test('clientと保存Endpointは同じCloud snapshot validator/fixture判定を共有する', async () => {
+  const minimal = createMinimalSnapshot('event-endpoint-minimal', 'Endpoint Minimal')
+  const complex = createSnapshot(createDemoData(), 'event-demo-main')
+  const incomplete = {
+    format: CLOUD_EVENT_SNAPSHOT_FORMAT,
+    version: CLOUD_EVENT_SNAPSHOT_VERSION,
+    appState: { version: CURRENT_STORAGE_VERSION, events: minimal.appState.events },
+  }
+  const invalidTime = structuredClone(complex)
+  invalidTime.appState.eventDays[0].date = 'bad'
+  const missingMaster = structuredClone(complex)
+  const referencedMemberId = missingMaster.appState.eventMembers[0].memberId
+  missingMaster.appState.members = missingMaster.appState.members.filter(
+    member => member.id !== referencedMemberId,
+  )
+  const extraMaster = structuredClone(complex)
+  extraMaster.appState.members.push({
+    id: 'endpoint-extra-member',
+    realName: 'Extra',
+    active: true,
+  })
+  const duplicateOwnedId = structuredClone(complex)
+  duplicateOwnedId.appState.scheduleItems.push(
+    structuredClone(duplicateOwnedId.appState.scheduleItems[0]),
+  )
+  const duplicateMember = structuredClone(complex)
+  duplicateMember.appState.members.push(
+    structuredClone(duplicateMember.appState.members[0]),
+  )
+  const duplicateBand = structuredClone(complex)
+  duplicateBand.appState.bands.push(
+    structuredClone(duplicateBand.appState.bands[0]),
+  )
+  const foreignOwnership = structuredClone(complex)
+  foreignOwnership.appState.eventDays[0].eventId = 'foreign-event'
+
+  const transitiveState = structuredClone(createDemoData())
+  const transitiveEventId = transitiveState.events[0].id
+  const transitiveEventBand = transitiveState.eventBands.find(candidate =>
+    candidate.eventId === transitiveEventId && candidate.bandId)
+  const transitiveBand = transitiveState.bands.find(candidate =>
+    candidate.id === transitiveEventBand?.bandId)
+  assert.ok(transitiveBand)
+  transitiveState.members.push({
+    id: 'endpoint-transitive-member',
+    realName: 'Endpoint Transitive',
+    active: true,
+  })
+  transitiveBand.defaultMemberIds.push('endpoint-transitive-member')
+  const missingTransitiveMaster = createSnapshot(transitiveState, transitiveEventId)
+  missingTransitiveMaster.appState.members =
+    missingTransitiveMaster.appState.members.filter(
+      member => member.id !== 'endpoint-transitive-member',
+    )
+
+  const cases = [
+    { name: 'empty Event', snapshot: minimal, valid: true },
+    { name: 'complex Event', snapshot: complex, valid: true },
+    { name: 'events-only V5', snapshot: incomplete, valid: false },
+    { name: 'invalid wrapper', snapshot: { ...minimal, version: 2 }, valid: false },
+    { name: 'invalid collection value', snapshot: {
+      ...minimal,
+      appState: { ...minimal.appState, members: [null] },
+    }, valid: false },
+    { name: 'blank Event ID', snapshot: {
+      ...minimal,
+      appState: {
+        ...minimal.appState,
+        events: [{ ...minimal.appState.events[0], id: '   ' }],
+      },
+    }, valid: false },
+    { name: 'missing master', snapshot: missingMaster, valid: false },
+    { name: 'extra master', snapshot: extraMaster, valid: false },
+    { name: 'missing transitive Band Member', snapshot: missingTransitiveMaster, valid: false },
+    { name: 'duplicate Member ID', snapshot: duplicateMember, valid: false },
+    { name: 'duplicate Band ID', snapshot: duplicateBand, valid: false },
+    { name: 'duplicate Event-owned ID', snapshot: duplicateOwnedId, valid: false },
+    { name: 'foreign Event ownership', snapshot: foreignOwnership, valid: false },
+    { name: 'invalid date invariant', snapshot: invalidTime, valid: false },
+  ]
+
+  for (const fixture of cases) {
+    let saveCalls = 0
+    const response = await handleCloudEventSaveRequest(
+      createSaveRequest(fixture.snapshot),
+      {
+        async authenticate() { return { id: 'user-a' } },
+        async saveValidatedSnapshot({ workspaceId, snapshot }) {
+          saveCalls += 1
+          return { data: createSavedRow(snapshot, workspaceId), error: null }
+        },
+      },
+    )
+    assert.equal(Boolean(parseCloudEventSnapshot(fixture.snapshot)), fixture.valid, fixture.name)
+    assert.equal(response.ok, fixture.valid, fixture.name)
+    assert.equal(saveCalls, fixture.valid ? 1 : 0, fixture.name)
+  }
+
+  for (const key of Object.keys(minimal.appState)) {
+    if (key === 'version') continue
+    const missingCollection = structuredClone(minimal)
+    delete missingCollection.appState[key]
+    let saveCalls = 0
+    const response = await handleCloudEventSaveRequest(
+      createSaveRequest(missingCollection),
+      {
+        async authenticate() { return { id: 'user-a' } },
+        async saveValidatedSnapshot() {
+          saveCalls += 1
+          return { data: null, error: null }
+        },
+      },
+    )
+    assert.equal(parseCloudEventSnapshot(missingCollection), undefined, key)
+    assert.equal(response.status, 400, key)
+    assert.equal(saveCalls, 0, key)
+  }
+})
+
+test('保存Endpointは正式認証identityだけを使いmethod・JSON・sizeをfail closedする', async () => {
+  const snapshot = createMinimalSnapshot('event-endpoint-auth', 'Endpoint Auth')
+  const savedInputs = []
+  const dependencies = {
+    async authenticate(token) {
+      return token === 'valid-token' ? { id: 'authenticated-user' } : undefined
+    },
+    async saveValidatedSnapshot(input) {
+      savedInputs.push(input)
+      return { data: createSavedRow(input.snapshot, input.workspaceId), error: null }
+    },
+  }
+
+  for (const request of [
+    new Request('https://example.invalid', { method: 'POST', headers: {
+      'content-type': 'application/json',
+    }, body: '{}' }),
+    new Request('https://example.invalid', { method: 'POST', headers: {
+      authorization: 'Bearer fake-token',
+      'content-type': 'application/json',
+    }, body: '{}' }),
+    new Request('https://example.invalid', { method: 'POST', headers: {
+      authorization: 'Bearer expired-token',
+      'content-type': 'application/json',
+    }, body: '{}' }),
+  ]) {
+    const response = await handleCloudEventSaveRequest(request, dependencies)
+    assert.equal(response.status, 401)
+  }
+
+  const forged = await handleCloudEventSaveRequest(createSaveRequest(snapshot, {
+    body: { userId: 'forged-user', role: 'owner' },
+  }), dependencies)
+  assert.equal(forged.status, 200)
+  assert.equal(savedInputs[0].actorId, 'authenticated-user')
+  assert.equal(savedInputs[0].workspaceId, 'workspace-a')
+
+  const preflight = await handleCloudEventSaveRequest(
+    new Request('https://example.invalid', { method: 'OPTIONS' }),
+    dependencies,
+  )
+  assert.equal(preflight.status, 204)
+  assert.equal(savedInputs.length, 1)
+
+  const wrongMethod = await handleCloudEventSaveRequest(
+    new Request('https://example.invalid', { method: 'GET' }),
+    dependencies,
+  )
+  assert.equal(wrongMethod.status, 405)
+
+  const configurationFailure = await handleCloudEventSaveRequest(
+    createSaveRequest(snapshot),
+    {
+      async authenticate() {
+        const error = new Error('configuration')
+        error.code = 'CONFIGURATION_ERROR'
+        throw error
+      },
+      async saveValidatedSnapshot() { throw new Error('not called') },
+    },
+  )
+  assert.equal(configurationFailure.status, 500)
+  assert.equal(
+    (await readEndpointPayload(configurationFailure)).error.code,
+    'CONFIGURATION_ERROR',
+  )
+
+  const oversized = await handleCloudEventSaveRequest(new Request(
+    'https://example.invalid',
+    {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer valid-token',
+        'content-type': 'application/json',
+      },
+      body: 'x'.repeat(CLOUD_EVENT_SAVE_MAX_REQUEST_BYTES + 1),
+    },
+  ), dependencies)
+  assert.equal(oversized.status, 413)
+  assert.equal(savedInputs.length, 1)
+})
+
+test('保存EndpointはDB再認可とresponseを検証し失敗を成功扱いしない', async () => {
+  const snapshot = createMinimalSnapshot('event-endpoint-db', 'Endpoint DB')
+  const request = () => createSaveRequest(snapshot)
+  const authenticate = async () => ({ id: 'user-a' })
+
+  for (const code of ['42501', 'ACCESS_DENIED']) {
+    const response = await handleCloudEventSaveRequest(request(), {
+      authenticate,
+      async saveValidatedSnapshot() {
+        return { data: null, error: { code } }
+      },
+    })
+    assert.equal(response.status, 403)
+    assert.equal((await readEndpointPayload(response)).error.code, 'ACCESS_DENIED')
+  }
+
+  const malformed = await handleCloudEventSaveRequest(request(), {
+    authenticate,
+    async saveValidatedSnapshot() { return { data: { revision: 1 }, error: null } },
+  })
+  assert.equal(malformed.status, 502)
+  assert.equal((await readEndpointPayload(malformed)).error.code, 'INVALID_RESPONSE')
+
+  const networkFailure = await handleCloudEventSaveRequest(request(), {
+    authenticate,
+    async saveValidatedSnapshot() { throw new Error('network') },
+  })
+  assert.equal(networkFailure.status, 502)
+  assert.equal((await readEndpointPayload(networkFailure)).error.code, 'SAVE_FAILED')
+
+  for (const revision of [1, 2]) {
+    const success = await handleCloudEventSaveRequest(request(), {
+      authenticate,
+      async saveValidatedSnapshot({ workspaceId, snapshot: validated }) {
+        return { data: createSavedRow(validated, workspaceId, revision), error: null }
+      },
+    })
+    assert.equal(success.status, 200)
+    assert.equal((await readEndpointPayload(success)).record.revision, revision)
+  }
+})
+
 test('複数Event snapshotからWorkspace stateを構築しlocal-only masterを維持する', () => {
   const state = createDemoData()
   const snapshots = state.events.slice(0, 2).map(event => createSnapshot(state, event.id))
@@ -729,6 +1013,62 @@ test('repositoryでWorkspace Eventを作成・一覧・取得・更新・削除�
   const deleted = await repository.deleteEvent('workspace-a', eventId)
   assert.equal(deleted.ok, true)
   assert.equal((await repository.loadEvent('workspace-a', eventId)).ok, false)
+})
+
+test('browser gatewayは保存専用Functionだけを呼び構造化errorを分類する', async () => {
+  const snapshot = createMinimalSnapshot('event-function-gateway', 'Function Gateway')
+  const calls = []
+  const client = {
+    functions: {
+      async invoke(name, options) {
+        calls.push({ name, options })
+        return {
+          data: { status: 'ok', record: createSavedRow(snapshot) },
+          error: null,
+        }
+      },
+    },
+  }
+  const gateway = createSupabaseCloudEventGateway(client)
+  const saved = await gateway.saveRow({ workspaceId: 'workspace-a', snapshot })
+  assert.equal(saved.error, null)
+  assert.equal(saved.data.event_id, 'event-function-gateway')
+  assert.deepEqual(calls, [{
+    name: 'save-cloud-event',
+    options: { body: { workspaceId: 'workspace-a', snapshot } },
+  }])
+  assert.equal('eventId' in calls[0].options.body, false)
+  assert.equal('eventName' in calls[0].options.body, false)
+
+  const deniedGateway = createSupabaseCloudEventGateway({
+    functions: {
+      async invoke() {
+        return {
+          data: null,
+          error: {
+            context: new Response(JSON.stringify({
+              status: 'error',
+              error: { code: 'ACCESS_DENIED', message: 'denied' },
+            }), { status: 403, headers: { 'content-type': 'application/json' } }),
+          },
+        }
+      },
+    },
+  })
+  assert.equal(
+    (await deniedGateway.saveRow({ workspaceId: 'workspace-a', snapshot })).error.code,
+    'ACCESS_DENIED',
+  )
+
+  const malformedGateway = createSupabaseCloudEventGateway({
+    functions: {
+      async invoke() { return { data: { status: 'ok' }, error: null } },
+    },
+  })
+  assert.equal(
+    (await malformedGateway.saveRow({ workspaceId: 'workspace-a', snapshot })).error.code,
+    'INVALID_RESPONSE',
+  )
 })
 
 test('Workspace bulk loadは認可済みkeyset pageを読みEvent単位loadを行わない', async () => {
@@ -2310,7 +2650,7 @@ test('App hydration retryは失敗前stateを再利用し、成功した空Works
 
 test('Cloud Event migrationはWorkspace ownership・RLS・revision・移管防止を定義する', async () => {
   const sql = await readFile(new URL(
-    '../supabase/migrations/20261007120000_cloud_event_persistence.sql',
+    '../supabase/migrations/20261008110000_cloud_event_persistence.sql',
     import.meta.url,
   ), 'utf8')
 
@@ -2346,6 +2686,83 @@ test('Cloud Event migrationはWorkspace ownership・RLS・revision・移管防�
   assert.match(sql, /new\.event_id is distinct from old\.event_id/i)
   assert.match(sql, /new\.created_at = old\.created_at/i)
   assert.match(sql, /new\.revision = old\.revision \+ 1/i)
+})
+
+test('migration実ファイルはAuth→Cloud Event→RPC/権限変更の依存順でversion重複がない', async () => {
+  const migrations = (await readdir(new URL(
+    '../supabase/migrations/',
+    import.meta.url,
+  ))).filter(name => name.endsWith('.sql')).sort()
+  const versions = migrations.map(name => name.split('_', 1)[0])
+
+  assert.equal(new Set(versions).size, versions.length)
+  assert.ok(migrations.indexOf('20261007_auth_workspace.sql') <
+    migrations.indexOf('20261008110000_cloud_event_persistence.sql'))
+  assert.ok(migrations.indexOf('20261008110000_cloud_event_persistence.sql') <
+    migrations.indexOf('20261008120000_cloud_event_authorized_delete.sql'))
+  assert.ok(migrations.indexOf('20261008140000_cloud_event_authorized_page.sql') <
+    migrations.indexOf('20261008150000_cloud_event_authorized_save.sql'))
+  assert.ok(migrations.indexOf('20261008150000_cloud_event_authorized_save.sql') <
+    migrations.indexOf('20261008160000_cloud_event_rpc_only_save.sql'))
+  assert.equal(migrations.includes('20261007120000_cloud_event_persistence.sql'), false)
+})
+
+test('authorized save migrationはbackend専用RPCとclient直接write取消しを定義する', async () => {
+  const sql = await readFile(new URL(
+    '../supabase/migrations/20261008150000_cloud_event_authorized_save.sql',
+    import.meta.url,
+  ), 'utf8')
+  const revokeSql = await readFile(new URL(
+    '../supabase/migrations/20261008160000_cloud_event_rpc_only_save.sql',
+    import.meta.url,
+  ), 'utf8')
+  const repositorySource = await readFile(new URL(
+    '../src/cloud/cloudEventRepository.ts',
+    import.meta.url,
+  ), 'utf8')
+  const endpointSource = await readFile(new URL(
+    '../src/cloud/cloudEventSaveEndpoint.ts',
+    import.meta.url,
+  ), 'utf8')
+  const edgeSource = await readFile(new URL(
+    '../supabase/functions/save-cloud-event/index.ts',
+    import.meta.url,
+  ), 'utf8')
+
+  assert.match(sql, /create function public\.save_cloud_event_validated\s*\(/i)
+  assert.match(sql, /language plpgsql\s+volatile\s+security definer\s+set search_path = ''/i)
+  assert.match(sql, /p_actor_id uuid/i)
+  assert.match(sql, /workspace_members\.workspace_id = p_workspace_id/i)
+  assert.match(sql, /workspace_members\.user_id = p_actor_id/i)
+  assert.match(sql, /for share/i)
+  assert.match(sql, /membership_role not in \('owner', 'editor'\)/i)
+  assert.match(sql, /insert into public\.cloud_events[\s\S]*on conflict \(workspace_id, event_id\) do update/i)
+  assert.match(sql, /snapshot_event_id := p_event_snapshot #>> '\{appState,events,0,id\}'/i)
+  assert.match(sql, /snapshot_event_name := p_event_snapshot #>> '\{appState,events,0,name\}'/i)
+  assert.match(sql, /revoke all on function public\.save_cloud_event_validated\(uuid, uuid, jsonb\)[\s\S]*from authenticated/i)
+  assert.match(sql, /grant execute on function public\.save_cloud_event_validated\(uuid, uuid, jsonb\)[\s\S]*to service_role/i)
+  for (const role of ['public', 'anon', 'authenticated']) {
+    assert.match(revokeSql, new RegExp(
+      `revoke insert, update on table public\\.cloud_events from ${role}`,
+      'i',
+    ))
+  }
+  assert.match(revokeSql, /revoke insert \([\s\S]*\) on public\.cloud_events from authenticated/i)
+  assert.match(revokeSql, /revoke update \([\s\S]*\) on public\.cloud_events from authenticated/i)
+
+  const saveGateway = repositorySource.slice(
+    repositorySource.indexOf('async saveRow'),
+    repositorySource.indexOf('async deleteAuthorizedEvent'),
+  )
+  assert.match(saveGateway, /client\.functions\.invoke\('save-cloud-event'/)
+  assert.doesNotMatch(saveGateway, /\.from\('cloud_events'\)/)
+  assert.doesNotMatch(saveGateway, /\.upsert\(/)
+  assert.match(endpointSource, /parseCloudEventSnapshot\(body\.snapshot\)/)
+  assert.match(endpointSource, /CLOUD_EVENT_SAVE_MAX_REQUEST_BYTES/)
+  assert.match(edgeSource, /authClient\.auth\.getUser\(accessToken\)/)
+  assert.match(edgeSource, /SUPABASE_SERVICE_ROLE_KEY/)
+  assert.match(edgeSource, /save_cloud_event_validated/)
+  assert.doesNotMatch(repositorySource, /SUPABASE_SERVICE_ROLE_KEY|service_role/i)
 })
 
 test('authorized delete migrationはMembershipをlockして認可済み結果だけを返す', async () => {
@@ -2482,9 +2899,19 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   assert.match(coreSql, /has_function_privilege/i)
   assert.match(coreSql, /has_table_privilege\('authenticated', 'public\.cloud_events', 'delete'\)/i)
   assert.match(coreSql, /owner direct DELETE unexpectedly succeeded/i)
+  assert.match(coreSql, /owner direct INSERT unexpectedly succeeded/i)
+  assert.match(coreSql, /owner incomplete direct INSERT unexpectedly succeeded/i)
+  assert.match(coreSql, /owner direct UPDATE unexpectedly succeeded/i)
+  assert.match(coreSql, /owner direct UPSERT unexpectedly succeeded/i)
   assert.match(coreSql, /editor direct DELETE unexpectedly succeeded/i)
   assert.match(coreSql, /viewer direct DELETE unexpectedly succeeded/i)
-  assert.match(coreSql, /viewer UPDATE unexpectedly changed a row/i)
+  assert.match(coreSql, /viewer UPDATE unexpectedly succeeded/i)
+  assert.match(coreSql, /authenticated direct internal save RPC unexpectedly succeeded/i)
+  assert.match(coreSql, /backend INSERT response is invalid/i)
+  assert.match(coreSql, /backend UPDATE\/revision response is invalid/i)
+  assert.match(coreSql, /viewer backend save unexpectedly succeeded/i)
+  assert.match(coreSql, /non-member backend save unexpectedly succeeded/i)
+  assert.match(coreSql, /cross-workspace backend save unexpectedly succeeded/i)
   assert.match(coreSql, /non-member delete unexpectedly succeeded/i)
   assert.match(coreSql, /cross-workspace delete unexpectedly succeeded/i)
   assert.match(coreSql, /revoked membership delete unexpectedly succeeded/i)
@@ -2515,5 +2942,7 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   assert.match(instructions, /disposable/i)
   assert.match(instructions, /psql/i)
   assert.match(instructions, /cloud_event_authorized_page_concurrency\.sql/i)
+  assert.match(instructions, /20261008110000_cloud_event_persistence\.sql/i)
+  assert.match(instructions, /20261008150000_cloud_event_authorized_save\.sql/i)
   assert.match(instructions, /not a passing database test/i)
 })

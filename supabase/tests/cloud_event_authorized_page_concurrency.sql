@@ -37,6 +37,9 @@ insert into public.workspace_members (workspace_id, user_id, role) values (
   '00000000-0000-0000-0000-000000000021',
   'viewer'
 );
+-- Database-only lock fixture: this exercises page authorization/locking, not
+-- the application snapshot parser. See the core SQL script for the complete
+-- app-loadable snapshot fixture.
 insert into public.cloud_events (
   workspace_id, event_id, event_name, event_snapshot
 ) values (

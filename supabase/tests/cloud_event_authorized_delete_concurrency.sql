@@ -37,6 +37,9 @@ insert into public.workspace_members (workspace_id, user_id, role) values (
   '00000000-0000-0000-0000-000000000011',
   'editor'
 );
+-- Database-only lock fixture: this intentionally exercises the table CHECK
+-- and delete RPC, not the application snapshot parser. The core SQL script
+-- uses a complete app-loadable snapshot fixture for save/read round-trips.
 insert into public.cloud_events (
   workspace_id, event_id, event_name, event_snapshot
 ) values (

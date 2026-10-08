@@ -14,7 +14,7 @@ import type {
   Stage,
   TimetableLock,
   TimetableOrderConstraint,
-} from '../domain/models'
+} from '../domain/models.ts'
 import { isSectionWithinStageTimeRange } from '../domain/stageTimeRanges.ts'
 import { isTimetableOrderConstraint } from '../domain/timetableOrderConstraints.ts'
 import {

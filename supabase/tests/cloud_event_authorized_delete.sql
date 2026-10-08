@@ -1,7 +1,9 @@
 \set ON_ERROR_STOP on
 
 -- Run only against a disposable Supabase/PostgreSQL database after applying all
--- repository migrations. This transaction rolls back every fixture.
+-- repository migrations. This transaction rolls back every fixture. The
+-- helper below is a complete, app-loadable empty Event snapshot rather than
+-- the older database-shape-only fixture.
 begin;
 
 create or replace function pg_temp.cloud_event_test_snapshot(
@@ -19,8 +21,28 @@ as $$
       'version', 5,
       'events', jsonb_build_array(jsonb_build_object(
         'id', event_id,
-        'name', event_name
-      ))
+        'name', event_name,
+        'timeZone', 'Asia/Tokyo',
+        'validationPolicy', jsonb_build_object(
+          'minimumGapBands', 1,
+          'minimumRestMinutes', 10
+        ),
+        'performanceSlotMinutes', jsonb_build_array(5)
+      )),
+      'members', '[]'::jsonb,
+      'bands', '[]'::jsonb,
+      'eventDays', '[]'::jsonb,
+      'stages', '[]'::jsonb,
+      'sections', '[]'::jsonb,
+      'eventMembers', '[]'::jsonb,
+      'eventMemberDays', '[]'::jsonb,
+      'eventBands', '[]'::jsonb,
+      'scheduleItems', '[]'::jsonb,
+      'paAssignments', '[]'::jsonb,
+      'dutyTypes', '[]'::jsonb,
+      'dutyAssignments', '[]'::jsonb,
+      'timetableLocks', '[]'::jsonb,
+      'timetableOrderConstraints', '[]'::jsonb
     )
   )
 $$;
@@ -94,9 +116,29 @@ begin
     raise exception 'authenticated must not have direct cloud_events DELETE';
   end if;
   if not has_table_privilege('authenticated', 'public.cloud_events', 'select')
-    or not has_table_privilege('authenticated', 'public.cloud_events', 'insert')
-    or not has_table_privilege('authenticated', 'public.cloud_events', 'update') then
-    raise exception 'authenticated must retain cloud_events SELECT/INSERT/UPDATE';
+    or has_table_privilege('authenticated', 'public.cloud_events', 'insert')
+    or has_table_privilege('authenticated', 'public.cloud_events', 'update') then
+    raise exception 'authenticated must retain SELECT but not direct writes';
+  end if;
+  if has_any_column_privilege(
+    'authenticated', 'public.cloud_events', 'insert,update'
+  ) then
+    raise exception 'authenticated must not retain column-level write privileges';
+  end if;
+  if has_function_privilege(
+    'authenticated',
+    'public.save_cloud_event_validated(uuid,uuid,jsonb)',
+    'execute'
+  ) or has_function_privilege(
+    'anon',
+    'public.save_cloud_event_validated(uuid,uuid,jsonb)',
+    'execute'
+  ) or not has_function_privilege(
+    'service_role',
+    'public.save_cloud_event_validated(uuid,uuid,jsonb)',
+    'execute'
+  ) then
+    raise exception 'internal save RPC privileges are incorrect';
   end if;
 end
 $$;
@@ -130,6 +172,69 @@ insert into public.cloud_events (
    pg_temp.cloud_event_test_snapshot('😀', '😀')),
   ('10000000-0000-0000-0000-000000000003', '𠮷', '𠮷',
    pg_temp.cloud_event_test_snapshot('𠮷', '𠮷'));
+
+-- The service role is only a transport to the backend-only RPC. The actor ID
+-- is still authorized and locked inside the same transaction as the upsert.
+set local role service_role;
+do $$
+declare
+  saved jsonb;
+begin
+  saved := public.save_cloud_event_validated(
+    '00000000-0000-0000-0000-000000000001',
+    '10000000-0000-0000-0000-000000000001',
+    pg_temp.cloud_event_test_snapshot('backend-save-event', 'Backend Save Event')
+  );
+  if saved ->> 'event_id' <> 'backend-save-event'
+    or (saved ->> 'revision')::bigint <> 1 then
+    raise exception 'backend INSERT response is invalid: %', saved;
+  end if;
+
+  saved := public.save_cloud_event_validated(
+    '00000000-0000-0000-0000-000000000002',
+    '10000000-0000-0000-0000-000000000001',
+    pg_temp.cloud_event_test_snapshot('backend-save-event', 'Backend Save Updated')
+  );
+  if saved ->> 'event_name' <> 'Backend Save Updated'
+    or (saved ->> 'revision')::bigint <> 2 then
+    raise exception 'backend UPDATE/revision response is invalid: %', saved;
+  end if;
+
+  begin
+    perform public.save_cloud_event_validated(
+      '00000000-0000-0000-0000-000000000003',
+      '10000000-0000-0000-0000-000000000001',
+      pg_temp.cloud_event_test_snapshot('viewer-backend-save', 'Viewer Save')
+    );
+    raise exception 'viewer backend save unexpectedly succeeded';
+  exception when sqlstate '42501' then
+    null;
+  end;
+
+  begin
+    perform public.save_cloud_event_validated(
+      '00000000-0000-0000-0000-000000000004',
+      '10000000-0000-0000-0000-000000000001',
+      pg_temp.cloud_event_test_snapshot('outsider-backend-save', 'Outsider Save')
+    );
+    raise exception 'non-member backend save unexpectedly succeeded';
+  exception when sqlstate '42501' then
+    null;
+  end;
+
+  begin
+    perform public.save_cloud_event_validated(
+      '00000000-0000-0000-0000-000000000002',
+      '10000000-0000-0000-0000-000000000002',
+      pg_temp.cloud_event_test_snapshot('cross-workspace-save', 'Cross Workspace')
+    );
+    raise exception 'cross-workspace backend save unexpectedly succeeded';
+  exception when sqlstate '42501' then
+    null;
+  end;
+end
+$$;
+reset role;
 
 -- The read RPC authorizes every page and owns the keyset ordering. It returns
 -- an envelope even when the authorized page is empty.
@@ -333,8 +438,8 @@ end
 $$;
 reset role;
 
--- Owner keeps SELECT/INSERT/UPDATE through the table API, but direct DELETE is
--- denied even though the row is visible and owned by an editable Workspace.
+-- Owners retain SELECT, but every direct write path is denied. Saving goes
+-- through the backend-only validator/RPC path tested below.
 set local role authenticated;
 select set_config(
   'request.jwt.claim.sub',
@@ -342,8 +447,6 @@ select set_config(
   true
 );
 do $$
-declare
-  affected integer;
 begin
   if not exists (
     select 1 from public.cloud_events
@@ -353,25 +456,80 @@ begin
     raise exception 'owner could not SELECT cloud event';
   end if;
 
-  insert into public.cloud_events (
-    workspace_id, event_id, event_name, event_snapshot
-  ) values (
-    '10000000-0000-0000-0000-000000000001',
-    'owner-write-event',
-    'Owner Write Event',
-    pg_temp.cloud_event_test_snapshot('owner-write-event', 'Owner Write Event')
-  );
-  update public.cloud_events
-    set event_name = 'Owner Updated Event',
-        event_snapshot = pg_temp.cloud_event_test_snapshot(
-          'owner-write-event', 'Owner Updated Event'
+  begin
+    insert into public.cloud_events (
+      workspace_id, event_id, event_name, event_snapshot
+    ) values (
+      '10000000-0000-0000-0000-000000000001',
+      'owner-write-event',
+      'Owner Write Event',
+      pg_temp.cloud_event_test_snapshot('owner-write-event', 'Owner Write Event')
+    );
+    raise exception 'owner direct INSERT unexpectedly succeeded';
+  exception when sqlstate '42501' then
+    null;
+  end;
+
+  begin
+    insert into public.cloud_events (
+      workspace_id, event_id, event_name, event_snapshot
+    ) values (
+      '10000000-0000-0000-0000-000000000001',
+      'owner-incomplete-event',
+      'Owner Incomplete Event',
+      jsonb_build_object(
+        'format', 'acappella-tt-cloud-event',
+        'version', 1,
+        'appState', jsonb_build_object(
+          'version', 5,
+          'events', jsonb_build_array(jsonb_build_object(
+            'id', 'owner-incomplete-event',
+            'name', 'Owner Incomplete Event'
+          ))
         )
-    where workspace_id = '10000000-0000-0000-0000-000000000001'
-      and event_id = 'owner-write-event';
-  get diagnostics affected = row_count;
-  if affected <> 1 then
-    raise exception 'owner UPDATE did not affect exactly one row';
-  end if;
+      )
+    );
+    raise exception 'owner incomplete direct INSERT unexpectedly succeeded';
+  exception when sqlstate '42501' then
+    null;
+  end;
+
+  begin
+    update public.cloud_events
+      set event_name = 'Owner Updated Event'
+      where workspace_id = '10000000-0000-0000-0000-000000000001'
+        and event_id = 'owner-direct-event';
+    raise exception 'owner direct UPDATE unexpectedly succeeded';
+  exception when sqlstate '42501' then
+    null;
+  end;
+
+  begin
+    insert into public.cloud_events (
+      workspace_id, event_id, event_name, event_snapshot
+    ) values (
+      '10000000-0000-0000-0000-000000000001',
+      'owner-direct-event',
+      'Owner Upsert Event',
+      pg_temp.cloud_event_test_snapshot('owner-direct-event', 'Owner Upsert Event')
+    ) on conflict (workspace_id, event_id) do update
+      set event_name = excluded.event_name,
+          event_snapshot = excluded.event_snapshot;
+    raise exception 'owner direct UPSERT unexpectedly succeeded';
+  exception when sqlstate '42501' then
+    null;
+  end;
+
+  begin
+    perform public.save_cloud_event_validated(
+      '00000000-0000-0000-0000-000000000001',
+      '10000000-0000-0000-0000-000000000001',
+      pg_temp.cloud_event_test_snapshot('forged-rpc-event', 'Forged RPC Event')
+    );
+    raise exception 'authenticated direct internal save RPC unexpectedly succeeded';
+  exception when sqlstate '42501' then
+    null;
+  end;
 
   begin
     delete from public.cloud_events
@@ -385,8 +543,7 @@ end
 $$;
 reset role;
 
--- Editor has the same direct write capabilities except DELETE, which remains
--- available only through the authorized RPC below.
+-- Editors have the same direct-write denial as owners.
 set local role authenticated;
 select set_config(
   'request.jwt.claim.sub',
@@ -394,28 +551,30 @@ select set_config(
   true
 );
 do $$
-declare
-  affected integer;
 begin
-  insert into public.cloud_events (
-    workspace_id, event_id, event_name, event_snapshot
-  ) values (
-    '10000000-0000-0000-0000-000000000001',
-    'editor-write-event',
-    'Editor Write Event',
-    pg_temp.cloud_event_test_snapshot('editor-write-event', 'Editor Write Event')
-  );
-  update public.cloud_events
-    set event_name = 'Editor Updated Event',
-        event_snapshot = pg_temp.cloud_event_test_snapshot(
-          'editor-write-event', 'Editor Updated Event'
-        )
-    where workspace_id = '10000000-0000-0000-0000-000000000001'
-      and event_id = 'editor-write-event';
-  get diagnostics affected = row_count;
-  if affected <> 1 then
-    raise exception 'editor UPDATE did not affect exactly one row';
-  end if;
+  begin
+    insert into public.cloud_events (
+      workspace_id, event_id, event_name, event_snapshot
+    ) values (
+      '10000000-0000-0000-0000-000000000001',
+      'editor-write-event',
+      'Editor Write Event',
+      pg_temp.cloud_event_test_snapshot('editor-write-event', 'Editor Write Event')
+    );
+    raise exception 'editor direct INSERT unexpectedly succeeded';
+  exception when sqlstate '42501' then
+    null;
+  end;
+
+  begin
+    update public.cloud_events
+      set event_name = 'Editor Updated Event'
+      where workspace_id = '10000000-0000-0000-0000-000000000001'
+        and event_id = 'editor-direct-event';
+    raise exception 'editor direct UPDATE unexpectedly succeeded';
+  exception when sqlstate '42501' then
+    null;
+  end;
 
   begin
     delete from public.cloud_events
@@ -516,8 +675,6 @@ select set_config(
   true
 );
 do $$
-declare
-  affected integer;
 begin
   if not exists (
     select 1 from public.cloud_events
@@ -541,14 +698,15 @@ begin
     null;
   end;
 
-  update public.cloud_events
-    set event_name = 'Viewer Updated Event'
-    where workspace_id = '10000000-0000-0000-0000-000000000001'
-      and event_id = 'viewer-rls-event';
-  get diagnostics affected = row_count;
-  if affected <> 0 then
-    raise exception 'viewer UPDATE unexpectedly changed a row';
-  end if;
+  begin
+    update public.cloud_events
+      set event_name = 'Viewer Updated Event'
+      where workspace_id = '10000000-0000-0000-0000-000000000001'
+        and event_id = 'viewer-rls-event';
+    raise exception 'viewer UPDATE unexpectedly succeeded';
+  exception when sqlstate '42501' then
+    null;
+  end;
 
   begin
     delete from public.cloud_events

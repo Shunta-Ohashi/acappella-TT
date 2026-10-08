@@ -6,8 +6,8 @@ import type {
   SectionId,
   Stage,
   StageId,
-} from './models'
-import type { CalculatedScheduleItem } from './timeline'
+} from './models.ts'
+import type { CalculatedScheduleItem } from './timeline.ts'
 import {
   isValidLocalTime,
   parseLocalTimeToMinute,

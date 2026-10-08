@@ -2,13 +2,27 @@
 
 These scripts exercise the real `cloud_events` checks, table privileges, RLS, RPC permissions,
 membership authorization, and the membership-lock ordering used by Cloud Event
-reads and deletion. Run them only against a disposable local Supabase/PostgreSQL database.
+reads, saving, and deletion. Run them only against a disposable local
+Supabase/PostgreSQL database.
 They create rows in `auth.users` and require an administrator connection.
 
 ## Prerequisites
 
 1. Start a disposable Supabase-compatible PostgreSQL database.
-2. Apply every file in `supabase/migrations` in filename order.
+2. Apply the migrations in version order. The relevant dependency chain in
+   this repository is:
+
+   - `20261007_auth_workspace.sql`
+   - `20261008110000_cloud_event_persistence.sql`
+   - `20261008120000_cloud_event_authorized_delete.sql`
+   - `20261008130000_cloud_event_rpc_only_delete.sql`
+   - `20261008140000_cloud_event_authorized_page.sql`
+   - `20261008150000_cloud_event_authorized_save.sql`
+   - `20261008160000_cloud_event_rpc_only_save.sql`
+
+   These names are ordered both by their migration version prefixes and by
+   ordinary filename sorting; do not infer that every external migration tool
+   uses shell filename order without checking that tool's migration history.
 3. Install `psql`. The concurrency tests also need the server-side `dblink`
    extension and permission to inspect `pg_stat_activity`.
 4. Set an administrator URL for that disposable database. Do not use a shared,
@@ -44,11 +58,27 @@ and asynchronous membership mutation, not by assuming a fixed sleep duration.
 Expected result: all `psql` commands exit with status 0. A skipped command is
 not a passing database test.
 
-The core script verifies that `authenticated` retains direct
-`SELECT`/`INSERT`/`UPDATE`, while direct `DELETE` is revoked for owner, editor,
-viewer, and anonymous clients. Owner/editor deletion is exercised only through
+The core script verifies that `authenticated` retains direct `SELECT`, while
+direct `INSERT`/`UPDATE`/`DELETE` and direct execution of the internal save RPC
+are revoked. Backend save is exercised through the service-role-only RPC, which
+locks and rechecks the supplied actor's owner/editor membership before upsert;
+its SQL fixture is a complete app-loadable empty Event snapshot. Owner/editor
+deletion is exercised only through
 `delete_cloud_event_authorized`, including its idempotent `already_absent`
 result. It also exercises authorized owner/editor/viewer page reads, denied
 non-member/anonymous/cross-Workspace reads, empty-page envelopes, and the
 database-owned `COLLATE "C"` keyset order. Applying every migration in order
-also covers the upgrade-safe DELETE revoke that follows the original table grant.
+also covers the upgrade-safe write revokes that follow the original table grant.
+
+## Renamed migration and existing histories
+
+`20261008110000_cloud_event_persistence.sql` was previously named
+`20261007120000_cloud_event_persistence.sql` while this feature was under
+development. If an environment already recorded the old version, do not apply
+the renamed base migration or blindly repair its history: first compare
+`supabase_migrations.schema_migrations` with the actual `cloud_events` table,
+triggers, policies, and constraints. After taking the environment's normal
+backup, an operator may reconcile only the migration-history entry using the
+approved Supabase migration-repair procedure. This repository does not perform
+that operation automatically. Fresh databases and environments where the old
+file was never applied use the new name normally.

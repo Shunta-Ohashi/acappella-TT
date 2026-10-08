@@ -13,7 +13,7 @@ import type {
   StageId,
   TimetableLock,
   TimetableOrderConstraint,
-} from './models'
+} from './models.ts'
 import { getReferencedSectionIds } from './scheduleBoundaries.ts'
 import {
   isValidLocalTime,

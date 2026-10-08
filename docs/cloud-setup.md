@@ -1,6 +1,6 @@
 # Supabase Auth / Workspace setup
 
-この手順はAuthとWorkspace基盤だけを設定します。Event・Timetableなどの編集データは、現時点では引き続き各ブラウザの`localStorage`へ保存されます。
+この手順はAuth / WorkspaceとWorkspace共有Cloud Eventを設定します。Cloud保存は明示的な「Cloudへ保存」操作で行い、ブラウザのWorkspace scoped `localStorage`はhydrate後のcacheとして使用します。
 
 ## 1. Supabase projectを作成する
 
@@ -10,7 +10,17 @@ Supabase Dashboardでprojectを作成します。frontendへ設定するのはPr
 
 ## 2. migrationを適用する
 
-SQL Editorなど管理者権限のある方法で、`supabase/migrations/20261007_auth_workspace.sql`を適用します。このmigrationは`profiles`、`workspaces`、`workspace_members`を作成し、全tableでRLSを有効化します。
+新規環境では`supabase/migrations`をmigration version順に適用します。Cloud Eventの依存順は次のとおりです。
+
+1. `20261007_auth_workspace.sql`
+2. `20261008110000_cloud_event_persistence.sql`
+3. `20261008120000_cloud_event_authorized_delete.sql`
+4. `20261008130000_cloud_event_rpc_only_delete.sql`
+5. `20261008140000_cloud_event_authorized_page.sql`
+6. `20261008150000_cloud_event_authorized_save.sql`
+7. `20261008160000_cloud_event_rpc_only_save.sql`
+
+ファイル名は通常の文字列順でもこの依存順になりますが、Supabase CLI等での適用済み判定はmigration historyに基づきます。旧開発名`20261007120000_cloud_event_persistence.sql`を適用済みの環境では、rename後のbase migrationを再適用しないでください。`supabase_migrations.schema_migrations`と実schema（table / trigger / policy / constraint）を照合し、backup取得後に、その環境で承認されたmigration repair手順で履歴だけを調整します。外部環境へこのrepositoryから自動repairは行いません。
 
 ## 3. Authentication userを作成する
 
@@ -59,17 +69,49 @@ Vercel PreviewでMagic Linkを使う場合は、利用するpreview URL pattern�
 
 Magic Linkのredirect先は、実行中ページのoriginから通常App rootを生成します。事前共有用の`#share=...`やqueryは引き継ぎません。
 
-## 8. Security確認
+## 8. Cloud Event保存Function
+
+Cloud Eventの保存はbrowserから`save-cloud-event` Edge Functionを呼びます。Functionは同じsourceの`parseCloudEventSnapshot()`でPersistence V5 / snapshot V1、ownership、ID一意性、exact Member/Band closureを検証してから、backend専用`save_cloud_event_validated` RPCを呼びます。validatorは`src/cloud/cloudEventSnapshot.ts`から相対importするため、別schemaを手作業で同期する必要はありません。
+
+FunctionはSupabaseのJWT verificationを有効なまま配備し（`--no-verify-jwt`を使用しない）、handler内でもBearer tokenを`auth.getUser(token)`へ渡して本人確認します。
+
+Function runtimeだけに以下を設定します。実値を`VITE_`環境変数、frontend、Git、response、logへ入れないでください。
+
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`（呼出元JWTを`auth.getUser()`で検証するclient用）
+- `SUPABASE_SERVICE_ROLE_KEY`（backend専用RPC用）
+
+保存requestはJSON POSTのみで、streamを実際に読みながら5 MiBで打ち切ります。これは現行V5 Event snapshotへ余裕を持たせつつ、認証済みrequestによる無制限なmemory使用を防ぐ上限です。`Content-Length`だけには依存しません。Function未配備・認証失敗・不正response・通信失敗時にbrowserから旧table upsertへfallbackしません。
+
+手元にSupabase CLI / Denoがある専用環境では、配備前に次を確認します（共有DBやproductionへは実行しません）。
+
+```powershell
+deno check supabase/functions/save-cloud-event/index.ts
+supabase functions serve save-cloud-event
+```
+
+安全な更新順は次のとおりです。
+
+1. `...150000_cloud_event_authorized_save.sql`まで適用してbackend専用RPCを作成
+2. `save-cloud-event` Functionを配備し、認証・保存integrationを確認
+3. 新frontendを配備
+4. `...160000_cloud_event_rpc_only_save.sql`を適用して旧clientの直接INSERT/UPDATEを取り消す
+
+直接write取消し後、旧frontendの直接upsertは意図どおり失敗します。途中状態を長期間残さず、専用環境で一連の順序を検証してからproductionへ反映してください。fresh DBでは全migration適用後にFunctionとfrontendを揃えて公開します。
+
+## 9. Security確認
 
 - `profiles`は本人のrowだけSELECT・INSERT・UPDATEできます。
 - `workspace_members`は本人のmembershipだけSELECTできます。
 - `workspaces`は本人のmembershipがあるWorkspaceだけSELECTできます。
 - `anon`には3 tableへの権限を付与していません。
 - Workspaceとmembershipの変更はbrowser clientへ許可していません。
+- `cloud_events`のbrowser直接INSERT / UPDATE / DELETEは許可していません。
+- 内部保存RPCは`service_role`だけが実行でき、保存transaction内でもactorのowner/editor membershipを`FOR SHARE`で再確認します。
 - データ保護はPublishable keyの秘匿ではなくRLSで行います。
 
-## 9. 現在の制限
+## 10. 現在の制限
 
-Auth/Workspaceへログインしても、Event・Timetable・PA・DutyなどはCloudへ保存されません。端末間共有、共同編集、Realtime、revision conflict処理は後続実装です。
+Cloudへ保存したEvent snapshotはWorkspace内で共有できますが、Realtime、revision conflict / CAS、Presence、offline draft復元、Member/Bandの独立Cloud table化は後続実装です。共有masterはEvent snapshotへ暫定的に複製し、snapshot間で矛盾した場合はsilent mergeせずWorkspace hydrateをfail closedします。
 
 Cloud modeの編集データは、同じブラウザ内でも認証ユーザーとWorkspaceの組み合わせごとに分離して`localStorage`へ保存されます。local-only modeで既存keyへ保存したデータは削除されず、Cloud Workspaceへ自動移行もされません。既存データを対象Workspaceへ移す場合は、local-only modeでバックアップを書き出し、対象Workspaceへログインしてから復元してください。
