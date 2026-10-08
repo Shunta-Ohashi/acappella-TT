@@ -246,7 +246,7 @@ const mergeMasterRecords = <T extends Member | Band>(
   return [...byId.values()]
 }
 
-const arePersistedValuesEqual = (left: unknown, right: unknown): boolean => {
+export const arePersistedValuesEqual = (left: unknown, right: unknown): boolean => {
   if (left === right) return true
   if (Array.isArray(left) || Array.isArray(right)) {
     return Array.isArray(left) &&

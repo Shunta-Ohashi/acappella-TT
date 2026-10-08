@@ -334,6 +334,8 @@ const createMinimalSnapshot = (eventId, eventName = eventId) => {
   return createSnapshot(state, eventId)
 }
 
+const SAVE_ENDPOINT_WORKSPACE_ID = '10000000-0000-0000-0000-000000000001'
+
 const createSavedRow = (
   snapshot,
   workspaceId = 'workspace-a',
@@ -358,7 +360,7 @@ const createSaveRequest = (snapshot, overrides = {}) => new Request(
       ...overrides.headers,
     },
     body: JSON.stringify({
-      workspaceId: 'workspace-a',
+      workspaceId: SAVE_ENDPOINT_WORKSPACE_ID,
       snapshot,
       ...overrides.body,
     }),
@@ -736,7 +738,7 @@ test('保存Endpointは正式認証identityだけを使いmethod・JSON・size�
   }), dependencies)
   assert.equal(forged.status, 200)
   assert.equal(savedInputs[0].actorId, 'authenticated-user')
-  assert.equal(savedInputs[0].workspaceId, 'workspace-a')
+  assert.equal(savedInputs[0].workspaceId, SAVE_ENDPOINT_WORKSPACE_ID)
 
   const preflight = await handleCloudEventSaveRequest(
     new Request('https://example.invalid', { method: 'OPTIONS' }),
@@ -783,6 +785,133 @@ test('保存Endpointは正式認証identityだけを使いmethod・JSON・size�
   assert.equal(savedInputs.length, 1)
 })
 
+test('保存EndpointはWorkspace IDを標準UUIDとして検証し大文字表記を正規化する', async () => {
+  const snapshot = createMinimalSnapshot('event-endpoint-workspace', 'Endpoint Workspace')
+  const savedInputs = []
+  const dependencies = {
+    async authenticate() { return { id: 'user-a' } },
+    async saveValidatedSnapshot(input) {
+      savedInputs.push(input)
+      return {
+        data: createSavedRow(input.snapshot, input.workspaceId.toLowerCase()),
+        error: null,
+      }
+    },
+  }
+
+  const lowercase = await handleCloudEventSaveRequest(
+    createSaveRequest(snapshot),
+    dependencies,
+  )
+  assert.equal(lowercase.status, 200)
+  assert.equal(savedInputs[0].workspaceId, SAVE_ENDPOINT_WORKSPACE_ID)
+
+  const uppercaseWorkspaceId = 'ABCDEF01-2345-6789-ABCD-EF0123456789'
+  const uppercase = await handleCloudEventSaveRequest(
+    createSaveRequest(snapshot, { body: { workspaceId: uppercaseWorkspaceId } }),
+    dependencies,
+  )
+  assert.equal(uppercase.status, 200)
+  assert.equal(savedInputs[1].workspaceId, uppercaseWorkspaceId.toLowerCase())
+
+  const invalidWorkspaceIds = [
+    '',
+    '   ',
+    'workspace-a',
+    '10000000-0000-0000-0000-00000000001',
+    'g0000000-0000-0000-0000-000000000001',
+    '100000000000-0000-0000-000000000001',
+    null,
+    42,
+    [],
+    {},
+  ]
+  for (const workspaceId of invalidWorkspaceIds) {
+    const saveCallsBefore = savedInputs.length
+    const response = await handleCloudEventSaveRequest(
+      createSaveRequest(snapshot, { body: { workspaceId } }),
+      dependencies,
+    )
+    assert.equal(response.status, 400, JSON.stringify(workspaceId))
+    assert.equal(
+      (await readEndpointPayload(response)).error.code,
+      'INVALID_REQUEST',
+      JSON.stringify(workspaceId),
+    )
+    assert.equal(savedInputs.length, saveCallsBefore, JSON.stringify(workspaceId))
+  }
+})
+
+test('保存EndpointはContent-Typeのmedia typeを厳密に検証する', async () => {
+  const snapshot = createMinimalSnapshot('event-endpoint-media-type', 'Endpoint Media Type')
+  let authenticationCalls = 0
+  let saveCalls = 0
+  const dependencies = {
+    async authenticate() {
+      authenticationCalls += 1
+      return { id: 'user-a' }
+    },
+    async saveValidatedSnapshot({ workspaceId, snapshot: validated }) {
+      saveCalls += 1
+      return { data: createSavedRow(validated, workspaceId), error: null }
+    },
+  }
+
+  for (const contentType of [
+    'application/json',
+    'application/json; charset=utf-8',
+    'Application/JSON; Charset=UTF-8',
+  ]) {
+    const response = await handleCloudEventSaveRequest(
+      createSaveRequest(snapshot, { headers: { 'content-type': contentType } }),
+      dependencies,
+    )
+    assert.equal(response.status, 200, contentType)
+  }
+  assert.equal(saveCalls, 3)
+
+  for (const contentType of [
+    'application/jsonp',
+    'application/json-seq',
+    'application/json-invalid',
+    'text/plain',
+  ]) {
+    const response = await handleCloudEventSaveRequest(
+      createSaveRequest(snapshot, { headers: { 'content-type': contentType } }),
+      dependencies,
+    )
+    assert.equal(response.status, 415, contentType)
+    assert.equal(
+      (await readEndpointPayload(response)).error.code,
+      'UNSUPPORTED_MEDIA_TYPE',
+      contentType,
+    )
+    assert.equal(saveCalls, 3, contentType)
+  }
+
+  const missingContentType = await handleCloudEventSaveRequest(new Request(
+    'https://example.supabase.co/functions/v1/save-cloud-event',
+    {
+      method: 'POST',
+      headers: { authorization: 'Bearer valid-token' },
+      body: JSON.stringify({ workspaceId: SAVE_ENDPOINT_WORKSPACE_ID, snapshot }),
+    },
+  ), dependencies)
+  assert.equal(missingContentType.status, 415)
+  assert.equal(saveCalls, 3)
+
+  const callsBeforePreflight = { authenticationCalls, saveCalls }
+  const preflight = await handleCloudEventSaveRequest(
+    new Request('https://example.invalid', { method: 'OPTIONS' }),
+    dependencies,
+  )
+  assert.equal(preflight.status, 204)
+  assert.deepEqual(
+    { authenticationCalls, saveCalls },
+    callsBeforePreflight,
+  )
+})
+
 test('保存EndpointはDB再認可とresponseを検証し失敗を成功扱いしない', async () => {
   const snapshot = createMinimalSnapshot('event-endpoint-db', 'Endpoint DB')
   const request = () => createSaveRequest(snapshot)
@@ -822,6 +951,99 @@ test('保存EndpointはDB再認可とresponseを検証し失敗を成功扱い�
     })
     assert.equal(success.status, 200)
     assert.equal((await readEndpointPayload(success)).record.revision, revision)
+  }
+})
+
+test('保存Endpointは返却snapshotと要求snapshotの永続内容が一致する場合だけ成功する', async () => {
+  const snapshot = createMinimalSnapshot('event-endpoint-response', 'Endpoint Response')
+  const authenticate = async () => ({ id: 'user-a' })
+  const reverseObjectKeys = value => {
+    if (Array.isArray(value)) return value.map(reverseObjectKeys)
+    if (value === null || typeof value !== 'object') return value
+    return Object.fromEntries(Object.entries(value).reverse().map(
+      ([key, nested]) => [key, reverseObjectKeys(nested)],
+    ))
+  }
+
+  const reorderedRow = createSavedRow(snapshot, SAVE_ENDPOINT_WORKSPACE_ID)
+  reorderedRow.event_snapshot = reverseObjectKeys(snapshot)
+  const reordered = await handleCloudEventSaveRequest(createSaveRequest(snapshot), {
+    authenticate,
+    async saveValidatedSnapshot() { return { data: reorderedRow, error: null } },
+  })
+  assert.equal(reordered.status, 200)
+
+  const assertInvalidResponse = async (data, label) => {
+    let saveCalls = 0
+    const response = await handleCloudEventSaveRequest(createSaveRequest(snapshot), {
+      authenticate,
+      async saveValidatedSnapshot() {
+        saveCalls += 1
+        return { data, error: null }
+      },
+    })
+    assert.equal(response.status, 502, label)
+    assert.equal((await readEndpointPayload(response)).error.code, 'INVALID_RESPONSE', label)
+    assert.equal(saveCalls, 1, label)
+  }
+
+  const returnedNameMismatch = createSavedRow(snapshot, SAVE_ENDPOINT_WORKSPACE_ID)
+  returnedNameMismatch.event_snapshot.appState.events[0].name = 'Unexpected Name'
+  await assertInvalidResponse(returnedNameMismatch, 'metadata/snapshot Event name mismatch')
+
+  const changedEvent = createSavedRow(snapshot, SAVE_ENDPOINT_WORKSPACE_ID)
+  changedEvent.event_snapshot.appState.events[0].description = 'Unexpected description'
+  await assertInvalidResponse(changedEvent, 'changed Event field')
+
+  const changedOrderedArray = createSavedRow(snapshot, SAVE_ENDPOINT_WORKSPACE_ID)
+  changedOrderedArray.event_snapshot.appState.events[0].performanceSlotMinutes = [10]
+  await assertInvalidResponse(changedOrderedArray, 'changed ordered Event array')
+
+  const complexSnapshot = createSnapshot(createDemoData(), 'event-demo-main')
+  const changedCollection = createSavedRow(complexSnapshot, SAVE_ENDPOINT_WORKSPACE_ID)
+  changedCollection.event_snapshot.appState.members[0].realName += ' changed'
+  let collectionSaveCalls = 0
+  const changedCollectionResponse = await handleCloudEventSaveRequest(
+    createSaveRequest(complexSnapshot),
+    {
+      authenticate,
+      async saveValidatedSnapshot() {
+        collectionSaveCalls += 1
+        return { data: changedCollection, error: null }
+      },
+    },
+  )
+  assert.equal(changedCollectionResponse.status, 502)
+  assert.equal(
+    (await readEndpointPayload(changedCollectionResponse)).error.code,
+    'INVALID_RESPONSE',
+  )
+  assert.equal(collectionSaveCalls, 1)
+
+  const missingRequiredField = createSavedRow(snapshot, SAVE_ENDPOINT_WORKSPACE_ID)
+  delete missingRequiredField.event_snapshot.appState.events
+  const wrongWorkspace = createSavedRow(snapshot, '20000000-0000-0000-0000-000000000002')
+  const wrongEvent = createSavedRow(snapshot, SAVE_ENDPOINT_WORKSPACE_ID)
+  wrongEvent.event_id = 'other-event'
+  const errorPayload = {
+    ...createSavedRow(snapshot, SAVE_ENDPOINT_WORKSPACE_ID),
+    error: { code: 'unexpected' },
+  }
+  const invalidRevision = createSavedRow(snapshot, SAVE_ENDPOINT_WORKSPACE_ID, 0)
+  const invalidTimestamp = createSavedRow(snapshot, SAVE_ENDPOINT_WORKSPACE_ID)
+  invalidTimestamp.updated_at = 'not-a-timestamp'
+
+  for (const [label, data] of [
+    ['missing required snapshot field', missingRequiredField],
+    ['Workspace mismatch', wrongWorkspace],
+    ['Event mismatch', wrongEvent],
+    ['null payload', null],
+    ['unknown payload', { status: 'ok' }],
+    ['error-bearing success payload', errorPayload],
+    ['invalid revision', invalidRevision],
+    ['invalid timestamp', invalidTimestamp],
+  ]) {
+    await assertInvalidResponse(data, label)
   }
 })
 

@@ -1,4 +1,5 @@
 import {
+  arePersistedValuesEqual,
   parseCloudEventSnapshot,
   type CloudEventSnapshotV1,
 } from './cloudEventSnapshot.ts'
@@ -104,19 +105,38 @@ const isTimestamp = (value: unknown): value is string =>
   value.trim().length > 0 &&
   Number.isFinite(Date.parse(value))
 
+const standardUuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+const normalizeWorkspaceId = (value: unknown): string | undefined =>
+  typeof value === 'string' && standardUuidPattern.test(value)
+    ? value.toLowerCase()
+    : undefined
+
+const hasJsonMediaType = (request: Request): boolean =>
+  request.headers.get('content-type')
+    ?.split(';', 1)[0]
+    ?.trim()
+    .toLowerCase() === 'application/json'
+
 const isValidSavedRecord = (
   value: unknown,
   workspaceId: string,
   snapshot: CloudEventSnapshotV1,
 ): boolean => {
-  if (!isRecord(value)) return false
+  if (
+    !isRecord(value) ||
+    Object.prototype.hasOwnProperty.call(value, 'error')
+  ) return false
   const event = snapshot.appState.events[0]
   const returnedSnapshot = parseCloudEventSnapshot(value.event_snapshot)
+  const returnedEvent = returnedSnapshot?.appState.events[0]
   return value.workspace_id === workspaceId &&
     value.event_id === event.id &&
     value.event_name === event.name &&
     returnedSnapshot !== undefined &&
-    returnedSnapshot.appState.events[0]?.id === event.id &&
+    returnedEvent?.id === event.id &&
+    returnedEvent.name === event.name &&
+    arePersistedValuesEqual(returnedSnapshot, snapshot) &&
     Number.isSafeInteger(value.revision) &&
     Number(value.revision) > 0 &&
     isTimestamp(value.created_at) &&
@@ -136,7 +156,7 @@ export const handleCloudEventSaveRequest = async (
   if (request.method !== 'POST') {
     return errorResponse(405, 'METHOD_NOT_ALLOWED', 'POSTのみ利用できます。')
   }
-  if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
+  if (!hasJsonMediaType(request)) {
     return errorResponse(415, 'UNSUPPORTED_MEDIA_TYPE', 'JSON形式のrequestが必要です。')
   }
 
@@ -167,10 +187,12 @@ export const handleCloudEventSaveRequest = async (
       : errorResponse(400, 'INVALID_REQUEST', 'JSON requestを読み取れませんでした。')
   }
 
-  if (!isRecord(body) ||
-    typeof body.workspaceId !== 'string' ||
-    body.workspaceId.trim().length === 0) {
+  if (!isRecord(body)) {
     return errorResponse(400, 'INVALID_REQUEST', 'Workspace IDが必要です。')
+  }
+  const workspaceId = normalizeWorkspaceId(body.workspaceId)
+  if (!workspaceId) {
+    return errorResponse(400, 'INVALID_REQUEST', 'Workspace IDの形式が正しくありません。')
   }
   const snapshot = parseCloudEventSnapshot(body.snapshot)
   if (!snapshot) {
@@ -180,7 +202,7 @@ export const handleCloudEventSaveRequest = async (
   try {
     const result = await dependencies.saveValidatedSnapshot({
       actorId: actor.id,
-      workspaceId: body.workspaceId,
+      workspaceId,
       snapshot,
     })
     if (result.error) {
@@ -189,7 +211,7 @@ export const handleCloudEventSaveRequest = async (
       }
       return errorResponse(502, 'SAVE_FAILED', 'Cloud Eventを保存できませんでした。')
     }
-    if (!isValidSavedRecord(result.data, body.workspaceId, snapshot)) {
+    if (!isValidSavedRecord(result.data, workspaceId, snapshot)) {
       return errorResponse(502, 'INVALID_RESPONSE', 'Cloud Eventの保存結果を確認できませんでした。')
     }
     return successResponse(result.data)
