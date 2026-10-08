@@ -9,9 +9,11 @@ import {
 import {
   createCloudEventOperationRegistry,
   deleteCloudEvent,
+  getCloudEventHydrationView,
   getCloudEventOperation,
   isCloudEventCacheWriteReady,
   loadCloudWorkspaceEvents,
+  runCloudEventHydrationAttempt,
   runExclusiveCloudEventDelete,
   runExclusiveCloudEventDeletion,
   runExclusiveCloudEventSave,
@@ -41,6 +43,59 @@ const createDeferred = () => {
     reject = rejectPromise
   })
   return { promise, resolve, reject }
+}
+
+const createHydrationHarness = (
+  initialState,
+  scopeKey = 'scope-a',
+) => {
+  let domainState = structuredClone(initialState)
+  let latestDomainState = domainState
+  let hydration = { scopeKey: '', kind: 'loading' }
+  let storageValue = 'existing-cache'
+  let storageSetCalls = 0
+  let storageRemoveCalls = 0
+  const transitions = []
+
+  const onStateChange = nextHydration => {
+    hydration = nextHydration
+    transitions.push(structuredClone(nextHydration))
+    if (isCloudEventCacheWriteReady({
+      cloudEnabled: true,
+      persistenceScopeReady: true,
+      requestedScopeKey: scopeKey,
+      hydration,
+    })) {
+      storageSetCalls += 1
+      storageValue = structuredClone(domainState)
+    }
+  }
+
+  return {
+    run(load, isCurrent = () => true) {
+      return runCloudEventHydrationAttempt({
+        scopeKey,
+        isCurrent,
+        load,
+        apply: loaded => {
+          domainState = structuredClone(loaded.state)
+          latestDomainState = domainState
+        },
+        onStateChange,
+      })
+    },
+    get domainState() { return domainState },
+    get latestDomainState() { return latestDomainState },
+    get hydration() { return hydration },
+    get storageValue() { return storageValue },
+    get storageSetCalls() { return storageSetCalls },
+    get storageRemoveCalls() { return storageRemoveCalls },
+    get transitions() { return transitions },
+    removeStorage() {
+      storageRemoveCalls += 1
+      storageValue = undefined
+    },
+  }
 }
 
 class MemoryCloudEventGateway {
@@ -695,6 +750,20 @@ test('Workspace bulk loadの途中失敗はhydrate stateを部分commitしない
   assert.equal(result.ok, false)
   assert.equal(!result.ok && result.error.code, 'SUPABASE_ERROR')
   assert.deepEqual(localState, before)
+
+  pageCalls = 0
+  const harness = createHydrationHarness(localState)
+  const completed = await harness.run(() => loadCloudWorkspaceEvents(
+    repository,
+    'workspace-a',
+    harness.domainState,
+  ))
+  assert.equal(completed.kind, 'error')
+  assert.deepEqual(harness.domainState, before)
+  assert.deepEqual(harness.latestDomainState, before)
+  assert.equal(harness.hydration.kind, 'error')
+  assert.equal(harness.storageSetCalls, 0)
+  assert.equal(harness.storageRemoveCalls, 0)
 })
 
 test('server commit後のsave応答失敗でもCloud deleteを必ず試行してrowを削除する', async () => {
@@ -1153,6 +1222,41 @@ test('Cloud local cacheはrequested scopeのrehydrate完了後だけ書き込み
   }), true)
 })
 
+test('Cloud hydrate表示はcurrent scopeの成功時だけdomain contentを表示する', () => {
+  const base = {
+    cloudEnabled: true,
+    persistenceScopeReady: true,
+    requestedScopeKey: 'scope-b',
+  }
+
+  assert.equal(getCloudEventHydrationView({
+    ...base,
+    hydration: { scopeKey: 'scope-a', kind: 'ready' },
+  }), 'loading')
+  assert.equal(getCloudEventHydrationView({
+    ...base,
+    hydration: { scopeKey: 'scope-b', kind: 'loading' },
+  }), 'loading')
+  assert.equal(getCloudEventHydrationView({
+    ...base,
+    hydration: { scopeKey: 'scope-b', kind: 'error', message: 'failed' },
+  }), 'error')
+  assert.equal(getCloudEventHydrationView({
+    ...base,
+    hydration: { scopeKey: 'scope-b', kind: 'ready' },
+  }), 'content')
+  assert.equal(getCloudEventHydrationView({
+    ...base,
+    persistenceScopeReady: false,
+    hydration: { scopeKey: 'scope-b', kind: 'ready' },
+  }), 'loading')
+  assert.equal(getCloudEventHydrationView({
+    ...base,
+    cloudEnabled: false,
+    hydration: { scopeKey: 'other', kind: 'loading' },
+  }), 'content')
+})
+
 test('Event別の並行操作は一方の完了で他方の占有を解除しない', async () => {
   const registry = createCloudEventOperationRegistry()
   const eventA = createDeferred()
@@ -1568,6 +1672,152 @@ test('Cloud load失敗はbase stateを変更せず別Event stateを返さない'
   assert.equal(result.ok, false)
   assert.equal(!result.ok && result.error.code, 'SUPABASE_ERROR')
   assert.deepEqual(base, before)
+})
+
+test('App hydration完了処理は全failureでdomain・latest ref・storageを保持する', async () => {
+  const cases = [
+    {
+      code: 'SUPABASE_ERROR',
+      message: 'Cloud Eventの通信に失敗しました。',
+      createState: createDemoData,
+    },
+    {
+      code: 'INVALID_SNAPSHOT',
+      message: 'Cloud Eventのデータ形式が正しくありません。',
+      createState: createDemoData,
+    },
+    {
+      code: 'SHARED_MASTER_CONFLICT',
+      message: 'Cloud Event間で共有masterが競合しています。',
+      createState: createDemoData,
+    },
+    {
+      code: 'INVALID_SNAPSHOT',
+      message: 'local master IDが重複しています。',
+      createState: () => {
+        const state = createDemoData()
+        state.members.push(structuredClone(state.members[0]))
+        return state
+      },
+    },
+  ]
+
+  for (const failure of cases) {
+    const initialState = failure.createState()
+    const before = structuredClone(initialState)
+    const harness = createHydrationHarness(initialState)
+    const result = await harness.run(async () => ({
+      ok: false,
+      error: { code: failure.code, message: failure.message },
+    }))
+
+    assert.deepEqual(result, {
+      kind: 'error',
+      error: { code: failure.code, message: failure.message },
+    })
+    assert.deepEqual(harness.domainState, before)
+    assert.deepEqual(harness.latestDomainState, before)
+    assert.deepEqual(harness.hydration, {
+      scopeKey: 'scope-a',
+      kind: 'error',
+      message: failure.message,
+    })
+    assert.equal(harness.storageValue, 'existing-cache')
+    assert.equal(harness.storageSetCalls, 0)
+    assert.equal(harness.storageRemoveCalls, 0)
+    assert.equal(isCloudEventCacheWriteReady({
+      cloudEnabled: true,
+      persistenceScopeReady: true,
+      requestedScopeKey: 'scope-a',
+      hydration: harness.hydration,
+    }), false)
+  }
+})
+
+test('App hydration完了処理はunexpected rejectionをerrorへ変換しcancel済み結果を無視する', async () => {
+  const initialState = createDemoData()
+  const before = structuredClone(initialState)
+  const rejectedHarness = createHydrationHarness(initialState)
+  const rejected = await rejectedHarness.run(async () => {
+    throw new Error('unexpected')
+  })
+  assert.equal(rejected.kind, 'error')
+  assert.equal(rejected.kind === 'error' && rejected.error.code, 'SUPABASE_ERROR')
+  assert.deepEqual(rejectedHarness.domainState, before)
+  assert.deepEqual(rejectedHarness.latestDomainState, before)
+  assert.equal(rejectedHarness.hydration.kind, 'error')
+  assert.equal(rejectedHarness.storageSetCalls, 0)
+  assert.equal(rejectedHarness.storageRemoveCalls, 0)
+
+  for (const settle of ['resolve', 'reject']) {
+    const deferred = createDeferred()
+    let visibleHydration = { scopeKey: 'scope-b', kind: 'loading' }
+    let applyCalls = 0
+    let current = true
+    const pending = runCloudEventHydrationAttempt({
+      scopeKey: 'scope-a',
+      isCurrent: () => current,
+      load: () => deferred.promise,
+      apply: () => { applyCalls += 1 },
+      onStateChange: state => { visibleHydration = state },
+    })
+    assert.deepEqual(visibleHydration, { scopeKey: 'scope-a', kind: 'loading' })
+    current = false
+    visibleHydration = { scopeKey: 'scope-b', kind: 'ready' }
+    if (settle === 'resolve') {
+      deferred.resolve({ ok: true, value: { state: createEmptyState(), records: [] } })
+    } else {
+      deferred.reject(new Error('late failure'))
+    }
+    assert.deepEqual(await pending, { kind: 'ignored' })
+    assert.equal(applyCalls, 0)
+    assert.deepEqual(visibleHydration, { scopeKey: 'scope-b', kind: 'ready' })
+  }
+})
+
+test('App hydration retryは失敗前stateを再利用し、成功した空Workspaceだけを適用する', async () => {
+  const initialState = createDemoData()
+  const before = structuredClone(initialState)
+  const harness = createHydrationHarness(initialState)
+  const inputs = []
+  const failingRepository = {
+    async loadWorkspaceEvents() {
+      return {
+        ok: false,
+        error: { code: 'SUPABASE_ERROR', message: 'network failure' },
+      }
+    },
+  }
+  const emptyRepository = {
+    async loadWorkspaceEvents() {
+      return { ok: true, value: [] }
+    },
+  }
+  const load = repository => {
+    inputs.push(structuredClone(harness.domainState))
+    return loadCloudWorkspaceEvents(repository, 'workspace-a', harness.domainState)
+  }
+
+  assert.equal((await harness.run(() => load(failingRepository))).kind, 'error')
+  assert.deepEqual(harness.domainState, before)
+  assert.equal(harness.storageSetCalls, 0)
+  assert.equal(harness.storageValue, 'existing-cache')
+
+  assert.equal((await harness.run(() => load(failingRepository))).kind, 'error')
+  assert.deepEqual(harness.domainState, before)
+  assert.equal(harness.storageSetCalls, 0)
+
+  assert.equal((await harness.run(() => load(emptyRepository))).kind, 'ready')
+  assert.deepEqual(inputs[0], before)
+  assert.deepEqual(inputs[1], before)
+  assert.deepEqual(inputs[2], before)
+  assert.equal(harness.hydration.kind, 'ready')
+  assert.deepEqual(harness.domainState.events, [])
+  assert.deepEqual(harness.domainState.eventDays, [])
+  assert.deepEqual(harness.domainState.scheduleItems, [])
+  assert.equal(harness.storageSetCalls, 1)
+  assert.notEqual(harness.storageValue, 'existing-cache')
+  assert.equal(harness.storageRemoveCalls, 0)
 })
 
 test('Cloud Event migrationはWorkspace ownership・RLS・revision・移管防止を定義する', async () => {

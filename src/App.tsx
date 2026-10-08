@@ -271,15 +271,16 @@ import { canEditCloudWorkspace } from './cloud/cloudWorkspace.ts'
 import { createSupabaseCloudEventRepository } from './cloud/cloudEventRepository.ts'
 import {
   createCloudEventOperationRegistry,
+  getCloudEventHydrationView,
   getCloudEventOperation,
   isCloudEventCacheWriteReady,
   loadCloudWorkspaceEvents,
+  runCloudEventHydrationAttempt,
   runExclusiveCloudEventDeletion,
   runExclusiveCloudEventSave,
   saveCloudEventFromState,
   type CloudEventHydrationState,
 } from './cloud/cloudEventLifecycle.ts'
-import { createCloudWorkspaceState } from './cloud/cloudEventSnapshot.ts'
 import './App.css'
 
 type AppView = 'event-editor' | AppSection
@@ -866,31 +867,23 @@ function App() {
     isCancelled: () => boolean,
   ) => {
     if (!cloudEventRepository) return
-    if (isCancelled() || currentPersistenceScopeRef.current !== scopeKey) return
-    setCloudEventLoadState({ scopeKey, kind: 'loading' })
-    const result = await loadCloudWorkspaceEvents(
-      cloudEventRepository,
-      workspaceId,
-      domainState,
-    )
-    if (isCancelled() || currentPersistenceScopeRef.current !== scopeKey) return
-
-    if (!result.ok) {
-      const cleared = createCloudWorkspaceState(domainState, [])
-      if (cleared.ok) applyPersistedSnapshot(cleared.state)
-      setCloudEventLoadState({
-        scopeKey,
-        kind: 'error',
-        message: result.error.message,
-      })
-      return
-    }
-
-    // In Cloud mode the scoped localStorage snapshot is only a cache. Cloud
-    // Event collections replace it after every startup/workspace hydration, so
-    // edits not explicitly saved to Cloud are intentionally discarded here.
-    applyPersistedSnapshot(result.value.state)
-    setCloudEventLoadState({ scopeKey, kind: 'ready' })
+    await runCloudEventHydrationAttempt({
+      scopeKey,
+      isCurrent: () => !isCancelled() &&
+        currentPersistenceScopeRef.current === scopeKey,
+      load: () => loadCloudWorkspaceEvents(
+        cloudEventRepository,
+        workspaceId,
+        domainState,
+      ),
+      apply: (loaded) => {
+        // In Cloud mode the scoped localStorage snapshot is only a cache. Cloud
+        // Event collections replace it after every successful hydration, so
+        // edits not explicitly saved to Cloud are intentionally discarded here.
+        applyPersistedSnapshot(loaded.state)
+      },
+      onStateChange: setCloudEventLoadState,
+    })
   })
 
   useEffect(() => {
@@ -3256,12 +3249,14 @@ function App() {
       ? gridAssignmentDeletion
       : null
 
-  if (!persistenceScopeReady || (
-    cloudWorkspace && (
-      cloudEventLoadState.scopeKey !== requestedPersistenceStorageKey ||
-      cloudEventLoadState.kind === 'loading'
-    )
-  )) {
+  const cloudEventHydrationView = getCloudEventHydrationView({
+    cloudEnabled: Boolean(cloudWorkspace),
+    persistenceScopeReady,
+    requestedScopeKey: requestedPersistenceStorageKey,
+    hydration: cloudEventLoadState,
+  })
+
+  if (cloudEventHydrationView === 'loading') {
     return (
       <main className="app-loading" aria-busy="true">
         <p role="status">ワークスペースのCloud Eventを読み込んでいます…</p>
@@ -3269,11 +3264,7 @@ function App() {
     )
   }
 
-  if (
-    cloudWorkspace &&
-    cloudEventLoadState.scopeKey === requestedPersistenceStorageKey &&
-    cloudEventLoadState.kind === 'error'
-  ) {
+  if (cloudEventHydrationView === 'error' && cloudEventLoadState.kind === 'error') {
     return (
       <AppShell
         activeSection="events"

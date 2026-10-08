@@ -27,6 +27,72 @@ export type CloudEventHydrationState =
   | { scopeKey: string; kind: 'ready' }
   | { scopeKey: string; kind: 'error'; message: string }
 
+export const getCloudEventHydrationView = ({
+  cloudEnabled,
+  persistenceScopeReady,
+  requestedScopeKey,
+  hydration,
+}: {
+  cloudEnabled: boolean
+  persistenceScopeReady: boolean
+  requestedScopeKey: string
+  hydration: CloudEventHydrationState
+}): 'loading' | 'error' | 'content' => {
+  if (!persistenceScopeReady) return 'loading'
+  if (!cloudEnabled) return 'content'
+  if (hydration.scopeKey !== requestedScopeKey || hydration.kind === 'loading') {
+    return 'loading'
+  }
+  return hydration.kind === 'error' ? 'error' : 'content'
+}
+
+export type CloudEventHydrationAttemptResult =
+  | { kind: 'ignored' }
+  | { kind: 'error'; error: CloudEventRepositoryError }
+  | { kind: 'ready' }
+
+const unexpectedHydrationError = (): CloudEventRepositoryError => ({
+  code: 'SUPABASE_ERROR',
+  message: 'Cloud Eventの通信に失敗しました。',
+})
+
+export const runCloudEventHydrationAttempt = async <T>({
+  scopeKey,
+  isCurrent,
+  load,
+  apply,
+  onStateChange,
+}: {
+  scopeKey: string
+  isCurrent: () => boolean
+  load: () => Promise<CloudEventLifecycleResult<T>>
+  apply: (value: T) => void
+  onStateChange: (state: CloudEventHydrationState) => void
+}): Promise<CloudEventHydrationAttemptResult> => {
+  if (!isCurrent()) return { kind: 'ignored' }
+  onStateChange({ scopeKey, kind: 'loading' })
+
+  let result: CloudEventLifecycleResult<T>
+  try {
+    result = await load()
+  } catch {
+    if (!isCurrent()) return { kind: 'ignored' }
+    const error = unexpectedHydrationError()
+    onStateChange({ scopeKey, kind: 'error', message: error.message })
+    return { kind: 'error', error }
+  }
+
+  if (!isCurrent()) return { kind: 'ignored' }
+  if (!result.ok) {
+    onStateChange({ scopeKey, kind: 'error', message: result.error.message })
+    return { kind: 'error', error: result.error }
+  }
+
+  apply(result.value)
+  onStateChange({ scopeKey, kind: 'ready' })
+  return { kind: 'ready' }
+}
+
 const createCloudEventOperationKey = (
   scopeKey: string,
   eventId: EventId,
