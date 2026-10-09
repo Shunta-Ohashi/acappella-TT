@@ -1,5 +1,13 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type FormEvent,
+} from 'react'
 import type { Member, MemberId } from '../domain/models'
+import type { EventEditorDraftHandle } from '../ui/eventEditorDraftGuard'
 
 interface AddEventMembersDialogProps {
   members: Member[]
@@ -16,17 +24,25 @@ const matchesMemberSearch = (member: Member, searchText: string): boolean => {
   )
 }
 
-export function AddEventMembersDialog({
+export const AddEventMembersDialog = forwardRef<
+EventEditorDraftHandle,
+AddEventMembersDialogProps
+>(function AddEventMembersDialog({
   members,
   onCancel,
   onAdd,
-}: AddEventMembersDialogProps) {
+}: AddEventMembersDialogProps, ref) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [searchText, setSearchText] = useState('')
   const [selectedMemberIds, setSelectedMemberIds] = useState<MemberId[]>([])
   const filteredMembers = members.filter((member) =>
     matchesMemberSearch(member, searchText),
   )
+
+  useImperativeHandle(ref, () => ({
+    hasUnsavedChanges: () => selectedMemberIds.length > 0,
+    reportUnsavedChanges: () => {},
+  }), [selectedMemberIds])
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -121,4 +137,4 @@ export function AddEventMembersDialog({
       </form>
     </dialog>
   )
-}
+})

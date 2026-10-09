@@ -8,13 +8,11 @@ import type {
   TimetableOrderConstraint,
 } from '../domain/models'
 import {
-  deleteTimetableOrderConstraint,
-} from '../domain/timetableOrderConstraints'
-import {
   evaluateTimetableOrderConstraintOccurrences,
   isTimetableOrderConstraintScopeReachable,
   type TimetableOrderConstraintOccurrence,
 } from '../ui/timetableOrderConstraintPresentation'
+import { commitTimetableOrderConstraintRepairDeletion } from '../ui/timetableOrderConstraintRepair'
 import { DeleteConfirmationDialog } from './DeleteConfirmationDialog'
 
 interface TimetableOrderConstraintRepairPanelProps {
@@ -26,6 +24,7 @@ interface TimetableOrderConstraintRepairPanelProps {
   timetableOrderConstraints: TimetableOrderConstraint[]
   constraintOccurrences?: TimetableOrderConstraintOccurrence[]
   onCommit: (constraints: TimetableOrderConstraint[]) => void
+  readOnly?: boolean
 }
 
 export function TimetableOrderConstraintRepairPanel({
@@ -37,6 +36,7 @@ export function TimetableOrderConstraintRepairPanel({
   timetableOrderConstraints,
   constraintOccurrences,
   onCommit,
+  readOnly = false,
 }: TimetableOrderConstraintRepairPanelProps) {
   const [pendingDeletion, setPendingDeletion] = useState<TimetableOrderConstraint | null>(null)
   const [actionError, setActionError] = useState('')
@@ -83,17 +83,21 @@ export function TimetableOrderConstraintRepairPanel({
   }
 
   const confirmDeletion = () => {
-    if (!pendingDeletion) return
-    const result = deleteTimetableOrderConstraint({
+    const result = commitTimetableOrderConstraintRepairDeletion({
+      readOnly,
+      pendingDeletion,
       timetableOrderConstraints,
-      constraintId: pendingDeletion.id,
+      onCommit,
     })
-    if (!result.ok) {
+    if (result.kind === 'error') {
       setActionError(result.errors.join(' '))
       setPendingDeletion(null)
       return
     }
-    onCommit(result.timetableOrderConstraints)
+    if (result.kind === 'blocked') {
+      setPendingDeletion(null)
+      return
+    }
     setActionError('')
     setPendingDeletion(null)
   }
@@ -107,7 +111,8 @@ export function TimetableOrderConstraintRepairPanel({
     >
       <h3>修復が必要な出演順制約 {unreachableOccurrences.length}件</h3>
       <p className="timetable-order-settings__guide">
-        開催日またはStageの参照を確認できません。内容を確認して削除してください。
+        開催日またはStageの参照を確認できません。
+        {readOnly ? '内容を確認してください。' : '内容を確認して削除してください。'}
       </p>
       <ul className="timetable-order-settings__list">
         {unreachableOccurrences.map(({
@@ -150,7 +155,7 @@ export function TimetableOrderConstraintRepairPanel({
                   {semanticMessages.map(message => <li key={message}>{message}</li>)}
                 </ul>
               </div>
-              <div className="timetable-order-settings__actions">
+              {!readOnly && <div className="timetable-order-settings__actions">
                 <button
                   type="button"
                   className="timetable-order-settings__delete"
@@ -162,7 +167,7 @@ export function TimetableOrderConstraintRepairPanel({
                 >
                   削除
                 </button>
-              </div>
+              </div>}
             </li>
           )
         })}
@@ -170,7 +175,7 @@ export function TimetableOrderConstraintRepairPanel({
 
       {actionError && <p className="form-error" role="alert">{actionError}</p>}
 
-      {pendingDeletion && (
+      {!readOnly && pendingDeletion && (
         <DeleteConfirmationDialog
           title="出演順制約を削除しますか？"
           description={`scopeを確認できない出演順制約（ID: ${pendingDeletion.id}、出演順: ${

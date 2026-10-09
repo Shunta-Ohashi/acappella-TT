@@ -23,10 +23,46 @@ export interface CloudWorkspaceAccess {
   membership: CloudWorkspaceMembership
 }
 
+export interface CloudWorkspaceSelection {
+  authRevision: number
+  workspaceId: string
+  visitRevision: number
+}
+
 export const createCloudAppBoundaryKey = (
   authRevision: number,
   userId: string,
 ): string => `${authRevision}:${userId}`
+
+export const createCloudWorkspaceVisitId = (
+  authRevision: number,
+  userId: string,
+  reloadToken: number,
+  visitRevision: number,
+): string => JSON.stringify([
+  authRevision,
+  userId,
+  reloadToken,
+  visitRevision,
+])
+
+export const selectCloudWorkspaceVisit = ({
+  current,
+  authRevision,
+  currentWorkspaceId,
+  nextWorkspaceId,
+}: {
+  current: CloudWorkspaceSelection | undefined
+  authRevision: number
+  currentWorkspaceId: string
+  nextWorkspaceId: string
+}): CloudWorkspaceSelection | undefined => {
+  if (currentWorkspaceId === nextWorkspaceId) return current
+  const visitRevision = current?.authRevision === authRevision
+    ? current.visitRevision + 1
+    : 1
+  return { authRevision, workspaceId: nextWorkspaceId, visitRevision }
+}
 
 const compareStableText = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0
@@ -44,6 +80,9 @@ export const sortCloudWorkspaceAccesses = (
 
 export const isWorkspaceRole = (value: unknown): value is WorkspaceRole =>
   typeof value === 'string' && WORKSPACE_ROLES.includes(value as WorkspaceRole)
+
+export const canEditCloudWorkspace = (role: unknown): boolean =>
+  role === 'owner' || role === 'editor'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)

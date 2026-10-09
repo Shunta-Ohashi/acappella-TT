@@ -12,7 +12,7 @@ import type {
   StageId,
   TimetableOrderConstraint,
   TimetableOrderConstraintId,
-} from './models'
+} from './models.ts'
 import { compareScheduleItemOrder } from './schedule.ts'
 
 export type TimetableOrderConstraintViolationCode =

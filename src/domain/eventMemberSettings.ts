@@ -13,7 +13,7 @@ import type {
   PaCapabilities,
   ParticipationStatus,
   TimeRange,
-} from './models'
+} from './models.ts'
 import {
   normalizeAvailabilityWindows,
   normalizeTimeRange,

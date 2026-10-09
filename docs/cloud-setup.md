@@ -1,6 +1,6 @@
 # Supabase Auth / Workspace setup
 
-この手順はAuthとWorkspace基盤だけを設定します。Event・Timetableなどの編集データは、現時点では引き続き各ブラウザの`localStorage`へ保存されます。
+この手順はAuth / WorkspaceとWorkspace共有Cloud Eventを設定します。Cloud保存は明示的な「Cloudへ保存」操作で行い、ブラウザのWorkspace scoped `localStorage`はhydrate後のcacheとして使用します。
 
 ## 1. Supabase projectを作成する
 
@@ -10,7 +10,32 @@ Supabase Dashboardでprojectを作成します。frontendへ設定するのはPr
 
 ## 2. migrationを適用する
 
-SQL Editorなど管理者権限のある方法で、`supabase/migrations/20261007_auth_workspace.sql`を適用します。このmigrationは`profiles`、`workspaces`、`workspace_members`を作成し、全tableでRLSを有効化します。
+新規環境では`supabase/migrations`をmigration version順に適用します。Cloud Eventの依存順は次のとおりです。
+
+1. `20261007_auth_workspace.sql`
+2. `20261008110000_cloud_event_persistence.sql`
+3. `20261008120000_cloud_event_authorized_delete.sql`
+4. `20261008130000_cloud_event_rpc_only_delete.sql`
+5. `20261008140000_cloud_event_authorized_page.sql`
+6. `20261008150000_cloud_event_authorized_save.sql`
+7. `20261008160000_cloud_event_rpc_only_save.sql`
+
+ファイル名は通常の文字列順でもこの依存順になりますが、Supabase CLI等での適用済み判定はmigration historyに基づきます。旧開発名`20261007120000_cloud_event_persistence.sql`を適用済みの可能性がある環境では、rename後のbase migrationを再適用しないでください。対象判定・catalog照合・承認済みrepair・中断復帰・完了確認は、専用の[Cloud Event migration履歴移行runbook](./cloud-event-migration-history-repair.md)に従って通常のmigration適用より前に実施します。外部環境へpackage install / build / App起動から自動repairは行いません。
+
+### 既存環境のDelete RPC切替
+
+既存環境ではDelete RPC作成と直接DELETE取消しを一度のblind deploymentで適用しません。旧frontendは`cloud_events`を直接DELETEするため、次の順序で切り替えます。
+
+1. `20261008120000_cloud_event_authorized_delete.sql`まで適用し、authorized delete RPCを利用可能にする（この時点では直接DELETE権限を維持）
+2. `delete_cloud_event_authorized(...)`を使用する新frontendを配備する
+3. 新frontendからEvent削除がRPC経由で成功することを確認する
+4. maintenance window等を設け、利用者へreloadを求めて、配備前から開かれているtabを含むlegacy clientをdrainする
+5. legacy clientが残っていないことを確認してから`20261008130000_cloud_event_rpc_only_delete.sql`を適用し、browserの直接DELETEをREVOKEする
+6. REVOKE後も新frontendからRPC削除が成功することを再確認する
+
+旧clientが存在し得る間は`...130000`を先に適用しないでください。新規環境では利用開始前に全migrationを順番に適用し、現在のFunction/frontendを揃えてから公開するため、この段階的切替は不要です。
+
+`...130000`はdirect GRANTのREVOKE後に`anon`と`authenticated`の実効DELETE権限も検査します。custom roleから継承したDELETEが残る場合はfail closedするため、operatorがrole membershipとinherited GRANTを確認・除去してからmigrationを再実行してください。migrationが共有custom roleの権限を自動変更することはありません。
 
 ## 3. Authentication userを作成する
 
@@ -59,17 +84,53 @@ Vercel PreviewでMagic Linkを使う場合は、利用するpreview URL pattern�
 
 Magic Linkのredirect先は、実行中ページのoriginから通常App rootを生成します。事前共有用の`#share=...`やqueryは引き継ぎません。
 
-## 8. Security確認
+## 8. Cloud Event保存Function
+
+Cloud Eventの保存はbrowserから`save-cloud-event` Edge Functionを呼びます。Functionは同じsourceの`parseCloudEventSnapshot()`でPersistence V5 / snapshot V1、ownership、ID一意性、exact Member/Band closureを検証してから、backend専用`save_cloud_event_validated` RPCを呼びます。validatorは`src/cloud/cloudEventSnapshot.ts`から相対importするため、別schemaを手作業で同期する必要はありません。
+
+FunctionはSupabaseのJWT verificationを有効なまま配備し（`--no-verify-jwt`を使用しない）、handler内でもBearer tokenを`auth.getUser(token)`へ渡して本人確認します。
+
+Function runtimeだけに以下を設定します。実値を`VITE_`環境変数、frontend、Git、response、logへ入れないでください。
+
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`（呼出元JWTを`auth.getUser()`で検証するclient用）
+- `SUPABASE_SERVICE_ROLE_KEY`（backend専用RPC用）
+
+保存requestはJSON POSTのみで、streamを実際に読みながら5 MiBで打ち切ります。これは現行V5 Event snapshotへ余裕を持たせつつ、認証済みrequestによる無制限なmemory使用を防ぐ上限です。`Content-Length`だけには依存しません。Function未配備・認証失敗・不正response・通信失敗時にbrowserから旧table upsertへfallbackしません。
+
+手元にSupabase CLI / Denoがある専用環境では、配備前に次を確認します（共有DBやproductionへは実行しません）。
+
+```powershell
+deno check supabase/functions/save-cloud-event/index.ts
+supabase functions serve save-cloud-event
+```
+
+安全な更新順は次のとおりです。
+
+1. `...150000_cloud_event_authorized_save.sql`まで適用してbackend専用RPCを作成し、backend-only EXECUTE contractの検査を通す
+2. `save-cloud-event` Functionを配備し、認証・保存integrationを確認
+3. 新frontendを配備
+4. 配備前から開かれているtabを含むlegacy clientをdrainし、必要に応じて利用者へreloadを求める
+5. `...160000_cloud_event_rpc_only_save.sql`を適用して旧clientの直接INSERT/UPDATEを取り消し、backend-only EXECUTE contractを再検査する
+6. 新frontendからEdge Function経由の保存を再確認する
+
+直接write取消し後、旧frontendの直接upsertは意図どおり失敗します。途中状態を長期間残さず、専用環境で一連の順序を検証してからproductionへ反映してください。fresh DBでは全migration適用後にFunctionとfrontendを揃えて公開します。
+
+`...150000`はRPC作成・直接REVOKE・`service_role`へのGRANT後に、save RPCが`SECURITY DEFINER`であり、`service_role`だけが実効EXECUTEを持ち、`PUBLIC` / `anon` / `authenticated`が実行できないことを検査します。`...160000`もfinal cutover前に同じbackend-only EXECUTE contractを再検査し、さらにtable/columnへのdirect GRANTをREVOKEした後、`anon`と`authenticated`に継承経由の実効INSERT/UPDATE権限が残っていないことを検査します。残存権限があればfail closedするため、operatorがinherited EXECUTE/WRITE GRANT、role membership、custom role、function default privilegesを修正してからmigrationを再実行してください。migrationは共有role membershipを自動変更しません。
+
+## 9. Security確認
 
 - `profiles`は本人のrowだけSELECT・INSERT・UPDATEできます。
 - `workspace_members`は本人のmembershipだけSELECTできます。
 - `workspaces`は本人のmembershipがあるWorkspaceだけSELECTできます。
 - `anon`には3 tableへの権限を付与していません。
 - Workspaceとmembershipの変更はbrowser clientへ許可していません。
+- `cloud_events`のbrowser直接INSERT / UPDATE / DELETEは許可していません。
+- 内部保存RPCは`service_role`だけが実行でき、保存transaction内でもactorのowner/editor membershipを`FOR SHARE`で再確認します。
 - データ保護はPublishable keyの秘匿ではなくRLSで行います。
 
-## 9. 現在の制限
+## 10. 現在の制限
 
-Auth/Workspaceへログインしても、Event・Timetable・PA・DutyなどはCloudへ保存されません。端末間共有、共同編集、Realtime、revision conflict処理は後続実装です。
+Cloudへ保存したEvent snapshotはWorkspace内で共有できますが、Realtime、revision conflict / CAS、Presence、offline draft復元、Member/Bandの独立Cloud table化は後続実装です。共有masterはEvent snapshotへ暫定的に複製し、snapshot間で矛盾した場合はsilent mergeせずWorkspace hydrateをfail closedします。
 
 Cloud modeの編集データは、同じブラウザ内でも認証ユーザーとWorkspaceの組み合わせごとに分離して`localStorage`へ保存されます。local-only modeで既存keyへ保存したデータは削除されず、Cloud Workspaceへ自動移行もされません。既存データを対象Workspaceへ移す場合は、local-only modeでバックアップを書き出し、対象Workspaceへログインしてから復元してください。

@@ -57,6 +57,7 @@ interface PaSettingsProps {
   onCreateUpdate: (draft: PaAssignmentsDraft) => PaAssignmentsUpdateResult
   onCommit: (result: Extract<PaAssignmentsUpdateResult, { ok: true }>) => void
   onSaveAndNext: () => void
+  readOnly?: boolean
 }
 
 export interface PaSettingsHandle {
@@ -97,6 +98,7 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
   onCreateUpdate,
   onCommit,
   onSaveAndNext,
+  readOnly = false,
   }: PaSettingsProps, ref) {
   const [draft, setDraft] = useState(() =>
     createPaAssignmentsDraft(event, paAssignments),
@@ -272,6 +274,7 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
   return (
     <section className="pa-settings" aria-label="PA設定">
       <form id={formId} noValidate onSubmit={handleSubmit}>
+        <fieldset className="read-only-form-controls" disabled={readOnly}>
         {invalidScopeAssignments.length > 0 && (
           <section
             className="pa-settings__repair"
@@ -469,9 +472,10 @@ export const PaSettings = forwardRef<PaSettingsHandle, PaSettingsProps>(
             </button>
           </div>
         </footer>
+        </fieldset>
       </form>
 
-      {editor && (
+      {!readOnly && editor && (
         <PaAssignmentEditorDialog
           event={event}
           eventDays={eventDays}

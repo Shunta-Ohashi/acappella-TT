@@ -15,6 +15,10 @@ export interface DeleteConfirmationCopy {
   cancelLabel: string
 }
 
+export const canDismissDeleteConfirmation = (
+  isPending: boolean,
+): boolean => !isPending
+
 export const getDeleteConfirmationCopy = (
   target: DeleteConfirmationTarget,
   targetLabel: string,

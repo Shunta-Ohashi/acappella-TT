@@ -3,6 +3,7 @@ import {
   eventEditorSteps,
   type EventEditorStepId,
 } from '../ui/eventEditorSteps'
+import { getEventEditorInteractionState } from '../ui/eventEditorInteraction'
 
 export type { EventEditorStepId } from '../ui/eventEditorSteps'
 
@@ -11,6 +12,12 @@ interface EventEditorShellProps {
   activeStep: EventEditorStepId
   onStepChange: (step: EventEditorStepId) => void
   onBackToEvents: () => void
+  cloudSave?: {
+    operation?: 'save' | 'delete'
+    feedback?: { kind: 'success' | 'error'; message: string }
+    onSave: () => void
+  }
+  readOnly?: boolean
   children: ReactNode
 }
 
@@ -19,22 +26,32 @@ export function EventEditorShell({
   activeStep,
   onStepChange,
   onBackToEvents,
+  cloudSave,
+  readOnly = false,
   children,
 }: EventEditorShellProps) {
   const currentStep = eventEditorSteps.find((step) => step.id === activeStep)
   const hasImplementedContent = [1, 2, 3, 4, 5, 6, 7, 8].includes(activeStep)
+  const interaction = getEventEditorInteractionState({
+    readOnly,
+    cloudOperation: cloudSave?.operation,
+  })
 
   if (!currentStep) {
     throw new Error(`Event editor step not found: ${activeStep}`)
   }
 
   return (
-    <main className="event-editor">
+    <main
+      className={readOnly ? 'event-editor event-editor--read-only' : 'event-editor'}
+      aria-busy={interaction.contentInert || undefined}
+    >
       <header className="event-editor__header">
         <div className="event-editor__header-inner">
           <button
             type="button"
             className="event-editor__back"
+            disabled={interaction.navigationDisabled}
             onClick={onBackToEvents}
           >
             <span aria-hidden="true">←</span> イベント一覧
@@ -44,9 +61,38 @@ export function EventEditorShell({
               <p className="event-editor__eyebrow">イベント編集</p>
               <h1>{eventName}</h1>
             </div>
-            <span className="event-editor__status" aria-label="編集状態: 下書き">
-              下書き
-            </span>
+            <div className="event-editor__header-actions">
+              {cloudSave && !readOnly && (
+                <div className="event-editor__cloud-save">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={cloudSave.operation !== undefined}
+                    onClick={cloudSave.onSave}
+                  >
+                    {cloudSave.operation === 'save'
+                      ? 'Cloud保存中…'
+                      : cloudSave.operation === 'delete'
+                        ? 'Cloud削除中…'
+                        : 'Cloudへ保存'}
+                  </button>
+                  {cloudSave.feedback && (
+                    <span
+                      className={`event-editor__cloud-feedback event-editor__cloud-feedback--${cloudSave.feedback.kind}`}
+                      role={cloudSave.feedback.kind === 'error' ? 'alert' : 'status'}
+                    >
+                      {cloudSave.feedback.message}
+                    </span>
+                  )}
+                </div>
+              )}
+              <span
+                className="event-editor__status"
+                aria-label={`編集状態: ${interaction.statusLabel}`}
+              >
+                {interaction.statusLabel}
+              </span>
+            </div>
           </div>
         </div>
       </header>
@@ -62,6 +108,7 @@ export function EventEditorShell({
                     ? 'event-step-navigation__button event-step-navigation__button--active'
                     : 'event-step-navigation__button'}
                   aria-current={step.id === activeStep ? 'step' : undefined}
+                  disabled={interaction.navigationDisabled}
                   onClick={() => onStepChange(step.id)}
                 >
                   <span className="event-step-navigation__number">{step.id}</span>
@@ -81,12 +128,19 @@ export function EventEditorShell({
             ? `event-editor__content event-editor__content--step-${activeStep} event-editor__content--workspace`
             : `event-editor__content event-editor__content--step-${activeStep}`}
           aria-labelledby="current-step-title"
+          inert={interaction.contentInert}
         >
           <header className="event-editor__step-header">
             <p>STEP {currentStep.id}</p>
             <h2 id="current-step-title">{currentStep.label}</h2>
             <span>{currentStep.description}</span>
           </header>
+
+          {readOnly && (
+            <p className="event-editor__read-only-notice" role="status">
+              このワークスペースは閲覧のみです。内容の確認と表示切替ができます。変更操作は利用できません。
+            </p>
+          )}
 
           {hasImplementedContent ? (
             children

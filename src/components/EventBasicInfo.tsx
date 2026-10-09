@@ -1,27 +1,47 @@
-import { useState, type FormEvent } from 'react'
+import {
+  forwardRef,
+  useImperativeHandle,
+  useMemo,
+  useState,
+  type FormEvent,
+} from 'react'
 import type { Event, EventDay, EventDayId, LocalDate } from '../domain/models'
 import {
   createEventBasicInfoDraft,
+  hasEventBasicInfoDraftChanges,
   validateEventBasicInfoDraft,
   type EventBasicInfoDraft,
   type EventBasicInfoUpdateResult,
   type EventBasicInfoValidationErrors,
 } from '../domain/eventBasicInfo'
-import { getDeleteConfirmationCopy } from '../ui/deleteConfirmation'
+import {
+  canDismissDeleteConfirmation,
+  getDeleteConfirmationCopy,
+} from '../ui/deleteConfirmation'
 import type {
   EventDeletionCheck,
   EventDeletionResult,
 } from '../domain/eventDeletion'
 import { DeleteConfirmationDialog } from './DeleteConfirmationDialog'
+import type { EventEditorDraftHandle } from '../ui/eventEditorDraftGuard'
 
 interface EventBasicInfoProps {
   event: Event
   eventDays: EventDay[]
   canDeleteEventDay: (eventDayId: EventDayId) => boolean
   checkEventDeletion: (eventId: Event['id']) => EventDeletionCheck
-  onDeleteEvent: (eventId: Event['id']) => EventDeletionResult
+  onDeleteEvent: (eventId: Event['id']) => Promise<EventDeletionActionResult>
+  isCloudSavePending?: boolean
   onSave: (draft: EventBasicInfoDraft) => EventBasicInfoUpdateResult
   onSaveAndNext: () => void
+  readOnly?: boolean
+}
+
+export type EventBasicInfoHandle = EventEditorDraftHandle
+
+export type EventDeletionActionResult = EventDeletionResult | {
+  ok: false
+  reason: 'CLOUD_DELETE_FAILED' | 'CLOUD_OPERATION_IN_PROGRESS' | 'READ_ONLY'
 }
 
 interface DateInput {
@@ -32,48 +52,89 @@ interface DateInput {
 
 const DELETE_BLOCKED_MESSAGE =
   'この開催日にはStage・出演バンドなどの設定があるため削除できません。関連する設定を先に削除してください。'
+const UNSAVED_CHANGES_MESSAGE =
+  'イベント基本情報に未保存の変更があります。先に基本情報を保存してください。'
+const READ_ONLY_MESSAGE =
+  '閲覧権限のワークスペースではイベントを削除できません。'
 
-const createDateInputs = (eventDays: EventDay[]): DateInput[] => eventDays.map(
+const createDateInputs = (
+  eventDays: EventBasicInfoDraft['eventDays'],
+): DateInput[] => eventDays.map(
   (eventDay) => ({
-    key: `event-day-${eventDay.id}`,
-    eventDayId: eventDay.id,
+    key: `event-day-${eventDay.eventDayId}`,
+    eventDayId: eventDay.eventDayId,
     value: eventDay.date,
   }),
 )
 
-export function EventBasicInfo({
+export const EventBasicInfo = forwardRef<EventBasicInfoHandle, EventBasicInfoProps>(function EventBasicInfo({
   event,
   eventDays,
   canDeleteEventDay,
   checkEventDeletion,
   onDeleteEvent,
+  isCloudSavePending = false,
   onSave,
   onSaveAndNext,
-}: EventBasicInfoProps) {
+  readOnly = false,
+}: EventBasicInfoProps, ref) {
   const initialDraft = createEventBasicInfoDraft(event, eventDays)
-  const initialEventDays = eventDays
-    .filter((eventDay) => eventDay.eventId === event.id)
-    .sort((first, second) => first.order - second.order)
   const [eventName, setEventName] = useState(initialDraft.name)
   const [description, setDescription] = useState(initialDraft.description)
   const [notes, setNotes] = useState(initialDraft.notes)
   const [dateInputs, setDateInputs] = useState<DateInput[]>(
-    createDateInputs(initialEventDays),
+    createDateInputs(initialDraft.eventDays),
   )
   const [nextDateInputKey, setNextDateInputKey] = useState(0)
   const [errors, setErrors] = useState<EventBasicInfoValidationErrors>({})
   const [saveMessage, setSaveMessage] = useState('')
+  const [savedDraft, setSavedDraft] = useState(initialDraft)
   const [pendingDeletion, setPendingDeletion] = useState<Pick<DateInput, 'key' | 'value'>>()
   const [pendingEventDeletion, setPendingEventDeletion] = useState<{
     eventId: Event['id']
     label: string
   }>()
   const [eventDeletionError, setEventDeletionError] = useState('')
+  const [isDeletingEvent, setIsDeletingEvent] = useState(false)
+  const currentDraft = useMemo<EventBasicInfoDraft>(() => ({
+    name: eventName,
+    eventDays: dateInputs.map((dateInput) => ({
+      eventDayId: dateInput.eventDayId,
+      date: dateInput.value,
+    })),
+    description,
+    notes,
+  }), [dateInputs, description, eventName, notes])
 
-  const getEventDeletionError = (result: Exclude<EventDeletionCheck, { ok: true }>) =>
-    result.reason === 'EVENT_NOT_FOUND'
-      ? '削除するイベントが見つかりません。イベント一覧へ戻って状態を確認してください。'
-      : 'イベント間の参照に矛盾があるため削除できません。データの整合性を確認してください。'
+  useImperativeHandle(ref, () => ({
+    hasUnsavedChanges: () => hasEventBasicInfoDraftChanges(
+      currentDraft,
+      savedDraft,
+    ),
+    reportUnsavedChanges: () => {
+      setErrors((previous) => ({
+        ...previous,
+        form: UNSAVED_CHANGES_MESSAGE,
+      }))
+      setSaveMessage('')
+    },
+  }), [currentDraft, savedDraft])
+
+  const getEventDeletionError = (
+    result: Exclude<EventDeletionActionResult, { ok: true }>,
+  ) => {
+    if (result.reason === 'EVENT_NOT_FOUND') {
+      return '削除するイベントが見つかりません。イベント一覧へ戻って状態を確認してください。'
+    }
+    if (result.reason === 'CLOUD_DELETE_FAILED') {
+      return 'Cloud Eventを削除できませんでした。通信状態とワークスペース権限を確認してください。'
+    }
+    if (result.reason === 'CLOUD_OPERATION_IN_PROGRESS') {
+      return 'Cloud Eventの保存または削除処理中です。完了後にもう一度お試しください。'
+    }
+    if (result.reason === 'READ_ONLY') return READ_ONLY_MESSAGE
+    return 'イベント間の参照に矛盾があるため削除できません。データの整合性を確認してください。'
+  }
 
   const clearFeedback = () => {
     setSaveMessage('')
@@ -140,6 +201,7 @@ export function EventBasicInfo({
   }
 
   const requestEventDeletion = () => {
+    if (isCloudSavePending) return
     const result = checkEventDeletion(event.id)
     if (!result.ok) {
       setEventDeletionError(getEventDeletionError(result))
@@ -152,25 +214,28 @@ export function EventBasicInfo({
     })
   }
 
-  const confirmEventDeletion = () => {
-    if (!pendingEventDeletion) return
-    const result = onDeleteEvent(pendingEventDeletion.eventId)
-    if (!result.ok) {
+  const confirmEventDeletion = async () => {
+    if (!pendingEventDeletion || isDeletingEvent) return
+    setIsDeletingEvent(true)
+    setEventDeletionError('')
+    try {
+      const result = await onDeleteEvent(pendingEventDeletion.eventId)
+      if (!result.ok) {
+        setEventDeletionError(getEventDeletionError(result))
+        return
+      }
       setPendingEventDeletion(undefined)
-      setEventDeletionError(getEventDeletionError(result))
+    } catch {
+      setEventDeletionError(
+        'イベントを削除できませんでした。通信状態を確認して、もう一度お試しください。',
+      )
+    } finally {
+      setIsDeletingEvent(false)
     }
   }
 
   const save = (moveToNext: boolean) => {
-    const draft: EventBasicInfoDraft = {
-      name: eventName,
-      eventDays: dateInputs.map((dateInput) => ({
-        eventDayId: dateInput.eventDayId,
-        date: dateInput.value,
-      })),
-      description,
-      notes,
-    }
+    const draft = currentDraft
     const validationErrors = validateEventBasicInfoDraft(draft)
     setErrors(validationErrors)
     setSaveMessage('')
@@ -183,10 +248,15 @@ export function EventBasicInfo({
       return
     }
 
-    setEventName(result.event.name)
-    setDescription(result.event.description ?? '')
-    setNotes(result.event.notes ?? '')
-    setDateInputs(createDateInputs(result.eventDays))
+    const normalizedSavedDraft = createEventBasicInfoDraft(
+      result.event,
+      result.eventDays,
+    )
+    setEventName(normalizedSavedDraft.name)
+    setDescription(normalizedSavedDraft.description)
+    setNotes(normalizedSavedDraft.notes)
+    setDateInputs(createDateInputs(normalizedSavedDraft.eventDays))
+    setSavedDraft(normalizedSavedDraft)
 
     if (moveToNext) {
       onSaveAndNext()
@@ -203,6 +273,7 @@ export function EventBasicInfo({
   return (
     <section className="event-basic-info" aria-label="イベント基本情報フォーム">
       <form noValidate onSubmit={handleSubmit}>
+        <fieldset className="read-only-form-controls" disabled={readOnly}>
         <div className="event-basic-info__card">
           <div className="event-basic-info__field">
             <label htmlFor="event-basic-info-name">
@@ -345,14 +416,15 @@ export function EventBasicInfo({
             </button>
           </div>
         </footer>
+        </fieldset>
       </form>
-      <div className="event-basic-info__danger-zone">
+      {!readOnly && <div className="event-basic-info__danger-zone">
         <div>
           <h3>危険な操作</h3>
           <p>
             このイベントとイベント内の設定を完全に削除します。共通データのメンバーと固定バンドは残ります。
           </p>
-          {eventDeletionError && (
+          {eventDeletionError && !pendingEventDeletion && (
             <p className="form-error" role="alert">
               {eventDeletionError}
             </p>
@@ -361,12 +433,13 @@ export function EventBasicInfo({
         <button
           type="button"
           className="event-basic-info__delete-event"
+          disabled={isCloudSavePending}
           onClick={requestEventDeletion}
         >
           このイベントを削除
         </button>
-      </div>
-      {pendingDeletion && (() => {
+      </div>}
+      {!readOnly && pendingDeletion && (() => {
         const copy = getDeleteConfirmationCopy(
           'event-day',
           pendingDeletion.value || '未入力の開催日',
@@ -379,7 +452,7 @@ export function EventBasicInfo({
           />
         )
       })()}
-      {pendingEventDeletion && (() => {
+      {!readOnly && pendingEventDeletion && (() => {
         const copy = getDeleteConfirmationCopy(
           'event',
           pendingEventDeletion.label,
@@ -387,11 +460,18 @@ export function EventBasicInfo({
         return (
           <DeleteConfirmationDialog
             {...copy}
-            onCancel={() => setPendingEventDeletion(undefined)}
+            isPending={isDeletingEvent}
+            pendingLabel="削除中…"
+            errorMessage={eventDeletionError}
+            onCancel={() => {
+              if (canDismissDeleteConfirmation(isDeletingEvent)) {
+                setPendingEventDeletion(undefined)
+              }
+            }}
             onConfirm={confirmEventDeletion}
           />
         )
       })()}
     </section>
   )
-}
+})

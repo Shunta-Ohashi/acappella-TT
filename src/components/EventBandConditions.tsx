@@ -1,4 +1,10 @@
-import { useState, type FormEvent } from 'react'
+import {
+  forwardRef,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type FormEvent,
+} from 'react'
 import type {
   Event,
   EventBand,
@@ -22,6 +28,10 @@ import {
   type EventBandConditionsValidationErrors,
 } from '../domain/eventBandConditions'
 import { EventBandConditionDialog } from './EventBandConditionDialog'
+import {
+  hasSemanticDraftChanges,
+  type EventEditorDraftHandle,
+} from '../ui/eventEditorDraftGuard'
 
 interface EventBandConditionsProps {
   event: Event
@@ -34,6 +44,7 @@ interface EventBandConditionsProps {
   eventMemberDays: EventMemberDay[]
   onSave: (draft: EventBandConditionsDraft) => EventBandConditionsUpdateResult
   onSaveAndNext: () => void
+  readOnly?: boolean
 }
 
 const emptyErrors = (): EventBandConditionsValidationErrors => ({ items: {} })
@@ -44,7 +55,12 @@ const formatEventDay = (eventDay: EventDay): string => {
   return `${Number(month)}月${Number(day)}日`
 }
 
-export function EventBandConditions({
+export type EventBandConditionsHandle = EventEditorDraftHandle
+
+export const EventBandConditions = forwardRef<
+EventBandConditionsHandle,
+EventBandConditionsProps
+>(function EventBandConditions({
   event,
   eventDays,
   eventBands,
@@ -55,15 +71,16 @@ export function EventBandConditions({
   eventMemberDays,
   onSave,
   onSaveAndNext,
-}: EventBandConditionsProps) {
+  readOnly = false,
+}: EventBandConditionsProps, ref) {
   const orderedEventDays = [...eventDays].sort((first, second) =>
     first.order - second.order ||
     first.date.localeCompare(second.date) ||
     first.id.localeCompare(second.id),
   )
-  const [draft, setDraft] = useState(() =>
-    createEventBandConditionsDraft(event, eventBands),
-  )
+  const initialDraft = createEventBandConditionsDraft(event, eventBands)
+  const [draft, setDraft] = useState(initialDraft)
+  const [savedDraft, setSavedDraft] = useState(initialDraft)
   const [selectedEventDayId, setSelectedEventDayId] = useState<EventDayId | undefined>(
     orderedEventDays[0]?.id,
   )
@@ -72,6 +89,7 @@ export function EventBandConditions({
     emptyErrors,
   )
   const [saveMessage, setSaveMessage] = useState('')
+  const editorRef = useRef<EventEditorDraftHandle>(null)
   const eventBandById = new Map(eventBands.map((eventBand) => [
     eventBand.id,
     eventBand,
@@ -90,6 +108,18 @@ export function EventBandConditions({
       ? [item.eventDayId]
       : []),
   )
+
+  useImperativeHandle(ref, () => ({
+    hasUnsavedChanges: () => hasSemanticDraftChanges(draft, savedDraft) ||
+      Boolean(editorRef.current?.hasUnsavedChanges()),
+    reportUnsavedChanges: () => {
+      setErrors((previous) => ({
+        ...previous,
+        form: '出演条件に未保存の変更があります。先にこの画面を保存してください。',
+      }))
+      setSaveMessage('')
+    },
+  }), [draft, savedDraft])
 
   const clearFeedback = () => {
     setErrors(emptyErrors())
@@ -128,7 +158,12 @@ export function EventBandConditions({
       return
     }
 
-    setDraft(createEventBandConditionsDraft(event, result.eventBands))
+    const normalizedSavedDraft = createEventBandConditionsDraft(
+      event,
+      result.eventBands,
+    )
+    setDraft(normalizedSavedDraft)
+    setSavedDraft(normalizedSavedDraft)
     setErrors(emptyErrors())
     if (moveToNext) onSaveAndNext()
     else setSaveMessage('✓ 保存しました')
@@ -183,6 +218,7 @@ export function EventBandConditions({
           </p>
         </div>
 
+        <fieldset className="read-only-form-controls" disabled={readOnly}>
         {selectedItems.length === 0 ? (
           <div className="event-band-conditions__empty">
             <p>この開催日には出演条件を設定するバンドがありません。</p>
@@ -269,10 +305,12 @@ export function EventBandConditions({
             </button>
           </div>
         </footer>
+        </fieldset>
       </form>
 
-      {editingItem && editingEventBand && (
+      {!readOnly && editingItem && editingEventBand && (
         <EventBandConditionDialog
+          ref={editorRef}
           key={editingEventBand.id}
           event={event}
           eventBand={editingEventBand}
@@ -290,4 +328,4 @@ export function EventBandConditions({
       )}
     </section>
   )
-}
+})
