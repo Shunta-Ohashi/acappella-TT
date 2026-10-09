@@ -252,19 +252,26 @@ auth_workspace_checks as (
     'profileNameCheck', exists (
       select 1 from auth_workspace_constraints
       where table_name = 'profiles' and contype = 'c'
-        and definition = 'check((btrim(display_name)<>''''::text))'
+        and definition in (
+          'check((btrim(display_name)<>''''::text))',
+          'check(btrim(display_name)<>''''::text)'
+        )
     ),
     'workspaceNameCheck', exists (
       select 1 from auth_workspace_constraints
       where table_name = 'workspaces' and contype = 'c'
-        and definition = 'check((btrim(name)<>''''::text))'
+        and definition in (
+          'check((btrim(name)<>''''::text))',
+          'check(btrim(name)<>''''::text)'
+        )
     ),
     'workspaceMemberRoleCheck', exists (
       select 1 from auth_workspace_constraints
       where table_name = 'workspace_members' and contype = 'c'
         and definition in (
           'check((role=any(array[''owner''::text,''editor''::text,''viewer''::text])))',
-          'check((role=any((array[''owner''::text,''editor''::text,''viewer''::text]))))'
+          'check((role=any((array[''owner''::text,''editor''::text,''viewer''::text]))))',
+          'check(role=any(array[''owner''::text,''editor''::text,''viewer''::text]))'
         )
     ),
     'updatedAtFunction', exists (

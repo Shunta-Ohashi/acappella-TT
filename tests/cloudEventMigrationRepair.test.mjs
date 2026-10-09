@@ -790,6 +790,33 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   assert.match(preflightSql, /authorized_page_function\.prosecdef/i)
   assert.match(preflightSql, /authorized_save_function\.prosecdef/i)
   assert.match(preflightSql, /aclexplode\s*\(coalesce\([\s\S]*acldefault\('f'/i)
+  const authWorkspaceChecksStart = preflightSql.indexOf('auth_workspace_checks as (')
+  const authWorkspaceChecksEnd = preflightSql.indexOf('\nbase_checks as (')
+  assert.ok(
+    authWorkspaceChecksStart >= 0 && authWorkspaceChecksEnd > authWorkspaceChecksStart,
+  )
+  const authWorkspaceChecksSql = preflightSql.slice(
+    authWorkspaceChecksStart,
+    authWorkspaceChecksEnd,
+  )
+  assert.match(
+    authWorkspaceChecksSql,
+    /'check\(btrim\(display_name\)<>''''::text\)'/i,
+  )
+  assert.match(authWorkspaceChecksSql, /'check\(btrim\(name\)<>''''::text\)'/i)
+  assert.match(
+    authWorkspaceChecksSql,
+    /'check\(role=any\(array\[''owner''::text,''editor''::text,''viewer''::text\]\)\)'/i,
+  )
+  assert.match(
+    authWorkspaceChecksSql,
+    /'check\(\(btrim\(display_name\)<>''''::text\)\)'/i,
+  )
+  assert.match(authWorkspaceChecksSql, /'check\(\(btrim\(name\)<>''''::text\)\)'/i)
+  assert.ok(authWorkspaceChecksSql.includes(
+    "'check((role=any(array[''owner''::text,''editor''::text,''viewer''::text])))'",
+  ))
+  assert.doesNotMatch(authWorkspaceChecksSql, /guest/i)
   assert.doesNotMatch(
     preflightSql,
     /aclexplode\s*\(\s*coalesce\(pg_attribute\.attacl,\s*'\{\}'::aclitem\[\]\s*\)/i,
@@ -812,6 +839,10 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   )
   assert.match(fixtureSql, /migration-history-event/)
   assert.match(catalogRegressionSql, /begin;[\s\S]*\\ir cloud_event_migration_history_preflight\.sql[\s\S]*rollback;/i)
+  assert.match(
+    catalogRegressionSql,
+    /when 'membership_role_check_broad'[\s\S]*check \(role in \('owner', 'editor', 'viewer', 'guest'\)\)/i,
+  )
   for (const scenario of [
     'cloud_anon_column_insert',
     'cloud_anon_column_update',
