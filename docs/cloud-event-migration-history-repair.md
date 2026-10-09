@@ -156,9 +156,21 @@ Confirm that:
 - constraints, functions, triggers, indexes, RLS, policies, and privileges are
   unchanged.
 
-Applying pending migrations is a separate approved operation. Preserve the
-existing deployment order: create the save RPC, deploy and verify the save Edge
-Function/frontend, then apply the direct-write revoke migration.
+Applying pending migrations is a separate approved operation. For an existing
+environment, preserve both staged rollout boundaries:
+
+1. Apply `20261008120000_cloud_event_authorized_delete.sql` while direct DELETE
+   remains available, deploy and verify the RPC-capable frontend, then drain all
+   legacy clients (including already-open tabs, using a maintenance window or
+   required reload when needed). Only after no legacy client remains, apply
+   `20261008130000_cloud_event_rpc_only_delete.sql` and verify RPC deletion again.
+2. Create the save RPC, deploy and verify the save Edge Function/frontend,
+   drain legacy clients, then apply the direct INSERT/UPDATE revoke migration
+   and verify Edge Function saving again.
+
+Do not apply either revoke while its legacy clients may still be active. A
+fresh environment instead applies the complete migration chain before exposing
+the current Function/frontend to users; it does not use this upgrade sequence.
 
 ## Disposable-database exercise
 

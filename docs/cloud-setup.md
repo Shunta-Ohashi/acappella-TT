@@ -22,6 +22,19 @@ Supabase Dashboardでprojectを作成します。frontendへ設定するのはPr
 
 ファイル名は通常の文字列順でもこの依存順になりますが、Supabase CLI等での適用済み判定はmigration historyに基づきます。旧開発名`20261007120000_cloud_event_persistence.sql`を適用済みの可能性がある環境では、rename後のbase migrationを再適用しないでください。対象判定・catalog照合・承認済みrepair・中断復帰・完了確認は、専用の[Cloud Event migration履歴移行runbook](./cloud-event-migration-history-repair.md)に従って通常のmigration適用より前に実施します。外部環境へpackage install / build / App起動から自動repairは行いません。
 
+### 既存環境のDelete RPC切替
+
+既存環境ではDelete RPC作成と直接DELETE取消しを一度のblind deploymentで適用しません。旧frontendは`cloud_events`を直接DELETEするため、次の順序で切り替えます。
+
+1. `20261008120000_cloud_event_authorized_delete.sql`まで適用し、authorized delete RPCを利用可能にする（この時点では直接DELETE権限を維持）
+2. `delete_cloud_event_authorized(...)`を使用する新frontendを配備する
+3. 新frontendからEvent削除がRPC経由で成功することを確認する
+4. maintenance window等を設け、利用者へreloadを求めて、配備前から開かれているtabを含むlegacy clientをdrainする
+5. legacy clientが残っていないことを確認してから`20261008130000_cloud_event_rpc_only_delete.sql`を適用し、browserの直接DELETEをREVOKEする
+6. REVOKE後も新frontendからRPC削除が成功することを再確認する
+
+旧clientが存在し得る間は`...130000`を先に適用しないでください。新規環境では利用開始前に全migrationを順番に適用し、現在のFunction/frontendを揃えてから公開するため、この段階的切替は不要です。
+
 ## 3. Authentication userを作成する
 
 Authenticationの公開signupを無効化してください。Authentication > Usersから、利用を許可する幹部ユーザーを管理者が事前作成します。
@@ -95,7 +108,9 @@ supabase functions serve save-cloud-event
 1. `...150000_cloud_event_authorized_save.sql`まで適用してbackend専用RPCを作成
 2. `save-cloud-event` Functionを配備し、認証・保存integrationを確認
 3. 新frontendを配備
-4. `...160000_cloud_event_rpc_only_save.sql`を適用して旧clientの直接INSERT/UPDATEを取り消す
+4. 配備前から開かれているtabを含むlegacy clientをdrainし、必要に応じて利用者へreloadを求める
+5. `...160000_cloud_event_rpc_only_save.sql`を適用して旧clientの直接INSERT/UPDATEを取り消す
+6. 新frontendからEdge Function経由の保存を再確認する
 
 直接write取消し後、旧frontendの直接upsertは意図どおり失敗します。途中状態を長期間残さず、専用環境で一連の順序を検証してからproductionへ反映してください。fresh DBでは全migration適用後にFunctionとfrontendを揃えて公開します。
 
