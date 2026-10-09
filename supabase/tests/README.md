@@ -37,17 +37,25 @@ set `request.jwt.claim.sub` before exercising RLS/RPC behavior.
 
 ```powershell
 $env:ACAPPELLA_TT_TEST_DATABASE_URL = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+$env:ACAPPELLA_TT_DBLINK_DATABASE_URL = $env:ACAPPELLA_TT_TEST_DATABASE_URL
 psql $env:ACAPPELLA_TT_TEST_DATABASE_URL -f supabase/tests/cloud_event_authorized_delete.sql
 psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
-  -v "test_db_url=$env:ACAPPELLA_TT_TEST_DATABASE_URL" `
+  -v "test_db_url=$env:ACAPPELLA_TT_DBLINK_DATABASE_URL" `
   -f supabase/tests/cloud_event_authorized_delete_concurrency.sql
 psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
-  -v "test_db_url=$env:ACAPPELLA_TT_TEST_DATABASE_URL" `
+  -v "test_db_url=$env:ACAPPELLA_TT_DBLINK_DATABASE_URL" `
   -f supabase/tests/cloud_event_authorized_page_concurrency.sql
 node scripts/cloudEventMigrationCatalogRegression.mjs `
   --db-url-env ACAPPELLA_TT_TEST_DATABASE_URL `
   --confirm-disposable
 ```
+
+`test_db_url` is opened by the PostgreSQL server through `dblink`, so it may
+need a different host from the outer `psql` URL. In particular, with local
+Supabase on Windows and Docker Desktop, keep the outer URL on
+`127.0.0.1:54322` and set the dblink URL to the container-reachable host, for
+example `postgresql://postgres:postgres@host.docker.internal:54322/postgres`.
+Other environments may continue to use the same URL for both variables.
 
 The first script is wrapped in a transaction and rolls back all fixtures. The
 concurrency scripts must commit between two database connections to prove lock

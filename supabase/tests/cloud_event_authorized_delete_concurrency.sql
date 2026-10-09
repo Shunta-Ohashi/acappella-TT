@@ -89,15 +89,21 @@ end
 $$;
 reset role;
 
-select extensions.dblink_send_query(
-  'membership_change',
-  $remote$
-    update public.workspace_members
-      set role = 'viewer'
-      where workspace_id = '20000000-0000-0000-0000-000000000001'
-        and user_id = '00000000-0000-0000-0000-000000000011'
-  $remote$
-);
+do $send$
+begin
+  if extensions.dblink_send_query(
+    'membership_change',
+    $remote$
+      update public.workspace_members
+        set role = 'viewer'
+        where workspace_id = '20000000-0000-0000-0000-000000000001'
+          and user_id = '00000000-0000-0000-0000-000000000011'
+    $remote$
+  ) <> 1 then
+    raise exception 'could not send asynchronous membership role UPDATE';
+  end if;
+end
+$send$;
 do $$
 declare
   attempt integer;
@@ -120,6 +126,17 @@ end
 $$;
 commit;
 select * from extensions.dblink_get_result('membership_change') as result(status text);
+do $drain$
+declare
+  remaining_result_count bigint;
+begin
+  select count(*) into remaining_result_count
+  from extensions.dblink_get_result('membership_change') as result(status text);
+  if remaining_result_count <> 0 then
+    raise exception 'membership role UPDATE returned an unexpected trailing result';
+  end if;
+end
+$drain$;
 
 do $$
 begin
@@ -151,14 +168,20 @@ select public.delete_cloud_event_authorized(
   'already-absent-race-event'
 );
 reset role;
-select extensions.dblink_send_query(
-  'membership_change',
-  $remote$
-    delete from public.workspace_members
-      where workspace_id = '20000000-0000-0000-0000-000000000001'
-        and user_id = '00000000-0000-0000-0000-000000000011'
-  $remote$
-);
+do $send$
+begin
+  if extensions.dblink_send_query(
+    'membership_change',
+    $remote$
+      delete from public.workspace_members
+        where workspace_id = '20000000-0000-0000-0000-000000000001'
+          and user_id = '00000000-0000-0000-0000-000000000011'
+    $remote$
+  ) <> 1 then
+    raise exception 'could not send asynchronous membership DELETE';
+  end if;
+end
+$send$;
 do $$
 declare
   attempt integer;
@@ -181,6 +204,17 @@ end
 $$;
 commit;
 select * from extensions.dblink_get_result('membership_change') as result(status text);
+do $drain$
+declare
+  remaining_result_count bigint;
+begin
+  select count(*) into remaining_result_count
+  from extensions.dblink_get_result('membership_change') as result(status text);
+  if remaining_result_count <> 0 then
+    raise exception 'membership DELETE returned an unexpected trailing result';
+  end if;
+end
+$drain$;
 
 -- Revocation first: once the downgrade commits, the subsequent RPC must deny.
 insert into public.workspace_members (workspace_id, user_id, role) values (

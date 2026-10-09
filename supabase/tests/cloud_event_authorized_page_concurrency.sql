@@ -89,14 +89,20 @@ end
 $$;
 reset role;
 
-select extensions.dblink_send_query(
-  'page_membership_change',
-  $remote$
-    delete from public.workspace_members
-      where workspace_id = '30000000-0000-0000-0000-000000000001'
-        and user_id = '00000000-0000-0000-0000-000000000021'
-  $remote$
-);
+do $send$
+begin
+  if extensions.dblink_send_query(
+    'page_membership_change',
+    $remote$
+      delete from public.workspace_members
+        where workspace_id = '30000000-0000-0000-0000-000000000001'
+          and user_id = '00000000-0000-0000-0000-000000000021'
+    $remote$
+  ) <> 1 then
+    raise exception 'could not send asynchronous page membership DELETE';
+  end if;
+end
+$send$;
 do $$
 declare
   attempt integer;
@@ -119,6 +125,17 @@ end
 $$;
 commit;
 select * from extensions.dblink_get_result('page_membership_change') as result(status text);
+do $drain$
+declare
+  remaining_result_count bigint;
+begin
+  select count(*) into remaining_result_count
+  from extensions.dblink_get_result('page_membership_change') as result(status text);
+  if remaining_result_count <> 0 then
+    raise exception 'page membership DELETE returned an unexpected trailing result';
+  end if;
+end
+$drain$;
 
 do $$
 begin

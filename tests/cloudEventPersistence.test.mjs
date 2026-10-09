@@ -4003,17 +4003,32 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   assert.match(coreSql, /rollback;/i)
 
   assert.match(concurrencySql, /extensions\.dblink_send_query/i)
+  const assertAsyncQueriesAreFullyDrained = (sql, expectedQueryCount) => {
+    const asyncQuerySegments = sql.split(/extensions\.dblink_send_query/i)
+    assert.equal(asyncQuerySegments.length, expectedQueryCount + 1)
+    for (const segment of asyncQuerySegments.slice(1)) {
+      assert.match(segment, /\)\s*<>\s*1\s+then[\s\S]*raise exception/i)
+      assert.equal(
+        [...segment.matchAll(/extensions\.dblink_get_result\s*\(/gi)].length,
+        2,
+      )
+    }
+  }
+  assertAsyncQueriesAreFullyDrained(concurrencySql, 2)
   assert.match(concurrencySql, /wait_event_type = 'Lock'/i)
   assert.match(concurrencySql, /membership role UPDATE did not wait/i)
   assert.match(concurrencySql, /membership DELETE did not wait/i)
   assert.match(concurrencySql, /RPC succeeded after committed downgrade/i)
   assert.match(pageConcurrencySql, /extensions\.dblink_send_query/i)
+  assertAsyncQueriesAreFullyDrained(pageConcurrencySql, 1)
   assert.match(pageConcurrencySql, /wait_event_type = 'Lock'/i)
   assert.match(pageConcurrencySql, /revocation did not wait for page RPC FOR SHARE lock/i)
   assert.match(pageConcurrencySql, /page RPC succeeded after committed membership revocation/i)
   assert.match(instructions, /disposable/i)
   assert.match(instructions, /psql/i)
   assert.match(instructions, /cloud_event_authorized_page_concurrency\.sql/i)
+  assert.match(instructions, /ACAPPELLA_TT_DBLINK_DATABASE_URL/)
+  assert.match(instructions, /host\.docker\.internal:54322/)
   assert.match(instructions, /20261008110000_cloud_event_persistence\.sql/i)
   assert.match(instructions, /20261008150000_cloud_event_authorized_save\.sql/i)
   assert.match(instructions, /not a passing database test/i)
