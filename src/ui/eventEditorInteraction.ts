@@ -6,6 +6,11 @@ export interface EventEditorInteractionState {
   statusLabel: '下書き' | '閲覧のみ' | 'Cloud保存中' | 'Cloud削除中'
 }
 
+export const isEventEditorCloudNavigationLocked = (
+  isEventEditorActive: boolean,
+  cloudOperation?: EventEditorCloudOperation,
+): boolean => isEventEditorActive && cloudOperation !== undefined
+
 export const getEventEditorInteractionState = ({
   readOnly,
   cloudOperation,

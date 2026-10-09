@@ -121,7 +121,13 @@
   content: '';
 }
 
-.top-navigation__link:hover {
+.top-navigation__brand:disabled,
+.top-navigation__link:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.top-navigation__link:hover:not(:disabled) {
   color: #1f4f91;
   background: #f7f9fc;
 }

@@ -286,8 +286,10 @@ import { useOptionalCloudWorkspace } from './cloud/useCloudWorkspace.ts'
 import { canEditCloudWorkspace } from './cloud/cloudWorkspace.ts'
 import { createSupabaseCloudEventRepository } from './cloud/cloudEventRepository.ts'
 import {
+  createCloudEventLocalBase,
   createCloudEventOperationRegistry,
   getCloudEventHydrationView,
+  getCloudEventLocalBaseState,
   getCloudEventOperation,
   isCloudEventCacheWriteReady,
   loadCloudWorkspaceEvents,
@@ -296,8 +298,11 @@ import {
   runExclusiveCloudEventSave,
   resolveCloudEventSaveCompletion,
   saveCloudEventFromState,
+  synchronizeCloudEventLocalBase,
+  type CloudEventLocalBase,
   type CloudEventHydrationState,
 } from './cloud/cloudEventLifecycle.ts'
+import { isEventEditorCloudNavigationLocked } from './ui/eventEditorInteraction.ts'
 import './App.css'
 
 type AppView = 'event-editor' | AppSection
@@ -374,12 +379,22 @@ function App() {
   const [activePersistenceStorageKey, setActivePersistenceStorageKey] = useState(
     requestedPersistenceStorageKey,
   )
+  const [activePersistenceVisitId, setActivePersistenceVisitId] = useState(
+    requestedCloudWorkspaceVisitId,
+  )
   const [initialAppState] = useState(() =>
     loadPersistedStateForScope({
       createFallback: createDemoData,
       cloudEnabled: Boolean(cloudWorkspace),
       storageKey: requestedPersistenceStorageKey,
     }),
+  )
+  const cloudEventLocalBaseRef = useRef<CloudEventLocalBase>(
+    createCloudEventLocalBase(
+      requestedPersistenceStorageKey,
+      requestedCloudWorkspaceVisitId,
+      initialAppState,
+    ),
   )
   const initialEventId = initialAppState.events[0]?.id ?? ''
   const initialEventDayId = getEventDaysForEvent(
@@ -439,6 +454,17 @@ function App() {
   const [stages, setStages] = useState<Stage[]>(initialAppState.stages)
   const [sections, setSections] = useState<Section[]>(initialAppState.sections)
   const selectedEvent = events.find((event) => event.id === selectedEventId)
+  const selectedCloudEventOperation = cloudWorkspace && selectedEvent
+    ? getCloudEventOperation(
+        cloudEventOperations,
+        requestedPersistenceStorageKey,
+        selectedEvent.id,
+      )
+    : undefined
+  const appNavigationDisabled = isEventEditorCloudNavigationLocked(
+    activeView === 'event-editor',
+    selectedCloudEventOperation,
+  )
   const selectedEventDays = getEventDaysForEvent(eventDays, selectedEventId)
   const selectedEventDayIds = new Set(
     selectedEventDays.map((eventDay) => eventDay.id),
@@ -671,6 +697,14 @@ function App() {
     storageKey: string,
     visitId: string,
   ) => {
+    // Bind the loaded cache to the scope and visit before its React state is
+    // applied. A requested scope alone never proves which Workspace owns the
+    // currently rendered domain state.
+    cloudEventLocalBaseRef.current = createCloudEventLocalBase(
+      storageKey,
+      visitId,
+      snapshot,
+    )
     // Invalidate a previous visit's ready state before this scope becomes
     // active, including A -> B -> A transitions that reuse the same key.
     if (cloudWorkspace) {
@@ -715,13 +749,16 @@ function App() {
     timetableHistoryReplayRef.current = false
     setOperationsPanelRevision(revision => revision + 1)
     setActivePersistenceStorageKey(storageKey)
+    setActivePersistenceVisitId(visitId)
   })
 
   useEffect(() => {
-    if (isPersistenceScopeReady(
-      activePersistenceStorageKey,
-      requestedPersistenceStorageKey,
-    )) return
+    if (
+      isPersistenceScopeReady(
+        activePersistenceStorageKey,
+        requestedPersistenceStorageKey,
+      ) && activePersistenceVisitId === requestedCloudWorkspaceVisitId
+    ) return
 
     let cancelled = false
     queueMicrotask(() => {
@@ -737,6 +774,7 @@ function App() {
     }
   }, [
     activePersistenceStorageKey,
+    activePersistenceVisitId,
     cloudWorkspace,
     requestedCloudWorkspaceVisitId,
     requestedPersistenceStorageKey,
@@ -745,7 +783,7 @@ function App() {
   const persistenceScopeReady = isPersistenceScopeReady(
     activePersistenceStorageKey,
     requestedPersistenceStorageKey,
-  )
+  ) && activePersistenceVisitId === requestedCloudWorkspaceVisitId
   const cloudEventScopeReady = isCloudEventCacheWriteReady({
     cloudEnabled: Boolean(cloudWorkspace),
     persistenceScopeReady,
@@ -790,7 +828,21 @@ function App() {
   const latestDomainStateRef = useRef(domainState)
   useLayoutEffect(() => {
     latestDomainStateRef.current = domainState
-  }, [domainState])
+    cloudEventLocalBaseRef.current = synchronizeCloudEventLocalBase({
+      localBase: cloudEventLocalBaseRef.current,
+      activeScopeKey: activePersistenceStorageKey,
+      activeVisitId: activePersistenceVisitId,
+      requestedScopeKey: requestedPersistenceStorageKey,
+      requestedVisitId: requestedCloudWorkspaceVisitId,
+      state: domainState,
+    })
+  }, [
+    activePersistenceStorageKey,
+    activePersistenceVisitId,
+    domainState,
+    requestedCloudWorkspaceVisitId,
+    requestedPersistenceStorageKey,
+  ])
   useEffect(() => {
     if (!cloudEventScopeReady) return
     savePersistedState(domainState, undefined, activePersistenceStorageKey)
@@ -901,19 +953,23 @@ function App() {
     workspaceId: string,
     scopeKey: string,
     visitId: string,
+    localBase: CloudEventLocalBase,
     isCancelled: () => boolean,
   ) => {
     if (!cloudEventRepository) return
+    const localBaseState = getCloudEventLocalBaseState(localBase, scopeKey, visitId)
+    if (!localBaseState) return
     await runCloudEventHydrationAttempt({
       scopeKey,
       visitId,
       isCurrent: () => !isCancelled() &&
         currentPersistenceScopeRef.current === scopeKey &&
-        currentCloudWorkspaceVisitRef.current === visitId,
+        currentCloudWorkspaceVisitRef.current === visitId &&
+        cloudEventLocalBaseRef.current === localBase,
       load: () => loadCloudWorkspaceEvents(
         cloudEventRepository,
         workspaceId,
-        domainState,
+        localBaseState,
       ),
       apply: (loaded) => {
         // In Cloud mode the scoped localStorage snapshot is only a cache. Cloud
@@ -929,11 +985,15 @@ function App() {
     if (!cloudWorkspace || !cloudEventRepository || !persistenceScopeReady) return
     let cancelled = false
     const scopeKey = requestedPersistenceStorageKey
+    const visitId = requestedCloudWorkspaceVisitId
+    const localBase = cloudEventLocalBaseRef.current
+    if (!getCloudEventLocalBaseState(localBase, scopeKey, visitId)) return
     queueMicrotask(() => {
       void loadCloudEventScope(
         cloudWorkspace.workspace.id,
         scopeKey,
-        requestedCloudWorkspaceVisitId,
+        visitId,
+        localBase,
         () => cancelled,
       )
     })
@@ -1800,6 +1860,7 @@ function App() {
   }
 
   const handleAppNavigation = (section: AppSection) => {
+    if (appNavigationDisabled) return
     if (activeView === 'event-editor' && blockUnsavedEditorNavigation('events')) return
     setActiveView(section)
   }
@@ -3348,6 +3409,7 @@ function App() {
       <AppShell
         activeSection="events"
         onNavigate={handleAppNavigation}
+        navigationDisabled={appNavigationDisabled}
         onBeforeSignOut={handleBeforeSignOut}
         onBeforeWorkspaceChange={handleBeforeWorkspaceChange}
       >
@@ -3369,6 +3431,7 @@ function App() {
     <AppShell
       activeSection={activeView === 'event-editor' ? 'events' : activeView}
       onNavigate={handleAppNavigation}
+      navigationDisabled={appNavigationDisabled}
       onBeforeSignOut={handleBeforeSignOut}
       onBeforeWorkspaceChange={handleBeforeWorkspaceChange}
     >
@@ -3389,11 +3452,7 @@ function App() {
           onStepChange={handleEventEditorStepChange}
           onBackToEvents={handleLeaveEventEditor}
           cloudSave={cloudWorkspace && selectedEvent ? {
-            operation: getCloudEventOperation(
-              cloudEventOperations,
-              requestedPersistenceStorageKey,
-              selectedEvent.id,
-            ),
+            operation: selectedCloudEventOperation,
             feedback: cloudEventSaveFeedback?.eventId === selectedEvent.id
               ? cloudEventSaveFeedback
               : undefined,
@@ -3419,11 +3478,7 @@ function App() {
               )}
               checkEventDeletion={handleCheckEventDeletion}
               onDeleteEvent={handleDeleteEvent}
-              isCloudSavePending={getCloudEventOperation(
-                cloudEventOperations,
-                requestedPersistenceStorageKey,
-                selectedEvent.id,
-              ) !== undefined}
+              isCloudSavePending={selectedCloudEventOperation !== undefined}
               onSave={handleSaveEventBasicInfo}
               onSaveAndNext={() => setActiveStep(2)}
               readOnly={!canEditWorkspace}

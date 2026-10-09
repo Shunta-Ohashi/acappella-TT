@@ -29,6 +29,53 @@ export type CloudEventHydrationState =
   | { scopeKey: string; visitId: string; kind: 'ready' }
   | { scopeKey: string; visitId: string; kind: 'error'; message: string }
 
+export interface CloudEventLocalBase {
+  scopeKey: string
+  visitId: string
+  state: PersistedDomainState
+}
+
+export const createCloudEventLocalBase = (
+  scopeKey: string,
+  visitId: string,
+  state: PersistedDomainState,
+): CloudEventLocalBase => ({ scopeKey, visitId, state })
+
+export const getCloudEventLocalBaseState = (
+  localBase: CloudEventLocalBase,
+  scopeKey: string,
+  visitId: string,
+): PersistedDomainState | undefined =>
+  localBase.scopeKey === scopeKey && localBase.visitId === visitId
+    ? localBase.state
+    : undefined
+
+export const synchronizeCloudEventLocalBase = ({
+  localBase,
+  activeScopeKey,
+  activeVisitId,
+  requestedScopeKey,
+  requestedVisitId,
+  state,
+}: {
+  localBase: CloudEventLocalBase
+  activeScopeKey: string
+  activeVisitId: string
+  requestedScopeKey: string
+  requestedVisitId: string
+  state: PersistedDomainState
+}): CloudEventLocalBase => {
+  if (
+    activeScopeKey !== requestedScopeKey ||
+    activeVisitId !== requestedVisitId ||
+    localBase.scopeKey !== requestedScopeKey ||
+    localBase.visitId !== requestedVisitId ||
+    localBase.state === state
+  ) return localBase
+
+  return createCloudEventLocalBase(requestedScopeKey, requestedVisitId, state)
+}
+
 export const getCloudEventHydrationView = ({
   cloudEnabled,
   persistenceScopeReady,

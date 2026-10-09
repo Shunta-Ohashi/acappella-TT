@@ -6,6 +6,7 @@ export type AppSection = 'events' | 'shared-data' | 'settings'
 interface AppShellProps {
   activeSection: AppSection
   onNavigate: (section: AppSection) => void
+  navigationDisabled?: boolean
   onBeforeSignOut?: () => boolean
   onBeforeWorkspaceChange?: () => boolean
   children: ReactNode
@@ -77,6 +78,7 @@ function CloudAccountControls({
 export function AppShell({
   activeSection,
   onNavigate,
+  navigationDisabled = false,
   onBeforeSignOut,
   onBeforeWorkspaceChange,
   children,
@@ -88,6 +90,7 @@ export function AppShell({
           <button
             type="button"
             className="top-navigation__brand"
+            disabled={navigationDisabled}
             onClick={() => onNavigate('events')}
           >
             Acappella TT
@@ -103,6 +106,7 @@ export function AppShell({
                     ? 'top-navigation__link top-navigation__link--active'
                     : 'top-navigation__link'}
                   aria-current={item.id === activeSection ? 'page' : undefined}
+                  disabled={navigationDisabled}
                   onClick={() => onNavigate(item.id)}
                 >
                   {item.label}

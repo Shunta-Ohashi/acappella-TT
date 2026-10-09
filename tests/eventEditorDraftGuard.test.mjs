@@ -13,7 +13,10 @@ import {
   hasSemanticDraftChanges,
   runEventEditorCloudSaveGuarded,
 } from '../src/ui/eventEditorDraftGuard.ts'
-import { getEventEditorInteractionState } from '../src/ui/eventEditorInteraction.ts'
+import {
+  getEventEditorInteractionState,
+  isEventEditorCloudNavigationLocked,
+} from '../src/ui/eventEditorInteraction.ts'
 
 const createHandle = (state) => ({
   hasUnsavedChanges: () => hasSemanticDraftChanges(state.current, state.saved) ||
@@ -168,6 +171,38 @@ test('temporary Cloud lockはviewer readOnlyと区別しdelete dialogをinertに
     navigationDisabled: true,
     statusLabel: 'Cloud削除中',
   })
+})
+
+test('Cloud save/delete中だけAppShell navigationをlockする', async () => {
+  assert.equal(isEventEditorCloudNavigationLocked(true, 'save'), true)
+  assert.equal(isEventEditorCloudNavigationLocked(true, 'delete'), true)
+  assert.equal(isEventEditorCloudNavigationLocked(true, undefined), false)
+  assert.equal(isEventEditorCloudNavigationLocked(false, 'save'), false)
+
+  const [appSource, appShellSource] = await Promise.all([
+    readFile(new URL('../src/App.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/components/AppShell.tsx', import.meta.url), 'utf8'),
+  ])
+  assert.equal(
+    appShellSource.match(/disabled=\{navigationDisabled\}/g)?.length,
+    2,
+  )
+  assert.match(appSource,
+    /const selectedCloudEventOperation = cloudWorkspace && selectedEvent[\s\S]*getCloudEventOperation\(/)
+  assert.match(appSource,
+    /const appNavigationDisabled = isEventEditorCloudNavigationLocked\([\s\S]*selectedCloudEventOperation/)
+  const navigationHandler = appSource.slice(
+    appSource.indexOf('const handleAppNavigation'),
+    appSource.indexOf('const handleBeforeSignOut'),
+  )
+  assert.match(navigationHandler, /if \(appNavigationDisabled\) return/)
+  assert.equal(
+    appSource.match(/navigationDisabled=\{appNavigationDisabled\}/g)?.length,
+    2,
+  )
+  assert.match(appSource, /operation: selectedCloudEventOperation/)
+  assert.match(appSource,
+    /isCloudSavePending=\{selectedCloudEventOperation !== undefined\}/)
 })
 
 test('invalid入力・追加・削除・順序変更・nested dialog変更もdirtyを維持する', () => {

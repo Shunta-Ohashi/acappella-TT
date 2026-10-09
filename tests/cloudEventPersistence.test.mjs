@@ -12,9 +12,11 @@ import {
   handleCloudEventSaveRequest,
 } from '../src/cloud/cloudEventSaveEndpoint.ts'
 import {
+  createCloudEventLocalBase,
   createCloudEventOperationRegistry,
   deleteCloudEvent,
   getCloudEventHydrationView,
+  getCloudEventLocalBaseState,
   getCloudEventOperation,
   isCloudEventCacheWriteReady,
   loadCloudWorkspaceEvents,
@@ -24,6 +26,7 @@ import {
   runExclusiveCloudEventSave,
   resolveCloudEventSaveCompletion,
   saveCloudEventFromState,
+  synchronizeCloudEventLocalBase,
 } from '../src/cloud/cloudEventLifecycle.ts'
 import {
   CLOUD_EVENT_SNAPSHOT_FORMAT,
@@ -47,6 +50,26 @@ const createEmptyState = () => ({
   paAssignments: [], dutyTypes: [], dutyAssignments: [], timetableLocks: [],
   timetableOrderConstraints: [],
 })
+
+const createLocalMasterOnlyState = (suffix) => {
+  const source = createDemoData()
+  const member = {
+    ...source.members[0],
+    id: `member-local-${suffix}`,
+    realName: `Local Member ${suffix}`,
+  }
+  const band = {
+    ...source.bands[0],
+    id: `band-local-${suffix}`,
+    name: `Local Band ${suffix}`,
+    defaultMemberIds: [member.id],
+  }
+  return {
+    ...createEmptyState(),
+    members: [member],
+    bands: [band],
+  }
+}
 
 const createDeferred = () => {
   let resolve
@@ -2418,6 +2441,177 @@ test('Workspace AからBへ再読込するとAのEvent collectionを残さない
   )
 })
 
+test('scope/visit付きlocal baseはcache適用前のA stateをB hydrateへ渡さない', () => {
+  const localA = createLocalMasterOnlyState('a')
+  const localB = createLocalMasterOnlyState('b')
+  const baseA = createCloudEventLocalBase('scope-a', 'visit-a-1', localA)
+
+  const switchingToB = synchronizeCloudEventLocalBase({
+    localBase: baseA,
+    activeScopeKey: 'scope-a',
+    activeVisitId: 'visit-a-1',
+    requestedScopeKey: 'scope-b',
+    requestedVisitId: 'visit-b-1',
+    state: localA,
+  })
+  assert.equal(switchingToB, baseA)
+  assert.equal(
+    getCloudEventLocalBaseState(switchingToB, 'scope-b', 'visit-b-1'),
+    undefined,
+  )
+
+  const baseB = createCloudEventLocalBase('scope-b', 'visit-b-1', localB)
+  assert.equal(
+    getCloudEventLocalBaseState(baseB, 'scope-b', 'visit-b-1'),
+    localB,
+  )
+  assert.equal(
+    getCloudEventLocalBaseState(baseB, 'scope-a', 'visit-a-1'),
+    undefined,
+  )
+})
+
+test('A→B hydrateはB local-only masterとB Cloud masterだけを統合する', async () => {
+  const gateway = new MemoryCloudEventGateway(['workspace-b'])
+  const repository = createCloudEventRepository(gateway)
+  const cloudB = createDemoData()
+  const cloudEvent = cloudB.events[0]
+  const saved = await saveCloudEventFromState(
+    repository,
+    'workspace-b',
+    cloudB,
+    cloudEvent.id,
+  )
+  assert.equal(saved.ok, true)
+  if (!saved.ok) return
+
+  const localA = createLocalMasterOnlyState('a')
+  const localB = createLocalMasterOnlyState('b')
+  const baseA = createCloudEventLocalBase('scope-a', 'visit-a-1', localA)
+  const baseB = createCloudEventLocalBase('scope-b', 'visit-b-1', localB)
+  assert.equal(getCloudEventLocalBaseState(baseA, 'scope-b', 'visit-b-1'), undefined)
+  const localBaseState = getCloudEventLocalBaseState(
+    baseB,
+    'scope-b',
+    'visit-b-1',
+  )
+  assert.ok(localBaseState)
+
+  const loaded = await loadCloudWorkspaceEvents(
+    repository,
+    'workspace-b',
+    localBaseState,
+  )
+  assert.equal(loaded.ok, true)
+  if (!loaded.ok) return
+
+  const memberIds = new Set(loaded.value.state.members.map(member => member.id))
+  const bandIds = new Set(loaded.value.state.bands.map(band => band.id))
+  assert.equal(memberIds.has('member-local-a'), false)
+  assert.equal(bandIds.has('band-local-a'), false)
+  assert.equal(memberIds.has('member-local-b'), true)
+  assert.equal(bandIds.has('band-local-b'), true)
+  for (const member of saved.value.snapshot.appState.members) {
+    assert.equal(memberIds.has(member.id), true)
+  }
+  for (const band of saved.value.snapshot.appState.bands) {
+    assert.equal(bandIds.has(band.id), true)
+  }
+})
+
+test('A→B→Aとempty Cloudでもvisitごとのlocal masterを分離する', async () => {
+  const emptyRepository = {
+    async loadWorkspaceEvents() {
+      return { ok: true, value: [] }
+    },
+  }
+  const bases = [
+    createCloudEventLocalBase(
+      'scope-a', 'visit-a-1', createLocalMasterOnlyState('a-1'),
+    ),
+    createCloudEventLocalBase(
+      'scope-b', 'visit-b-1', createLocalMasterOnlyState('b-1'),
+    ),
+    createCloudEventLocalBase(
+      'scope-a', 'visit-a-2', createLocalMasterOnlyState('a-2'),
+    ),
+  ]
+  const expectations = [
+    ['scope-a', 'visit-a-1', 'member-local-a-1', ['member-local-b-1', 'member-local-a-2']],
+    ['scope-b', 'visit-b-1', 'member-local-b-1', ['member-local-a-1', 'member-local-a-2']],
+    ['scope-a', 'visit-a-2', 'member-local-a-2', ['member-local-a-1', 'member-local-b-1']],
+  ]
+
+  for (const [index, [scopeKey, visitId, expectedMemberId, excludedMemberIds]] of
+    expectations.entries()) {
+    const state = getCloudEventLocalBaseState(bases[index], scopeKey, visitId)
+    assert.ok(state)
+    const loaded = await loadCloudWorkspaceEvents(emptyRepository, 'workspace', state)
+    assert.equal(loaded.ok, true)
+    if (!loaded.ok) continue
+    assert.deepEqual(loaded.value.state.members.map(member => member.id), [expectedMemberId])
+    assert.deepEqual(loaded.value.state.bands.map(band => band.id), [
+      expectedMemberId.replace('member-', 'band-'),
+    ])
+    for (const excluded of excludedMemberIds) {
+      assert.equal(loaded.value.state.members.some(member => member.id === excluded), false)
+    }
+    assert.deepEqual(loaded.value.state.events, [])
+  }
+})
+
+test('hydrate retryは同じscope/visitの最新local baseだけを再利用する', async () => {
+  const failingRepository = {
+    async loadWorkspaceEvents() {
+      return {
+        ok: false,
+        error: { code: 'SUPABASE_ERROR', message: 'network failure' },
+      }
+    },
+  }
+  const emptyRepository = {
+    async loadWorkspaceEvents() {
+      return { ok: true, value: [] }
+    },
+  }
+  const initialB = createLocalMasterOnlyState('b-initial')
+  let localBase = createCloudEventLocalBase('scope-b', 'visit-b-1', initialB)
+  const failed = await loadCloudWorkspaceEvents(
+    failingRepository,
+    'workspace-b',
+    getCloudEventLocalBaseState(localBase, 'scope-b', 'visit-b-1'),
+  )
+  assert.equal(failed.ok, false)
+
+  const currentB = createLocalMasterOnlyState('b-current')
+  localBase = synchronizeCloudEventLocalBase({
+    localBase,
+    activeScopeKey: 'scope-b',
+    activeVisitId: 'visit-b-1',
+    requestedScopeKey: 'scope-b',
+    requestedVisitId: 'visit-b-1',
+    state: currentB,
+  })
+  const retryBase = getCloudEventLocalBaseState(localBase, 'scope-b', 'visit-b-1')
+  assert.equal(retryBase, currentB)
+  const retried = await loadCloudWorkspaceEvents(
+    emptyRepository,
+    'workspace-b',
+    retryBase,
+  )
+  assert.equal(retried.ok, true)
+  assert.deepEqual(
+    retried.ok && retried.value.state.members.map(member => member.id),
+    ['member-local-b-current'],
+  )
+  assert.equal(
+    retried.ok && retried.value.state.members.some(
+      member => member.id === 'member-local-b-initial',
+    ),
+    false,
+  )
+})
+
 test('Cloud local cacheはrequested scopeのrehydrate完了後だけ書き込み可能になる', () => {
   const base = {
     cloudEnabled: true,
@@ -3082,10 +3276,24 @@ test('Appの初回起動とscope切替は同じCloud非破壊loaderへ接続す�
   )
   assert.match(rehydrateScope,
     /setCloudEventLoadState\(\{ scopeKey: storageKey, visitId, kind: 'loading' \}\)/)
+  assert.match(rehydrateScope,
+    /cloudEventLocalBaseRef\.current = createCloudEventLocalBase\([\s\S]*storageKey,[\s\S]*visitId,[\s\S]*snapshot/)
   assert.ok(
     rehydrateScope.indexOf("kind: 'loading'") <
       rehydrateScope.indexOf('setActivePersistenceStorageKey(storageKey)'),
   )
+  assert.match(rehydrateScope, /setActivePersistenceVisitId\(visitId\)/)
+
+  const cloudLoad = source.slice(
+    source.indexOf('const loadCloudEventScope'),
+    source.indexOf('const handleExportBackup'),
+  )
+  assert.match(cloudLoad,
+    /localBase: CloudEventLocalBase[\s\S]*getCloudEventLocalBaseState\(localBase, scopeKey, visitId\)/)
+  assert.match(cloudLoad,
+    /loadCloudWorkspaceEvents\([\s\S]*cloudEventRepository,[\s\S]*workspaceId,[\s\S]*localBaseState/)
+  assert.doesNotMatch(cloudLoad, /workspaceId,[\s\S]*domainState/)
+  assert.match(cloudLoad, /cloudEventLocalBaseRef\.current === localBase/)
 })
 
 test('malformed raw Cloud cacheはhydrate失敗・例外でも元文字列を保持する', async () => {
