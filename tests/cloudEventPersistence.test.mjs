@@ -497,6 +497,13 @@ test('Cloud Event snapshotはEvent-owned参照を内部解決しcross ownership�
     ['Section missing Stage', appState => {
       appState.sections[0].stageId = 'missing-stage'
     }],
+    ['Section foreign Stage', appState => {
+      const section = appState.sections[0]
+      const foreignStage = appState.stages.find(candidate =>
+        candidate.id !== section.stageId)
+      assert.ok(foreignStage)
+      section.stageId = foreignStage.id
+    }],
     ['EventMemberDay missing EventMember', appState => {
       appState.eventMemberDays[0].eventMemberId = 'missing-event-member'
     }],
@@ -505,6 +512,11 @@ test('Cloud Event snapshotはEvent-owned参照を内部解決しcross ownership�
     }],
     ['ScheduleItem missing Stage', appState => {
       appState.scheduleItems[0].stageId = 'missing-stage'
+    }],
+    ['Performance invalid Section lane', appState => {
+      const performance = appState.scheduleItems.find(item => item.kind === 'performance')
+      assert.ok(performance)
+      performance.sectionId = 'missing-section'
     }],
     ['Performance missing EventBand', appState => {
       const performance = appState.scheduleItems.find(item => item.kind === 'performance')
@@ -552,6 +564,34 @@ test('Cloud Event snapshotはEvent-owned参照を内部解決しcross ownership�
     }],
     ['Lock missing ScheduleItem', appState => {
       appState.timetableLocks[0].scheduleItemId = 'missing-schedule-item'
+    }],
+    ['Lock references Break', appState => {
+      const lock = appState.timetableLocks[0]
+      const breakItem = appState.scheduleItems.find(item => item.kind === 'break')
+      assert.ok(breakItem)
+      lock.scheduleItemId = breakItem.id
+      lock.stageId = breakItem.stageId
+      lock.sectionId = breakItem.sectionId
+    }],
+    ['Lock Stage mismatch', appState => {
+      const lock = appState.timetableLocks[0]
+      const item = appState.scheduleItems.find(candidate =>
+        candidate.id === lock.scheduleItemId)
+      const foreignStage = appState.stages.find(candidate =>
+        candidate.id !== item?.stageId)
+      assert.ok(item)
+      assert.ok(foreignStage)
+      lock.stageId = foreignStage.id
+    }],
+    ['Lock Section mismatch', appState => {
+      const lock = appState.timetableLocks[0]
+      const item = appState.scheduleItems.find(candidate =>
+        candidate.id === lock.scheduleItemId)
+      const foreignSection = appState.sections.find(candidate =>
+        candidate.stageId === item?.stageId && candidate.id !== item?.sectionId)
+      assert.ok(item)
+      assert.ok(foreignSection)
+      lock.sectionId = foreignSection.id
     }],
     ['OrderConstraint missing EventBand', appState => {
       appState.timetableOrderConstraints[0].eventBandIds[0] = 'missing-event-band'

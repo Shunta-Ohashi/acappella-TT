@@ -63,6 +63,9 @@ The catalog check covers:
   Workspace-membership columns/defaults, PK/FK/CHECK constraints, update
   function/triggers, index, RLS policies, and effective table/column grants;
 - migration-history table and old/new/later versions;
+- migration history contains only the repository versions understood by this
+  one-time helper, contains no duplicate versions, and records later Cloud
+  Event migrations as a legal version-order prefix;
 - all `cloud_events` columns, primary/foreign/check constraints, including the
   strict Persistence V5 / snapshot V1 shape check;
 - metadata functions and triggers, indexes, RLS, policies, and effective client
@@ -88,7 +91,7 @@ other catalog mismatch is an unknown state and must not be repaired.
 | B — old only | Old version only; catalog matches the known final old schema and all recorded later migrations | After approval, mark new applied, re-inspect, then mark old reverted. Do not execute the base SQL again. |
 | C — new only | New version only; catalog matches | Already migrated. No history write. |
 | D — both | Both versions; catalog matches | Treat as an interrupted repair. Review the change record and use the explicit resume command to remove only the old history row. |
-| E — unknown | Table/history missing on only one side, weaker/unknown CHECK, missing object, unexpected privilege, or other mismatch | Stop with non-zero status. Investigate or restore; do not hide the difference with history repair. |
+| E — unknown | Table/history missing on only one side, unknown or duplicate history version, non-prefix later history, weaker/unknown CHECK, missing object, unexpected privilege, or other mismatch | Stop with non-zero status. Investigate or restore; do not hide the difference with history repair. |
 
 ## Approved apply and interrupted-resume paths
 

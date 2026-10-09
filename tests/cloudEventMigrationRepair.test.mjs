@@ -4,6 +4,7 @@ import test from 'node:test'
 
 import {
   analyzeCloudEventMigrationInspection,
+  KNOWN_CLOUD_EVENT_MIGRATION_VERSIONS,
   NEW_CLOUD_EVENT_MIGRATION_VERSION,
   OLD_CLOUD_EVENT_MIGRATION_VERSION,
   REQUIRED_AUTH_WORKSPACE_SCHEMA_CHECKS,
@@ -125,6 +126,80 @@ test('migration history判定はfresh・旧のみ・新のみ・両方を明示�
   assert.deepEqual(both.repairCommands, [
     { version: OLD_CLOUD_EVENT_MIGRATION_VERSION, status: 'reverted' },
   ])
+
+  assert.equal(analyzeCloudEventMigrationInspection(createInspection({
+    versions: [AUTH_VERSION],
+    cloudEventsExists: false,
+  })).kind, 'fresh')
+})
+
+test('migration historyは既知versionだけを一意なlater prefixとして受け入れる', () => {
+  assert.deepEqual(KNOWN_CLOUD_EVENT_MIGRATION_VERSIONS, [
+    AUTH_VERSION,
+    OLD_CLOUD_EVENT_MIGRATION_VERSION,
+    NEW_CLOUD_EVENT_MIGRATION_VERSION,
+    ...Object.values(LATER_VERSIONS),
+  ])
+
+  for (const [label, baseVersions] of [
+    ['old-only', createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION)],
+    ['new-only', createKnownVersions(NEW_CLOUD_EVENT_MIGRATION_VERSION)],
+    ['both', [
+      ...createKnownVersions(NEW_CLOUD_EVENT_MIGRATION_VERSION),
+      OLD_CLOUD_EVENT_MIGRATION_VERSION,
+    ]],
+  ]) {
+    const inspection = createInspection({
+      versions: [...baseVersions, '20990101000000'],
+    })
+    const result = analyzeCloudEventMigrationInspection(inspection)
+    assert.equal(result.kind, 'unknown', label)
+    assert.match(result.mismatches.join('\n'), /unknown migration history versions/i)
+  }
+
+  for (const [label, versions] of [
+    ['old base', [
+      ...createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
+      OLD_CLOUD_EVENT_MIGRATION_VERSION,
+    ]],
+    ['new base', [
+      ...createKnownVersions(NEW_CLOUD_EVENT_MIGRATION_VERSION),
+      NEW_CLOUD_EVENT_MIGRATION_VERSION,
+    ]],
+    ['known non-base', [
+      ...createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
+      LATER_VERSIONS.authorizedPage,
+    ]],
+  ]) {
+    const result = analyzeCloudEventMigrationInspection(createInspection({ versions }))
+    assert.equal(result.kind, 'unknown', label)
+    assert.match(result.mismatches.join('\n'), /duplicate migration history versions/i)
+  }
+
+  for (const [label, versions] of [
+    ['rpcOnlySave without predecessors', [
+      AUTH_VERSION,
+      OLD_CLOUD_EVENT_MIGRATION_VERSION,
+      LATER_VERSIONS.rpcOnlySave,
+    ]],
+    ['authorizedPage missing rpcOnlyDelete', [
+      AUTH_VERSION,
+      OLD_CLOUD_EVENT_MIGRATION_VERSION,
+      LATER_VERSIONS.authorizedDelete,
+      LATER_VERSIONS.authorizedPage,
+    ]],
+    ['authorizedSave missing authorizedPage', [
+      AUTH_VERSION,
+      OLD_CLOUD_EVENT_MIGRATION_VERSION,
+      LATER_VERSIONS.authorizedDelete,
+      LATER_VERSIONS.rpcOnlyDelete,
+      LATER_VERSIONS.authorizedSave,
+    ]],
+  ]) {
+    const result = analyzeCloudEventMigrationInspection(createInspection({ versions }))
+    assert.equal(result.kind, 'unknown', label)
+    assert.match(result.mismatches.join('\n'), /later migration history is not a prefix/i)
+  }
 })
 
 test('履歴とcatalogが一致しない状態はrepairせず停止する', () => {
@@ -288,6 +363,14 @@ test('危険・不明なcatalogではapplyとresumeのrepairを一度も呼ば�
   })
   unsafeSaveExecute.laterSchema.authenticatedSaveExecute = true
   cases.push({ inspection: unsafeSaveExecute, resume: false })
+
+  const unknownHistory = createInspection({
+    versions: [
+      ...createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
+      '20990101000000',
+    ],
+  })
+  cases.push({ inspection: unknownHistory, resume: false })
 
   for (const { inspection, resume } of cases) {
     let repairCalls = 0
@@ -481,7 +564,9 @@ test('各repair直前の再inspectionは初回mutation前のschema・data・hist
   const cases = [
     ['schema', inspection => { inspection.baseSchemaChecks.columns = false }],
     ['data', inspection => { inspection.cloudData.digest = 'changed-before-repair' }],
-    ['history', inspection => { inspection.appliedVersions.push('20990101000000') }],
+    ['unknown history', inspection => {
+      inspection.appliedVersions.push('20990101000000')
+    }],
     ['target', inspection => { inspection.target.database = 'other-database' }],
   ]
   for (const [label, mutate] of cases) {
@@ -750,4 +835,10 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   assert.match(dbReadme, /cloudEventMigrationCatalogRegression\.mjs/)
   assert.ok(migrationFiles.includes('20261008110000_cloud_event_persistence.sql'))
   assert.ok(!migrationFiles.includes('20261007120000_cloud_event_persistence.sql'))
+  assert.deepEqual(
+    migrationFiles.map(file => file.split('_')[0]).sort(),
+    KNOWN_CLOUD_EVENT_MIGRATION_VERSIONS
+      .filter(version => version !== OLD_CLOUD_EVENT_MIGRATION_VERSION)
+      .sort(),
+  )
 })

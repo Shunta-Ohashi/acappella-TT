@@ -15,6 +15,19 @@ const LATER_MIGRATIONS = {
   rpcOnlySave: '20261008160000',
 }
 
+const LATER_MIGRATION_VERSIONS = Object.values(LATER_MIGRATIONS)
+
+export const KNOWN_CLOUD_EVENT_MIGRATION_VERSIONS = [
+  AUTH_WORKSPACE_MIGRATION_VERSION,
+  OLD_CLOUD_EVENT_MIGRATION_VERSION,
+  NEW_CLOUD_EVENT_MIGRATION_VERSION,
+  ...LATER_MIGRATION_VERSIONS,
+]
+
+const KNOWN_CLOUD_EVENT_MIGRATION_VERSION_SET = new Set(
+  KNOWN_CLOUD_EVENT_MIGRATION_VERSIONS,
+)
+
 export const REQUIRED_BASE_SCHEMA_CHECKS = [
   'columns',
   'primaryKey',
@@ -136,6 +149,18 @@ export const analyzeCloudEventMigrationInspection = inspection => {
     }
   }
 
+  const versionCounts = new Map()
+  for (const version of inspection.appliedVersions) {
+    versionCounts.set(version, (versionCounts.get(version) ?? 0) + 1)
+  }
+  const duplicateVersions = [...versionCounts]
+    .filter(([, count]) => count > 1)
+    .map(([version]) => version)
+    .sort()
+  const unknownVersions = [...versionCounts.keys()]
+    .filter(version => !KNOWN_CLOUD_EVENT_MIGRATION_VERSION_SET.has(version))
+    .sort()
+
   const applied = new Set(inspection.appliedVersions)
   const oldApplied = applied.has(OLD_CLOUD_EVENT_MIGRATION_VERSION)
   const newApplied = applied.has(NEW_CLOUD_EVENT_MIGRATION_VERSION)
@@ -143,6 +168,22 @@ export const analyzeCloudEventMigrationInspection = inspection => {
     ([name, version]) => [name, applied.has(version)],
   ))
   const mismatches = []
+
+  if (duplicateVersions.length > 0) {
+    mismatches.push(`duplicate migration history versions: ${duplicateVersions.join(', ')}`)
+  }
+  if (unknownVersions.length > 0) {
+    mismatches.push(`unknown migration history versions: ${unknownVersions.join(', ')}`)
+  }
+
+  let missingEarlierLaterMigration = false
+  for (const version of LATER_MIGRATION_VERSIONS) {
+    if (!applied.has(version)) {
+      missingEarlierLaterMigration = true
+    } else if (missingEarlierLaterMigration) {
+      mismatches.push(`later migration history is not a prefix at version ${version}`)
+    }
+  }
 
   if (!inspection.historyTableExists && inspection.appliedVersions.length > 0) {
     mismatches.push('migration history rows were reported without a history table')
