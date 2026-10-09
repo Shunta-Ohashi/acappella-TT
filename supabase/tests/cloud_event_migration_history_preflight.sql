@@ -491,10 +491,9 @@ auth_workspace_checks as (
         select 1
         from auth_workspace_tables
         join pg_catalog.pg_attribute on pg_attribute.attrelid = auth_workspace_tables.oid
-        cross join lateral pg_catalog.aclexplode(
-          coalesce(pg_attribute.attacl, '{}'::aclitem[])
-        ) as column_acl
+        cross join lateral pg_catalog.aclexplode(pg_attribute.attacl) as column_acl
         where pg_attribute.attnum > 0 and not pg_attribute.attisdropped
+          and pg_attribute.attacl is not null
           and column_acl.grantee = 0
       )
   ) as value
@@ -816,10 +815,9 @@ later_schema as (
         select 1
         from cloud_table
         join pg_catalog.pg_attribute on pg_attribute.attrelid = cloud_table.oid
-        cross join lateral pg_catalog.aclexplode(
-          coalesce(pg_attribute.attacl, '{}'::aclitem[])
-        ) as column_acl
+        cross join lateral pg_catalog.aclexplode(pg_attribute.attacl) as column_acl
         where pg_attribute.attnum > 0 and not pg_attribute.attisdropped
+          and pg_attribute.attacl is not null
           and column_acl.grantee = 0
           and column_acl.privilege_type in ('INSERT', 'UPDATE')
       )

@@ -790,6 +790,26 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   assert.match(preflightSql, /authorized_page_function\.prosecdef/i)
   assert.match(preflightSql, /authorized_save_function\.prosecdef/i)
   assert.match(preflightSql, /aclexplode\s*\(coalesce\([\s\S]*acldefault\('f'/i)
+  assert.doesNotMatch(
+    preflightSql,
+    /aclexplode\s*\(\s*coalesce\(pg_attribute\.attacl,\s*'\{\}'::aclitem\[\]\s*\)/i,
+  )
+  const publicColumnWriteStart = preflightSql.indexOf("'publicColumnWrite'")
+  const publicColumnWriteEnd = preflightSql.indexOf('\n  ) as value', publicColumnWriteStart)
+  assert.ok(publicColumnWriteStart >= 0 && publicColumnWriteEnd > publicColumnWriteStart)
+  const publicColumnWriteSql = preflightSql.slice(
+    publicColumnWriteStart,
+    publicColumnWriteEnd,
+  )
+  assert.match(
+    publicColumnWriteSql,
+    /aclexplode\s*\(pg_attribute\.attacl\)[\s\S]*pg_attribute\.attacl is not null/i,
+  )
+  assert.match(publicColumnWriteSql, /column_acl\.grantee = 0/i)
+  assert.match(
+    publicColumnWriteSql,
+    /column_acl\.privilege_type in \('INSERT', 'UPDATE'\)/i,
+  )
   assert.match(fixtureSql, /migration-history-event/)
   assert.match(catalogRegressionSql, /begin;[\s\S]*\\ir cloud_event_migration_history_preflight\.sql[\s\S]*rollback;/i)
   for (const scenario of [
