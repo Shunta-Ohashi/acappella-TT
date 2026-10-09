@@ -939,6 +939,33 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   assert.match(guide, /20261007120000[\s\S]*--status reverted/)
   assert.match(guide, /--db-url/)
   assert.match(guide, /--dry-run/)
+  const disposableExercise = guide.slice(
+    guide.indexOf('## Disposable-database exercise'),
+  )
+  assert.match(disposableExercise, /Supabase CLI 2\.120\.0/)
+  const temporaryCopy = disposableExercise.indexOf(
+    'Copy-Item -LiteralPath $currentBase -Destination $temporaryOldBase',
+  )
+  const markOldApplied = disposableExercise.indexOf(
+    'migration repair 20261007120000 --status applied',
+  )
+  const removeTemporaryCopy = disposableExercise.indexOf(
+    'Remove-Item -LiteralPath $temporaryOldBase -Force',
+  )
+  const markCurrentReverted = disposableExercise.indexOf(
+    'migration repair 20261008110000 --status reverted',
+  )
+  assert.ok(temporaryCopy >= 0)
+  assert.ok(markOldApplied > temporaryCopy)
+  assert.ok(removeTemporaryCopy > markOldApplied)
+  assert.ok(markCurrentReverted > removeTemporaryCopy)
+  assert.match(
+    disposableExercise,
+    /git status --short --[\s\S]*20261007120000_cloud_event_persistence\.sql/,
+  )
+  assert.match(disposableExercise, /Never create it during production or staging repair/i)
+  assert.match(disposableExercise, /never commit or[\s\S]*push it/i)
+  assert.match(disposableExercise, /repairCommands` list/)
   assert.match(dbReadme, /cloud-event-migration-history-repair\.md/)
   assert.match(dbReadme, /cloudEventMigrationCatalogRegression\.mjs/)
   assert.ok(migrationFiles.includes('20261008110000_cloud_event_persistence.sql'))

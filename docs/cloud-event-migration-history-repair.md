@@ -185,18 +185,87 @@ roles automatically.
 ## Disposable-database exercise
 
 This is an integration exercise, not proof about a production project. On a
-disposable Supabase-compatible database only:
+disposable Supabase-compatible database only. Supabase CLI 2.120.0 was observed
+to require a matching local migration filename when marking an otherwise absent
+version as applied. This temporary file is needed only to manufacture an
+`old-only` history for the exercise; future CLI versions may behave differently.
 
-1. Apply `20261007_auth_workspace.sql` and the current base SQL. The current
-   base is the same SQL as the known final old file before rename.
-2. Mark `20261007` and `20261007120000` applied using official CLI repair with an
-   explicit disposable `--db-url`; do not mark the new version.
-3. Apply `supabase/tests/cloud_event_migration_history_fixture.sql` to create one
+1. In a disposable validation worktree, reset or apply migrations through
+   `20261008110000_cloud_event_persistence.sql`. This creates the current base
+   schema and initially records the current version as applied. The current base
+   SQL is the same as the known final old file before rename.
+2. Before marking the old version applied, create an old-filename copy in that
+   validation worktree only. Refuse to overwrite an existing path, and delete
+   the copy immediately after the CLI command even if the command fails:
+
+   ```powershell
+   $currentBase = '.\supabase\migrations\20261008110000_cloud_event_persistence.sql'
+   $temporaryOldBase = '.\supabase\migrations\20261007120000_cloud_event_persistence.sql'
+
+   if (Test-Path -LiteralPath $temporaryOldBase) {
+     throw "Temporary old migration already exists: $temporaryOldBase"
+   }
+
+   Copy-Item -LiteralPath $currentBase -Destination $temporaryOldBase
+   try {
+     supabase migration repair 20261007120000 --status applied `
+       --db-url $env:ACAPPELLA_TT_MIGRATION_REPAIR_DB_URL
+     if ($LASTEXITCODE -ne 0) {
+       throw 'Failed to mark the disposable old migration version applied.'
+     }
+   }
+   finally {
+     Remove-Item -LiteralPath $temporaryOldBase -Force
+   }
+
+   if (Test-Path -LiteralPath $temporaryOldBase) {
+     throw "Temporary old migration was not removed: $temporaryOldBase"
+   }
+   ```
+
+3. With the temporary file already removed, mark the current version reverted
+   and confirm that migration history is now `old-only`:
+
+   ```powershell
+   supabase migration repair 20261008110000 --status reverted `
+     --db-url $env:ACAPPELLA_TT_MIGRATION_REPAIR_DB_URL
+   if ($LASTEXITCODE -ne 0) {
+     throw 'Failed to mark the disposable current migration version reverted.'
+   }
+
+   supabase migration list `
+     --db-url $env:ACAPPELLA_TT_MIGRATION_REPAIR_DB_URL
+   git status --short -- `
+     supabase/migrations/20261007120000_cloud_event_persistence.sql
+   ```
+
+   The final command must not report the temporary old migration. Files such as
+   an untracked `supabase/config.toml` created by `supabase init` are separate
+   validation-worktree artifacts; review them independently, but never mistake
+   them for permission to retain the old migration file.
+4. Apply `supabase/tests/cloud_event_migration_history_fixture.sql` to create one
    Event row with known snapshot/revision/timestamps.
-4. Run check mode, record row count/digest, run approved apply mode, then run
-   check mode again.
-5. Require state C and the identical row count/digest. Also query the fixture row
-   directly if required by the change record.
+5. Run helper check mode and require `state: old-only` with no mismatches. Record
+   the row count/digest, run approved apply mode, and require this plan order:
+   `20261008110000` applied, then `20261007120000` reverted.
+6. Run check mode again and require `state: new-only`, an empty
+   `repairCommands` list, and the identical row count/digest. Query the fixture
+   directly and confirm its Event row and revision `1` remain unchanged.
+7. Run the completion `supabase db push --dry-run` command. It must not propose
+   the base migration again; for a database stopped at the base migration, only
+   these later migrations should remain pending:
+
+   - `20261008120000_cloud_event_authorized_delete.sql`
+   - `20261008130000_cloud_event_rpc_only_delete.sql`
+   - `20261008140000_cloud_event_authorized_page.sql`
+   - `20261008150000_cloud_event_authorized_save.sql`
+   - `20261008160000_cloud_event_rpc_only_save.sql`
+
+The temporary old migration is exclusively an artificial disposable-exercise
+fixture. Never create it during production or staging repair, never commit or
+push it, and do not permanently restore the renamed migration to this
+repository. The `finally` cleanup and the scoped `git status --short` check are
+mandatory before considering the exercise complete.
 
 Mock tests cover the state machine and interruption behavior. This disposable
 exercise is the real CLI/PostgreSQL check and is not considered passed unless
