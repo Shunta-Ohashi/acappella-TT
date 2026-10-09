@@ -22,6 +22,7 @@ import {
   runExclusiveCloudEventDelete,
   runExclusiveCloudEventDeletion,
   runExclusiveCloudEventSave,
+  resolveCloudEventSaveCompletion,
   saveCloudEventFromState,
 } from '../src/cloud/cloudEventLifecycle.ts'
 import {
@@ -65,10 +66,11 @@ const compareUtf8Bytes = (left, right) => Buffer.compare(
 const createHydrationHarness = (
   initialState,
   scopeKey = 'scope-a',
+  visitId = 'visit-a',
 ) => {
   let domainState = structuredClone(initialState)
   let latestDomainState = domainState
-  let hydration = { scopeKey: '', kind: 'loading' }
+  let hydration = { scopeKey: '', visitId: '', kind: 'loading' }
   let storageValue = 'existing-cache'
   let storageSetCalls = 0
   let storageRemoveCalls = 0
@@ -81,6 +83,7 @@ const createHydrationHarness = (
       cloudEnabled: true,
       persistenceScopeReady: true,
       requestedScopeKey: scopeKey,
+      requestedVisitId: visitId,
       hydration,
     })) {
       storageSetCalls += 1
@@ -92,6 +95,7 @@ const createHydrationHarness = (
     run(load, isCurrent = () => true) {
       return runCloudEventHydrationAttempt({
         scopeKey,
+        visitId,
         isCurrent,
         load,
         apply: loaded => {
@@ -144,6 +148,7 @@ class RawCacheStorage {
 const createRawCacheHydrationHarness = ({
   storage,
   scopeKey,
+  visitId = 'visit-a',
   fallback = createDemoData(),
 }) => {
   let domainState = loadPersistedStateForScope({
@@ -153,12 +158,13 @@ const createRawCacheHydrationHarness = ({
     storageKey: scopeKey,
   })
   let latestDomainState = domainState
-  let hydration = { scopeKey: '', kind: 'loading' }
+  let hydration = { scopeKey: '', visitId: '', kind: 'loading' }
 
   return {
     run(load, isCurrent = () => true) {
       return runCloudEventHydrationAttempt({
         scopeKey,
+        visitId,
         isCurrent,
         load,
         apply: loaded => {
@@ -171,6 +177,7 @@ const createRawCacheHydrationHarness = ({
             cloudEnabled: true,
             persistenceScopeReady: true,
             requestedScopeKey: scopeKey,
+            requestedVisitId: visitId,
             hydration,
           })) {
             savePersistedState(domainState, storage, scopeKey)
@@ -1297,8 +1304,10 @@ test('Cloud hydrateはMap変換前にlocal Member/Bandのduplicate IDをfail clo
       cloudEnabled: true,
       persistenceScopeReady: true,
       requestedScopeKey: 'scope-a',
+      requestedVisitId: 'visit-a',
       hydration: {
         scopeKey: 'scope-a',
+        visitId: 'visit-a',
         kind: 'error',
         message: !loaded.ok ? loaded.error.message : '',
       },
@@ -1858,6 +1867,133 @@ test('server commit後のsave応答失敗でもCloud deleteを必ず試行して
   assert.equal(gateway.rows.has(`workspace-a:${eventId}`), false)
 })
 
+test('Cloud save開始後に対象Eventが変わった場合は古い成功をstaleとして扱う', async () => {
+  const state = createDemoData()
+  const eventId = state.events[0].id
+  const deferred = createDeferred()
+  let sentSnapshot
+  const pending = saveCloudEventFromState({
+    async saveEvent(workspaceId, snapshot) {
+      sentSnapshot = structuredClone(snapshot)
+      await deferred.promise
+      return {
+        ok: true,
+        value: {
+          workspaceId,
+          eventId,
+          eventName: snapshot.appState.events[0].name,
+          revision: 1,
+          createdAt: '2026-10-10T00:00:00.000Z',
+          updatedAt: '2026-10-10T00:00:00.000Z',
+          snapshot,
+        },
+      }
+    },
+  }, 'workspace-a', state, eventId)
+  assert.ok(sentSnapshot)
+  const latestState = structuredClone(state)
+  latestState.events.find(event => event.id === eventId).name = '保存開始後の名前'
+  deferred.resolve()
+
+  const result = await pending
+  const completion = resolveCloudEventSaveCompletion({
+    result,
+    currentState: latestState,
+    eventId,
+    isVisitCurrent: true,
+  })
+  assert.equal(completion.kind, 'stale')
+  assert.equal(
+    latestState.events.find(event => event.id === eventId)?.name,
+    '保存開始後の名前',
+  )
+})
+
+test('Cloud save完了判定はsnapshot closureだけを比較しvisit・failureもfail closedに扱う', async () => {
+  const state = createDemoData()
+  const eventId = state.events[0].id
+  const saved = await saveCloudEventFromState({
+    async saveEvent(workspaceId, snapshot) {
+      return {
+        ok: true,
+        value: {
+          workspaceId,
+          eventId,
+          eventName: snapshot.appState.events[0].name,
+          revision: 2,
+          createdAt: '2026-10-10T00:00:00.000Z',
+          updatedAt: '2026-10-10T00:01:00.000Z',
+          snapshot,
+        },
+      }
+    },
+  }, 'workspace-a', state, eventId)
+  assert.equal(saved.ok, true)
+  assert.ok(saved.ok && saved.value.snapshot.appState.members.length > 0)
+  assert.ok(saved.ok && saved.value.snapshot.appState.bands.length > 0)
+
+  assert.equal(resolveCloudEventSaveCompletion({
+    result: saved,
+    currentState: structuredClone(state),
+    eventId,
+    isVisitCurrent: true,
+  }).kind, 'saved')
+
+  const unrelatedEventEdit = structuredClone(state)
+  const unrelatedEvent = unrelatedEventEdit.events.find(event => event.id !== eventId)
+  assert.ok(unrelatedEvent)
+  unrelatedEvent.name = '無関係なEventだけを更新'
+  assert.equal(resolveCloudEventSaveCompletion({
+    result: saved,
+    currentState: unrelatedEventEdit,
+    eventId,
+    isVisitCurrent: true,
+  }).kind, 'saved')
+
+  const referencedMemberEdit = structuredClone(state)
+  const memberId = saved.ok && saved.value.snapshot.appState.members[0].id
+  const member = referencedMemberEdit.members.find(candidate => candidate.id === memberId)
+  assert.ok(member)
+  member.realName = `${member.realName} 更新`
+  assert.equal(resolveCloudEventSaveCompletion({
+    result: saved,
+    currentState: referencedMemberEdit,
+    eventId,
+    isVisitCurrent: true,
+  }).kind, 'stale')
+
+  const referencedBandEdit = structuredClone(state)
+  const bandId = saved.ok && saved.value.snapshot.appState.bands[0].id
+  const band = referencedBandEdit.bands.find(candidate => candidate.id === bandId)
+  assert.ok(band)
+  band.name = `${band.name} 更新`
+  assert.equal(resolveCloudEventSaveCompletion({
+    result: saved,
+    currentState: referencedBandEdit,
+    eventId,
+    isVisitCurrent: true,
+  }).kind, 'stale')
+
+  assert.equal(resolveCloudEventSaveCompletion({
+    result: saved,
+    currentState: state,
+    eventId,
+    isVisitCurrent: false,
+  }).kind, 'ignored')
+  assert.deepEqual(resolveCloudEventSaveCompletion({
+    result: {
+      ok: false,
+      error: { code: 'SUPABASE_ERROR', message: 'network' },
+    },
+    currentState: state,
+    eventId,
+    isVisitCurrent: true,
+  }), {
+    kind: 'failed',
+    error: { code: 'SUPABASE_ERROR', message: 'network' },
+  })
+})
+
 test('Cloud deleteはRPCが認可済みと明示したrow不存在だけをidempotent successとして扱う', async () => {
   const gateway = new MemoryCloudEventGateway(['workspace-a'])
   const repository = createCloudEventRepository(gateway)
@@ -2287,27 +2423,30 @@ test('Cloud local cacheはrequested scopeのrehydrate完了後だけ書き込み
     cloudEnabled: true,
     persistenceScopeReady: true,
     requestedScopeKey: 'scope-b',
+    requestedVisitId: 'visit-b',
   }
   assert.equal(isCloudEventCacheWriteReady({
     ...base,
-    hydration: { scopeKey: 'scope-a', kind: 'ready' },
+    hydration: { scopeKey: 'scope-a', visitId: 'visit-a', kind: 'ready' },
   }), false)
   assert.equal(isCloudEventCacheWriteReady({
     ...base,
-    hydration: { scopeKey: 'scope-b', kind: 'loading' },
+    hydration: { scopeKey: 'scope-b', visitId: 'visit-b', kind: 'loading' },
   }), false)
   assert.equal(isCloudEventCacheWriteReady({
     ...base,
-    hydration: { scopeKey: 'scope-b', kind: 'error', message: 'failed' },
+    hydration: {
+      scopeKey: 'scope-b', visitId: 'visit-b', kind: 'error', message: 'failed',
+    },
   }), false)
   assert.equal(isCloudEventCacheWriteReady({
     ...base,
-    hydration: { scopeKey: 'scope-b', kind: 'ready' },
+    hydration: { scopeKey: 'scope-b', visitId: 'visit-b', kind: 'ready' },
   }), true)
   assert.equal(isCloudEventCacheWriteReady({
     ...base,
     cloudEnabled: false,
-    hydration: { scopeKey: 'other', kind: 'loading' },
+    hydration: { scopeKey: 'other', visitId: 'other-visit', kind: 'loading' },
   }), true)
 })
 
@@ -2316,33 +2455,36 @@ test('Cloud hydrate表示はcurrent scopeの成功時だけdomain contentを表�
     cloudEnabled: true,
     persistenceScopeReady: true,
     requestedScopeKey: 'scope-b',
+    requestedVisitId: 'visit-b',
   }
 
   assert.equal(getCloudEventHydrationView({
     ...base,
-    hydration: { scopeKey: 'scope-a', kind: 'ready' },
+    hydration: { scopeKey: 'scope-a', visitId: 'visit-a', kind: 'ready' },
   }), 'loading')
   assert.equal(getCloudEventHydrationView({
     ...base,
-    hydration: { scopeKey: 'scope-b', kind: 'loading' },
+    hydration: { scopeKey: 'scope-b', visitId: 'visit-b', kind: 'loading' },
   }), 'loading')
   assert.equal(getCloudEventHydrationView({
     ...base,
-    hydration: { scopeKey: 'scope-b', kind: 'error', message: 'failed' },
+    hydration: {
+      scopeKey: 'scope-b', visitId: 'visit-b', kind: 'error', message: 'failed',
+    },
   }), 'error')
   assert.equal(getCloudEventHydrationView({
     ...base,
-    hydration: { scopeKey: 'scope-b', kind: 'ready' },
+    hydration: { scopeKey: 'scope-b', visitId: 'visit-b', kind: 'ready' },
   }), 'content')
   assert.equal(getCloudEventHydrationView({
     ...base,
     persistenceScopeReady: false,
-    hydration: { scopeKey: 'scope-b', kind: 'ready' },
+    hydration: { scopeKey: 'scope-b', visitId: 'visit-b', kind: 'ready' },
   }), 'loading')
   assert.equal(getCloudEventHydrationView({
     ...base,
     cloudEnabled: false,
-    hydration: { scopeKey: 'other', kind: 'loading' },
+    hydration: { scopeKey: 'other', visitId: 'other-visit', kind: 'loading' },
   }), 'content')
 })
 
@@ -2359,6 +2501,7 @@ test('Event別の並行操作は一方の完了で他方の占有を解除しな
     registry,
     scopeKey: 'scope-a',
     eventId: 'event-a',
+    visitId: 'visit-a',
     operation: () => eventA.promise,
     onChange,
   })
@@ -2366,6 +2509,7 @@ test('Event別の並行操作は一方の完了で他方の占有を解除しな
     registry,
     scopeKey: 'scope-a',
     eventId: 'event-b',
+    visitId: 'visit-a',
     operation: () => eventB.promise,
     onChange,
   })
@@ -2393,12 +2537,14 @@ test('A/B save中にAだけ完了してもBのsaving状態を維持する', asyn
     registry,
     scopeKey: 'scope-a',
     eventId: 'event-a',
+    visitId: 'visit-a',
     operation: () => eventA.promise,
   })
   const savingB = runExclusiveCloudEventSave({
     registry,
     scopeKey: 'scope-a',
     eventId: 'event-b',
+    visitId: 'visit-a',
     operation: () => eventB.promise,
   })
 
@@ -2420,12 +2566,14 @@ test('同一Eventの重複saveを開始せずfailureでも必ずregistryを解�
     registry,
     scopeKey: 'scope-a',
     eventId: 'event-a',
+    visitId: 'visit-a-1',
     operation: () => deferred.promise,
   })
   const duplicate = await runExclusiveCloudEventSave({
     registry,
     scopeKey: 'scope-a',
     eventId: 'event-a',
+    visitId: 'visit-a-2',
     operation: async () => {
       duplicateRequestCount += 1
       return 'duplicate'
@@ -2441,6 +2589,79 @@ test('同一Eventの重複saveを開始せずfailureでも必ずregistryを解�
   assert.equal(registry.get('scope-a', 'event-a'), undefined)
 })
 
+test('A→B→Aの旧visit save完了はsuccess扱いせず完了までは新visit saveを排他する', async () => {
+  const state = createDemoData()
+  const eventId = state.events[0].id
+  const snapshot = createSnapshot(state, eventId)
+  const savedResult = {
+    ok: true,
+    value: {
+      record: {
+        workspaceId: 'workspace-a',
+        eventId,
+        eventName: snapshot.appState.events[0].name,
+        revision: 1,
+        createdAt: '2026-10-10T00:00:00.000Z',
+        updatedAt: '2026-10-10T00:00:00.000Z',
+        snapshot,
+      },
+      snapshot,
+    },
+  }
+  const registry = createCloudEventOperationRegistry()
+  const deferred = createDeferred()
+  let activeVisit = 'visit-a-1'
+  let secondVisitCalls = 0
+  const oldVisitSave = runExclusiveCloudEventSave({
+    registry,
+    scopeKey: 'scope-a',
+    eventId,
+    visitId: 'visit-a-1',
+    operation: lease => {
+      assert.equal(lease.visitId, 'visit-a-1')
+      return deferred.promise
+    },
+  })
+
+  activeVisit = 'visit-b-1'
+  activeVisit = 'visit-a-2'
+  const blocked = await runExclusiveCloudEventSave({
+    registry,
+    scopeKey: 'scope-a',
+    eventId,
+    visitId: 'visit-a-2',
+    operation: async () => {
+      secondVisitCalls += 1
+      return savedResult
+    },
+  })
+  assert.deepEqual(blocked, { started: false })
+  assert.equal(secondVisitCalls, 0)
+
+  deferred.resolve(savedResult)
+  const completed = await oldVisitSave
+  assert.equal(completed.started, true)
+  assert.equal(completed.started && resolveCloudEventSaveCompletion({
+    result: completed.value,
+    currentState: state,
+    eventId,
+    isVisitCurrent: activeVisit === 'visit-a-1',
+  }).kind, 'ignored')
+
+  const retry = await runExclusiveCloudEventSave({
+    registry,
+    scopeKey: 'scope-a',
+    eventId,
+    visitId: 'visit-a-2',
+    operation: async () => {
+      secondVisitCalls += 1
+      return savedResult
+    },
+  })
+  assert.equal(retry.started, true)
+  assert.equal(secondVisitCalls, 1)
+})
+
 test('save/deleteは同じEventで両方向に排他し、別Event・別scopeをblockしない', async () => {
   for (const firstKind of ['save', 'delete']) {
     const registry = createCloudEventOperationRegistry()
@@ -2452,6 +2673,7 @@ test('save/deleteは同じEventで両方向に排他し、別Event・別scopeを
       registry,
       scopeKey: 'scope-a',
       eventId: 'event-a',
+      visitId: 'visit-a-1',
       operation: () => pending.promise,
     })
     let sameEventCalls = 0
@@ -2459,12 +2681,14 @@ test('save/deleteは同じEventで両方向に排他し、別Event・別scopeを
       registry,
       scopeKey: 'scope-a',
       eventId: 'event-a',
+      visitId: 'visit-a-2',
       operation: async () => { sameEventCalls += 1 },
     })
     const blockedDelete = await runExclusiveCloudEventDelete({
       registry,
       scopeKey: 'scope-a',
       eventId: 'event-a',
+      visitId: 'visit-a-2',
       operation: async () => { sameEventCalls += 1 },
     })
     assert.deepEqual(blockedSave, { started: false })
@@ -2475,12 +2699,14 @@ test('save/deleteは同じEventで両方向に排他し、別Event・別scopeを
       registry,
       scopeKey: 'scope-a',
       eventId: 'event-b',
+      visitId: 'visit-a-1',
       operation: async () => 'deleted-b',
     })).started, true)
     assert.equal((await runExclusiveCloudEventSave({
       registry,
       scopeKey: 'scope-b',
       eventId: 'event-a',
+      visitId: 'visit-b-1',
       operation: async () => 'saved-other-scope',
     })).started, true)
 
@@ -2500,6 +2726,7 @@ test('operation leaseはsuccess・failure result・throwで解除され再試行
       registry,
       scopeKey: 'scope-a',
       eventId: 'event-a',
+      visitId: 'visit-a',
       operation,
     })
     assert.equal(result.started, true)
@@ -2509,6 +2736,7 @@ test('operation leaseはsuccess・failure result・throwで解除され再試行
     registry,
     scopeKey: 'scope-a',
     eventId: 'event-a',
+    visitId: 'visit-a',
     operation: async () => { throw new Error('network') },
   }), /network/)
   assert.equal(registry.get('scope-a', 'event-a'), undefined)
@@ -2516,17 +2744,18 @@ test('operation leaseはsuccess・failure result・throwで解除され再試行
     registry,
     scopeKey: 'scope-a',
     eventId: 'event-a',
+    visitId: 'visit-a',
     operation: async () => 'retry succeeded',
   })).started, true)
 })
 
 test('token付きleaseは古いcleanupで新しい占有や別scopeを解除しない', () => {
   const registry = createCloudEventOperationRegistry()
-  const oldLease = registry.tryStart('scope-a', 'event-a', 'delete')
+  const oldLease = registry.tryStart('scope-a', 'event-a', 'delete', 'visit-a-1')
   assert.ok(oldLease)
   registry.finish(oldLease)
-  const currentLease = registry.tryStart('scope-a', 'event-a', 'save')
-  const otherScopeLease = registry.tryStart('scope-b', 'event-a', 'delete')
+  const currentLease = registry.tryStart('scope-a', 'event-a', 'save', 'visit-a-2')
+  const otherScopeLease = registry.tryStart('scope-b', 'event-a', 'delete', 'visit-b-1')
   assert.ok(currentLease)
   assert.ok(otherScopeLease)
 
@@ -2548,6 +2777,7 @@ test('認可済みdeleted/already_absentだけがlocal cascadeし、失敗時は
     const completed = await runExclusiveCloudEventDeletion({
       registry,
       scopeKey: 'scope-a',
+      visitId: 'visit-a',
       workspaceId: 'workspace-a',
       eventId,
       repository: {
@@ -2559,7 +2789,7 @@ test('認可済みdeleted/already_absentだけがlocal cascadeし、失敗時は
         },
         async saveEvent() { saveCalls += 1 },
       },
-      isScopeCurrent: () => true,
+      isVisitCurrent: () => true,
       getLatestState: () => state,
       commit: result => {
         commitCalls += 1
@@ -2583,6 +2813,7 @@ test('認可済みdeleted/already_absentだけがlocal cascadeし、失敗時は
     const failed = await runExclusiveCloudEventDeletion({
       registry,
       scopeKey: 'scope-a',
+      visitId: 'visit-a',
       workspaceId: 'workspace-a',
       eventId,
       repository: {
@@ -2590,7 +2821,7 @@ test('認可済みdeleted/already_absentだけがlocal cascadeし、失敗時は
           return { ok: false, error: { code, message: code } }
         },
       },
-      isScopeCurrent: () => true,
+      isVisitCurrent: () => true,
       getLatestState: () => state,
       commit: () => { commitCalls += 1 },
     })
@@ -2605,6 +2836,7 @@ test('認可済みdeleted/already_absentだけがlocal cascadeし、失敗時は
     const retry = await runExclusiveCloudEventDeletion({
       registry,
       scopeKey: 'scope-a',
+      visitId: 'visit-a',
       workspaceId: 'workspace-a',
       eventId,
       repository: {
@@ -2619,7 +2851,7 @@ test('認可済みdeleted/already_absentだけがlocal cascadeし、失敗時は
           }
         },
       },
-      isScopeCurrent: () => true,
+      isVisitCurrent: () => true,
       getLatestState: () => state,
       commit: () => { commitCalls += 1 },
     })
@@ -2640,12 +2872,13 @@ test('App利用delete経路は待機中saveを防ぎ、最新stateへcascadeし�
   const deletion = runExclusiveCloudEventDeletion({
     registry,
     scopeKey: 'scope-a',
+    visitId: 'visit-a',
     workspaceId: 'workspace-a',
     eventId: deletedEventId,
     repository: {
       async deleteEvent() { return deferredDelete.promise },
     },
-    isScopeCurrent: () => true,
+    isVisitCurrent: () => true,
     getLatestState: () => latestState,
     commit: result => {
       latestState = {
@@ -2661,6 +2894,7 @@ test('App利用delete経路は待機中saveを防ぎ、最新stateへcascadeし�
     registry,
     scopeKey: 'scope-a',
     eventId: deletedEventId,
+    visitId: 'visit-a-2',
     operation: async () => { saveCalls += 1 },
   })
   assert.deepEqual(saveDuringDelete, { started: false })
@@ -2702,17 +2936,20 @@ test('scope切替後の遅延delete結果はcommitせず別scopeの占有も解�
   const deletion = runExclusiveCloudEventDeletion({
     registry,
     scopeKey: 'scope-a',
+    visitId: 'visit-a',
     workspaceId: 'workspace-a',
     eventId,
     repository: {
       async deleteEvent() { return deferredDelete.promise },
     },
-    isScopeCurrent: () => activeScope === 'scope-a',
+    isVisitCurrent: () => activeScope === 'scope-a',
     getLatestState: () => state,
     commit: () => { commitCalls += 1 },
   })
   activeScope = 'scope-b'
-  const scopeBLease = registry.tryStart('scope-b', eventId, 'save')
+  const scopeBLease = registry.tryStart(
+    'scope-b', eventId, 'save', 'visit-b',
+  )
   assert.ok(scopeBLease)
   deferredDelete.resolve({
     ok: true,
@@ -2732,6 +2969,73 @@ test('scope切替後の遅延delete結果はcommitせず別scopeの占有も解�
   assert.equal(registry.get('scope-a', eventId), undefined)
   assert.equal(registry.get('scope-b', eventId), 'save')
   registry.finish(scopeBLease)
+})
+
+test('A→B→Aで再利用したscopeへ旧visitのdelete結果をcommitせず完了までは新visitも排他する', async () => {
+  const registry = createCloudEventOperationRegistry()
+  const deferredDelete = createDeferred()
+  const state = createDemoData()
+  const eventId = state.events[0].id
+  let activeVisit = 'visit-a-1'
+  let commitCalls = 0
+  let newVisitSaveCalls = 0
+  const deletion = runExclusiveCloudEventDeletion({
+    registry,
+    scopeKey: 'scope-a',
+    visitId: 'visit-a-1',
+    workspaceId: 'workspace-a',
+    eventId,
+    repository: {
+      async deleteEvent() { return deferredDelete.promise },
+    },
+    isVisitCurrent: visitId => activeVisit === visitId,
+    getLatestState: () => state,
+    commit: () => { commitCalls += 1 },
+  })
+
+  activeVisit = 'visit-b-1'
+  activeVisit = 'visit-a-2'
+  const blockedInSecondVisit = await runExclusiveCloudEventSave({
+    registry,
+    scopeKey: 'scope-a',
+    eventId,
+    visitId: 'visit-a-2',
+    operation: async () => {
+      newVisitSaveCalls += 1
+      return 'saved'
+    },
+  })
+  assert.deepEqual(blockedInSecondVisit, { started: false })
+  assert.equal(newVisitSaveCalls, 0)
+
+  deferredDelete.resolve({
+    ok: true,
+    value: {
+      status: 'deleted',
+      workspaceId: 'workspace-a',
+      eventId,
+    },
+  })
+  assert.deepEqual(await deletion, {
+    started: true,
+    value: { ok: false, reason: 'CLOUD_DELETE_FAILED' },
+  })
+  assert.equal(commitCalls, 0)
+  assert.equal(state.events.some(event => event.id === eventId), true)
+
+  const retry = await runExclusiveCloudEventSave({
+    registry,
+    scopeKey: 'scope-a',
+    eventId,
+    visitId: 'visit-a-2',
+    operation: async lease => {
+      assert.equal(lease.visitId, 'visit-a-2')
+      newVisitSaveCalls += 1
+      return 'saved'
+    },
+  })
+  assert.deepEqual(retry, { started: true, value: 'saved' })
+  assert.equal(newVisitSaveCalls, 1)
 })
 
 test('Cloud load失敗はbase stateを変更せず別Event stateを返さない', async () => {
@@ -2777,7 +3081,7 @@ test('Appの初回起動とscope切替は同じCloud非破壊loaderへ接続す�
     source.indexOf('const persistenceScopeReady'),
   )
   assert.match(rehydrateScope,
-    /setCloudEventLoadState\(\{ scopeKey: storageKey, kind: 'loading' \}\)/)
+    /setCloudEventLoadState\(\{ scopeKey: storageKey, visitId, kind: 'loading' \}\)/)
   assert.ok(
     rehydrateScope.indexOf("kind: 'loading'") <
       rehydrateScope.indexOf('setActivePersistenceStorageKey(storageKey)'),
@@ -2815,6 +3119,7 @@ test('malformed raw Cloud cacheはhydrate失敗・例外でも元文字列を保
       cloudEnabled: true,
       persistenceScopeReady: true,
       requestedScopeKey: scopeKey,
+      requestedVisitId: 'visit-a',
       hydration: harness.hydration,
     }), 'error')
   }
@@ -2991,6 +3296,7 @@ test('App hydration完了処理は全failureでdomain・latest ref・storageを�
     assert.deepEqual(harness.latestDomainState, before)
     assert.deepEqual(harness.hydration, {
       scopeKey: 'scope-a',
+      visitId: 'visit-a',
       kind: 'error',
       message: failure.message,
     })
@@ -3001,6 +3307,7 @@ test('App hydration完了処理は全failureでdomain・latest ref・storageを�
       cloudEnabled: true,
       persistenceScopeReady: true,
       requestedScopeKey: 'scope-a',
+      requestedVisitId: 'visit-a',
       hydration: harness.hydration,
     }), false)
   }
@@ -3023,19 +3330,24 @@ test('App hydration完了処理はunexpected rejectionをerrorへ変換しcancel
 
   for (const settle of ['resolve', 'reject']) {
     const deferred = createDeferred()
-    let visibleHydration = { scopeKey: 'scope-b', kind: 'loading' }
+    let visibleHydration = {
+      scopeKey: 'scope-b', visitId: 'visit-b', kind: 'loading',
+    }
     let applyCalls = 0
     let current = true
     const pending = runCloudEventHydrationAttempt({
       scopeKey: 'scope-a',
+      visitId: 'visit-a',
       isCurrent: () => current,
       load: () => deferred.promise,
       apply: () => { applyCalls += 1 },
       onStateChange: state => { visibleHydration = state },
     })
-    assert.deepEqual(visibleHydration, { scopeKey: 'scope-a', kind: 'loading' })
+    assert.deepEqual(visibleHydration, {
+      scopeKey: 'scope-a', visitId: 'visit-a', kind: 'loading',
+    })
     current = false
-    visibleHydration = { scopeKey: 'scope-b', kind: 'ready' }
+    visibleHydration = { scopeKey: 'scope-b', visitId: 'visit-b', kind: 'ready' }
     if (settle === 'resolve') {
       deferred.resolve({ ok: true, value: { state: createEmptyState(), records: [] } })
     } else {
@@ -3043,8 +3355,57 @@ test('App hydration完了処理はunexpected rejectionをerrorへ変換しcancel
     }
     assert.deepEqual(await pending, { kind: 'ignored' })
     assert.equal(applyCalls, 0)
-    assert.deepEqual(visibleHydration, { scopeKey: 'scope-b', kind: 'ready' })
+    assert.deepEqual(visibleHydration, {
+      scopeKey: 'scope-b', visitId: 'visit-b', kind: 'ready',
+    })
   }
+})
+
+test('A→B→Aでscope keyが同じでも旧visitのhydrate結果を現在visitへ適用しない', async () => {
+  const deferred = createDeferred()
+  let currentVisit = 'visit-a-1'
+  let visibleHydration = {
+    scopeKey: 'scope-a', visitId: currentVisit, kind: 'loading',
+  }
+  let applyCalls = 0
+  const pending = runCloudEventHydrationAttempt({
+    scopeKey: 'scope-a',
+    visitId: 'visit-a-1',
+    isCurrent: () => currentVisit === 'visit-a-1',
+    load: () => deferred.promise,
+    apply: () => { applyCalls += 1 },
+    onStateChange: state => { visibleHydration = state },
+  })
+
+  currentVisit = 'visit-b-1'
+  currentVisit = 'visit-a-2'
+  visibleHydration = {
+    scopeKey: 'scope-a', visitId: 'visit-a-2', kind: 'ready',
+  }
+  deferred.resolve({
+    ok: true,
+    value: { state: createEmptyState(), records: [] },
+  })
+
+  assert.deepEqual(await pending, { kind: 'ignored' })
+  assert.equal(applyCalls, 0)
+  assert.deepEqual(visibleHydration, {
+    scopeKey: 'scope-a', visitId: 'visit-a-2', kind: 'ready',
+  })
+  assert.equal(getCloudEventHydrationView({
+    cloudEnabled: true,
+    persistenceScopeReady: true,
+    requestedScopeKey: 'scope-a',
+    requestedVisitId: 'visit-a-2',
+    hydration: { scopeKey: 'scope-a', visitId: 'visit-a-1', kind: 'ready' },
+  }), 'loading')
+  assert.equal(isCloudEventCacheWriteReady({
+    cloudEnabled: true,
+    persistenceScopeReady: true,
+    requestedScopeKey: 'scope-a',
+    requestedVisitId: 'visit-a-2',
+    hydration: { scopeKey: 'scope-a', visitId: 'visit-a-1', kind: 'ready' },
+  }), false)
 })
 
 test('App hydration retryは失敗前stateを再利用し、成功した空Workspaceだけを適用する', async () => {

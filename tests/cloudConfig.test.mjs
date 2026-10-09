@@ -7,7 +7,9 @@ import { resolveCloudConfig } from '../src/cloud/cloudConfig.ts'
 import {
   canEditCloudWorkspace,
   createCloudAppBoundaryKey,
+  createCloudWorkspaceVisitId,
   isWorkspaceRole,
+  selectCloudWorkspaceVisit,
   sortCloudWorkspaceAccesses,
 } from '../src/cloud/cloudWorkspace.ts'
 
@@ -126,6 +128,66 @@ test('Cloud App identityはWorkspace切替では変わらずuser・auth revision
   )
   assert.notEqual(createCloudAppBoundaryKey(4, 'user-a'), current)
   assert.notEqual(createCloudAppBoundaryKey(3, 'user-b'), current)
+})
+
+test('Workspace visit identityはA→B→Aでscope key再利用時も各visitを区別する', () => {
+  const authRevision = 3
+  const userId = 'user-a'
+  const reloadToken = 0
+  const initialVisit = createCloudWorkspaceVisitId(
+    authRevision,
+    userId,
+    reloadToken,
+    0,
+  )
+  const workspaceB = selectCloudWorkspaceVisit({
+    current: undefined,
+    authRevision,
+    currentWorkspaceId: 'workspace-a',
+    nextWorkspaceId: 'workspace-b',
+  })
+  assert.deepEqual(workspaceB, {
+    authRevision,
+    workspaceId: 'workspace-b',
+    visitRevision: 1,
+  })
+  const workspaceAAgain = selectCloudWorkspaceVisit({
+    current: workspaceB,
+    authRevision,
+    currentWorkspaceId: 'workspace-b',
+    nextWorkspaceId: 'workspace-a',
+  })
+  assert.deepEqual(workspaceAAgain, {
+    authRevision,
+    workspaceId: 'workspace-a',
+    visitRevision: 2,
+  })
+  const secondVisit = createCloudWorkspaceVisitId(
+    authRevision,
+    userId,
+    reloadToken,
+    workspaceB.visitRevision,
+  )
+  const thirdVisit = createCloudWorkspaceVisitId(
+    authRevision,
+    userId,
+    reloadToken,
+    workspaceAAgain.visitRevision,
+  )
+
+  assert.notEqual(initialVisit, secondVisit)
+  assert.notEqual(initialVisit, thirdVisit)
+  assert.notEqual(secondVisit, thirdVisit)
+  assert.equal(selectCloudWorkspaceVisit({
+    current: workspaceAAgain,
+    authRevision,
+    currentWorkspaceId: 'workspace-a',
+    nextWorkspaceId: 'workspace-a',
+  }), workspaceAAgain)
+  assert.equal(
+    createCloudAppBoundaryKey(authRevision, userId),
+    createCloudAppBoundaryKey(authRevision, userId),
+  )
 })
 
 test('Auth Workspace migrationはprofilesとworkspacesのupdated_atだけをUPDATE時に更新する', async () => {

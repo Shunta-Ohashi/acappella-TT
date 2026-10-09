@@ -294,6 +294,7 @@ import {
   runCloudEventHydrationAttempt,
   runExclusiveCloudEventDeletion,
   runExclusiveCloudEventSave,
+  resolveCloudEventSaveCompletion,
   saveCloudEventFromState,
   type CloudEventHydrationState,
 } from './cloud/cloudEventLifecycle.ts'
@@ -369,6 +370,7 @@ function App() {
         workspaceId: cloudWorkspace.workspace.id,
       })
     : STORAGE_KEY
+  const requestedCloudWorkspaceVisitId = cloudWorkspace?.workspaceVisitId ?? ''
   const [activePersistenceStorageKey, setActivePersistenceStorageKey] = useState(
     requestedPersistenceStorageKey,
   )
@@ -405,8 +407,8 @@ function App() {
   } | null>(null)
   const [cloudEventLoadState, setCloudEventLoadState] = useState<CloudEventHydrationState>(
     cloudWorkspace
-      ? { scopeKey: '', kind: 'loading' }
-      : { scopeKey: STORAGE_KEY, kind: 'ready' },
+      ? { scopeKey: '', visitId: '', kind: 'loading' }
+      : { scopeKey: STORAGE_KEY, visitId: '', kind: 'ready' },
   )
   const [cloudEventReloadToken, setCloudEventReloadToken] = useState(0)
   const [cloudEventOperationRegistry] = useState(createCloudEventOperationRegistry)
@@ -422,11 +424,13 @@ function App() {
     message: string
   } | null>(null)
   const currentPersistenceScopeRef = useRef(requestedPersistenceStorageKey)
+  const currentCloudWorkspaceVisitRef = useRef(requestedCloudWorkspaceVisitId)
   const [breakDuration, setBreakDuration] = useState<number>(10)
 
   useLayoutEffect(() => {
     currentPersistenceScopeRef.current = requestedPersistenceStorageKey
-  }, [requestedPersistenceStorageKey])
+    currentCloudWorkspaceVisitRef.current = requestedCloudWorkspaceVisitId
+  }, [requestedCloudWorkspaceVisitId, requestedPersistenceStorageKey])
 
   // ==================== 📦 各種状態（State）の管理 ====================
 
@@ -665,11 +669,12 @@ function App() {
   const rehydratePersistenceScope = useEffectEvent((
     snapshot: PersistedAppStateV5,
     storageKey: string,
+    visitId: string,
   ) => {
     // Invalidate a previous visit's ready state before this scope becomes
     // active, including A -> B -> A transitions that reuse the same key.
     if (cloudWorkspace) {
-      setCloudEventLoadState({ scopeKey: storageKey, kind: 'loading' })
+      setCloudEventLoadState({ scopeKey: storageKey, visitId, kind: 'loading' })
     }
     const nextEventId = snapshot.events.some(event => event.id === selectedEventId)
       ? selectedEventId
@@ -725,12 +730,17 @@ function App() {
         createFallback: createDemoData,
         cloudEnabled: Boolean(cloudWorkspace),
         storageKey: requestedPersistenceStorageKey,
-      }), requestedPersistenceStorageKey)
+      }), requestedPersistenceStorageKey, requestedCloudWorkspaceVisitId)
     })
     return () => {
       cancelled = true
     }
-  }, [activePersistenceStorageKey, cloudWorkspace, requestedPersistenceStorageKey])
+  }, [
+    activePersistenceStorageKey,
+    cloudWorkspace,
+    requestedCloudWorkspaceVisitId,
+    requestedPersistenceStorageKey,
+  ])
 
   const persistenceScopeReady = isPersistenceScopeReady(
     activePersistenceStorageKey,
@@ -740,6 +750,7 @@ function App() {
     cloudEnabled: Boolean(cloudWorkspace),
     persistenceScopeReady,
     requestedScopeKey: requestedPersistenceStorageKey,
+    requestedVisitId: requestedCloudWorkspaceVisitId,
     hydration: cloudEventLoadState,
   })
 
@@ -889,13 +900,16 @@ function App() {
   const loadCloudEventScope = useEffectEvent(async (
     workspaceId: string,
     scopeKey: string,
+    visitId: string,
     isCancelled: () => boolean,
   ) => {
     if (!cloudEventRepository) return
     await runCloudEventHydrationAttempt({
       scopeKey,
+      visitId,
       isCurrent: () => !isCancelled() &&
-        currentPersistenceScopeRef.current === scopeKey,
+        currentPersistenceScopeRef.current === scopeKey &&
+        currentCloudWorkspaceVisitRef.current === visitId,
       load: () => loadCloudWorkspaceEvents(
         cloudEventRepository,
         workspaceId,
@@ -919,6 +933,7 @@ function App() {
       void loadCloudEventScope(
         cloudWorkspace.workspace.id,
         scopeKey,
+        requestedCloudWorkspaceVisitId,
         () => cancelled,
       )
     })
@@ -930,6 +945,7 @@ function App() {
     cloudEventRepository,
     cloudWorkspace,
     persistenceScopeReady,
+    requestedCloudWorkspaceVisitId,
     requestedPersistenceStorageKey,
   ])
 
@@ -1205,8 +1221,12 @@ function App() {
     if (!cloudWorkspace || !cloudEventRepository) return true
     if (!canEditWorkspace) return false
     const scopeKey = requestedPersistenceStorageKey
+    const visitId = cloudWorkspace.workspaceVisitId
+    const isVisitCurrent = () =>
+      currentPersistenceScopeRef.current === scopeKey &&
+      currentCloudWorkspaceVisitRef.current === visitId
     if (
-      currentPersistenceScopeRef.current !== scopeKey ||
+      !isVisitCurrent() ||
       !latestDomainStateRef.current.events.some(event => event.id === eventId)
     ) return false
     setCloudEventSaveFeedback(null)
@@ -1216,6 +1236,7 @@ function App() {
         registry: cloudEventOperationRegistry,
         scopeKey,
         eventId,
+        visitId,
         operation: () => saveCloudEventFromState(
           cloudEventRepository,
           cloudWorkspace.workspace.id,
@@ -1225,7 +1246,7 @@ function App() {
         onChange: setCloudEventOperations,
       })
     } catch {
-      if (currentPersistenceScopeRef.current === scopeKey) {
+      if (isVisitCurrent()) {
         setCloudEventSaveFeedback({
           eventId,
           kind: 'error',
@@ -1235,7 +1256,7 @@ function App() {
       return false
     }
     if (!execution.started) {
-      if (currentPersistenceScopeRef.current === scopeKey) {
+      if (isVisitCurrent()) {
         const operation = cloudEventOperationRegistry.get(scopeKey, eventId)
         setCloudEventSaveFeedback({
           eventId,
@@ -1247,21 +1268,33 @@ function App() {
       }
       return false
     }
-    if (currentPersistenceScopeRef.current !== scopeKey) return false
-
-    const result = execution.value
-    if (!result.ok) {
+    const completion = resolveCloudEventSaveCompletion({
+      result: execution.value,
+      currentState: latestDomainStateRef.current,
+      eventId,
+      isVisitCurrent: isVisitCurrent(),
+    })
+    if (completion.kind === 'ignored') return false
+    if (completion.kind === 'failed') {
       setCloudEventSaveFeedback({
         eventId,
         kind: 'error',
-        message: result.error.message,
+        message: completion.error.message,
+      })
+      return false
+    }
+    if (completion.kind === 'stale') {
+      setCloudEventSaveFeedback({
+        eventId,
+        kind: 'error',
+        message: 'Cloud保存中に編集内容が変更されました。Cloudには保存開始時点の内容が保存されています。最新内容を保存するには、もう一度Cloudへ保存してください。',
       })
       return false
     }
     setCloudEventSaveFeedback({
       eventId,
       kind: 'success',
-      message: `Cloudへ保存しました（revision ${result.value.revision}）。`,
+      message: `Cloudへ保存しました（revision ${completion.record.revision}）。`,
     })
     return true
   }
@@ -1364,6 +1397,7 @@ function App() {
     const initialResult = createEventDeletion(getEventDeletionInput(eventId))
     if (!initialResult.ok) return initialResult
     const scopeKey = requestedPersistenceStorageKey
+    const visitId = cloudWorkspace?.workspaceVisitId ?? ''
 
     let result = initialResult
     if (cloudWorkspace && cloudEventRepository) {
@@ -1371,10 +1405,13 @@ function App() {
         const execution = await runExclusiveCloudEventDeletion({
           registry: cloudEventOperationRegistry,
           scopeKey,
+          visitId,
           workspaceId: cloudWorkspace.workspace.id,
           eventId,
           repository: cloudEventRepository,
-          isScopeCurrent: () => currentPersistenceScopeRef.current === scopeKey,
+          isVisitCurrent: operationVisitId =>
+            currentPersistenceScopeRef.current === scopeKey &&
+            currentCloudWorkspaceVisitRef.current === operationVisitId,
           getLatestState: () => latestDomainStateRef.current,
           commit: commitEventDeletion,
           onChange: setCloudEventOperations,
@@ -3294,6 +3331,7 @@ function App() {
     cloudEnabled: Boolean(cloudWorkspace),
     persistenceScopeReady,
     requestedScopeKey: requestedPersistenceStorageKey,
+    requestedVisitId: requestedCloudWorkspaceVisitId,
     hydration: cloudEventLoadState,
   })
 
