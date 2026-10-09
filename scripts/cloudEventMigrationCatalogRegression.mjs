@@ -42,6 +42,8 @@ const scenarios = [
   ['save_anon_execute', result => result.laterSchema.anonSaveExecute],
   ['save_authenticated_execute', result => result.laterSchema.authenticatedSaveExecute],
   ['save_anon_inherited_execute', result => result.laterSchema.anonSaveExecute],
+  ['save_authenticated_inherited_execute', result =>
+    result.laterSchema.authenticatedSaveExecute],
   ['save_service_role_execute_missing', result => !result.laterSchema.serviceRoleSaveExecute],
   ['save_service_role_missing', result => !result.laterSchema.saveFunctionPermissionCatalogReady],
   ['required_role_missing', result => !result.laterSchema.permissionCatalogReady],

@@ -158,7 +158,8 @@ begin
     when 'save_authenticated_execute' then
       grant execute on function
         public.save_cloud_event_validated(uuid, uuid, jsonb) to authenticated;
-    when 'save_anon_inherited_execute' then
+    when 'save_anon_inherited_execute',
+      'save_authenticated_inherited_execute' then
       if exists (
         select 1 from pg_catalog.pg_roles
         where rolname = 'cloud_event_save_regression_inherited'
@@ -169,7 +170,11 @@ begin
       grant execute on function
         public.save_cloud_event_validated(uuid, uuid, jsonb)
         to cloud_event_save_regression_inherited;
-      grant cloud_event_save_regression_inherited to anon;
+      if scenario = 'save_anon_inherited_execute' then
+        grant cloud_event_save_regression_inherited to anon;
+      else
+        grant cloud_event_save_regression_inherited to authenticated;
+      end if;
     when 'save_service_role_execute_missing' then
       revoke execute on function
         public.save_cloud_event_validated(uuid, uuid, jsonb) from service_role;

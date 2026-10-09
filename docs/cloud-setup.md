@@ -107,16 +107,16 @@ supabase functions serve save-cloud-event
 
 安全な更新順は次のとおりです。
 
-1. `...150000_cloud_event_authorized_save.sql`まで適用してbackend専用RPCを作成
+1. `...150000_cloud_event_authorized_save.sql`まで適用してbackend専用RPCを作成し、backend-only EXECUTE contractの検査を通す
 2. `save-cloud-event` Functionを配備し、認証・保存integrationを確認
 3. 新frontendを配備
 4. 配備前から開かれているtabを含むlegacy clientをdrainし、必要に応じて利用者へreloadを求める
-5. `...160000_cloud_event_rpc_only_save.sql`を適用して旧clientの直接INSERT/UPDATEを取り消す
+5. `...160000_cloud_event_rpc_only_save.sql`を適用して旧clientの直接INSERT/UPDATEを取り消し、backend-only EXECUTE contractを再検査する
 6. 新frontendからEdge Function経由の保存を再確認する
 
 直接write取消し後、旧frontendの直接upsertは意図どおり失敗します。途中状態を長期間残さず、専用環境で一連の順序を検証してからproductionへ反映してください。fresh DBでは全migration適用後にFunctionとfrontendを揃えて公開します。
 
-`...160000`はtable/columnへのdirect GRANTをREVOKEした後、`anon`と`authenticated`に継承経由の実効INSERT/UPDATE権限が残っていないことも検査します。残存権限があればfail closedするため、operatorがrole membership、inherited GRANT、custom roleを修正してからmigrationを再実行してください。
+`...150000`はRPC作成・直接REVOKE・`service_role`へのGRANT後に、save RPCが`SECURITY DEFINER`であり、`service_role`だけが実効EXECUTEを持ち、`PUBLIC` / `anon` / `authenticated`が実行できないことを検査します。`...160000`もfinal cutover前に同じbackend-only EXECUTE contractを再検査し、さらにtable/columnへのdirect GRANTをREVOKEした後、`anon`と`authenticated`に継承経由の実効INSERT/UPDATE権限が残っていないことを検査します。残存権限があればfail closedするため、operatorがinherited EXECUTE/WRITE GRANT、role membership、custom role、function default privilegesを修正してからmigrationを再実行してください。migrationは共有role membershipを自動変更しません。
 
 ## 9. Security確認
 

@@ -67,8 +67,14 @@ never a production repair or migration command.
 The RPC-only DELETE and save migrations perform the same fail-closed check
 after revoking direct browser grants. If `anon` or `authenticated` still has an
 effective DELETE or INSERT/UPDATE privilege through a custom role, migration
-application must fail. Repair the inherited GRANT or role membership explicitly
-and rerun; do not grant browser access merely to make a fixture pass.
+application must fail. The authorized-save migration also verifies its
+backend-only RPC immediately after creation, and the RPC-only save migration
+rechecks it: SECURITY DEFINER and effective service-role EXECUTE are required,
+while PUBLIC and effective anon/authenticated EXECUTE are forbidden. Catalog
+regressions cover inherited EXECUTE through custom roles for both browser roles.
+Repair inherited GRANTs, role memberships/custom roles, or unsafe function
+default privileges explicitly and rerun; do not grant browser access merely to
+make a fixture pass.
 
 The concurrency tests use a bounded polling loop only to observe the second
 connection waiting on a PostgreSQL lock; ordering is established by the RPC call

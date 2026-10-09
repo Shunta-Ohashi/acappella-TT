@@ -173,9 +173,14 @@ fresh environment instead applies the complete migration chain before exposing
 the current Function/frontend to users; it does not use this upgrade sequence.
 Both revoke migrations also fail closed after their direct REVOKEs when `anon`
 or `authenticated` retains effective DELETE or INSERT/UPDATE privileges through
-an inherited custom role. Inspect and remove the relevant role membership or
-inherited GRANT, then rerun the migration; the migrations do not alter shared
-custom roles automatically.
+an inherited custom role. The authorized-save migration additionally verifies
+the backend-only save RPC as soon as it is created, and the RPC-only save
+migration verifies it again before the final cutover: the function must remain
+`SECURITY DEFINER`, only `service_role` may have effective EXECUTE, and PUBLIC,
+`anon`, and `authenticated` must not. Inspect and remove inherited EXECUTE/write
+GRANTs, unsafe role memberships or custom roles, and unsafe function default
+privileges, then rerun the migration; migrations do not alter shared custom
+roles automatically.
 
 ## Disposable-database exercise
 

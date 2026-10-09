@@ -834,6 +834,7 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'save_anon_execute',
     'save_authenticated_execute',
     'save_anon_inherited_execute',
+    'save_authenticated_inherited_execute',
     'save_service_role_execute_missing',
     'save_service_role_missing',
   ]) {

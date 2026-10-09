@@ -3754,6 +3754,32 @@ test('authorized save migrationはbackend専用RPCとclient直接write取消し�
   assert.match(sql, /snapshot_event_name := p_event_snapshot #>> '\{appState,events,0,name\}'/i)
   assert.match(sql, /revoke all on function public\.save_cloud_event_validated\(uuid, uuid, jsonb\)[\s\S]*from authenticated/i)
   assert.match(sql, /grant execute on function public\.save_cloud_event_validated\(uuid, uuid, jsonb\)[\s\S]*to service_role/i)
+  for (const migrationSql of [sql, revokeSql]) {
+    assert.match(migrationSql, /do \$cloud_event_save_execute_privilege_guard\$/i)
+    assert.match(migrationSql,
+      /to_regprocedure\(\s*'public\.save_cloud_event_validated\(uuid,uuid,jsonb\)'/i)
+    assert.match(migrationSql, /from pg_catalog\.pg_roles where rolname = 'authenticated'/i)
+    assert.match(migrationSql, /from pg_catalog\.pg_roles where rolname = 'anon'/i)
+    assert.match(migrationSql, /from pg_catalog\.pg_roles where rolname = 'service_role'/i)
+    assert.match(migrationSql, /pg_proc\.prosecdef/i)
+    assert.match(migrationSql,
+      /aclexplode\(coalesce\([\s\S]*acldefault\('f', pg_proc\.proowner\)/i)
+    assert.match(migrationSql,
+      /function_acl\.grantee = 0[\s\S]*function_acl\.privilege_type = 'EXECUTE'/i)
+    assert.match(migrationSql,
+      /has_function_privilege\(\s*authenticated_role_oid,[\s\S]*'EXECUTE'/i)
+    assert.match(migrationSql,
+      /has_function_privilege\(\s*anon_role_oid,[\s\S]*'EXECUTE'/i)
+    assert.match(migrationSql,
+      /not has_function_privilege\(\s*service_role_oid,[\s\S]*'EXECUTE'/i)
+    assert.match(migrationSql, /using errcode = '42501'/i)
+    assert.match(migrationSql,
+      /inherited EXECUTE grants or custom-role memberships[\s\S]*default ACLs/i)
+  }
+  assert.ok(
+    sql.indexOf('grant execute on function public.save_cloud_event_validated') <
+      sql.indexOf('do $cloud_event_save_execute_privilege_guard$'),
+  )
   for (const role of ['public', 'anon', 'authenticated']) {
     assert.match(revokeSql, new RegExp(
       `revoke insert, update on table public\\.cloud_events from ${role}`,
@@ -3782,6 +3808,10 @@ test('authorized save migrationはbackend専用RPCとclient直接write取消し�
   assert.ok(
     revokeSql.lastIndexOf('revoke update (') <
       revokeSql.indexOf('do $cloud_event_write_privilege_guard$'),
+  )
+  assert.ok(
+    revokeSql.indexOf('do $cloud_event_write_privilege_guard$') <
+      revokeSql.indexOf('do $cloud_event_save_execute_privilege_guard$'),
   )
 
   const saveGateway = repositorySource.slice(
