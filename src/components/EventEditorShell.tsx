@@ -3,6 +3,7 @@ import {
   eventEditorSteps,
   type EventEditorStepId,
 } from '../ui/eventEditorSteps'
+import { getEventEditorInteractionState } from '../ui/eventEditorInteraction'
 
 export type { EventEditorStepId } from '../ui/eventEditorSteps'
 
@@ -31,18 +32,26 @@ export function EventEditorShell({
 }: EventEditorShellProps) {
   const currentStep = eventEditorSteps.find((step) => step.id === activeStep)
   const hasImplementedContent = [1, 2, 3, 4, 5, 6, 7, 8].includes(activeStep)
+  const interaction = getEventEditorInteractionState({
+    readOnly,
+    cloudOperation: cloudSave?.operation,
+  })
 
   if (!currentStep) {
     throw new Error(`Event editor step not found: ${activeStep}`)
   }
 
   return (
-    <main className={readOnly ? 'event-editor event-editor--read-only' : 'event-editor'}>
+    <main
+      className={readOnly ? 'event-editor event-editor--read-only' : 'event-editor'}
+      aria-busy={interaction.contentInert || undefined}
+    >
       <header className="event-editor__header">
         <div className="event-editor__header-inner">
           <button
             type="button"
             className="event-editor__back"
+            disabled={interaction.navigationDisabled}
             onClick={onBackToEvents}
           >
             <span aria-hidden="true">←</span> イベント一覧
@@ -77,8 +86,11 @@ export function EventEditorShell({
                   )}
                 </div>
               )}
-              <span className="event-editor__status" aria-label="編集状態: 下書き">
-                {readOnly ? '閲覧のみ' : '下書き'}
+              <span
+                className="event-editor__status"
+                aria-label={`編集状態: ${interaction.statusLabel}`}
+              >
+                {interaction.statusLabel}
               </span>
             </div>
           </div>
@@ -96,6 +108,7 @@ export function EventEditorShell({
                     ? 'event-step-navigation__button event-step-navigation__button--active'
                     : 'event-step-navigation__button'}
                   aria-current={step.id === activeStep ? 'step' : undefined}
+                  disabled={interaction.navigationDisabled}
                   onClick={() => onStepChange(step.id)}
                 >
                   <span className="event-step-navigation__number">{step.id}</span>
@@ -115,6 +128,7 @@ export function EventEditorShell({
             ? `event-editor__content event-editor__content--step-${activeStep} event-editor__content--workspace`
             : `event-editor__content event-editor__content--step-${activeStep}`}
           aria-labelledby="current-step-title"
+          inert={interaction.contentInert}
         >
           <header className="event-editor__step-header">
             <p>STEP {currentStep.id}</p>

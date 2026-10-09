@@ -163,8 +163,14 @@
   font-weight: 650;
 }
 
-.event-editor__back:hover {
+.event-editor__back:hover:not(:disabled) {
   color: #174b8c;
+}
+
+.event-editor__back:disabled,
+.event-step-navigation__button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .event-editor__title-row {
@@ -269,7 +275,7 @@
   white-space: nowrap;
 }
 
-.event-step-navigation__button:hover {
+.event-step-navigation__button:hover:not(:disabled) {
   color: #214f88;
   background: #f5f8fc;
 }

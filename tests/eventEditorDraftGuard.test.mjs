@@ -13,6 +13,7 @@ import {
   hasSemanticDraftChanges,
   runEventEditorCloudSaveGuarded,
 } from '../src/ui/eventEditorDraftGuard.ts'
+import { getEventEditorInteractionState } from '../src/ui/eventEditorInteraction.ts'
 
 const createHandle = (state) => ({
   hasUnsavedChanges: () => hasSemanticDraftChanges(state.current, state.saved) ||
@@ -116,6 +117,59 @@ test('Step 1〜5は未保存draftでCloud requestを止め、commit後は最新s
   }
 })
 
+test('Step 1〜5のclean draftはCloud save開始後に共通interaction lockへ移行する', () => {
+  for (const [step, label, saved] of cases) {
+    const state = {
+      saved: structuredClone(saved),
+      current: structuredClone(saved),
+      reportCount: 0,
+    }
+    let operation
+    assert.equal(runEventEditorCloudSaveGuarded({
+      activeStep: step,
+      handles: { [step]: createHandle(state) },
+      onBlocked: () => assert.fail(`${label}: clean draft was blocked`),
+      onSave: () => { operation = 'save' },
+    }), true, label)
+    assert.deepEqual(getEventEditorInteractionState({
+      readOnly: false,
+      cloudOperation: operation,
+    }), {
+      contentInert: true,
+      navigationDisabled: true,
+      statusLabel: 'Cloud保存中',
+    }, label)
+
+    operation = undefined
+    assert.deepEqual(getEventEditorInteractionState({
+      readOnly: false,
+      cloudOperation: operation,
+    }), {
+      contentInert: false,
+      navigationDisabled: false,
+      statusLabel: '下書き',
+    }, `${label}: completion unlock`)
+  }
+})
+
+test('temporary Cloud lockはviewer readOnlyと区別しdelete dialogをinertにしない', () => {
+  assert.deepEqual(getEventEditorInteractionState({
+    readOnly: true,
+  }), {
+    contentInert: false,
+    navigationDisabled: false,
+    statusLabel: '閲覧のみ',
+  })
+  assert.deepEqual(getEventEditorInteractionState({
+    readOnly: false,
+    cloudOperation: 'delete',
+  }), {
+    contentInert: false,
+    navigationDisabled: true,
+    statusLabel: 'Cloud削除中',
+  })
+})
+
 test('invalid入力・追加・削除・順序変更・nested dialog変更もdirtyを維持する', () => {
   const saved = {
     items: [
@@ -160,9 +214,17 @@ test('元へ戻す・draftId/object identityだけの差はcleanで、active Ste
 })
 
 test('AppはStep 1〜5のproduction handleをCloud保存と遷移guardへ接続する', async () => {
-  const [appSource, stageSource, memberSource, bandSource, conditionSource] =
+  const [
+    appSource,
+    shellSource,
+    stageSource,
+    memberSource,
+    bandSource,
+    conditionSource,
+  ] =
     await Promise.all([
       readFile(new URL('../src/App.tsx', import.meta.url), 'utf8'),
+      readFile(new URL('../src/components/EventEditorShell.tsx', import.meta.url), 'utf8'),
       readFile(new URL('../src/components/EventStageSettings.tsx', import.meta.url), 'utf8'),
       readFile(new URL('../src/components/EventMemberSettings.tsx', import.meta.url), 'utf8'),
       readFile(new URL('../src/components/EventBandSettings.tsx', import.meta.url), 'utf8'),
@@ -179,7 +241,27 @@ test('AppはStep 1〜5のproduction handleをCloud保存と遷移guardへ接続�
     assert.match(appSource, new RegExp(`ref=\\{${refName}\\}`), refName)
   }
   assert.match(appSource, /runEventEditorCloudSaveGuarded\(/)
+  assert.match(appSource, /if \(hasUnsavedOperations\(\)\)/)
   assert.match(appSource, /getActiveEventEditorDraftBlock\(/)
+  assert.match(shellSource, /disabled=\{interaction\.navigationDisabled\}/)
+  assert.match(shellSource, /aria-busy=\{interaction\.contentInert \|\| undefined\}/)
+  assert.match(shellSource, /inert=\{interaction\.contentInert\}/)
+  assert.match(shellSource, /\{hasImplementedContent \? \([\s\S]*children/)
+  const step6Start = appSource.indexOf(') : activeStep === 6 && selectedEvent ? (')
+  const step7Start = appSource.indexOf(') : activeStep === 7 && selectedEvent')
+  assert.notEqual(step6Start, -1)
+  assert.ok(step7Start > step6Start)
+  const step6Source = appSource.slice(step6Start, step7Start)
+  for (const mutationSurface of [
+    'DragDropContext',
+    'TimetableOperationsWorkspace',
+    'TimetableGrid',
+    'TimetableOrderConstraintSettings',
+    'PaSettings',
+    'DutySettings',
+  ]) {
+    assert.match(step6Source, new RegExp(mutationSurface), mutationSurface)
+  }
   for (const source of [stageSource, memberSource, bandSource, conditionSource]) {
     assert.match(source, /useImperativeHandle\(ref/)
     assert.match(source, /setSavedDraft\(/)
