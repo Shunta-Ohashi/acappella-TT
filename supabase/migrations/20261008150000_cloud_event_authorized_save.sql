@@ -1,6 +1,10 @@
 -- Cloud Event snapshots are fully validated by the save Edge Function before
 -- this backend-only function receives them. Browser roles cannot call this
--- function or write cloud_events directly.
+-- function. In existing environments, legacy browser clients temporarily keep
+-- direct INSERT/UPDATE access after this migration; deploy the Edge Function
+-- and compatible frontend, drain those clients, then apply
+-- 20261008160000_cloud_event_rpc_only_save.sql to revoke direct writes. Fresh
+-- environments reach the final state with no browser direct-write access.
 
 create function public.save_cloud_event_validated(
   p_actor_id uuid,
