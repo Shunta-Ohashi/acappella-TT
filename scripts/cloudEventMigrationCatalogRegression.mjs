@@ -45,8 +45,6 @@ const scenarios = [
   ['save_authenticated_inherited_execute', result =>
     result.laterSchema.authenticatedSaveExecute],
   ['save_service_role_execute_missing', result => !result.laterSchema.serviceRoleSaveExecute],
-  ['save_service_role_missing', result => !result.laterSchema.saveFunctionPermissionCatalogReady],
-  ['required_role_missing', result => !result.laterSchema.permissionCatalogReady],
   ['profiles_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_type', result => !result.authWorkspaceChecks.profilesColumns],

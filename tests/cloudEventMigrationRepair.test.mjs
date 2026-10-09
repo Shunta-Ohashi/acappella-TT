@@ -857,7 +857,6 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'cloud_anon_inherited_column_write',
     'cloud_authenticated_inherited_column_write',
     'cloud_anon_column_grant_option',
-    'required_role_missing',
     'profiles_missing',
     'profiles_column_type',
     'membership_primary_key_missing',
@@ -887,10 +886,35 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'save_anon_inherited_execute',
     'save_authenticated_inherited_execute',
     'save_service_role_execute_missing',
-    'save_service_role_missing',
   ]) {
     assert.match(catalogRegressionSql, new RegExp(`'${scenario}'`), scenario)
     assert.match(catalogRegressionRunner, new RegExp(`'${scenario}'`), scenario)
+  }
+  for (const removedScenario of [
+    'save_service_role_missing',
+    'required_role_missing',
+  ]) {
+    assert.doesNotMatch(
+      catalogRegressionSql,
+      new RegExp(`'${removedScenario}'`),
+      removedScenario,
+    )
+    assert.doesNotMatch(
+      catalogRegressionRunner,
+      new RegExp(`'${removedScenario}'`),
+      removedScenario,
+    )
+  }
+  for (const reservedRole of ['service_role', 'anon', 'authenticated']) {
+    assert.doesNotMatch(
+      catalogRegressionSql,
+      new RegExp(
+        `\\b(?:alter|drop)\\s+(?:role|user)\\s+` +
+          `(?:if\\s+exists\\s+)?"?${reservedRole}"?(?:\\s|;|$)`,
+        'i',
+      ),
+      reservedRole,
+    )
   }
   const baselineGuard = catalogRegressionRunner.slice(
     catalogRegressionRunner.indexOf("inspectScenario(databaseUrl, 'baseline')"),

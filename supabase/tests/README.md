@@ -59,10 +59,17 @@ the repository's real migration-history preflight once for the safe baseline
 and once per deliberately damaged catalog. Each mutation is enclosed in a
 transaction and rolled back. It covers effective/inherited and PUBLIC table or
 column writes (including grant option), every delete/page/save authorization
-function's effective EXECUTE contract and SECURITY DEFINER mode, missing roles,
-and one-at-a-time Auth / Workspace column, PK, CHECK, FK, RLS, policy, function,
-trigger, and privilege changes. `--confirm-disposable` is mandatory; this is
-never a production repair or migration command.
+function's effective EXECUTE contract and SECURITY DEFINER mode, and one-at-a-time
+Auth / Workspace column, PK, CHECK, FK, RLS, policy, function, trigger, and
+privilege changes. `--confirm-disposable` is mandatory; this is never a
+production repair or migration command.
+
+Supabase-managed `service_role`, `anon`, and `authenticated` roles are never
+renamed, dropped, or otherwise altered by the real-database fixture. Role absence
+is covered by the read-only preflight readiness fields and analyzer/unit
+regressions, which verify that a missing required role remains fail-closed.
+Supabase protects these reserved roles even in a disposable local environment,
+so mutating them is not a portable catalog-regression scenario.
 
 The RPC-only DELETE and save migrations perform the same fail-closed check
 after revoking direct browser grants. If `anon` or `authenticated` still has an

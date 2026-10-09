@@ -178,22 +178,6 @@ begin
     when 'save_service_role_execute_missing' then
       revoke execute on function
         public.save_cloud_event_validated(uuid, uuid, jsonb) from service_role;
-    when 'save_service_role_missing' then
-      if exists (
-        select 1 from pg_catalog.pg_roles
-        where rolname = 'cloud_event_catalog_regression_service_role'
-      ) then
-        raise exception 'Disposable service role replacement already exists';
-      end if;
-      alter role service_role rename to cloud_event_catalog_regression_service_role;
-    when 'required_role_missing' then
-      if exists (
-        select 1 from pg_catalog.pg_roles
-        where rolname = 'cloud_event_catalog_regression_anon'
-      ) then
-        raise exception 'Disposable replacement role already exists';
-      end if;
-      alter role anon rename to cloud_event_catalog_regression_anon;
     when 'profiles_missing' then
       alter table public.profiles rename to catalog_regression_profiles;
     when 'profiles_column_missing' then
