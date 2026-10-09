@@ -140,6 +140,12 @@ const main = async () => {
       baseline.laterSchema.publicSaveExecute ||
       baseline.laterSchema.anonSaveExecute ||
       baseline.laterSchema.authenticatedSaveExecute ||
+      !baseline.laterSchema.authenticatedSelect ||
+      baseline.laterSchema.authenticatedInsert ||
+      baseline.laterSchema.authenticatedUpdate ||
+      baseline.laterSchema.authenticatedDelete ||
+      baseline.laterSchema.authenticatedColumnInsert ||
+      baseline.laterSchema.authenticatedColumnUpdate ||
       baseline.laterSchema.anonTableWrite ||
       baseline.laterSchema.anonColumnWrite ||
       baseline.laterSchema.publicTableWrite ||

@@ -841,6 +841,24 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     assert.match(catalogRegressionSql, new RegExp(`'${scenario}'`), scenario)
     assert.match(catalogRegressionRunner, new RegExp(`'${scenario}'`), scenario)
   }
+  const baselineGuard = catalogRegressionRunner.slice(
+    catalogRegressionRunner.indexOf("inspectScenario(databaseUrl, 'baseline')"),
+    catalogRegressionRunner.indexOf('for (const [scenario, detected] of scenarios)'),
+  )
+  assert.match(baselineGuard, /!baseline\.laterSchema\.authenticatedSelect\b/)
+  for (const privilege of [
+    'authenticatedInsert',
+    'authenticatedUpdate',
+    'authenticatedDelete',
+    'authenticatedColumnInsert',
+    'authenticatedColumnUpdate',
+  ]) {
+    assert.match(
+      baselineGuard,
+      new RegExp(`\\|\\|\\s*baseline\\.laterSchema\\.${privilege}\\b`),
+      privilege,
+    )
+  }
   assert.match(catalogRegressionRunner, /--confirm-disposable/)
   assert.match(guide, /20261008110000[\s\S]*--status applied/)
   assert.match(guide, /20261007120000[\s\S]*--status reverted/)
