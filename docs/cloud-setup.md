@@ -20,7 +20,7 @@ Supabase Dashboardでprojectを作成します。frontendへ設定するのはPr
 6. `20261008150000_cloud_event_authorized_save.sql`
 7. `20261008160000_cloud_event_rpc_only_save.sql`
 
-ファイル名は通常の文字列順でもこの依存順になりますが、Supabase CLI等での適用済み判定はmigration historyに基づきます。旧開発名`20261007120000_cloud_event_persistence.sql`を適用済みの環境では、rename後のbase migrationを再適用しないでください。`supabase_migrations.schema_migrations`と実schema（table / trigger / policy / constraint）を照合し、backup取得後に、その環境で承認されたmigration repair手順で履歴だけを調整します。外部環境へこのrepositoryから自動repairは行いません。
+ファイル名は通常の文字列順でもこの依存順になりますが、Supabase CLI等での適用済み判定はmigration historyに基づきます。旧開発名`20261007120000_cloud_event_persistence.sql`を適用済みの可能性がある環境では、rename後のbase migrationを再適用しないでください。対象判定・catalog照合・承認済みrepair・中断復帰・完了確認は、専用の[Cloud Event migration履歴移行runbook](./cloud-event-migration-history-repair.md)に従って通常のmigration適用より前に実施します。外部環境へpackage install / build / App起動から自動repairは行いません。
 
 ## 3. Authentication userを作成する
 

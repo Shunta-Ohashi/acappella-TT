@@ -82,3 +82,10 @@ backup, an operator may reconcile only the migration-history entry using the
 approved Supabase migration-repair procedure. This repository does not perform
 that operation automatically. Fresh databases and environments where the old
 file was never applied use the new name normally.
+
+The executable read-only preflight, state-specific official CLI commands,
+interruption recovery, and disposable-database fixture are documented in
+[`docs/cloud-event-migration-history-repair.md`](../../docs/cloud-event-migration-history-repair.md).
+Run that procedure before normal migration application; the default helper mode
+only inspects and plans, while history mutation requires explicit `--apply` and
+target-fingerprint confirmation.

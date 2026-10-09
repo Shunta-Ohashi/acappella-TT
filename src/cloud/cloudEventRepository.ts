@@ -317,9 +317,7 @@ export const createCloudEventRepository = (
       }
       return {
         ok: true,
-        value: [...validSummaries].sort((left, right) =>
-          left.createdAt.localeCompare(right.createdAt) ||
-          left.eventId.localeCompare(right.eventId)),
+        value: validSummaries,
       }
     } catch {
       return databaseFailure({})

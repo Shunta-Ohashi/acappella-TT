@@ -1237,6 +1237,67 @@ test('repositoryでWorkspace Eventを作成・一覧・取得・更新・削除�
   assert.equal((await repository.loadEvent('workspace-a', eventId)).ok, false)
 })
 
+test('listEventsはDBが返したmetadata順をlocaleで再ソートせず維持する', async () => {
+  const rows = [
+    ['Z-event', 'Z'],
+    ['a-event', 'a'],
+    ['_event', '_'],
+    ['日本-event', '日本'],
+    ['😀-event', '😀'],
+  ].map(([eventId, eventName]) => ({
+    workspace_id: 'workspace-a',
+    event_id: eventId,
+    event_name: eventName,
+    revision: 1,
+    created_at: '2026-10-08T00:00:00.000Z',
+    updated_at: '2026-10-08T00:00:01.000Z',
+  }))
+  const originalRows = structuredClone(rows)
+  const repository = createCloudEventRepository({
+    async getWorkspaceRole() {
+      return { data: { role: 'editor' }, error: null }
+    },
+    async listRows() { return { data: rows, error: null } },
+    async loadRow() { throw new Error('not called') },
+    async loadAuthorizedWorkspacePage() { throw new Error('not called') },
+    async saveRow() { throw new Error('not called') },
+    async deleteAuthorizedEvent() { throw new Error('not called') },
+  })
+
+  const listed = await repository.listEvents('workspace-a')
+  assert.equal(listed.ok, true)
+  assert.deepEqual(
+    listed.ok && listed.value.map(summary => summary.eventId),
+    rows.map(row => row.event_id),
+  )
+  assert.deepEqual(rows, originalRows)
+})
+
+test('Supabase metadata一覧はcreated_atからevent_idの順でDBへORDER BYを委ねる', async () => {
+  const orders = []
+  const terminal = { data: [], error: null }
+  const query = {
+    select() { return this },
+    eq() { return this },
+    order(column, options) {
+      orders.push({ column, options })
+      return orders.length === 2 ? terminal : this
+    },
+  }
+  const gateway = createSupabaseCloudEventGateway({
+    from(table) {
+      assert.equal(table, 'cloud_events')
+      return query
+    },
+  })
+
+  assert.deepEqual(await gateway.listRows('workspace-a'), terminal)
+  assert.deepEqual(orders, [
+    { column: 'created_at', options: { ascending: true } },
+    { column: 'event_id', options: { ascending: true } },
+  ])
+})
+
 test('browser gatewayは保存専用Functionだけを呼び構造化errorを分類する', async () => {
   const snapshot = createMinimalSnapshot('event-function-gateway', 'Function Gateway')
   const calls = []
