@@ -128,6 +128,28 @@ anon_role as (
 service_role as (
   select oid from pg_catalog.pg_roles where rolname = 'service_role'
 ),
+authorized_delete_function as (
+  select
+    pg_proc.oid,
+    pg_proc.proacl,
+    pg_proc.proowner,
+    pg_proc.prosecdef,
+    pg_proc.prosrc
+  from pg_catalog.pg_proc
+  where pg_proc.oid =
+    to_regprocedure('public.delete_cloud_event_authorized(uuid,text)')
+),
+authorized_page_function as (
+  select
+    pg_proc.oid,
+    pg_proc.proacl,
+    pg_proc.proowner,
+    pg_proc.prosecdef,
+    pg_proc.prosrc
+  from pg_catalog.pg_proc
+  where pg_proc.oid =
+    to_regprocedure('public.load_cloud_events_page_authorized(uuid,text,integer)')
+),
 authorized_save_function as (
   select
     pg_proc.oid,
@@ -598,13 +620,45 @@ base_checks as (
 later_schema as (
   select jsonb_build_object(
     'authorizedDeleteFunction', exists (
-      select 1 from pg_catalog.pg_proc
-      where oid = to_regprocedure('public.delete_cloud_event_authorized(uuid,text)')
-        and lower(prosrc) like '%from public.workspace_members%'
+      select 1 from authorized_delete_function
+      where lower(prosrc) like '%from public.workspace_members%'
         and lower(prosrc) like '%for share%'
         and lower(prosrc) like '%delete from public.cloud_events%'
         and lower(prosrc) like '%already_absent%'
     ),
+    'authorizedDeleteSecurityDefiner', coalesce((
+      select authorized_delete_function.prosecdef from authorized_delete_function
+    ), false),
+    'deleteFunctionPermissionCatalogReady',
+      (select count(*) = 1 from authorized_delete_function)
+      and (select count(*) = 1 from service_role)
+      and (select count(*) = 1 from anon_role)
+      and (select count(*) = 1 from authenticated_role),
+    'authenticatedDeleteExecute', coalesce((select has_function_privilege(
+      authenticated_role.oid,
+      authorized_delete_function.oid,
+      'EXECUTE'
+    ) from authenticated_role cross join authorized_delete_function), false),
+    'publicDeleteExecute', exists (
+      select 1
+      from authorized_delete_function
+      cross join lateral pg_catalog.aclexplode(coalesce(
+        authorized_delete_function.proacl,
+        pg_catalog.acldefault('f', authorized_delete_function.proowner)
+      )) as function_acl
+      where function_acl.grantee = 0
+        and function_acl.privilege_type = 'EXECUTE'
+    ),
+    'anonDeleteExecute', coalesce((select has_function_privilege(
+      anon_role.oid,
+      authorized_delete_function.oid,
+      'EXECUTE'
+    ) from anon_role cross join authorized_delete_function), false),
+    'serviceRoleDeleteExecute', coalesce((select has_function_privilege(
+      service_role.oid,
+      authorized_delete_function.oid,
+      'EXECUTE'
+    ) from service_role cross join authorized_delete_function), false),
     'authorizedPageIndex', exists (
       select 1 from pg_catalog.pg_indexes
       where schemaname = 'public'
@@ -612,14 +666,45 @@ later_schema as (
         and indexdef like '%event_id COLLATE "C"%'
     ),
     'authorizedPageFunction', exists (
-      select 1 from pg_catalog.pg_proc
-      where oid =
-        to_regprocedure('public.load_cloud_events_page_authorized(uuid,text,integer)')
-        and lower(prosrc) like '%from public.workspace_members%'
+      select 1 from authorized_page_function
+      where lower(prosrc) like '%from public.workspace_members%'
         and lower(prosrc) like '%for share%'
         and prosrc like '%event_id collate "C"%'
         and lower(prosrc) like '%limit (p_page_size + 1)%'
     ),
+    'authorizedPageSecurityDefiner', coalesce((
+      select authorized_page_function.prosecdef from authorized_page_function
+    ), false),
+    'pageFunctionPermissionCatalogReady',
+      (select count(*) = 1 from authorized_page_function)
+      and (select count(*) = 1 from service_role)
+      and (select count(*) = 1 from anon_role)
+      and (select count(*) = 1 from authenticated_role),
+    'authenticatedPageExecute', coalesce((select has_function_privilege(
+      authenticated_role.oid,
+      authorized_page_function.oid,
+      'EXECUTE'
+    ) from authenticated_role cross join authorized_page_function), false),
+    'publicPageExecute', exists (
+      select 1
+      from authorized_page_function
+      cross join lateral pg_catalog.aclexplode(coalesce(
+        authorized_page_function.proacl,
+        pg_catalog.acldefault('f', authorized_page_function.proowner)
+      )) as function_acl
+      where function_acl.grantee = 0
+        and function_acl.privilege_type = 'EXECUTE'
+    ),
+    'anonPageExecute', coalesce((select has_function_privilege(
+      anon_role.oid,
+      authorized_page_function.oid,
+      'EXECUTE'
+    ) from anon_role cross join authorized_page_function), false),
+    'serviceRolePageExecute', coalesce((select has_function_privilege(
+      service_role.oid,
+      authorized_page_function.oid,
+      'EXECUTE'
+    ) from service_role cross join authorized_page_function), false),
     'authorizedSaveFunction', exists (
       select 1 from authorized_save_function
       where lower(prosrc) like '%from public.workspace_members%'

@@ -47,6 +47,62 @@ begin
     when 'cloud_anon_column_grant_option' then
       grant update (event_name) on table public.cloud_events to anon
         with grant option;
+    when 'delete_function_security_invoker' then
+      alter function public.delete_cloud_event_authorized(uuid, text)
+        security invoker;
+    when 'delete_authenticated_execute_missing' then
+      revoke execute on function
+        public.delete_cloud_event_authorized(uuid, text) from authenticated;
+    when 'delete_public_execute' then
+      grant execute on function
+        public.delete_cloud_event_authorized(uuid, text) to public;
+    when 'delete_anon_execute' then
+      grant execute on function
+        public.delete_cloud_event_authorized(uuid, text) to anon;
+    when 'delete_service_role_execute' then
+      grant execute on function
+        public.delete_cloud_event_authorized(uuid, text) to service_role;
+    when 'delete_anon_inherited_execute' then
+      if exists (
+        select 1 from pg_catalog.pg_roles
+        where rolname = 'cloud_event_delete_regression_inherited'
+      ) then
+        raise exception 'Disposable delete regression role already exists';
+      end if;
+      create role cloud_event_delete_regression_inherited nologin;
+      grant execute on function
+        public.delete_cloud_event_authorized(uuid, text)
+        to cloud_event_delete_regression_inherited;
+      grant cloud_event_delete_regression_inherited to anon;
+    when 'page_function_security_invoker' then
+      alter function public.load_cloud_events_page_authorized(uuid, text, integer)
+        security invoker;
+    when 'page_authenticated_execute_missing' then
+      revoke execute on function
+        public.load_cloud_events_page_authorized(uuid, text, integer)
+        from authenticated;
+    when 'page_public_execute' then
+      grant execute on function
+        public.load_cloud_events_page_authorized(uuid, text, integer) to public;
+    when 'page_anon_execute' then
+      grant execute on function
+        public.load_cloud_events_page_authorized(uuid, text, integer) to anon;
+    when 'page_service_role_execute' then
+      grant execute on function
+        public.load_cloud_events_page_authorized(uuid, text, integer)
+        to service_role;
+    when 'page_anon_inherited_execute' then
+      if exists (
+        select 1 from pg_catalog.pg_roles
+        where rolname = 'cloud_event_page_regression_inherited'
+      ) then
+        raise exception 'Disposable page regression role already exists';
+      end if;
+      create role cloud_event_page_regression_inherited nologin;
+      grant execute on function
+        public.load_cloud_events_page_authorized(uuid, text, integer)
+        to cloud_event_page_regression_inherited;
+      grant cloud_event_page_regression_inherited to anon;
     when 'save_function_security_invoker' then
       alter function public.save_cloud_event_validated(uuid, uuid, jsonb)
         security invoker;

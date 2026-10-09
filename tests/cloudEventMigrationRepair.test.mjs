@@ -48,8 +48,20 @@ const createInspection = ({
     baseSchemaChecks,
     laterSchema: {
       authorizedDeleteFunction: applied.has(LATER_VERSIONS.authorizedDelete),
+      authorizedDeleteSecurityDefiner: applied.has(LATER_VERSIONS.authorizedDelete),
+      deleteFunctionPermissionCatalogReady: applied.has(LATER_VERSIONS.authorizedDelete),
+      authenticatedDeleteExecute: applied.has(LATER_VERSIONS.authorizedDelete),
+      publicDeleteExecute: false,
+      anonDeleteExecute: false,
+      serviceRoleDeleteExecute: false,
       authorizedPageIndex: applied.has(LATER_VERSIONS.authorizedPage),
       authorizedPageFunction: applied.has(LATER_VERSIONS.authorizedPage),
+      authorizedPageSecurityDefiner: applied.has(LATER_VERSIONS.authorizedPage),
+      pageFunctionPermissionCatalogReady: applied.has(LATER_VERSIONS.authorizedPage),
+      authenticatedPageExecute: applied.has(LATER_VERSIONS.authorizedPage),
+      publicPageExecute: false,
+      anonPageExecute: false,
+      serviceRolePageExecute: false,
       authorizedSaveFunction: applied.has(LATER_VERSIONS.authorizedSave),
       authorizedSaveSecurityDefiner: applied.has(LATER_VERSIONS.authorizedSave),
       saveFunctionPermissionCatalogReady: applied.has(LATER_VERSIONS.authorizedSave),
@@ -217,6 +229,42 @@ test('authorized save RPCのSECURITY DEFINERと実効EXECUTE権限をfail-closed
   assert.equal(analyzeCloudEventMigrationInspection(beforeAuthorizedSave).kind, 'old-only')
 })
 
+test('authorized delete/page RPCのSECURITY DEFINERと実効EXECUTE契約をfail-closedで検査する', () => {
+  for (const check of [
+    'authorizedDeleteSecurityDefiner',
+    'deleteFunctionPermissionCatalogReady',
+    'authenticatedDeleteExecute',
+    'authorizedPageSecurityDefiner',
+    'pageFunctionPermissionCatalogReady',
+    'authenticatedPageExecute',
+  ]) {
+    const inspection = createInspection({
+      versions: createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
+    })
+    inspection.laterSchema[check] = false
+    const result = analyzeCloudEventMigrationInspection(inspection)
+    assert.equal(result.kind, 'unknown', check)
+    assert.match(result.mismatches.join('\n'), /authorized (delete|page)|authenticated/i)
+  }
+
+  for (const check of [
+    'publicDeleteExecute',
+    'anonDeleteExecute',
+    'serviceRoleDeleteExecute',
+    'publicPageExecute',
+    'anonPageExecute',
+    'serviceRolePageExecute',
+  ]) {
+    const inspection = createInspection({
+      versions: createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
+    })
+    inspection.laterSchema[check] = true
+    const result = analyzeCloudEventMigrationInspection(inspection)
+    assert.equal(result.kind, 'unknown', check)
+    assert.match(result.mismatches.join('\n'), new RegExp(check), check)
+  }
+})
+
 test('危険・不明なcatalogではapplyとresumeのrepairを一度も呼ばない', async () => {
   const cases = []
   const unsafeAuth = createInspection({
@@ -338,7 +386,11 @@ test('確認modeは対象を判定するだけで履歴変更を行わない', a
 test('旧のみのknown schemaは新登録後に再確認してから旧履歴を除去する', async () => {
   const versions = new Set(createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION))
   const repairCalls = []
-  const inspectTarget = async () => createInspection({ versions: [...versions] })
+  let inspectionCalls = 0
+  const inspectTarget = async () => {
+    inspectionCalls += 1
+    return createInspection({ versions: [...versions] })
+  }
   const repairMigration = async (_databaseUrl, command) => {
     repairCalls.push(command)
     if (command.status === 'applied') versions.add(command.version)
@@ -366,6 +418,7 @@ test('旧のみのknown schemaは新登録後に再確認してから旧履歴�
   ])
   assert.equal(versions.has(NEW_CLOUD_EVENT_MIGRATION_VERSION), true)
   assert.equal(versions.has(OLD_CLOUD_EVENT_MIGRATION_VERSION), false)
+  assert.equal(inspectionCalls, 6)
 })
 
 test('両方登録済みの中断状態は明示resume時だけ旧履歴を除去する', async () => {
@@ -396,18 +449,143 @@ test('両方登録済みの中断状態は明示resume時だけ旧履歴を除�
   assert.equal(withoutResume.code, 'EXPLICIT_RESUME_REQUIRED')
   assert.equal(repairCalls.length, 0)
 
+  let resumedInspectionCalls = 0
   const resumed = await runCloudEventMigrationRepair({
     databaseUrl: 'postgresql://test.invalid/postgres',
     apply: true,
     resume: true,
     confirmTarget: check.plan.targetFingerprint,
-    inspectTarget,
+    inspectTarget: async () => {
+      resumedInspectionCalls += 1
+      return inspectTarget()
+    },
     repairMigration,
   })
   assert.equal(resumed.ok, true)
   assert.deepEqual(repairCalls, [
     { version: OLD_CLOUD_EVENT_MIGRATION_VERSION, status: 'reverted' },
   ])
+  assert.equal(resumedInspectionCalls, 3)
+})
+
+test('各repair直前の再inspectionは初回mutation前のschema・data・history・target raceを拒否する', async () => {
+  const initial = createInspection({
+    versions: createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
+  })
+  const preview = await runCloudEventMigrationRepair({
+    databaseUrl: 'postgresql://test.invalid/postgres',
+    inspectTarget: async () => structuredClone(initial),
+    repairMigration: async () => ({ ok: true }),
+  })
+
+  const cases = [
+    ['schema', inspection => { inspection.baseSchemaChecks.columns = false }],
+    ['data', inspection => { inspection.cloudData.digest = 'changed-before-repair' }],
+    ['history', inspection => { inspection.appliedVersions.push('20990101000000') }],
+    ['target', inspection => { inspection.target.database = 'other-database' }],
+  ]
+  for (const [label, mutate] of cases) {
+    let inspectionCalls = 0
+    let repairCalls = 0
+    const changed = structuredClone(initial)
+    mutate(changed)
+    const result = await runCloudEventMigrationRepair({
+      databaseUrl: 'postgresql://test.invalid/postgres',
+      apply: true,
+      confirmTarget: preview.plan.targetFingerprint,
+      inspectTarget: async () => {
+        inspectionCalls += 1
+        return structuredClone(inspectionCalls === 1 ? initial : changed)
+      },
+      repairMigration: async () => {
+        repairCalls += 1
+        return { ok: true }
+      },
+    })
+    assert.equal(result.ok, false, label)
+    assert.equal(result.code, 'PRE_REPAIR_STATE_CHANGED', label)
+    assert.equal(repairCalls, 0, label)
+  }
+})
+
+test('mutation直前のinspection失敗またはinvalid shapeではrepairを開始しない', async () => {
+  const initial = createInspection({
+    versions: createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
+  })
+  const preview = await runCloudEventMigrationRepair({
+    databaseUrl: 'postgresql://test.invalid/postgres',
+    inspectTarget: async () => structuredClone(initial),
+    repairMigration: async () => ({ ok: true }),
+  })
+
+  for (const secondInspection of ['throw', 'invalid']) {
+    let inspectionCalls = 0
+    let repairCalls = 0
+    const result = await runCloudEventMigrationRepair({
+      databaseUrl: 'postgresql://test.invalid/postgres',
+      apply: true,
+      confirmTarget: preview.plan.targetFingerprint,
+      inspectTarget: async () => {
+        inspectionCalls += 1
+        if (inspectionCalls === 1) return structuredClone(initial)
+        if (secondInspection === 'throw') throw new Error('preflight unavailable')
+        return { invalid: true }
+      },
+      repairMigration: async () => {
+        repairCalls += 1
+        return { ok: true }
+      },
+    })
+    assert.equal(result.ok, false, secondInspection)
+    assert.equal(result.code, 'PRE_REPAIR_INSPECTION_FAILED', secondInspection)
+    assert.equal(repairCalls, 0, secondInspection)
+  }
+})
+
+test('old-onlyの1回目後も2回目直前にschema/data/historyを再検査して停止する', async () => {
+  const oldOnly = createInspection({
+    versions: createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
+  })
+  const both = createInspection({
+    versions: [
+      ...createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
+      NEW_CLOUD_EVENT_MIGRATION_VERSION,
+    ],
+  })
+  const preview = await runCloudEventMigrationRepair({
+    databaseUrl: 'postgresql://test.invalid/postgres',
+    inspectTarget: async () => structuredClone(oldOnly),
+    repairMigration: async () => ({ ok: true }),
+  })
+
+  const cases = [
+    ['schema', inspection => { inspection.baseSchemaChecks.columns = false }],
+    ['data', inspection => { inspection.cloudData.digest = 'changed-between-repairs' }],
+    ['history', inspection => { inspection.appliedVersions.push('20990101000000') }],
+  ]
+  for (const [label, mutate] of cases) {
+    const preSecondRepair = structuredClone(both)
+    mutate(preSecondRepair)
+    const inspections = [oldOnly, oldOnly, both, preSecondRepair]
+    let inspectionIndex = 0
+    let repairCalls = 0
+    const result = await runCloudEventMigrationRepair({
+      databaseUrl: 'postgresql://test.invalid/postgres',
+      apply: true,
+      confirmTarget: preview.plan.targetFingerprint,
+      inspectTarget: async () => structuredClone(inspections[inspectionIndex++]),
+      repairMigration: async () => {
+        repairCalls += 1
+        return { ok: true }
+      },
+    })
+    assert.equal(result.ok, false, label)
+    assert.equal(result.code, 'PRE_REPAIR_STATE_CHANGED', label)
+    assert.equal(repairCalls, 1, label)
+    assert.deepEqual(result.completedCommands, [
+      { version: NEW_CLOUD_EVENT_MIGRATION_VERSION, status: 'applied' },
+    ], label)
+  }
 })
 
 test('repair失敗・schema/data変化・対象未指定では次の操作へ進まない', async () => {
@@ -466,8 +644,8 @@ test('repair失敗・schema/data変化・対象未指定では次の操作へ進
     },
   })
   assert.equal(changedData.ok, false)
-  assert.equal(changedData.code, 'NON_HISTORY_STATE_CHANGED')
-  assert.equal(repairCalls, 1)
+  assert.equal(changedData.code, 'PRE_REPAIR_STATE_CHANGED')
+  assert.equal(repairCalls, 0)
   assert.equal(versions.has(OLD_CLOUD_EVENT_MIGRATION_VERSION), true)
 })
 
@@ -516,6 +694,8 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     assert.match(preflightSql, new RegExp(`'${check}'`), check)
   }
   assert.match(preflightSql, /has_function_privilege\s*\(/i)
+  assert.match(preflightSql, /authorized_delete_function\.prosecdef/i)
+  assert.match(preflightSql, /authorized_page_function\.prosecdef/i)
   assert.match(preflightSql, /authorized_save_function\.prosecdef/i)
   assert.match(preflightSql, /aclexplode\s*\(coalesce\([\s\S]*acldefault\('f'/i)
   assert.match(fixtureSql, /migration-history-event/)
@@ -538,6 +718,18 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'workspace_policy_extra',
     'updated_at_function_invalid',
     'auth_workspace_anon_column_write',
+    'delete_function_security_invoker',
+    'delete_authenticated_execute_missing',
+    'delete_public_execute',
+    'delete_anon_execute',
+    'delete_service_role_execute',
+    'delete_anon_inherited_execute',
+    'page_function_security_invoker',
+    'page_authenticated_execute_missing',
+    'page_public_execute',
+    'page_anon_execute',
+    'page_service_role_execute',
+    'page_anon_inherited_execute',
     'save_function_security_invoker',
     'save_public_execute',
     'save_anon_execute',

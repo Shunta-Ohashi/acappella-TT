@@ -18,6 +18,18 @@ const scenarios = [
   ['cloud_public_column_update', result => result.laterSchema.publicColumnWrite],
   ['cloud_anon_inherited_column_write', result => result.laterSchema.anonColumnWrite],
   ['cloud_anon_column_grant_option', result => result.laterSchema.anonColumnWrite],
+  ['delete_function_security_invoker', result => !result.laterSchema.authorizedDeleteSecurityDefiner],
+  ['delete_authenticated_execute_missing', result => !result.laterSchema.authenticatedDeleteExecute],
+  ['delete_public_execute', result => result.laterSchema.publicDeleteExecute],
+  ['delete_anon_execute', result => result.laterSchema.anonDeleteExecute],
+  ['delete_service_role_execute', result => result.laterSchema.serviceRoleDeleteExecute],
+  ['delete_anon_inherited_execute', result => result.laterSchema.anonDeleteExecute],
+  ['page_function_security_invoker', result => !result.laterSchema.authorizedPageSecurityDefiner],
+  ['page_authenticated_execute_missing', result => !result.laterSchema.authenticatedPageExecute],
+  ['page_public_execute', result => result.laterSchema.publicPageExecute],
+  ['page_anon_execute', result => result.laterSchema.anonPageExecute],
+  ['page_service_role_execute', result => result.laterSchema.serviceRolePageExecute],
+  ['page_anon_inherited_execute', result => result.laterSchema.anonPageExecute],
   ['save_function_security_invoker', result => !result.laterSchema.authorizedSaveSecurityDefiner],
   ['save_public_execute', result => result.laterSchema.publicSaveExecute],
   ['save_anon_execute', result => result.laterSchema.anonSaveExecute],
@@ -101,6 +113,18 @@ const main = async () => {
     if (
       !baseline.authWorkspaceReady ||
       !baseline.laterSchema.permissionCatalogReady ||
+      !baseline.laterSchema.authorizedDeleteSecurityDefiner ||
+      !baseline.laterSchema.deleteFunctionPermissionCatalogReady ||
+      !baseline.laterSchema.authenticatedDeleteExecute ||
+      baseline.laterSchema.publicDeleteExecute ||
+      baseline.laterSchema.anonDeleteExecute ||
+      baseline.laterSchema.serviceRoleDeleteExecute ||
+      !baseline.laterSchema.authorizedPageSecurityDefiner ||
+      !baseline.laterSchema.pageFunctionPermissionCatalogReady ||
+      !baseline.laterSchema.authenticatedPageExecute ||
+      baseline.laterSchema.publicPageExecute ||
+      baseline.laterSchema.anonPageExecute ||
+      baseline.laterSchema.serviceRolePageExecute ||
       !baseline.laterSchema.authorizedSaveSecurityDefiner ||
       !baseline.laterSchema.saveFunctionPermissionCatalogReady ||
       !baseline.laterSchema.serviceRoleSaveExecute ||

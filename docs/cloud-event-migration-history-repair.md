@@ -69,8 +69,9 @@ The catalog check covers:
   write privileges, including inherited anon privileges, PUBLIC ACLs, every
   live user column, and grant option;
 - later delete/page/save functions and the `COLLATE "C"` page index;
-- the backend save function's SECURITY DEFINER mode and effective EXECUTE
-  contract (service role only; no PUBLIC, anon, or authenticated access);
+- each authorization RPC's SECURITY DEFINER mode and effective EXECUTE
+  contract (authenticated only for delete/page, service role only for save,
+  with no access for the other client/backend roles or PUBLIC);
 - complete row count and a deterministic digest including snapshot, revision,
   and timestamps.
 
@@ -110,9 +111,11 @@ supabase migration repair 20261007120000 --status reverted `
   --db-url $env:ACAPPELLA_TT_MIGRATION_REPAIR_DB_URL
 ```
 
-These are two separate operations, not one transaction. After each command the
-helper reruns migration-list and catalog inspection. It stops immediately on a
-non-zero exit, unexpected history, schema change, or data digest change and does
+These are two separate operations, not one transaction. Immediately before and
+after each command, the helper reruns migration-list and catalog inspection. A
+command runs only when target identity, the full applied-version set, schema,
+row count/digest, and the next legal repair command still match the previously
+verified state. It stops immediately on a non-zero exit or any mismatch and does
 not run `db push`.
 
 If interruption occurs after the new version is marked applied, rerun check

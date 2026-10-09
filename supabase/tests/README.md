@@ -58,11 +58,11 @@ The catalog regression command requires the complete migration chain and runs
 the repository's real migration-history preflight once for the safe baseline
 and once per deliberately damaged catalog. Each mutation is enclosed in a
 transaction and rolled back. It covers effective/inherited and PUBLIC table or
-column writes (including grant option), the backend save function's effective
-EXECUTE contract and SECURITY DEFINER mode, missing roles, and one-at-a-time
-Auth / Workspace column, PK, CHECK, FK, RLS, policy, function, trigger, and
-privilege changes. `--confirm-disposable` is mandatory; this is never a
-production repair or migration command.
+column writes (including grant option), every delete/page/save authorization
+function's effective EXECUTE contract and SECURITY DEFINER mode, missing roles,
+and one-at-a-time Auth / Workspace column, PK, CHECK, FK, RLS, policy, function,
+trigger, and privilege changes. `--confirm-disposable` is mandatory; this is
+never a production repair or migration command.
 
 The concurrency tests use a bounded polling loop only to observe the second
 connection waiting on a PostgreSQL lock; ordering is established by the RPC call

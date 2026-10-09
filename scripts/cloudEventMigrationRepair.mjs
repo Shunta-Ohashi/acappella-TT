@@ -57,8 +57,20 @@ export const REQUIRED_AUTH_WORKSPACE_SCHEMA_CHECKS = [
 
 export const REQUIRED_LATER_SCHEMA_CHECKS = [
   'authorizedDeleteFunction',
+  'authorizedDeleteSecurityDefiner',
+  'deleteFunctionPermissionCatalogReady',
+  'authenticatedDeleteExecute',
+  'publicDeleteExecute',
+  'anonDeleteExecute',
+  'serviceRoleDeleteExecute',
   'authorizedPageIndex',
   'authorizedPageFunction',
+  'authorizedPageSecurityDefiner',
+  'pageFunctionPermissionCatalogReady',
+  'authenticatedPageExecute',
+  'publicPageExecute',
+  'anonPageExecute',
+  'serviceRolePageExecute',
   'authorizedSaveFunction',
   'authorizedSaveSecurityDefiner',
   'saveFunctionPermissionCatalogReady',
@@ -165,6 +177,36 @@ export const analyzeCloudEventMigrationInspection = inspection => {
     )
     compareExpected(
       mismatches,
+      inspection.laterSchema.authorizedDeleteSecurityDefiner,
+      laterApplied.authorizedDelete,
+      'authorized delete SECURITY DEFINER/history',
+    )
+    compareExpected(
+      mismatches,
+      inspection.laterSchema.deleteFunctionPermissionCatalogReady,
+      laterApplied.authorizedDelete,
+      'authorized delete permission catalog readiness/history',
+    )
+    compareExpected(
+      mismatches,
+      inspection.laterSchema.authenticatedDeleteExecute,
+      laterApplied.authorizedDelete,
+      'authenticated authorized delete EXECUTE privilege/history',
+    )
+    for (const check of [
+      'publicDeleteExecute',
+      'anonDeleteExecute',
+      'serviceRoleDeleteExecute',
+    ]) {
+      compareExpected(
+        mismatches,
+        inspection.laterSchema[check],
+        false,
+        `${check} privilege`,
+      )
+    }
+    compareExpected(
+      mismatches,
       inspection.laterSchema.authorizedPageIndex,
       laterApplied.authorizedPage,
       'authorized page index/history',
@@ -175,6 +217,36 @@ export const analyzeCloudEventMigrationInspection = inspection => {
       laterApplied.authorizedPage,
       'authorized page function/history',
     )
+    compareExpected(
+      mismatches,
+      inspection.laterSchema.authorizedPageSecurityDefiner,
+      laterApplied.authorizedPage,
+      'authorized page SECURITY DEFINER/history',
+    )
+    compareExpected(
+      mismatches,
+      inspection.laterSchema.pageFunctionPermissionCatalogReady,
+      laterApplied.authorizedPage,
+      'authorized page permission catalog readiness/history',
+    )
+    compareExpected(
+      mismatches,
+      inspection.laterSchema.authenticatedPageExecute,
+      laterApplied.authorizedPage,
+      'authenticated authorized page EXECUTE privilege/history',
+    )
+    for (const check of [
+      'publicPageExecute',
+      'anonPageExecute',
+      'serviceRolePageExecute',
+    ]) {
+      compareExpected(
+        mismatches,
+        inspection.laterSchema[check],
+        false,
+        `${check} privilege`,
+      )
+    }
     compareExpected(
       mismatches,
       inspection.laterSchema.authorizedSaveFunction,
@@ -323,6 +395,21 @@ const sameNonHistoryState = (before, after) =>
   JSON.stringify(before.laterSchema) === JSON.stringify(after.laterSchema) &&
   JSON.stringify(before.cloudData) === JSON.stringify(after.cloudData)
 
+const sameMigrationHistory = (expected, actual) =>
+  expected.historyTableExists === actual.historyTableExists &&
+  JSON.stringify([...expected.appliedVersions].sort()) ===
+    JSON.stringify([...actual.appliedVersions].sort())
+
+const sameRepairCommand = (expected, actual) =>
+  expected?.version === actual?.version && expected?.status === actual?.status
+
+const getExpectedAppliedVersions = (versions, command) => {
+  const expected = new Set(versions)
+  if (command.status === 'applied') expected.add(command.version)
+  else expected.delete(command.version)
+  return [...expected].sort()
+}
+
 export const runCloudEventMigrationRepair = async ({
   databaseUrl,
   apply = false,
@@ -368,6 +455,45 @@ export const runCloudEventMigrationRepair = async ({
   let currentInspection = before
   for (let index = 0; index < analysis.repairCommands.length; index += 1) {
     const command = analysis.repairCommands[index]
+    let preMutationInspection
+    try {
+      preMutationInspection = await inspectTarget(databaseUrl)
+    } catch {
+      return {
+        ok: false,
+        code: 'PRE_REPAIR_INSPECTION_FAILED',
+        failedCommand: command,
+        completedCommands: analysis.repairCommands.slice(0, index),
+        plan,
+      }
+    }
+    if (!isInspection(preMutationInspection)) {
+      return {
+        ok: false,
+        code: 'PRE_REPAIR_INSPECTION_FAILED',
+        failedCommand: command,
+        completedCommands: analysis.repairCommands.slice(0, index),
+        plan,
+      }
+    }
+    const preMutationAnalysis = analyzeCloudEventMigrationInspection(
+      preMutationInspection,
+    )
+    if (
+      !sameNonHistoryState(before, preMutationInspection) ||
+      !sameMigrationHistory(currentInspection, preMutationInspection) ||
+      preMutationAnalysis.kind === 'unknown' ||
+      !sameRepairCommand(preMutationAnalysis.repairCommands[0], command)
+    ) {
+      return {
+        ok: false,
+        code: 'PRE_REPAIR_STATE_CHANGED',
+        failedCommand: command,
+        completedCommands: analysis.repairCommands.slice(0, index),
+        plan,
+      }
+    }
+
     let repaired
     try {
       repaired = await repairMigration(databaseUrl, command)
@@ -407,6 +533,22 @@ export const runCloudEventMigrationRepair = async ({
       return {
         ok: false,
         code: 'NON_HISTORY_STATE_CHANGED',
+        completedCommands: analysis.repairCommands.slice(0, index + 1),
+        plan,
+      }
+    }
+    const expectedAppliedVersions = getExpectedAppliedVersions(
+      preMutationInspection.appliedVersions,
+      command,
+    )
+    if (
+      nextInspection.historyTableExists !== preMutationInspection.historyTableExists ||
+      JSON.stringify([...nextInspection.appliedVersions].sort()) !==
+        JSON.stringify(expectedAppliedVersions)
+    ) {
+      return {
+        ok: false,
+        code: 'UNEXPECTED_POST_REPAIR_STATE',
         completedCommands: analysis.repairCommands.slice(0, index + 1),
         plan,
       }

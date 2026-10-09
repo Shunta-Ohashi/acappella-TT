@@ -2,11 +2,13 @@ import type {
   Band,
   EventId,
   Member,
+  ScheduleBoundary,
 } from '../domain/models.ts'
 import {
   createEventDeletion,
   type EventDeletionInput,
 } from '../domain/eventDeletion.ts'
+import { isValidScheduleItemSectionAssignment } from '../domain/schedule.ts'
 import {
   createPersistedAppState,
   isPersistedAppStateV5,
@@ -149,6 +151,153 @@ const hasValidCloudEventIdentity = (state: PersistedAppStateV5): boolean => {
     event.name.trim().length > 0
 }
 
+const hasBoundaryInStage = (
+  boundary: ScheduleBoundary,
+  stageId: string,
+  scheduleItemById: ReadonlyMap<string, PersistedAppStateV5['scheduleItems'][number]>,
+  sectionById: ReadonlyMap<string, PersistedAppStateV5['sections'][number]>,
+): boolean => {
+  if (boundary.kind === 'time') return true
+  if (boundary.kind === 'schedule-item') {
+    return scheduleItemById.get(boundary.scheduleItemId)?.stageId === stageId
+  }
+  return sectionById.get(boundary.sectionId)?.stageId === stageId
+}
+
+/**
+ * Cloud Event snapshots are self-contained trust-boundary documents. Unlike
+ * local persistence, every Event-owned reference must resolve inside this one
+ * snapshot and remain within its sole Event.
+ */
+export const hasValidCloudEventRelationships = (
+  state: PersistedAppStateV5,
+): boolean => {
+  const event = state.events[0]
+  if (
+    !event ||
+    state.events.length !== 1 ||
+    !hasUniqueIds(state.members) ||
+    !hasUniqueIds(state.bands) ||
+    !hasUniqueEventOwnedCollectionIds(state)
+  ) return false
+
+  const memberById = new Map(state.members.map(member => [member.id, member]))
+  const bandById = new Map(state.bands.map(band => [band.id, band]))
+  const eventDayById = new Map(state.eventDays.map(day => [day.id, day]))
+  const stageById = new Map(state.stages.map(stage => [stage.id, stage]))
+  const sectionById = new Map(state.sections.map(section => [section.id, section]))
+  const eventMemberById = new Map(
+    state.eventMembers.map(eventMember => [eventMember.id, eventMember]),
+  )
+  const eventBandById = new Map(
+    state.eventBands.map(eventBand => [eventBand.id, eventBand]),
+  )
+  const scheduleItemById = new Map(
+    state.scheduleItems.map(item => [item.id, item]),
+  )
+  const dutyTypeById = new Map(state.dutyTypes.map(dutyType => [dutyType.id, dutyType]))
+
+  if (state.bands.some(band =>
+    band.defaultMemberIds.some(memberId => !memberById.has(memberId)))) return false
+  if (state.eventDays.some(day => day.eventId !== event.id)) return false
+  if (state.stages.some(stage => {
+    const day = eventDayById.get(stage.eventDayId)
+    return day?.eventId !== event.id
+  })) return false
+  if (state.sections.some(section => {
+    const stage = stageById.get(section.stageId)
+    const day = stage ? eventDayById.get(stage.eventDayId) : undefined
+    return day?.eventId !== event.id
+  })) return false
+  if (state.eventMembers.some(eventMember =>
+    eventMember.eventId !== event.id || !memberById.has(eventMember.memberId))) return false
+  if (state.eventMemberDays.some(memberDay => {
+    const eventMember = eventMemberById.get(memberDay.eventMemberId)
+    const eventDay = eventDayById.get(memberDay.eventDayId)
+    return eventMember?.eventId !== event.id || eventDay?.eventId !== event.id
+  })) return false
+
+  if (state.eventBands.some(eventBand => {
+    const eventDay = eventDayById.get(eventBand.eventDayId)
+    if (
+      eventBand.eventId !== event.id ||
+      eventDay?.eventId !== event.id ||
+      eventBand.memberIds.some(memberId => !memberById.has(memberId)) ||
+      (eventBand.bandId !== undefined && !bandById.has(eventBand.bandId))
+    ) return true
+    if (!eventBand.fixedPlacement) return false
+    const stage = stageById.get(eventBand.fixedPlacement.stageId)
+    if (!stage || stage.eventDayId !== eventBand.eventDayId) return true
+    return eventBand.fixedPlacement.sectionId !== undefined &&
+      sectionById.get(eventBand.fixedPlacement.sectionId)?.stageId !== stage.id
+  })) return false
+
+  if (state.scheduleItems.some(item => {
+    const stage = stageById.get(item.stageId)
+    const eventDay = stage ? eventDayById.get(stage.eventDayId) : undefined
+    if (!stage || eventDay?.eventId !== event.id) return true
+    const stageSections = state.sections.filter(section => section.stageId === stage.id)
+    if (!isValidScheduleItemSectionAssignment(stage.id, stageSections, item)) return true
+    if (item.kind === 'break') return false
+    const eventBand = eventBandById.get(item.eventBandId)
+    return eventBand?.eventId !== event.id || eventBand.eventDayId !== stage.eventDayId
+  })) return false
+
+  if (state.paAssignments.some(assignment => {
+    const eventDay = eventDayById.get(assignment.eventDayId)
+    const stage = stageById.get(assignment.stageId)
+    return assignment.eventId !== event.id ||
+      eventDay?.eventId !== event.id ||
+      stage?.eventDayId !== assignment.eventDayId ||
+      !memberById.has(assignment.memberId) ||
+      !hasBoundaryInStage(assignment.from, assignment.stageId, scheduleItemById, sectionById) ||
+      !hasBoundaryInStage(assignment.until, assignment.stageId, scheduleItemById, sectionById)
+  })) return false
+
+  if (state.dutyTypes.some(dutyType => dutyType.eventId !== event.id)) return false
+  if (state.dutyAssignments.some(assignment => {
+    const dutyType = dutyTypeById.get(assignment.dutyTypeId)
+    const eventDay = eventDayById.get(assignment.eventDayId)
+    const stage = stageById.get(assignment.stageId)
+    return dutyType?.eventId !== event.id ||
+      eventDay?.eventId !== event.id ||
+      stage?.eventDayId !== assignment.eventDayId ||
+      !memberById.has(assignment.memberId) ||
+      !hasBoundaryInStage(assignment.from, assignment.stageId, scheduleItemById, sectionById) ||
+      !hasBoundaryInStage(assignment.until, assignment.stageId, scheduleItemById, sectionById)
+  })) return false
+
+  if (state.timetableLocks.some(lock => {
+    const item = scheduleItemById.get(lock.scheduleItemId)
+    const stage = stageById.get(lock.stageId)
+    const eventDay = stage ? eventDayById.get(stage.eventDayId) : undefined
+    return lock.eventId !== event.id ||
+      eventDay?.eventId !== event.id ||
+      item?.kind !== 'performance' ||
+      item.stageId !== lock.stageId ||
+      item.sectionId !== lock.sectionId ||
+      (lock.sectionId !== undefined &&
+        sectionById.get(lock.sectionId)?.stageId !== lock.stageId)
+  })) return false
+
+  return state.timetableOrderConstraints.every(constraint => {
+    const eventDay = eventDayById.get(constraint.eventDayId)
+    const stage = stageById.get(constraint.stageId)
+    if (
+      constraint.eventId !== event.id ||
+      eventDay?.eventId !== event.id ||
+      stage?.eventDayId !== constraint.eventDayId ||
+      (constraint.sectionId !== undefined &&
+        sectionById.get(constraint.sectionId)?.stageId !== constraint.stageId)
+    ) return false
+    return constraint.eventBandIds.every(eventBandId => {
+      const eventBand = eventBandById.get(eventBandId)
+      return eventBand?.eventId === event.id &&
+        eventBand.eventDayId === constraint.eventDayId
+    })
+  })
+}
+
 export const createCloudEventSnapshot = (
   state: PersistedDomainState,
   eventId: EventId,
@@ -194,7 +343,8 @@ export const createCloudEventSnapshot = (
     !hasUniqueEventOwnedCollectionIds(appState) ||
     !hasOnlyOneEvent(appState) ||
     !hasValidCloudEventIdentity(appState) ||
-    !hasExactReferencedMasters(appState)
+    !hasExactReferencedMasters(appState) ||
+    !hasValidCloudEventRelationships(appState)
   ) {
     return { ok: false, reason: 'INVALID_SNAPSHOT' }
   }
@@ -225,7 +375,8 @@ export const parseCloudEventSnapshot = (
     !hasUniqueEventOwnedCollectionIds(snapshot.appState) ||
     !hasOnlyOneEvent(snapshot.appState) ||
     !hasValidCloudEventIdentity(snapshot.appState) ||
-    !hasExactReferencedMasters(snapshot.appState)
+    !hasExactReferencedMasters(snapshot.appState) ||
+    !hasValidCloudEventRelationships(snapshot.appState)
   ) {
     return undefined
   }

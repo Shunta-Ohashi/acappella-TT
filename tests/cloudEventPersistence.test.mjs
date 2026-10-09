@@ -31,6 +31,7 @@ import {
   CLOUD_EVENT_SNAPSHOT_VERSION,
   createCloudEventSnapshot,
   createCloudWorkspaceState,
+  hasValidCloudEventRelationships,
   parseCloudEventSnapshot,
 } from '../src/cloud/cloudEventSnapshot.ts'
 import {
@@ -457,6 +458,125 @@ test('unsupportedまたはmalformed Cloud Event snapshotを拒否する', () => 
   assert.ok(withDuplicateMember.appState.members[0])
   withDuplicateMember.appState.members.push(withDuplicateMember.appState.members[0])
   assert.equal(parseCloudEventSnapshot(withDuplicateMember), undefined)
+})
+
+test('Cloud Event snapshotはEvent-owned参照を内部解決しcross ownershipを拒否する', () => {
+  const { state, eventId, snapshot } = createSnapshotContainingEveryEventOwnedCollection()
+  assert.equal(hasValidCloudEventRelationships(snapshot.appState), true)
+
+  const cases = [
+    ['EventBand missing EventDay', appState => {
+      appState.eventBands[0].eventDayId = 'missing-event-day'
+    }],
+    ['EventBand foreign EventDay ownership', appState => {
+      const day = appState.eventDays.find(candidate =>
+        candidate.id === appState.eventBands[0].eventDayId)
+      assert.ok(day)
+      day.eventId = 'foreign-event'
+    }],
+    ['fixedPlacement missing Stage', appState => {
+      appState.eventBands[0].fixedPlacement = { stageId: 'missing-stage' }
+    }],
+    ['fixedPlacement missing Section', appState => {
+      const eventBand = appState.eventBands[0]
+      const stage = appState.stages.find(candidate =>
+        candidate.eventDayId === eventBand.eventDayId)
+      assert.ok(stage)
+      eventBand.fixedPlacement = { stageId: stage.id, sectionId: 'missing-section' }
+    }],
+    ['fixedPlacement cross EventDay', appState => {
+      const eventBand = appState.eventBands[0]
+      const foreignStage = appState.stages.find(candidate =>
+        candidate.eventDayId !== eventBand.eventDayId)
+      assert.ok(foreignStage)
+      eventBand.fixedPlacement = { stageId: foreignStage.id }
+    }],
+    ['Stage missing EventDay', appState => {
+      appState.stages[0].eventDayId = 'missing-event-day'
+    }],
+    ['Section missing Stage', appState => {
+      appState.sections[0].stageId = 'missing-stage'
+    }],
+    ['EventMemberDay missing EventMember', appState => {
+      appState.eventMemberDays[0].eventMemberId = 'missing-event-member'
+    }],
+    ['EventMemberDay missing EventDay', appState => {
+      appState.eventMemberDays[0].eventDayId = 'missing-event-day'
+    }],
+    ['ScheduleItem missing Stage', appState => {
+      appState.scheduleItems[0].stageId = 'missing-stage'
+    }],
+    ['Performance missing EventBand', appState => {
+      const performance = appState.scheduleItems.find(item => item.kind === 'performance')
+      assert.ok(performance)
+      performance.eventBandId = 'missing-event-band'
+    }],
+    ['Performance cross EventDay', appState => {
+      const performance = appState.scheduleItems.find(item => item.kind === 'performance')
+      assert.ok(performance)
+      const stage = appState.stages.find(candidate => candidate.id === performance.stageId)
+      const foreignBand = appState.eventBands.find(candidate =>
+        candidate.eventDayId !== stage?.eventDayId)
+      assert.ok(foreignBand)
+      performance.eventBandId = foreignBand.id
+    }],
+    ['PA missing EventDay', appState => {
+      appState.paAssignments[0].eventDayId = 'missing-event-day'
+    }],
+    ['PA missing Boundary ScheduleItem', appState => {
+      appState.paAssignments[0].from = {
+        kind: 'schedule-item', scheduleItemId: 'missing-schedule-item', edge: 'start',
+      }
+    }],
+    ['PA cross EventDay Stage', appState => {
+      const assignment = appState.paAssignments[0]
+      const foreignStage = appState.stages.find(candidate =>
+        candidate.eventDayId !== assignment.eventDayId)
+      assert.ok(foreignStage)
+      assignment.stageId = foreignStage.id
+    }],
+    ['Duty missing DutyType', appState => {
+      appState.dutyAssignments[0].dutyTypeId = 'missing-duty-type'
+    }],
+    ['Duty missing Boundary Section', appState => {
+      appState.dutyAssignments[0].until = {
+        kind: 'section', sectionId: 'missing-section', edge: 'end',
+      }
+    }],
+    ['Duty cross EventDay Stage', appState => {
+      const assignment = appState.dutyAssignments[0]
+      const foreignStage = appState.stages.find(candidate =>
+        candidate.eventDayId !== assignment.eventDayId)
+      assert.ok(foreignStage)
+      assignment.stageId = foreignStage.id
+    }],
+    ['Lock missing ScheduleItem', appState => {
+      appState.timetableLocks[0].scheduleItemId = 'missing-schedule-item'
+    }],
+    ['OrderConstraint missing EventBand', appState => {
+      appState.timetableOrderConstraints[0].eventBandIds[0] = 'missing-event-band'
+    }],
+    ['OrderConstraint cross EventDay EventBand', appState => {
+      const constraint = appState.timetableOrderConstraints[0]
+      const foreignBand = appState.eventBands.find(candidate =>
+        candidate.eventDayId !== constraint.eventDayId)
+      assert.ok(foreignBand)
+      constraint.eventBandIds[0] = foreignBand.id
+    }],
+  ]
+
+  for (const [label, mutate] of cases) {
+    const malformed = structuredClone(snapshot)
+    mutate(malformed.appState)
+    assert.equal(hasValidCloudEventRelationships(malformed.appState), false, label)
+    assert.equal(parseCloudEventSnapshot(malformed), undefined, label)
+  }
+
+  const malformedState = structuredClone(state)
+  const eventBand = malformedState.eventBands.find(candidate => candidate.eventId === eventId)
+  assert.ok(eventBand)
+  eventBand.eventDayId = 'missing-event-day'
+  assert.equal(createCloudEventSnapshot(malformedState, eventId).ok, false)
 })
 
 test('全Event配下collectionの同一ID重複をbuilderとparserでfail closedする', () => {
