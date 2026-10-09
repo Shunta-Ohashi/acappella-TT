@@ -17,8 +17,62 @@ select set_config('acappella_tt.catalog_scenario', :'catalog_scenario', true);
 do $catalog_regression$
 declare
   scenario text := current_setting('acappella_tt.catalog_scenario');
+  inherited_role_name name := 'cloud_event_catalog_regression_inherited';
+  inherited_member_name name;
 begin
-  case scenario
+  if scenario in (
+    'cloud_anon_inherited_delete',
+    'cloud_authenticated_inherited_delete',
+    'cloud_anon_inherited_table_insert',
+    'cloud_anon_inherited_table_update',
+    'cloud_authenticated_inherited_table_insert',
+    'cloud_authenticated_inherited_table_update',
+    'cloud_anon_inherited_column_write',
+    'cloud_authenticated_inherited_column_write'
+  ) then
+    if exists (
+      select 1 from pg_catalog.pg_roles
+      where rolname = inherited_role_name
+    ) then
+      raise exception 'Disposable regression role already exists';
+    end if;
+
+    inherited_member_name := case
+      when scenario like 'cloud_anon_%' then 'anon'
+      else 'authenticated'
+    end;
+    execute format('create role %I nologin', inherited_role_name);
+
+    case
+      when scenario like '%_inherited_delete' then
+        execute format(
+          'grant delete on table public.cloud_events to %I',
+          inherited_role_name
+        );
+      when scenario like '%_inherited_table_insert' then
+        execute format(
+          'grant insert on table public.cloud_events to %I',
+          inherited_role_name
+        );
+      when scenario like '%_inherited_table_update' then
+        execute format(
+          'grant update on table public.cloud_events to %I',
+          inherited_role_name
+        );
+      when scenario like '%_inherited_column_write' then
+        execute format(
+          'grant update (event_name) on table public.cloud_events to %I',
+          inherited_role_name
+        );
+    end case;
+
+    execute format(
+      'grant %I to %I',
+      inherited_role_name,
+      inherited_member_name
+    );
+  else
+    case scenario
     when 'baseline' then
       null;
     when 'cloud_anon_table_insert' then
@@ -33,17 +87,6 @@ begin
       grant insert (event_name) on table public.cloud_events to public;
     when 'cloud_public_column_update' then
       grant update (event_name) on table public.cloud_events to public;
-    when 'cloud_anon_inherited_column_write' then
-      if exists (
-        select 1 from pg_catalog.pg_roles
-        where rolname = 'cloud_event_catalog_regression_inherited'
-      ) then
-        raise exception 'Disposable regression role already exists';
-      end if;
-      create role cloud_event_catalog_regression_inherited nologin;
-      grant update (event_name) on table public.cloud_events
-        to cloud_event_catalog_regression_inherited;
-      grant cloud_event_catalog_regression_inherited to anon;
     when 'cloud_anon_column_grant_option' then
       grant update (event_name) on table public.cloud_events to anon
         with grant option;
@@ -208,7 +251,8 @@ begin
       grant update (display_name) on table public.profiles to anon;
     else
       raise exception 'Unknown catalog regression scenario: %', scenario;
-  end case;
+    end case;
+  end if;
 end;
 $catalog_regression$;
 

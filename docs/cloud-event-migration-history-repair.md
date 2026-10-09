@@ -171,6 +171,11 @@ environment, preserve both staged rollout boundaries:
 Do not apply either revoke while its legacy clients may still be active. A
 fresh environment instead applies the complete migration chain before exposing
 the current Function/frontend to users; it does not use this upgrade sequence.
+Both revoke migrations also fail closed after their direct REVOKEs when `anon`
+or `authenticated` retains effective DELETE or INSERT/UPDATE privileges through
+an inherited custom role. Inspect and remove the relevant role membership or
+inherited GRANT, then rerun the migration; the migrations do not alter shared
+custom roles automatically.
 
 ## Disposable-database exercise
 

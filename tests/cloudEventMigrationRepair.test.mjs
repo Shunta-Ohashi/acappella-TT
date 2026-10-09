@@ -240,12 +240,17 @@ test('Auth / Workspaceの既知catalog契約は1項目でも不一致ならunkno
   }
 })
 
-test('Cloud Eventのanon/PUBLIC table・column権限とcatalog不明を個別に拒否する', () => {
-  for (const check of [
-    'anonTableWrite',
-    'anonColumnWrite',
-    'publicTableWrite',
-    'publicColumnWrite',
+test('Cloud Eventのbrowser/PUBLIC実効table・column権限とcatalog不明を個別に拒否する', () => {
+  for (const [check, mismatchPattern] of [
+    ['authenticatedInsert', /authenticated INSERT privilege/i],
+    ['authenticatedUpdate', /authenticated UPDATE privilege/i],
+    ['authenticatedDelete', /authenticated DELETE privilege/i],
+    ['authenticatedColumnInsert', /authenticated column INSERT privilege/i],
+    ['authenticatedColumnUpdate', /authenticated column UPDATE privilege/i],
+    ['anonTableWrite', /anonTableWrite privilege/i],
+    ['anonColumnWrite', /anonColumnWrite privilege/i],
+    ['publicTableWrite', /publicTableWrite privilege/i],
+    ['publicColumnWrite', /publicColumnWrite privilege/i],
   ]) {
     const inspection = createInspection({
       versions: createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
@@ -253,7 +258,7 @@ test('Cloud Eventのanon/PUBLIC table・column権限とcatalog不明を個別に
     inspection.laterSchema[check] = true
     const result = analyzeCloudEventMigrationInspection(inspection)
     assert.equal(result.kind, 'unknown', check)
-    assert.match(result.mismatches.join('\n'), new RegExp(check), check)
+    assert.match(result.mismatches.join('\n'), mismatchPattern, check)
   }
 
   const unavailable = createInspection({
@@ -779,6 +784,8 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     assert.match(preflightSql, new RegExp(`'${check}'`), check)
   }
   assert.match(preflightSql, /has_function_privilege\s*\(/i)
+  assert.match(preflightSql, /has_table_privilege\s*\(/i)
+  assert.match(preflightSql, /has_column_privilege\s*\(/i)
   assert.match(preflightSql, /authorized_delete_function\.prosecdef/i)
   assert.match(preflightSql, /authorized_page_function\.prosecdef/i)
   assert.match(preflightSql, /authorized_save_function\.prosecdef/i)
@@ -790,7 +797,14 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'cloud_anon_column_update',
     'cloud_public_column_insert',
     'cloud_public_column_update',
+    'cloud_anon_inherited_delete',
+    'cloud_authenticated_inherited_delete',
+    'cloud_anon_inherited_table_insert',
+    'cloud_anon_inherited_table_update',
+    'cloud_authenticated_inherited_table_insert',
+    'cloud_authenticated_inherited_table_update',
     'cloud_anon_inherited_column_write',
+    'cloud_authenticated_inherited_column_write',
     'cloud_anon_column_grant_option',
     'required_role_missing',
     'profiles_missing',

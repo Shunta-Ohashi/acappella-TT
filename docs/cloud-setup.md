@@ -35,6 +35,8 @@ Supabase Dashboardでprojectを作成します。frontendへ設定するのはPr
 
 旧clientが存在し得る間は`...130000`を先に適用しないでください。新規環境では利用開始前に全migrationを順番に適用し、現在のFunction/frontendを揃えてから公開するため、この段階的切替は不要です。
 
+`...130000`はdirect GRANTのREVOKE後に`anon`と`authenticated`の実効DELETE権限も検査します。custom roleから継承したDELETEが残る場合はfail closedするため、operatorがrole membershipとinherited GRANTを確認・除去してからmigrationを再実行してください。migrationが共有custom roleの権限を自動変更することはありません。
+
 ## 3. Authentication userを作成する
 
 Authenticationの公開signupを無効化してください。Authentication > Usersから、利用を許可する幹部ユーザーを管理者が事前作成します。
@@ -113,6 +115,8 @@ supabase functions serve save-cloud-event
 6. 新frontendからEdge Function経由の保存を再確認する
 
 直接write取消し後、旧frontendの直接upsertは意図どおり失敗します。途中状態を長期間残さず、専用環境で一連の順序を検証してからproductionへ反映してください。fresh DBでは全migration適用後にFunctionとfrontendを揃えて公開します。
+
+`...160000`はtable/columnへのdirect GRANTをREVOKEした後、`anon`と`authenticated`に継承経由の実効INSERT/UPDATE権限が残っていないことも検査します。残存権限があればfail closedするため、operatorがrole membership、inherited GRANT、custom roleを修正してからmigrationを再実行してください。
 
 ## 9. Security確認
 

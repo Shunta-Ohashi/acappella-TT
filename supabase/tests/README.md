@@ -64,6 +64,12 @@ and one-at-a-time Auth / Workspace column, PK, CHECK, FK, RLS, policy, function,
 trigger, and privilege changes. `--confirm-disposable` is mandatory; this is
 never a production repair or migration command.
 
+The RPC-only DELETE and save migrations perform the same fail-closed check
+after revoking direct browser grants. If `anon` or `authenticated` still has an
+effective DELETE or INSERT/UPDATE privilege through a custom role, migration
+application must fail. Repair the inherited GRANT or role membership explicitly
+and rerun; do not grant browser access merely to make a fixture pass.
+
 The concurrency tests use a bounded polling loop only to observe the second
 connection waiting on a PostgreSQL lock; ordering is established by the RPC call
 and asynchronous membership mutation, not by assuming a fixed sleep duration.

@@ -3193,6 +3193,27 @@ test('authorized save migrationはbackend専用RPCとclient直接write取消し�
   }
   assert.match(revokeSql, /revoke insert \([\s\S]*\) on public\.cloud_events from authenticated/i)
   assert.match(revokeSql, /revoke update \([\s\S]*\) on public\.cloud_events from authenticated/i)
+  for (const role of ['anon', 'authenticated']) {
+    assert.match(revokeSql, new RegExp(
+      `has_table_privilege\\('${role}', 'public\\.cloud_events', 'INSERT'\\)`,
+      'i',
+    ))
+    assert.match(revokeSql, new RegExp(
+      `has_table_privilege\\('${role}', 'public\\.cloud_events', 'UPDATE'\\)`,
+      'i',
+    ))
+    assert.match(revokeSql, new RegExp(
+      `has_any_column_privilege\\(\\s*'${role}',\\s*'public\\.cloud_events',\\s*'INSERT,UPDATE'`,
+      'i',
+    ))
+  }
+  assert.match(revokeSql, /raise exception[\s\S]*effective table write privilege/i)
+  assert.match(revokeSql, /raise exception[\s\S]*effective column write privilege/i)
+  assert.match(revokeSql, /inherited INSERT\/UPDATE grants or role memberships/i)
+  assert.ok(
+    revokeSql.lastIndexOf('revoke update (') <
+      revokeSql.indexOf('do $cloud_event_write_privilege_guard$'),
+  )
 
   const saveGateway = repositorySource.slice(
     repositorySource.indexOf('async saveRow'),
@@ -3306,7 +3327,7 @@ test('authorized page migrationは各pageでMembershipをlockしC照合順envelo
   assert.doesNotMatch(repositoryWorkspaceLoad, /\.sort\(/)
 })
 
-test('upgrade migrationはCloud Event直接DELETEだけを全client roleから取り消す', async () => {
+test('upgrade migrationは直接DELETEを取り消し継承実効権限をfail closedにする', async () => {
   const sql = await readFile(new URL(
     '../supabase/migrations/20261008130000_cloud_event_rpc_only_delete.sql',
     import.meta.url,
@@ -3315,6 +3336,14 @@ test('upgrade migrationはCloud Event直接DELETEだけを全client roleから�
   assert.match(sql, /revoke delete on table public\.cloud_events from public/i)
   assert.match(sql, /revoke delete on table public\.cloud_events from anon/i)
   assert.match(sql, /revoke delete on table public\.cloud_events from authenticated/i)
+  assert.match(sql, /has_table_privilege\('anon', 'public\.cloud_events', 'DELETE'\)/i)
+  assert.match(sql, /has_table_privilege\('authenticated', 'public\.cloud_events', 'DELETE'\)/i)
+  assert.match(sql, /raise exception[\s\S]*effective DELETE privilege/i)
+  assert.match(sql, /inherited DELETE grants or role memberships/i)
+  assert.ok(
+    sql.lastIndexOf('revoke delete on table') <
+      sql.indexOf('do $cloud_event_delete_privilege_guard$'),
+  )
   assert.doesNotMatch(sql, /revoke all/i)
   assert.doesNotMatch(sql, /service_role/i)
 })
