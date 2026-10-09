@@ -125,6 +125,20 @@ authenticated_role as (
 anon_role as (
   select oid from pg_catalog.pg_roles where rolname = 'anon'
 ),
+service_role as (
+  select oid from pg_catalog.pg_roles where rolname = 'service_role'
+),
+authorized_save_function as (
+  select
+    pg_proc.oid,
+    pg_proc.proacl,
+    pg_proc.proowner,
+    pg_proc.prosecdef,
+    pg_proc.prosrc
+  from pg_catalog.pg_proc
+  where pg_proc.oid =
+    to_regprocedure('public.save_cloud_event_validated(uuid,uuid,jsonb)')
+),
 constraint_definitions as (
   select
     pg_constraint.contype,
@@ -607,13 +621,47 @@ later_schema as (
         and lower(prosrc) like '%limit (p_page_size + 1)%'
     ),
     'authorizedSaveFunction', exists (
-      select 1 from pg_catalog.pg_proc
-      where oid = to_regprocedure('public.save_cloud_event_validated(uuid,uuid,jsonb)')
-        and lower(prosrc) like '%from public.workspace_members%'
+      select 1 from authorized_save_function
+      where lower(prosrc) like '%from public.workspace_members%'
         and lower(prosrc) like '%for share%'
         and lower(prosrc) like '%insert into public.cloud_events%'
         and lower(prosrc) like '%on conflict (workspace_id, event_id) do update%'
     ),
+    'authorizedSaveSecurityDefiner', coalesce((
+      select authorized_save_function.prosecdef from authorized_save_function
+    ), false),
+    'saveFunctionPermissionCatalogReady',
+      (select count(*) = 1 from authorized_save_function)
+      and (select count(*) = 1 from service_role)
+      and (select count(*) = 1 from anon_role)
+      and (select count(*) = 1 from authenticated_role),
+    'serviceRoleSaveExecute', coalesce((select has_function_privilege(
+      service_role.oid,
+      authorized_save_function.oid,
+      'EXECUTE'
+    ) from service_role cross join authorized_save_function), false),
+    -- PUBLIC has no pg_roles OID. Its effective function privilege is the
+    -- grantee=0 entry in the resolved ACL, including PostgreSQL's default ACL.
+    'publicSaveExecute', exists (
+      select 1
+      from authorized_save_function
+      cross join lateral pg_catalog.aclexplode(coalesce(
+        authorized_save_function.proacl,
+        pg_catalog.acldefault('f', authorized_save_function.proowner)
+      )) as function_acl
+      where function_acl.grantee = 0
+        and function_acl.privilege_type = 'EXECUTE'
+    ),
+    'anonSaveExecute', coalesce((select has_function_privilege(
+      anon_role.oid,
+      authorized_save_function.oid,
+      'EXECUTE'
+    ) from anon_role cross join authorized_save_function), false),
+    'authenticatedSaveExecute', coalesce((select has_function_privilege(
+      authenticated_role.oid,
+      authorized_save_function.oid,
+      'EXECUTE'
+    ) from authenticated_role cross join authorized_save_function), false),
     'authenticatedSelect', coalesce((select has_table_privilege(
       authenticated_role.oid, cloud_table.oid, 'SELECT'
     ) from authenticated_role cross join cloud_table), false),

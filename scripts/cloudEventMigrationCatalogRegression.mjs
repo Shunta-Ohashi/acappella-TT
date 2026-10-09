@@ -18,6 +18,13 @@ const scenarios = [
   ['cloud_public_column_update', result => result.laterSchema.publicColumnWrite],
   ['cloud_anon_inherited_column_write', result => result.laterSchema.anonColumnWrite],
   ['cloud_anon_column_grant_option', result => result.laterSchema.anonColumnWrite],
+  ['save_function_security_invoker', result => !result.laterSchema.authorizedSaveSecurityDefiner],
+  ['save_public_execute', result => result.laterSchema.publicSaveExecute],
+  ['save_anon_execute', result => result.laterSchema.anonSaveExecute],
+  ['save_authenticated_execute', result => result.laterSchema.authenticatedSaveExecute],
+  ['save_anon_inherited_execute', result => result.laterSchema.anonSaveExecute],
+  ['save_service_role_execute_missing', result => !result.laterSchema.serviceRoleSaveExecute],
+  ['save_service_role_missing', result => !result.laterSchema.saveFunctionPermissionCatalogReady],
   ['required_role_missing', result => !result.laterSchema.permissionCatalogReady],
   ['profiles_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_missing', result => !result.authWorkspaceChecks.profilesColumns],
@@ -94,6 +101,12 @@ const main = async () => {
     if (
       !baseline.authWorkspaceReady ||
       !baseline.laterSchema.permissionCatalogReady ||
+      !baseline.laterSchema.authorizedSaveSecurityDefiner ||
+      !baseline.laterSchema.saveFunctionPermissionCatalogReady ||
+      !baseline.laterSchema.serviceRoleSaveExecute ||
+      baseline.laterSchema.publicSaveExecute ||
+      baseline.laterSchema.anonSaveExecute ||
+      baseline.laterSchema.authenticatedSaveExecute ||
       baseline.laterSchema.anonTableWrite ||
       baseline.laterSchema.anonColumnWrite ||
       baseline.laterSchema.publicTableWrite ||

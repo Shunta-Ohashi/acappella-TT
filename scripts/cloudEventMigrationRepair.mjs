@@ -60,6 +60,12 @@ export const REQUIRED_LATER_SCHEMA_CHECKS = [
   'authorizedPageIndex',
   'authorizedPageFunction',
   'authorizedSaveFunction',
+  'authorizedSaveSecurityDefiner',
+  'saveFunctionPermissionCatalogReady',
+  'serviceRoleSaveExecute',
+  'publicSaveExecute',
+  'anonSaveExecute',
+  'authenticatedSaveExecute',
   'authenticatedSelect',
   'authenticatedInsert',
   'authenticatedUpdate',
@@ -175,6 +181,36 @@ export const analyzeCloudEventMigrationInspection = inspection => {
       laterApplied.authorizedSave,
       'authorized save function/history',
     )
+    compareExpected(
+      mismatches,
+      inspection.laterSchema.authorizedSaveSecurityDefiner,
+      laterApplied.authorizedSave,
+      'authorized save SECURITY DEFINER/history',
+    )
+    compareExpected(
+      mismatches,
+      inspection.laterSchema.saveFunctionPermissionCatalogReady,
+      laterApplied.authorizedSave,
+      'authorized save permission catalog readiness/history',
+    )
+    compareExpected(
+      mismatches,
+      inspection.laterSchema.serviceRoleSaveExecute,
+      laterApplied.authorizedSave,
+      'service_role authorized save EXECUTE privilege/history',
+    )
+    for (const check of [
+      'publicSaveExecute',
+      'anonSaveExecute',
+      'authenticatedSaveExecute',
+    ]) {
+      compareExpected(
+        mismatches,
+        inspection.laterSchema[check],
+        false,
+        `${check} privilege`,
+      )
+    }
     compareExpected(
       mismatches,
       inspection.laterSchema.authenticatedSelect,

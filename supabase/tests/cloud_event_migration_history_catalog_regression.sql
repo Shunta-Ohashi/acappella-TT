@@ -47,6 +47,41 @@ begin
     when 'cloud_anon_column_grant_option' then
       grant update (event_name) on table public.cloud_events to anon
         with grant option;
+    when 'save_function_security_invoker' then
+      alter function public.save_cloud_event_validated(uuid, uuid, jsonb)
+        security invoker;
+    when 'save_public_execute' then
+      grant execute on function
+        public.save_cloud_event_validated(uuid, uuid, jsonb) to public;
+    when 'save_anon_execute' then
+      grant execute on function
+        public.save_cloud_event_validated(uuid, uuid, jsonb) to anon;
+    when 'save_authenticated_execute' then
+      grant execute on function
+        public.save_cloud_event_validated(uuid, uuid, jsonb) to authenticated;
+    when 'save_anon_inherited_execute' then
+      if exists (
+        select 1 from pg_catalog.pg_roles
+        where rolname = 'cloud_event_save_regression_inherited'
+      ) then
+        raise exception 'Disposable save regression role already exists';
+      end if;
+      create role cloud_event_save_regression_inherited nologin;
+      grant execute on function
+        public.save_cloud_event_validated(uuid, uuid, jsonb)
+        to cloud_event_save_regression_inherited;
+      grant cloud_event_save_regression_inherited to anon;
+    when 'save_service_role_execute_missing' then
+      revoke execute on function
+        public.save_cloud_event_validated(uuid, uuid, jsonb) from service_role;
+    when 'save_service_role_missing' then
+      if exists (
+        select 1 from pg_catalog.pg_roles
+        where rolname = 'cloud_event_catalog_regression_service_role'
+      ) then
+        raise exception 'Disposable service role replacement already exists';
+      end if;
+      alter role service_role rename to cloud_event_catalog_regression_service_role;
     when 'required_role_missing' then
       if exists (
         select 1 from pg_catalog.pg_roles

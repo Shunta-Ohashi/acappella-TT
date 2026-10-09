@@ -69,6 +69,8 @@ The catalog check covers:
   write privileges, including inherited anon privileges, PUBLIC ACLs, every
   live user column, and grant option;
 - later delete/page/save functions and the `COLLATE "C"` page index;
+- the backend save function's SECURITY DEFINER mode and effective EXECUTE
+  contract (service role only; no PUBLIC, anon, or authenticated access);
 - complete row count and a deterministic digest including snapshot, revision,
   and timestamps.
 

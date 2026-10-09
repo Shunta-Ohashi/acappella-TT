@@ -51,6 +51,12 @@ const createInspection = ({
       authorizedPageIndex: applied.has(LATER_VERSIONS.authorizedPage),
       authorizedPageFunction: applied.has(LATER_VERSIONS.authorizedPage),
       authorizedSaveFunction: applied.has(LATER_VERSIONS.authorizedSave),
+      authorizedSaveSecurityDefiner: applied.has(LATER_VERSIONS.authorizedSave),
+      saveFunctionPermissionCatalogReady: applied.has(LATER_VERSIONS.authorizedSave),
+      serviceRoleSaveExecute: applied.has(LATER_VERSIONS.authorizedSave),
+      publicSaveExecute: false,
+      anonSaveExecute: false,
+      authenticatedSaveExecute: false,
       authenticatedSelect: cloudEventsExists,
       authenticatedInsert: cloudEventsExists && !applied.has(LATER_VERSIONS.rpcOnlySave),
       authenticatedUpdate: cloudEventsExists && !applied.has(LATER_VERSIONS.rpcOnlySave),
@@ -170,6 +176,47 @@ test('Cloud Eventのanon/PUBLIC table・column権限とcatalog不明を個別に
   assert.equal(analyzeCloudEventMigrationInspection(unavailable).kind, 'unknown')
 })
 
+test('authorized save RPCのSECURITY DEFINERと実効EXECUTE権限をfail-closedで検査する', () => {
+  for (const check of [
+    'publicSaveExecute',
+    'anonSaveExecute',
+    'authenticatedSaveExecute',
+  ]) {
+    const inspection = createInspection({
+      versions: createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
+    })
+    inspection.laterSchema[check] = true
+    const result = analyzeCloudEventMigrationInspection(inspection)
+    assert.equal(result.kind, 'unknown', check)
+    assert.match(result.mismatches.join('\n'), new RegExp(check), check)
+  }
+
+  for (const check of [
+    'authorizedSaveSecurityDefiner',
+    'saveFunctionPermissionCatalogReady',
+    'serviceRoleSaveExecute',
+  ]) {
+    const inspection = createInspection({
+      versions: createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
+    })
+    inspection.laterSchema[check] = false
+    const result = analyzeCloudEventMigrationInspection(inspection)
+    assert.equal(result.kind, 'unknown', check)
+    assert.match(result.mismatches.join('\n'), /authorized save|service_role/i, check)
+  }
+
+  const beforeAuthorizedSave = createInspection({
+    versions: [
+      AUTH_VERSION,
+      OLD_CLOUD_EVENT_MIGRATION_VERSION,
+      LATER_VERSIONS.authorizedDelete,
+      LATER_VERSIONS.rpcOnlyDelete,
+      LATER_VERSIONS.authorizedPage,
+    ],
+  })
+  assert.equal(analyzeCloudEventMigrationInspection(beforeAuthorizedSave).kind, 'old-only')
+})
+
 test('危険・不明なcatalogではapplyとresumeのrepairを一度も呼ばない', async () => {
   const cases = []
   const unsafeAuth = createInspection({
@@ -187,6 +234,12 @@ test('危険・不明なcatalogではapplyとresumeのrepairを一度も呼ば�
   })
   unsafePermission.laterSchema.publicColumnWrite = true
   cases.push({ inspection: unsafePermission, resume: true })
+
+  const unsafeSaveExecute = createInspection({
+    versions: createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
+  })
+  unsafeSaveExecute.laterSchema.authenticatedSaveExecute = true
+  cases.push({ inspection: unsafeSaveExecute, resume: false })
 
   for (const { inspection, resume } of cases) {
     let repairCalls = 0
@@ -462,6 +515,9 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   for (const check of REQUIRED_LATER_SCHEMA_CHECKS) {
     assert.match(preflightSql, new RegExp(`'${check}'`), check)
   }
+  assert.match(preflightSql, /has_function_privilege\s*\(/i)
+  assert.match(preflightSql, /authorized_save_function\.prosecdef/i)
+  assert.match(preflightSql, /aclexplode\s*\(coalesce\([\s\S]*acldefault\('f'/i)
   assert.match(fixtureSql, /migration-history-event/)
   assert.match(catalogRegressionSql, /begin;[\s\S]*\\ir cloud_event_migration_history_preflight\.sql[\s\S]*rollback;/i)
   for (const scenario of [
@@ -482,6 +538,13 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'workspace_policy_extra',
     'updated_at_function_invalid',
     'auth_workspace_anon_column_write',
+    'save_function_security_invoker',
+    'save_public_execute',
+    'save_anon_execute',
+    'save_authenticated_execute',
+    'save_anon_inherited_execute',
+    'save_service_role_execute_missing',
+    'save_service_role_missing',
   ]) {
     assert.match(catalogRegressionSql, new RegExp(`'${scenario}'`), scenario)
     assert.match(catalogRegressionRunner, new RegExp(`'${scenario}'`), scenario)
