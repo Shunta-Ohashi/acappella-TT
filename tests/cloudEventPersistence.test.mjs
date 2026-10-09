@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { readFile, readdir } from 'node:fs/promises'
 import test from 'node:test'
 
+import './eventEditorDraftGuard.test.mjs'
+
 import { createDemoData } from '../src/data/demoData.ts'
 import {
   createCloudEventRepository,
@@ -2054,7 +2056,8 @@ test('Event作成はCloudへ自動保存せず明示保存操作だけがsaveを
 
   assert.doesNotMatch(createHandler, /persistEventToCloud|saveCloudEventFromState/)
   assert.match(explicitSaveHandler, /persistEventToCloud\(domainState, selectedEvent\.id\)/)
-  assert.match(explicitSaveHandler, /eventBasicInfoRef\.current\?\.hasUnsavedChanges\(\)/)
+  assert.match(explicitSaveHandler, /runEventEditorCloudSaveGuarded\(/)
+  assert.match(explicitSaveHandler, /handles: getEventEditorDraftHandles\(\)/)
   assert.match(deleteHandler, /runExclusiveCloudEventDeletion\(/)
   assert.match(deleteHandler, /latestDomainStateRef\.current/)
   assert.match(

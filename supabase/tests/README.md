@@ -44,12 +44,24 @@ psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
 psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
   -v "test_db_url=$env:ACAPPELLA_TT_TEST_DATABASE_URL" `
   -f supabase/tests/cloud_event_authorized_page_concurrency.sql
+node scripts/cloudEventMigrationCatalogRegression.mjs `
+  --db-url-env ACAPPELLA_TT_TEST_DATABASE_URL `
+  --confirm-disposable
 ```
 
 The first script is wrapped in a transaction and rolls back all fixtures. The
 concurrency scripts must commit between two database connections to prove lock
 ordering, so they clean up their fixed-ID fixtures when successful. Use a disposable
 database because an interrupted run can leave those fixtures behind.
+
+The catalog regression command requires the complete migration chain and runs
+the repository's real migration-history preflight once for the safe baseline
+and once per deliberately damaged catalog. Each mutation is enclosed in a
+transaction and rolled back. It covers effective/inherited and PUBLIC table or
+column writes (including grant option), missing roles, and one-at-a-time Auth /
+Workspace column, PK, CHECK, FK, RLS, policy, function, trigger, and privilege
+changes. `--confirm-disposable` is mandatory; this is never a production repair
+or migration command.
 
 The concurrency tests use a bounded polling loop only to observe the second
 connection waiting on a PostgreSQL lock; ordering is established by the RPC call

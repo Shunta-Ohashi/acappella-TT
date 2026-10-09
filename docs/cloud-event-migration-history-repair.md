@@ -59,12 +59,15 @@ psql --no-psqlrc --quiet --no-align --tuples-only `
 
 The catalog check covers:
 
-- Auth users, Workspaces, and Workspace memberships;
+- the Auth reference plus the repository-owned Profile, Workspace, and
+  Workspace-membership columns/defaults, PK/FK/CHECK constraints, update
+  function/triggers, index, RLS policies, and effective table/column grants;
 - migration-history table and old/new/later versions;
 - all `cloud_events` columns, primary/foreign/check constraints, including the
   strict Persistence V5 / snapshot V1 shape check;
 - metadata functions and triggers, indexes, RLS, policies, and effective client
-  write privileges;
+  write privileges, including inherited anon privileges, PUBLIC ACLs, every
+  live user column, and grant option;
 - later delete/page/save functions and the `COLLATE "C"` page index;
 - complete row count and a deterministic digest including snapshot, revision,
   and timestamps.
@@ -168,3 +171,19 @@ disposable Supabase-compatible database only:
 Mock tests cover the state machine and interruption behavior. This disposable
 exercise is the real CLI/PostgreSQL check and is not considered passed unless
 all commands actually ran successfully.
+
+To exercise the actual PostgreSQL catalogs against the fully migrated
+disposable database, also run:
+
+```powershell
+node scripts/cloudEventMigrationCatalogRegression.mjs `
+  --db-url-env ACAPPELLA_TT_MIGRATION_REPAIR_DB_URL `
+  --confirm-disposable
+```
+
+The runner invokes the same preflight used by the repair helper. Its SQL fixture
+temporarily damages one catalog property at a time inside a transaction and
+rolls it back. A missing/loosened policy, constraint, role, RLS flag, trigger,
+function, or unsafe table/column grant must therefore be observed as unsafe by
+the real catalog query. Merely having the expected check names in a SQL file is
+not counted as a passing database test.

@@ -6,7 +6,9 @@ import {
   analyzeCloudEventMigrationInspection,
   NEW_CLOUD_EVENT_MIGRATION_VERSION,
   OLD_CLOUD_EVENT_MIGRATION_VERSION,
+  REQUIRED_AUTH_WORKSPACE_SCHEMA_CHECKS,
   REQUIRED_BASE_SCHEMA_CHECKS,
+  REQUIRED_LATER_SCHEMA_CHECKS,
   runCloudEventMigrationRepair,
 } from '../scripts/cloudEventMigrationRepair.mjs'
 
@@ -28,6 +30,9 @@ const createInspection = ({
   const baseSchemaChecks = Object.fromEntries(
     REQUIRED_BASE_SCHEMA_CHECKS.map(check => [check, cloudEventsExists]),
   )
+  const authWorkspaceChecks = Object.fromEntries(
+    REQUIRED_AUTH_WORKSPACE_SCHEMA_CHECKS.map(check => [check, cloudEventsExists]),
+  )
   return {
     target: {
       database: 'postgres',
@@ -38,6 +43,7 @@ const createInspection = ({
     historyTableExists: versions.length > 0,
     appliedVersions: [...versions],
     authWorkspaceReady: cloudEventsExists,
+    authWorkspaceChecks,
     cloudEventsExists,
     baseSchemaChecks,
     laterSchema: {
@@ -53,7 +59,11 @@ const createInspection = ({
         cloudEventsExists && !applied.has(LATER_VERSIONS.rpcOnlySave),
       authenticatedColumnUpdate:
         cloudEventsExists && !applied.has(LATER_VERSIONS.rpcOnlySave),
-      anonOrPublicWrite: false,
+      permissionCatalogReady: cloudEventsExists,
+      anonTableWrite: false,
+      anonColumnWrite: false,
+      publicTableWrite: false,
+      publicColumnWrite: false,
     },
     cloudData: {
       rowCount: cloudEventsExists ? 1 : 0,
@@ -122,6 +132,114 @@ test('履歴とcatalogが一致しない状態はrepairせず停止する', () =
   })
   missingLaterObject.laterSchema.authorizedSaveFunction = false
   assert.equal(analyzeCloudEventMigrationInspection(missingLaterObject).kind, 'unknown')
+})
+
+test('Auth / Workspaceの既知catalog契約は1項目でも不一致ならunknownになる', () => {
+  for (const check of REQUIRED_AUTH_WORKSPACE_SCHEMA_CHECKS) {
+    const inspection = createInspection({
+      versions: createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
+    })
+    inspection.authWorkspaceChecks[check] = false
+    inspection.authWorkspaceReady = false
+    const result = analyzeCloudEventMigrationInspection(inspection)
+    assert.equal(result.kind, 'unknown', check)
+    assert.match(result.mismatches.join('\n'), new RegExp(check), check)
+  }
+})
+
+test('Cloud Eventのanon/PUBLIC table・column権限とcatalog不明を個別に拒否する', () => {
+  for (const check of [
+    'anonTableWrite',
+    'anonColumnWrite',
+    'publicTableWrite',
+    'publicColumnWrite',
+  ]) {
+    const inspection = createInspection({
+      versions: createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
+    })
+    inspection.laterSchema[check] = true
+    const result = analyzeCloudEventMigrationInspection(inspection)
+    assert.equal(result.kind, 'unknown', check)
+    assert.match(result.mismatches.join('\n'), new RegExp(check), check)
+  }
+
+  const unavailable = createInspection({
+    versions: createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
+  })
+  unavailable.laterSchema.permissionCatalogReady = false
+  assert.equal(analyzeCloudEventMigrationInspection(unavailable).kind, 'unknown')
+})
+
+test('危険・不明なcatalogではapplyとresumeのrepairを一度も呼ばない', async () => {
+  const cases = []
+  const unsafeAuth = createInspection({
+    versions: createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
+  })
+  unsafeAuth.authWorkspaceChecks.policies = false
+  unsafeAuth.authWorkspaceReady = false
+  cases.push({ inspection: unsafeAuth, resume: false })
+
+  const unsafePermission = createInspection({
+    versions: [
+      ...createKnownVersions(NEW_CLOUD_EVENT_MIGRATION_VERSION),
+      OLD_CLOUD_EVENT_MIGRATION_VERSION,
+    ],
+  })
+  unsafePermission.laterSchema.publicColumnWrite = true
+  cases.push({ inspection: unsafePermission, resume: true })
+
+  for (const { inspection, resume } of cases) {
+    let repairCalls = 0
+    const result = await runCloudEventMigrationRepair({
+      databaseUrl: 'postgresql://test.invalid/postgres',
+      apply: true,
+      resume,
+      confirmTarget: 'not-used-for-unknown-state',
+      inspectTarget: async () => structuredClone(inspection),
+      repairMigration: async () => {
+        repairCalls += 1
+        return { ok: true }
+      },
+    })
+    assert.equal(result.ok, false)
+    assert.equal(result.code, 'UNKNOWN_STATE')
+    assert.equal(repairCalls, 0)
+  }
+
+  const missingField = createInspection({
+    versions: createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
+  })
+  delete missingField.authWorkspaceChecks.profilesColumns
+  let repairCalls = 0
+  const invalidShape = await runCloudEventMigrationRepair({
+    databaseUrl: 'postgresql://test.invalid/postgres',
+    apply: true,
+    inspectTarget: async () => missingField,
+    repairMigration: async () => {
+      repairCalls += 1
+      return { ok: true }
+    },
+  })
+  assert.equal(invalidShape.ok, false)
+  assert.equal(invalidShape.code, 'INVALID_INSPECTION')
+  assert.equal(repairCalls, 0)
+
+  const missingPermissionField = createInspection({
+    versions: createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
+  })
+  delete missingPermissionField.laterSchema.permissionCatalogReady
+  const invalidPermissionShape = await runCloudEventMigrationRepair({
+    databaseUrl: 'postgresql://test.invalid/postgres',
+    apply: true,
+    inspectTarget: async () => missingPermissionField,
+    repairMigration: async () => {
+      repairCalls += 1
+      return { ok: true }
+    },
+  })
+  assert.equal(invalidPermissionShape.ok, false)
+  assert.equal(invalidPermissionShape.code, 'INVALID_INSPECTION')
+  assert.equal(repairCalls, 0)
 })
 
 test('確認modeは対象を判定するだけで履歴変更を行わない', async () => {
@@ -301,13 +419,29 @@ test('repair失敗・schema/data変化・対象未指定では次の操作へ進
 })
 
 test('履歴移行成果物はread-only preflight・明示CLI repair・fixtureを備える', async () => {
-  const [preflightSql, fixtureSql, guide, dbReadme, migrationFiles] = await Promise.all([
+  const [
+    preflightSql,
+    fixtureSql,
+    catalogRegressionSql,
+    catalogRegressionRunner,
+    guide,
+    dbReadme,
+    migrationFiles,
+  ] = await Promise.all([
     readFile(new URL(
       '../supabase/tests/cloud_event_migration_history_preflight.sql',
       import.meta.url,
     ), 'utf8'),
     readFile(new URL(
       '../supabase/tests/cloud_event_migration_history_fixture.sql',
+      import.meta.url,
+    ), 'utf8'),
+    readFile(new URL(
+      '../supabase/tests/cloud_event_migration_history_catalog_regression.sql',
+      import.meta.url,
+    ), 'utf8'),
+    readFile(new URL(
+      '../scripts/cloudEventMigrationCatalogRegression.mjs',
       import.meta.url,
     ), 'utf8'),
     readFile(new URL('../docs/cloud-event-migration-history-repair.md', import.meta.url), 'utf8'),
@@ -322,12 +456,43 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   assert.match(preflightSql, /supabase_migrations\.schema_migrations/i)
   assert.match(preflightSql, /cloud_events_snapshot_shape_check/i)
   assert.match(preflightSql, /cloud_data_digest/i)
+  for (const check of REQUIRED_AUTH_WORKSPACE_SCHEMA_CHECKS) {
+    assert.match(preflightSql, new RegExp(`'${check}'`), check)
+  }
+  for (const check of REQUIRED_LATER_SCHEMA_CHECKS) {
+    assert.match(preflightSql, new RegExp(`'${check}'`), check)
+  }
   assert.match(fixtureSql, /migration-history-event/)
+  assert.match(catalogRegressionSql, /begin;[\s\S]*\\ir cloud_event_migration_history_preflight\.sql[\s\S]*rollback;/i)
+  for (const scenario of [
+    'cloud_anon_column_insert',
+    'cloud_anon_column_update',
+    'cloud_public_column_insert',
+    'cloud_public_column_update',
+    'cloud_anon_inherited_column_write',
+    'cloud_anon_column_grant_option',
+    'required_role_missing',
+    'profiles_missing',
+    'profiles_column_type',
+    'membership_primary_key_missing',
+    'membership_role_check_broad',
+    'membership_foreign_key_wrong_target',
+    'workspace_rls_disabled',
+    'workspace_policy_broad',
+    'workspace_policy_extra',
+    'updated_at_function_invalid',
+    'auth_workspace_anon_column_write',
+  ]) {
+    assert.match(catalogRegressionSql, new RegExp(`'${scenario}'`), scenario)
+    assert.match(catalogRegressionRunner, new RegExp(`'${scenario}'`), scenario)
+  }
+  assert.match(catalogRegressionRunner, /--confirm-disposable/)
   assert.match(guide, /20261008110000[\s\S]*--status applied/)
   assert.match(guide, /20261007120000[\s\S]*--status reverted/)
   assert.match(guide, /--db-url/)
   assert.match(guide, /--dry-run/)
   assert.match(dbReadme, /cloud-event-migration-history-repair\.md/)
+  assert.match(dbReadme, /cloudEventMigrationCatalogRegression\.mjs/)
   assert.ok(migrationFiles.includes('20261008110000_cloud_event_persistence.sql'))
   assert.ok(!migrationFiles.includes('20261007120000_cloud_event_persistence.sql'))
 })

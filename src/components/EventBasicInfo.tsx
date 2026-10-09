@@ -23,6 +23,7 @@ import type {
   EventDeletionResult,
 } from '../domain/eventDeletion'
 import { DeleteConfirmationDialog } from './DeleteConfirmationDialog'
+import type { EventEditorDraftHandle } from '../ui/eventEditorDraftGuard'
 
 interface EventBasicInfoProps {
   event: Event
@@ -36,10 +37,7 @@ interface EventBasicInfoProps {
   readOnly?: boolean
 }
 
-export interface EventBasicInfoHandle {
-  hasUnsavedChanges: () => boolean
-  reportUnsavedChanges: () => void
-}
+export type EventBasicInfoHandle = EventEditorDraftHandle
 
 export type EventDeletionActionResult = EventDeletionResult | {
   ok: false

@@ -32,6 +32,47 @@ export const REQUIRED_BASE_SCHEMA_CHECKS = [
   'policies',
 ]
 
+export const REQUIRED_AUTH_WORKSPACE_SCHEMA_CHECKS = [
+  'authUsersReference',
+  'profilesColumns',
+  'workspacesColumns',
+  'workspaceMembersColumns',
+  'profilesPrimaryKey',
+  'workspacesPrimaryKey',
+  'workspaceMembersPrimaryKey',
+  'profilesUserForeignKey',
+  'workspaceMemberUserForeignKey',
+  'workspaceMemberWorkspaceForeignKey',
+  'profileNameCheck',
+  'workspaceNameCheck',
+  'workspaceMemberRoleCheck',
+  'updatedAtFunction',
+  'updatedAtTriggers',
+  'workspaceMemberUserIndex',
+  'rowLevelSecurity',
+  'policies',
+  'tablePrivileges',
+  'columnPrivileges',
+]
+
+export const REQUIRED_LATER_SCHEMA_CHECKS = [
+  'authorizedDeleteFunction',
+  'authorizedPageIndex',
+  'authorizedPageFunction',
+  'authorizedSaveFunction',
+  'authenticatedSelect',
+  'authenticatedInsert',
+  'authenticatedUpdate',
+  'authenticatedDelete',
+  'authenticatedColumnInsert',
+  'authenticatedColumnUpdate',
+  'permissionCatalogReady',
+  'anonTableWrite',
+  'anonColumnWrite',
+  'publicTableWrite',
+  'publicColumnWrite',
+]
+
 const isRecord = value =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
@@ -47,21 +88,16 @@ const isInspection = value =>
   Array.isArray(value.appliedVersions) &&
   value.appliedVersions.every(version => typeof version === 'string') &&
   typeof value.authWorkspaceReady === 'boolean' &&
+  hasBooleanProperties(
+    value.authWorkspaceChecks,
+    REQUIRED_AUTH_WORKSPACE_SCHEMA_CHECKS,
+  ) &&
+  value.authWorkspaceReady === REQUIRED_AUTH_WORKSPACE_SCHEMA_CHECKS.every(
+    check => value.authWorkspaceChecks[check],
+  ) &&
   typeof value.cloudEventsExists === 'boolean' &&
   hasBooleanProperties(value.baseSchemaChecks, REQUIRED_BASE_SCHEMA_CHECKS) &&
-  hasBooleanProperties(value.laterSchema, [
-    'authorizedDeleteFunction',
-    'authorizedPageIndex',
-    'authorizedPageFunction',
-    'authorizedSaveFunction',
-    'authenticatedSelect',
-    'authenticatedInsert',
-    'authenticatedUpdate',
-    'authenticatedDelete',
-    'authenticatedColumnInsert',
-    'authenticatedColumnUpdate',
-    'anonOrPublicWrite',
-  ]) &&
+  hasBooleanProperties(value.laterSchema, REQUIRED_LATER_SCHEMA_CHECKS) &&
   isRecord(value.cloudData) &&
   Number.isSafeInteger(value.cloudData.rowCount) &&
   value.cloudData.rowCount >= 0 &&
@@ -105,8 +141,10 @@ export const analyzeCloudEventMigrationInspection = inspection => {
       mismatches.push('Cloud Event catalog objects exist without public.cloud_events')
     }
   } else {
-    if (!inspection.authWorkspaceReady) {
-      mismatches.push('Auth / Workspace prerequisite schema is incomplete')
+    for (const check of REQUIRED_AUTH_WORKSPACE_SCHEMA_CHECKS) {
+      if (!inspection.authWorkspaceChecks[check]) {
+        mismatches.push(`Auth / Workspace schema check failed: ${check}`)
+      }
     }
     for (const check of REQUIRED_BASE_SCHEMA_CHECKS) {
       if (!inspection.baseSchemaChecks[check]) {
@@ -173,12 +211,21 @@ export const analyzeCloudEventMigrationInspection = inspection => {
       !laterApplied.rpcOnlySave,
       'authenticated column UPDATE privilege/history',
     )
-    compareExpected(
-      mismatches,
-      inspection.laterSchema.anonOrPublicWrite,
-      false,
-      'anon/public write privilege',
-    )
+    compareExpected(mismatches, inspection.laterSchema.permissionCatalogReady,
+      true, 'Cloud Event permission catalog readiness')
+    for (const check of [
+      'anonTableWrite',
+      'anonColumnWrite',
+      'publicTableWrite',
+      'publicColumnWrite',
+    ]) {
+      compareExpected(
+        mismatches,
+        inspection.laterSchema[check],
+        false,
+        `${check} privilege`,
+      )
+    }
     if (!oldApplied && !newApplied) {
       mismatches.push('public.cloud_events exists without the old or new base history entry')
     }
@@ -233,6 +280,8 @@ const createTargetFingerprint = (databaseTarget, inspectedTarget) => createHash(
 const sameNonHistoryState = (before, after) =>
   JSON.stringify(before.target) === JSON.stringify(after.target) &&
   before.authWorkspaceReady === after.authWorkspaceReady &&
+  JSON.stringify(before.authWorkspaceChecks) ===
+    JSON.stringify(after.authWorkspaceChecks) &&
   before.cloudEventsExists === after.cloudEventsExists &&
   JSON.stringify(before.baseSchemaChecks) === JSON.stringify(after.baseSchemaChecks) &&
   JSON.stringify(before.laterSchema) === JSON.stringify(after.laterSchema) &&

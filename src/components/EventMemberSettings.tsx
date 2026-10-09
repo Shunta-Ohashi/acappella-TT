@@ -1,4 +1,10 @@
-import { useState, type FormEvent } from 'react'
+import {
+  forwardRef,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type FormEvent,
+} from 'react'
 import type {
   Event,
   EventBand,
@@ -36,6 +42,10 @@ import { CsvFileButton } from './CsvFileButton'
 import { CsvImportPreviewDialog, type CsvImportPreview } from './CsvImportPreviewDialog'
 import { EVENT_MEMBER_CSV_HELP } from '../csv/csvHelp'
 import { CsvImportHelpPopover } from './CsvImportHelpPopover'
+import {
+  hasSemanticDraftChanges,
+  type EventEditorDraftHandle,
+} from '../ui/eventEditorDraftGuard'
 
 interface EventMemberSettingsProps {
   event: Event
@@ -90,7 +100,12 @@ const matchesMemberSearch = (member: Member, searchText: string): boolean => {
   )
 }
 
-export function EventMemberSettings({
+export type EventMemberSettingsHandle = EventEditorDraftHandle
+
+export const EventMemberSettings = forwardRef<
+EventMemberSettingsHandle,
+EventMemberSettingsProps
+>(function EventMemberSettings({
   event,
   eventDays,
   members,
@@ -101,13 +116,15 @@ export function EventMemberSettings({
   onSave,
   onSaveAndNext,
   readOnly = false,
-}: EventMemberSettingsProps) {
-  const [draft, setDraft] = useState(() => createEventMemberSettingsDraft(
+}: EventMemberSettingsProps, ref) {
+  const initialDraft = createEventMemberSettingsDraft(
     event,
     eventDays,
     eventMembers,
     eventMemberDays,
-  ))
+  )
+  const [draft, setDraft] = useState(initialDraft)
+  const [savedDraft, setSavedDraft] = useState(initialDraft)
   const [searchText, setSearchText] = useState('')
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
   const [detailsEditor, setDetailsEditor] =
@@ -121,6 +138,8 @@ export function EventMemberSettings({
     preview: CsvImportPreview
     candidate?: EventMemberSettingsDraft
   }>()
+  const addMembersDialogRef = useRef<EventEditorDraftHandle>(null)
+  const memberDetailsDialogRef = useRef<EventEditorDraftHandle>(null)
   const memberById = new Map(members.map((member) => [member.id, member]))
   const orderedEventDays = eventDays
     .filter((eventDay) => eventDay.eventId === event.id)
@@ -157,6 +176,20 @@ export function EventMemberSettings({
   const detailsMember = detailsMemberDraft
     ? memberById.get(detailsMemberDraft.memberId)
     : undefined
+
+  useImperativeHandle(ref, () => ({
+    hasUnsavedChanges: () => hasSemanticDraftChanges(draft, savedDraft) ||
+      Boolean(addMembersDialogRef.current?.hasUnsavedChanges()) ||
+      Boolean(memberDetailsDialogRef.current?.hasUnsavedChanges()) ||
+      Boolean(csvImport?.candidate),
+    reportUnsavedChanges: () => {
+      setErrors((previous) => ({
+        ...previous,
+        form: 'イベントメンバーに未保存の変更があります。先にこの画面を保存してください。',
+      }))
+      setSaveMessage('')
+    },
+  }), [csvImport?.candidate, draft, savedDraft])
 
   const clearFeedback = () => {
     setSaveMessage('')
@@ -357,12 +390,14 @@ export function EventMemberSettings({
       return
     }
 
-    setDraft(createEventMemberSettingsDraft(
+    const normalizedSavedDraft = createEventMemberSettingsDraft(
       event,
       orderedEventDays,
       result.eventMembers,
       result.eventMemberDays,
-    ))
+    )
+    setDraft(normalizedSavedDraft)
+    setSavedDraft(normalizedSavedDraft)
     if (moveToNext) {
       onSaveAndNext()
     } else {
@@ -661,6 +696,7 @@ export function EventMemberSettings({
 
       {!readOnly && isAddDialogOpen && (
         <AddEventMembersDialog
+          ref={addMembersDialogRef}
           members={addableMembers}
           onCancel={() => setIsAddDialogOpen(false)}
           onAdd={handleAddMembers}
@@ -668,6 +704,7 @@ export function EventMemberSettings({
       )}
       {!readOnly && detailsEditor && detailsMemberDraft && detailsMember && (
         <EventMemberDayDetailsDialog
+          ref={memberDetailsDialogRef}
           key={`${detailsEditor.memberDraftId}:${detailsEditor.initialEventDayId}`}
           member={detailsMember}
           memberDraft={detailsMemberDraft}
@@ -714,4 +751,4 @@ export function EventMemberSettings({
       })()}
     </section>
   )
-}
+})

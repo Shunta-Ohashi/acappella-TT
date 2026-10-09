@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type FormEvent,
+} from 'react'
 import type {
   Band,
   Event,
@@ -26,6 +33,10 @@ import {
   type EventBandSettingsItemErrors,
   type EventBandDayFeasibility,
 } from '../domain/eventBandSettings'
+import {
+  hasSemanticDraftChanges,
+  type EventEditorDraftHandle,
+} from '../ui/eventEditorDraftGuard'
 
 interface EventBandEditorDialogProps {
   event: Event
@@ -116,7 +127,10 @@ function EventBandFeasibilityFeedback({
   )
 }
 
-export function EventBandEditorDialog({
+export const EventBandEditorDialog = forwardRef<
+EventEditorDraftHandle,
+EventBandEditorDialogProps
+>(function EventBandEditorDialog({
   event,
   eventDays,
   bands,
@@ -132,7 +146,7 @@ export function EventBandEditorDialog({
   createDraftId,
   onCancel,
   onApply,
-}: EventBandEditorDialogProps) {
+}: EventBandEditorDialogProps, ref) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const draftIdRef = useRef(item?.draftId ?? createDraftId())
   const [addMode, setAddMode] = useState<AddMode>('fixed')
@@ -150,6 +164,13 @@ export function EventBandEditorDialog({
   const [unregisteredDefaultMemberIds, setUnregisteredDefaultMemberIds] =
     useState<MemberId[]>([])
   const [errors, setErrors] = useState<EventBandSettingsItemErrors>({})
+
+  useImperativeHandle(ref, () => ({
+    hasUnsavedChanges: () => item
+      ? hasSemanticDraftChanges(draft, item)
+      : draft !== undefined,
+    reportUnsavedChanges: () => {},
+  }), [draft, item])
   const memberById = new Map(members.map((member) => [member.id, member]))
   const selectedEventMembers = eventMembers.filter((eventMember) =>
     eventMember.eventId === event.id,
@@ -617,4 +638,4 @@ export function EventBandEditorDialog({
       </form>
     </dialog>
   )
-}
+})

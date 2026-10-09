@@ -148,9 +148,10 @@ test('AppのCloud保存と画面遷移はEventBasicInfoの同期dirty handleを�
     appSource.indexOf('const handleSaveSelectedEventToCloud'),
     appSource.indexOf('const blockUnsavedOperationsNavigation'),
   )
-  assert.match(cloudSaveHandler, /eventBasicInfoRef\.current\?\.hasUnsavedChanges\(\)/)
+  assert.match(cloudSaveHandler, /runEventEditorCloudSaveGuarded\(/)
+  assert.match(cloudSaveHandler, /handles: getEventEditorDraftHandles\(\)/)
   assert.ok(
-    cloudSaveHandler.indexOf('hasUnsavedChanges()') <
+    cloudSaveHandler.indexOf('runEventEditorCloudSaveGuarded(') <
       cloudSaveHandler.indexOf('persistEventToCloud(domainState, selectedEvent.id)'),
   )
   assert.match(appSource, /const blockUnsavedEditorNavigation[\s\S]*reportUnsavedChanges\(\)/)

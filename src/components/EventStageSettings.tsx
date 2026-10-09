@@ -1,4 +1,10 @@
-import { useState, type FormEvent } from 'react'
+import {
+  forwardRef,
+  useImperativeHandle,
+  useMemo,
+  useState,
+  type FormEvent,
+} from 'react'
 import type {
   Event,
   EventDay,
@@ -25,6 +31,10 @@ import {
 import { getDeleteConfirmationCopy } from '../ui/deleteConfirmation'
 import { DeleteConfirmationDialog } from './DeleteConfirmationDialog'
 import { StageSectionSettings } from './StageSectionSettings'
+import {
+  hasSemanticDraftChanges,
+  type EventEditorDraftHandle,
+} from '../ui/eventEditorDraftGuard'
 
 type PendingDeletion =
   | { kind: 'stage'; draftId: string; label: string }
@@ -53,7 +63,12 @@ const formatEventDay = (date: string): string => {
   return `${Number(match[1])}年${Number(match[2])}月${Number(match[3])}日`
 }
 
-export function EventStageSettings({
+export type EventStageSettingsHandle = EventEditorDraftHandle
+
+export const EventStageSettings = forwardRef<
+EventStageSettingsHandle,
+EventStageSettingsProps
+>(function EventStageSettings({
   event,
   eventDays,
   stages,
@@ -64,7 +79,7 @@ export function EventStageSettings({
   onSave,
   onSaveAndNext,
   readOnly = false,
-}: EventStageSettingsProps) {
+}: EventStageSettingsProps, ref) {
   const orderedEventDays = eventDays
     .filter((eventDay) => eventDay.eventId === event.id)
     .sort((first, second) =>
@@ -88,6 +103,7 @@ export function EventStageSettings({
   const [performanceSlotInputError, setPerformanceSlotInputError] = useState('')
   const [stageDrafts, setStageDrafts] = useState(initialDraft.stages)
   const [sectionDrafts, setSectionDrafts] = useState(initialDraft.sections)
+  const [savedDraft, setSavedDraft] = useState(initialDraft)
   const [nextStageDraftKey, setNextStageDraftKey] = useState(0)
   const [nextSectionDraftKey, setNextSectionDraftKey] = useState(0)
   const [errors, setErrors] = useState<EventStageSettingsValidationErrors>({
@@ -96,6 +112,23 @@ export function EventStageSettings({
   })
   const [saveMessage, setSaveMessage] = useState('')
   const [pendingDeletion, setPendingDeletion] = useState<PendingDeletion>()
+  const currentDraft = useMemo(() => ({
+    performanceSlotMinutes,
+    stages: stageDrafts,
+    sections: sectionDrafts,
+  }), [performanceSlotMinutes, sectionDrafts, stageDrafts])
+
+  useImperativeHandle(ref, () => ({
+    hasUnsavedChanges: () => hasSemanticDraftChanges(currentDraft, savedDraft) ||
+      newPerformanceSlotMinute.trim().length > 0,
+    reportUnsavedChanges: () => {
+      setErrors((previous) => ({
+        ...previous,
+        form: 'ステージ・セクションに未保存の変更があります。先にこの画面を保存してください。',
+      }))
+      setSaveMessage('')
+    },
+  }), [currentDraft, newPerformanceSlotMinute, savedDraft])
 
   const selectedEventDayId = orderedEventDays.some(
     (eventDay) => eventDay.id === selectedEventDayIdState,
@@ -327,11 +360,7 @@ export function EventStageSettings({
   }
 
   const save = (moveToNext: boolean) => {
-    const draft = {
-      performanceSlotMinutes,
-      stages: stageDrafts,
-      sections: sectionDrafts,
-    }
+    const draft = currentDraft
     const validationErrors = validateEventStageSettingsDraft(draft)
     setErrors(validationErrors)
     setSaveMessage('')
@@ -373,6 +402,7 @@ export function EventStageSettings({
     setPerformanceSlotMinutes(savedDraft.performanceSlotMinutes)
     setStageDrafts(savedDraft.stages)
     setSectionDrafts(savedDraft.sections)
+    setSavedDraft(savedDraft)
 
     if (moveToNext) {
       onSaveAndNext()
@@ -804,4 +834,4 @@ export function EventStageSettings({
       })()}
     </section>
   )
-}
+})

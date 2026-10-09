@@ -72,10 +72,22 @@ import {
   type EventDeletionActionResult,
 } from './components/EventBasicInfo'
 import { CommonDataPage } from './components/CommonDataPage'
-import { EventMemberSettings } from './components/EventMemberSettings'
-import { EventBandSettings } from './components/EventBandSettings'
-import { EventBandConditions } from './components/EventBandConditions'
-import { EventStageSettings } from './components/EventStageSettings'
+import {
+  EventMemberSettings,
+  type EventMemberSettingsHandle,
+} from './components/EventMemberSettings'
+import {
+  EventBandSettings,
+  type EventBandSettingsHandle,
+} from './components/EventBandSettings'
+import {
+  EventBandConditions,
+  type EventBandConditionsHandle,
+} from './components/EventBandConditions'
+import {
+  EventStageSettings,
+  type EventStageSettingsHandle,
+} from './components/EventStageSettings'
 import { PaSettings } from './components/PaSettings'
 import type { PaSettingsHandle } from './components/PaSettings'
 import {
@@ -119,6 +131,10 @@ import {
   getUnsavedOperationsNavigationMessage,
   hasUnsavedOperationsChanges,
 } from './ui/operationsDraftChanges'
+import {
+  getActiveEventEditorDraftBlock,
+  runEventEditorCloudSaveGuarded,
+} from './ui/eventEditorDraftGuard'
 import {
   cloneTimetableEditSnapshot,
   createTimetableHistoryController,
@@ -512,6 +528,10 @@ function App() {
   const paSettingsRef = useRef<PaSettingsHandle>(null)
   const dutySettingsRef = useRef<DutySettingsHandle>(null)
   const eventBasicInfoRef = useRef<EventBasicInfoHandle>(null)
+  const eventStageSettingsRef = useRef<EventStageSettingsHandle>(null)
+  const eventMemberSettingsRef = useRef<EventMemberSettingsHandle>(null)
+  const eventBandSettingsRef = useRef<EventBandSettingsHandle>(null)
+  const eventBandConditionsRef = useRef<EventBandConditionsHandle>(null)
   const [generationPreview, setGenerationPreview] = useState<GenerationPreviewState | null>(null)
   const [operationsPanelRevision, setOperationsPanelRevision] = useState(0)
   const [generationOptions, setGenerationOptions] = useState<TimetableGenerationUiOptions>(
@@ -1668,26 +1688,37 @@ function App() {
 
   const hasUnsavedOperations = () => hasUnsavedOperationsChanges(paSettingsRef.current, dutySettingsRef.current)
 
+  const getEventEditorDraftHandles = () => ({
+    1: eventBasicInfoRef.current,
+    2: eventStageSettingsRef.current,
+    3: eventMemberSettingsRef.current,
+    4: eventBandSettingsRef.current,
+    5: eventBandConditionsRef.current,
+  })
+
   const handleSaveSelectedEventToCloud = () => {
     if (!canEditWorkspace) return
     if (!selectedEvent || !cloudWorkspace) return
-    if (eventBasicInfoRef.current?.hasUnsavedChanges()) {
-      setCloudEventSaveFeedback({
+    runEventEditorCloudSaveGuarded({
+      activeStep,
+      handles: getEventEditorDraftHandles(),
+      onBlocked: (block) => setCloudEventSaveFeedback({
         eventId: selectedEvent.id,
         kind: 'error',
-        message: 'イベント基本情報に未保存の変更があります。先に基本情報を保存してから「Cloudへ保存」を実行してください。',
-      })
-      return
-    }
-    if (hasUnsavedOperations()) {
-      setCloudEventSaveFeedback({
-        eventId: selectedEvent.id,
-        kind: 'error',
-        message: 'PAまたは当日運営の未保存編集を先に保存してください。',
-      })
-      return
-    }
-    void persistEventToCloud(domainState, selectedEvent.id)
+        message: block.message,
+      }),
+      onSave: () => {
+        if (hasUnsavedOperations()) {
+          setCloudEventSaveFeedback({
+            eventId: selectedEvent.id,
+            kind: 'error',
+            message: 'PAまたは当日運営の未保存編集を先に保存してください。',
+          })
+          return
+        }
+        void persistEventToCloud(domainState, selectedEvent.id)
+      },
+    })
   }
 
   const blockUnsavedOperationsNavigation = (
@@ -1709,8 +1740,12 @@ function App() {
   const blockUnsavedEditorNavigation = (
     target: EventEditorStepId | 'events' | 'sign-out' | 'workspace-switch',
   ): boolean => {
-    if (eventBasicInfoRef.current?.hasUnsavedChanges()) {
-      eventBasicInfoRef.current.reportUnsavedChanges()
+    const draftBlock = getActiveEventEditorDraftBlock({
+      activeStep,
+      handles: getEventEditorDraftHandles(),
+    })
+    if (draftBlock) {
+      draftBlock.handle.reportUnsavedChanges()
       return true
     }
     return blockUnsavedOperationsNavigation(target)
@@ -3357,6 +3392,7 @@ function App() {
             />
           ) : activeStep === 2 && selectedEvent ? (
             <EventStageSettings
+              ref={eventStageSettingsRef}
               key={selectedEvent.id}
               event={selectedEvent}
               eventDays={selectedEventDays}
@@ -3391,6 +3427,7 @@ function App() {
             />
           ) : activeStep === 3 && selectedEvent ? (
             <EventMemberSettings
+              ref={eventMemberSettingsRef}
               key={selectedEvent.id}
               event={selectedEvent}
               eventDays={selectedEventDays}
@@ -3405,6 +3442,7 @@ function App() {
             />
           ) : activeStep === 4 && selectedEvent ? (
             <EventBandSettings
+              ref={eventBandSettingsRef}
               key={selectedEvent.id}
               event={selectedEvent}
               eventDays={selectedEventDays}
@@ -3422,6 +3460,7 @@ function App() {
             />
           ) : activeStep === 5 && selectedEvent ? (
             <EventBandConditions
+              ref={eventBandConditionsRef}
               key={selectedEvent.id}
               event={selectedEvent}
               eventDays={selectedEventDays}
