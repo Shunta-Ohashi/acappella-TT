@@ -71,7 +71,9 @@ The catalog check covers:
 - metadata functions and triggers, indexes, RLS, policies, and effective client
   write privileges, including inherited anon privileges, PUBLIC ACLs, every
   live user column, and grant option;
-- later delete/page/save functions and the `COLLATE "C"` page index;
+- later delete/page/save functions, the `COLLATE "C"` page index, and the
+  Workspace generation table/functions/triggers used to reject mixed-version
+  pagination;
 - each authorization RPC's SECURITY DEFINER mode and effective EXECUTE
   contract (authenticated only for delete/page, service role only for save,
   with no access for the other client/backend roles or PUBLIC);
@@ -260,6 +262,7 @@ version as applied. This temporary file is needed only to manufacture an
    - `20261008140000_cloud_event_authorized_page.sql`
    - `20261008150000_cloud_event_authorized_save.sql`
    - `20261008160000_cloud_event_rpc_only_save.sql`
+   - `20261008170000_cloud_event_workspace_generation.sql`
 
 The temporary old migration is exclusively an artificial disposable-exercise
 fixture. Never create it during production or staging repair, never commit or

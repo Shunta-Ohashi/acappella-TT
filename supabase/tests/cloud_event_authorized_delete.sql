@@ -96,18 +96,18 @@ begin
   end if;
   if not has_function_privilege(
     'authenticated',
-    'public.load_cloud_events_page_authorized(uuid,text,integer)',
+    'public.load_cloud_events_page_authorized(uuid,text,integer,text)',
     'execute'
   ) then
     raise exception 'authenticated must be able to execute page RPC';
   end if;
   if has_function_privilege(
     'anon',
-    'public.load_cloud_events_page_authorized(uuid,text,integer)',
+    'public.load_cloud_events_page_authorized(uuid,text,integer,text)',
     'execute'
   ) or has_function_privilege(
     'service_role',
-    'public.load_cloud_events_page_authorized(uuid,text,integer)',
+    'public.load_cloud_events_page_authorized(uuid,text,integer,text)',
     'execute'
   ) then
     raise exception 'anon and service_role must not be able to execute page RPC';
@@ -251,7 +251,7 @@ declare
   ordered_ids jsonb;
 begin
   first_page := public.load_cloud_events_page_authorized(
-    '10000000-0000-0000-0000-000000000001', null, 2
+    '10000000-0000-0000-0000-000000000001', null, 2, null
   );
   if first_page ->> 'status' <> 'ok'
     or first_page ->> 'workspace_id' <>
@@ -266,7 +266,8 @@ begin
   final_page := public.load_cloud_events_page_authorized(
     '10000000-0000-0000-0000-000000000001',
     first_page ->> 'next_cursor',
-    100
+    100,
+    first_page ->> 'workspace_generation'
   );
   if final_page ->> 'status' <> 'ok'
     or final_page ->> 'next_cursor' is not null
@@ -275,7 +276,7 @@ begin
   end if;
 
   final_page := public.load_cloud_events_page_authorized(
-    '10000000-0000-0000-0000-000000000001', 'zzzz', 100
+    '10000000-0000-0000-0000-000000000001', 'zzzz', 100, null
   );
   if final_page ->> 'status' <> 'ok'
     or jsonb_array_length(final_page -> 'rows') <> 0
@@ -284,7 +285,7 @@ begin
   end if;
 
   final_page := public.load_cloud_events_page_authorized(
-    '10000000-0000-0000-0000-000000000003', null, 100
+    '10000000-0000-0000-0000-000000000003', null, 100, null
   );
   select jsonb_agg(page_entry.value ->> 'event_id' order by page_entry.ordinality)
     into ordered_ids
@@ -296,7 +297,7 @@ begin
 
   begin
     perform public.load_cloud_events_page_authorized(
-      '10000000-0000-0000-0000-000000000001', '   ', 100
+      '10000000-0000-0000-0000-000000000001', '   ', 100, null
     );
     raise exception 'blank page cursor unexpectedly succeeded';
   exception when sqlstate '22023' then
@@ -304,7 +305,7 @@ begin
   end;
   begin
     perform public.load_cloud_events_page_authorized(
-      '10000000-0000-0000-0000-000000000001', null, 101
+      '10000000-0000-0000-0000-000000000001', null, 101, null
     );
     raise exception 'oversized page unexpectedly succeeded';
   exception when sqlstate '22023' then
@@ -325,7 +326,7 @@ declare
   result jsonb;
 begin
   result := public.load_cloud_events_page_authorized(
-    '10000000-0000-0000-0000-000000000001', null, 1
+    '10000000-0000-0000-0000-000000000001', null, 1, null
   );
   if result ->> 'status' <> 'ok' or jsonb_array_length(result -> 'rows') <> 1 then
     raise exception 'editor could not read an authorized page: %', result;
@@ -345,7 +346,7 @@ declare
   result jsonb;
 begin
   result := public.load_cloud_events_page_authorized(
-    '10000000-0000-0000-0000-000000000001', null, 1
+    '10000000-0000-0000-0000-000000000001', null, 1, null
   );
   if result ->> 'status' <> 'ok' or jsonb_array_length(result -> 'rows') <> 1 then
     raise exception 'viewer could not read an authorized page: %', result;
@@ -370,7 +371,7 @@ declare
   result jsonb;
 begin
   result := public.load_cloud_events_page_authorized(
-    '10000000-0000-0000-0000-000000000001', 'zzzz', 100
+    '10000000-0000-0000-0000-000000000001', 'zzzz', 100, null
   );
   if result ->> 'status' <> 'ok' or jsonb_array_length(result -> 'rows') <> 0 then
     raise exception 'downgraded viewer could not read an authorized empty page: %', result;
@@ -393,7 +394,7 @@ do $$
 begin
   begin
     perform public.load_cloud_events_page_authorized(
-      '10000000-0000-0000-0000-000000000001', null, 100
+      '10000000-0000-0000-0000-000000000001', null, 100, null
     );
     raise exception 'non-member page read unexpectedly succeeded';
   exception when sqlstate '42501' then
@@ -413,7 +414,7 @@ do $$
 begin
   begin
     perform public.load_cloud_events_page_authorized(
-      '10000000-0000-0000-0000-000000000002', null, 100
+      '10000000-0000-0000-0000-000000000002', null, 100, null
     );
     raise exception 'cross-workspace page read unexpectedly succeeded';
   exception when sqlstate '42501' then
@@ -428,10 +429,138 @@ do $$
 begin
   begin
     perform public.load_cloud_events_page_authorized(
-      '10000000-0000-0000-0000-000000000001', null, 100
+      '10000000-0000-0000-0000-000000000001', null, 100, null
     );
     raise exception 'anonymous page read unexpectedly succeeded';
   exception when sqlstate '42501' then
+    null;
+  end;
+end
+$$;
+reset role;
+
+-- Every mutation between page requests invalidates the generation
+-- captured by the earlier page. These are separate SQL commands inside the
+-- disposable test transaction, which also verifies command-counter visibility.
+create temporary table cloud_event_page_generation_probe (
+  generation text not null
+) on commit drop;
+-- The admin transaction owns this temporary table, while the generation
+-- probes run under SET LOCAL ROLE authenticated. Grant only the operations
+-- those probes use; TRUNCATE remains an owner-only operation after RESET ROLE.
+grant select, insert on table cloud_event_page_generation_probe
+  to authenticated;
+
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-0000-0000-000000000001',
+  true
+);
+insert into cloud_event_page_generation_probe (generation)
+select public.load_cloud_events_page_authorized(
+  '10000000-0000-0000-0000-000000000001', null, 1, null
+) ->> 'workspace_generation';
+reset role;
+insert into public.cloud_events (
+  workspace_id, event_id, event_name, event_snapshot
+) values (
+  '10000000-0000-0000-0000-000000000001',
+  'generation-insert',
+  'Generation Insert',
+  pg_temp.cloud_event_test_snapshot('generation-insert', 'Generation Insert')
+);
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-0000-0000-000000000001',
+  true
+);
+do $$
+begin
+  begin
+    perform public.load_cloud_events_page_authorized(
+      '10000000-0000-0000-0000-000000000001', null, 1,
+      (select generation from cloud_event_page_generation_probe limit 1)
+    );
+    raise exception 'inter-page INSERT did not invalidate the page generation';
+  exception when sqlstate '40001' then
+    null;
+  end;
+end
+$$;
+reset role;
+
+truncate cloud_event_page_generation_probe;
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-0000-0000-000000000001',
+  true
+);
+insert into cloud_event_page_generation_probe (generation)
+select public.load_cloud_events_page_authorized(
+  '10000000-0000-0000-0000-000000000001', null, 1, null
+) ->> 'workspace_generation';
+reset role;
+update public.cloud_events
+  set event_name = 'Generation Update',
+      event_snapshot = pg_temp.cloud_event_test_snapshot(
+        'generation-insert', 'Generation Update'
+      )
+  where workspace_id = '10000000-0000-0000-0000-000000000001'
+    and event_id = 'generation-insert';
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-0000-0000-000000000001',
+  true
+);
+do $$
+begin
+  begin
+    perform public.load_cloud_events_page_authorized(
+      '10000000-0000-0000-0000-000000000001', null, 1,
+      (select generation from cloud_event_page_generation_probe limit 1)
+    );
+    raise exception 'inter-page UPDATE did not invalidate the page generation';
+  exception when sqlstate '40001' then
+    null;
+  end;
+end
+$$;
+reset role;
+
+truncate cloud_event_page_generation_probe;
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-0000-0000-000000000001',
+  true
+);
+insert into cloud_event_page_generation_probe (generation)
+select public.load_cloud_events_page_authorized(
+  '10000000-0000-0000-0000-000000000001', null, 1, null
+) ->> 'workspace_generation';
+reset role;
+delete from public.cloud_events
+  where workspace_id = '10000000-0000-0000-0000-000000000001'
+    and event_id = 'generation-insert';
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-0000-0000-000000000001',
+  true
+);
+do $$
+begin
+  begin
+    perform public.load_cloud_events_page_authorized(
+      '10000000-0000-0000-0000-000000000001', null, 1,
+      (select generation from cloud_event_page_generation_probe limit 1)
+    );
+    raise exception 'inter-page DELETE did not invalidate the page generation';
+  exception when sqlstate '40001' then
     null;
   end;
 end

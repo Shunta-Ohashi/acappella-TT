@@ -119,6 +119,15 @@ cloud_table as (
     and pg_class.relname = 'cloud_events'
     and pg_class.relkind = 'r'
 ),
+workspace_generation_table as (
+  select pg_class.oid, pg_class.relacl, pg_class.relowner,
+    pg_class.relrowsecurity
+  from pg_catalog.pg_class
+  join pg_catalog.pg_namespace on pg_namespace.oid = pg_class.relnamespace
+  where pg_namespace.nspname = 'public'
+    and pg_class.relname = 'cloud_event_workspace_generations'
+    and pg_class.relkind = 'r'
+),
 authenticated_role as (
   select oid from pg_catalog.pg_roles where rolname = 'authenticated'
 ),
@@ -147,8 +156,30 @@ authorized_page_function as (
     pg_proc.prosecdef,
     pg_proc.prosrc
   from pg_catalog.pg_proc
-  where pg_proc.oid =
-    to_regprocedure('public.load_cloud_events_page_authorized(uuid,text,integer)')
+  where pg_proc.oid in (
+    to_regprocedure('public.load_cloud_events_page_authorized(uuid,text,integer)'),
+    to_regprocedure('public.load_cloud_events_page_authorized(uuid,text,integer,text)')
+  )
+),
+generation_page_function as (
+  select * from authorized_page_function
+  where oid = to_regprocedure(
+    'public.load_cloud_events_page_authorized(uuid,text,integer,text)'
+  )
+),
+initialize_generation_function as (
+  select pg_proc.oid, pg_proc.prosecdef, pg_proc.prosrc
+  from pg_catalog.pg_proc
+  where pg_proc.oid = to_regprocedure(
+    'public.initialize_cloud_event_workspace_generation()'
+  )
+),
+advance_generation_function as (
+  select pg_proc.oid, pg_proc.prosecdef, pg_proc.prosrc
+  from pg_catalog.pg_proc
+  where pg_proc.oid = to_regprocedure(
+    'public.advance_cloud_event_workspace_generation()'
+  )
 ),
 authorized_save_function as (
   select
@@ -711,6 +742,163 @@ later_schema as (
       authorized_page_function.oid,
       'EXECUTE'
     ) from service_role cross join authorized_page_function), false),
+    'workspaceGenerationTable',
+      (select count(*) = 1 from workspace_generation_table)
+      and (select count(*) = 2
+        from workspace_generation_table
+        join pg_catalog.pg_attribute
+          on pg_attribute.attrelid = workspace_generation_table.oid
+        where pg_attribute.attnum > 0 and not pg_attribute.attisdropped)
+      and exists (
+        select 1
+        from workspace_generation_table
+        join pg_catalog.pg_attribute
+          on pg_attribute.attrelid = workspace_generation_table.oid
+        where pg_attribute.attname = 'workspace_id'
+          and pg_attribute.atttypid = 'uuid'::regtype
+          and pg_attribute.attnotnull
+      )
+      and exists (
+        select 1
+        from workspace_generation_table
+        join pg_catalog.pg_attribute
+          on pg_attribute.attrelid = workspace_generation_table.oid
+        join pg_catalog.pg_attrdef
+          on pg_attrdef.adrelid = workspace_generation_table.oid
+          and pg_attrdef.adnum = pg_attribute.attnum
+        where pg_attribute.attname = 'generation'
+          and pg_attribute.atttypid = 'bigint'::regtype
+          and pg_attribute.attnotnull
+          and regexp_replace(
+            lower(pg_get_expr(pg_attrdef.adbin, pg_attrdef.adrelid)),
+            '\s+', '', 'g'
+          ) in ('0', '0::bigint')
+      )
+      and exists (
+        select 1
+        from workspace_generation_table
+        join pg_catalog.pg_constraint
+          on pg_constraint.conrelid = workspace_generation_table.oid
+        where pg_constraint.contype = 'p'
+          and pg_constraint.conkey = array[
+            (select pg_attribute.attnum
+              from pg_catalog.pg_attribute
+              where pg_attribute.attrelid = workspace_generation_table.oid
+                and pg_attribute.attname = 'workspace_id')
+          ]::smallint[]
+      )
+      and exists (
+        select 1
+        from workspace_generation_table
+        join pg_catalog.pg_constraint
+          on pg_constraint.conrelid = workspace_generation_table.oid
+        where pg_constraint.contype = 'f'
+          and pg_constraint.confrelid = to_regclass('public.workspaces')
+          and pg_constraint.confdeltype = 'c'
+          and pg_constraint.conkey = array[
+            (select pg_attribute.attnum
+              from pg_catalog.pg_attribute
+              where pg_attribute.attrelid = workspace_generation_table.oid
+                and pg_attribute.attname = 'workspace_id')
+          ]::smallint[]
+      )
+      and exists (
+        select 1
+        from workspace_generation_table
+        join pg_catalog.pg_constraint
+          on pg_constraint.conrelid = workspace_generation_table.oid
+        where pg_constraint.contype = 'c'
+          and regexp_replace(
+            lower(pg_get_constraintdef(pg_constraint.oid, true)),
+            '\s+', '', 'g'
+          ) in (
+            'check(generation>=0)',
+            'check((generation>=0))'
+          )
+      )
+      and (select workspace_generation_table.relrowsecurity
+        from workspace_generation_table)
+      and not exists (
+        select 1
+        from workspace_generation_table
+        cross join (
+          select authenticated_role.oid from authenticated_role
+          union all select anon_role.oid from anon_role
+          union all select service_role.oid from service_role
+        ) as browser_or_backend_role
+        cross join (values ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'))
+          as privileges(privilege_name)
+        where has_table_privilege(
+          browser_or_backend_role.oid,
+          workspace_generation_table.oid,
+          privileges.privilege_name
+        )
+      )
+      and not exists (
+        select 1
+        from workspace_generation_table
+        cross join lateral pg_catalog.aclexplode(coalesce(
+          workspace_generation_table.relacl,
+          pg_catalog.acldefault('r', workspace_generation_table.relowner)
+        )) as table_acl
+        where table_acl.grantee = 0
+          and table_acl.privilege_type in (
+            'SELECT', 'INSERT', 'UPDATE', 'DELETE'
+          )
+      )
+      and not exists (
+        select 1 from pg_catalog.pg_policy
+        join workspace_generation_table
+          on workspace_generation_table.oid = pg_policy.polrelid
+      ),
+    'workspaceGenerationFunctions',
+      exists (
+        select 1 from initialize_generation_function
+        where initialize_generation_function.prosecdef
+          and lower(initialize_generation_function.prosrc)
+            like '%insert into public.cloud_event_workspace_generations%'
+      )
+      and exists (
+        select 1 from advance_generation_function
+        where advance_generation_function.prosecdef
+          and lower(advance_generation_function.prosrc)
+            like '%update public.cloud_event_workspace_generations%'
+          and lower(advance_generation_function.prosrc)
+            like '%set generation = generation + 1%'
+      ),
+    'workspaceGenerationTriggers',
+      exists (
+        select 1
+        from workspace_generation_table
+        join pg_catalog.pg_trigger
+          on pg_trigger.tgrelid = to_regclass('public.workspaces')
+        join initialize_generation_function
+          on initialize_generation_function.oid = pg_trigger.tgfoid
+        where pg_trigger.tgname = 'workspaces_initialize_cloud_event_generation'
+          and not pg_trigger.tgisinternal
+          and pg_trigger.tgenabled = 'O'
+      )
+      and exists (
+        select 1
+        from cloud_table
+        join pg_catalog.pg_trigger on pg_trigger.tgrelid = cloud_table.oid
+        join advance_generation_function
+          on advance_generation_function.oid = pg_trigger.tgfoid
+        where pg_trigger.tgname = 'cloud_events_advance_workspace_generation'
+          and not pg_trigger.tgisinternal
+          and pg_trigger.tgenabled = 'O'
+      ),
+    'authorizedPageGenerationGuard', exists (
+      select 1 from generation_page_function
+      where lower(generation_page_function.prosrc)
+          like '%from public.cloud_event_workspace_generations%'
+        and lower(generation_page_function.prosrc) like '%for share%'
+        and lower(generation_page_function.prosrc)
+          like '%p_expected_generation::bigint <> workspace_generation%'
+        and lower(generation_page_function.prosrc) like '%errcode = ''40001''%'
+        and lower(generation_page_function.prosrc)
+          like '%''workspace_generation'', workspace_generation::text%'
+    ),
     'authorizedSaveFunction', exists (
       select 1 from authorized_save_function
       where lower(prosrc) like '%from public.workspace_members%'

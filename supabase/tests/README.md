@@ -19,6 +19,7 @@ They create rows in `auth.users` and require an administrator connection.
    - `20261008140000_cloud_event_authorized_page.sql`
    - `20261008150000_cloud_event_authorized_save.sql`
    - `20261008160000_cloud_event_rpc_only_save.sql`
+   - `20261008170000_cloud_event_workspace_generation.sql`
 
    These names are ordered both by their migration version prefixes and by
    ordinary filename sorting; do not infer that every external migration tool

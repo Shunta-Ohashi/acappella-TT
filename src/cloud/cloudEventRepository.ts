@@ -39,6 +39,7 @@ export type CloudEventRepositoryErrorCode =
   | 'INVALID_SNAPSHOT'
   | 'INVALID_RESPONSE'
   | 'SHARED_MASTER_CONFLICT'
+  | 'WORKSPACE_SNAPSHOT_CHANGED'
   | 'CONFIGURATION_ERROR'
   | 'SUPABASE_ERROR'
   | 'INVALID_ARGUMENT'
@@ -71,6 +72,7 @@ export interface CloudEventDatabaseGateway {
     workspaceId: string,
     afterEventId: EventId | null,
     limit: number,
+    expectedGeneration: string | null,
   ) => Promise<CloudEventDatabaseResult<unknown>>
   loadRow: (
     workspaceId: string,
@@ -177,6 +179,7 @@ const parseDeletionConfirmation = (
 }
 
 interface AuthorizedWorkspacePage {
+  generation: string
   rows: unknown[]
   nextCursor: EventId | null
 }
@@ -190,6 +193,8 @@ const parseAuthorizedWorkspacePage = (
     !isRecord(value) ||
     value.status !== 'ok' ||
     value.workspace_id !== workspaceId ||
+    !isNonEmptyString(value.workspace_generation) ||
+    !/^(0|[1-9][0-9]*)$/u.test(value.workspace_generation) ||
     !Array.isArray(value.rows) ||
     !('next_cursor' in value) ||
     ('error' in value) ||
@@ -203,7 +208,11 @@ const parseAuthorizedWorkspacePage = (
     (nextCursor !== null && value.rows.length !== pageSize)
   ) return undefined
 
-  return { rows: value.rows, nextCursor }
+  return {
+    generation: value.workspace_generation,
+    rows: value.rows,
+    nextCursor,
+  }
 }
 
 const invalidArgument = (message: string): CloudEventRepositoryResult<never> => ({
@@ -353,6 +362,7 @@ export const createCloudEventRepository = (
     const seenEventIds = new Set<EventId>()
     const requestedCursors = new Set<EventId>()
     let afterEventId: EventId | null = null
+    let expectedGeneration: string | null = null
 
     try {
       while (true) {
@@ -360,7 +370,20 @@ export const createCloudEventRepository = (
           workspaceId,
           afterEventId,
           workspacePageSize,
+          expectedGeneration,
         )
+        if (
+          result.error?.code === '40001' ||
+          result.error?.code === 'WORKSPACE_SNAPSHOT_CHANGED'
+        ) {
+          return {
+            ok: false,
+            error: {
+              code: 'WORKSPACE_SNAPSHOT_CHANGED',
+              message: 'Cloud Eventの読込中にWorkspaceが更新されました。再読み込みしてください。',
+            },
+          }
+        }
         if (result.error) return databaseFailure(result.error)
         const page = parseAuthorizedWorkspacePage(
           result.data,
@@ -368,6 +391,11 @@ export const createCloudEventRepository = (
           workspacePageSize,
         )
         if (!page) return invalidResponse()
+        if (
+          expectedGeneration !== null &&
+          page.generation !== expectedGeneration
+        ) return invalidResponse()
+        expectedGeneration = page.generation
 
         // The authorized RPC owns the C-collated keyset order. Do not re-sort
         // or compare Unicode IDs with JavaScript locale/UTF-16 semantics here.
@@ -478,11 +506,17 @@ export const createSupabaseCloudEventGateway = (
     return { data: result.data, error: result.error }
   },
 
-  async loadAuthorizedWorkspacePage(workspaceId, afterEventId, limit) {
+  async loadAuthorizedWorkspacePage(
+    workspaceId,
+    afterEventId,
+    limit,
+    expectedGeneration,
+  ) {
     const result = await client.rpc('load_cloud_events_page_authorized', {
       p_workspace_id: workspaceId,
       p_after_event_id: afterEventId,
       p_page_size: limit,
+      p_expected_generation: expectedGeneration,
     })
     return { data: result.data, error: result.error }
   },

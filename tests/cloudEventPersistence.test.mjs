@@ -218,6 +218,7 @@ class MemoryCloudEventGateway {
   rows = new Map()
   allowedWorkspaces = new Set()
   workspaceRoles = new Map()
+  workspaceGenerations = new Map()
   authenticated = true
   clock = 0
   accessCalls = 0
@@ -233,6 +234,9 @@ class MemoryCloudEventGateway {
       workspaceId,
       'editor',
     ]))
+    this.workspaceGenerations = new Map(
+      allowedWorkspaces.map(workspaceId => [workspaceId, 0n]),
+    )
   }
 
   key(workspaceId, eventId) {
@@ -282,11 +286,26 @@ class MemoryCloudEventGateway {
     }
   }
 
-  async loadAuthorizedWorkspacePage(workspaceId, afterEventId, limit) {
+  async loadAuthorizedWorkspacePage(
+    workspaceId,
+    afterEventId,
+    limit,
+    expectedGeneration,
+  ) {
     this.workspacePageCalls += 1
-    this.workspacePageRequests.push({ workspaceId, afterEventId, limit })
+    this.workspacePageRequests.push({
+      workspaceId,
+      afterEventId,
+      limit,
+      expectedGeneration,
+    })
     const denied = this.deny(workspaceId)
     if (denied) return denied
+    const generation = this.workspaceGenerations.get(workspaceId) ?? 0n
+    if (
+      expectedGeneration !== null &&
+      expectedGeneration !== generation.toString()
+    ) return { data: null, error: { code: '40001' } }
     const candidates = [...this.rows.values()]
       .filter(row => row.workspace_id === workspaceId)
       .sort((left, right) => compareUtf8Bytes(left.event_id, right.event_id))
@@ -297,6 +316,7 @@ class MemoryCloudEventGateway {
       data: {
         status: 'ok',
         workspace_id: workspaceId,
+        workspace_generation: generation.toString(),
         rows: rows.map(row => structuredClone(row)),
         next_cursor: candidates.length > limit
           ? rows.at(-1)?.event_id ?? null
@@ -326,6 +346,10 @@ class MemoryCloudEventGateway {
       updated_at: now,
     }
     this.rows.set(key, row)
+    this.workspaceGenerations.set(
+      workspaceId,
+      (this.workspaceGenerations.get(workspaceId) ?? 0n) + 1n,
+    )
     return { data: structuredClone(row), error: null }
   }
 
@@ -335,7 +359,13 @@ class MemoryCloudEventGateway {
     if (denied) return denied
     const key = this.key(workspaceId, eventId)
     const row = this.rows.get(key)
-    if (row) this.rows.delete(key)
+    if (row) {
+      this.rows.delete(key)
+      this.workspaceGenerations.set(
+        workspaceId,
+        (this.workspaceGenerations.get(workspaceId) ?? 0n) + 1n,
+      )
+    }
     return {
       data: {
         status: row ? 'deleted' : 'already_absent',
@@ -1630,6 +1660,7 @@ test('Workspace bulk loadは不正page・scope越境・重複・cursor進行不�
   const page = (rows, nextCursor = null, overrides = {}) => ({
     status: 'ok',
     workspace_id: 'workspace-a',
+    workspace_generation: '0',
     rows,
     next_cursor: nextCursor,
     ...overrides,
@@ -1643,6 +1674,8 @@ test('Workspace bulk loadは不正page・scope越境・重複・cursor進行不�
       code: 'INVALID_RESPONSE',
     },
     { pages: [page([], null, { status: 'unknown' })], code: 'INVALID_RESPONSE' },
+    { pages: [page([], null, { workspace_generation: '' })], code: 'INVALID_RESPONSE' },
+    { pages: [page([], null, { workspace_generation: '-1' })], code: 'INVALID_RESPONSE' },
     { pages: [page([], null, { workspace_id: 'workspace-b' })], code: 'INVALID_RESPONSE' },
     { pages: [page([], null, { error: 'ambiguous' })], code: 'INVALID_RESPONSE' },
     { pages: [page([{ ...row, workspace_id: 'workspace-b' }])], code: 'INVALID_SNAPSHOT' },
@@ -1656,6 +1689,13 @@ test('Workspace bulk loadは不正page・scope越境・重複・cursor進行不�
     },
     {
       pages: [page([row], row.event_id), page([otherRow], row.event_id)],
+      code: 'INVALID_RESPONSE',
+      pageSize: 1,
+    },
+    {
+      pages: [page([row], row.event_id), page([otherRow], null, {
+        workspace_generation: '1',
+      })],
       code: 'INVALID_RESPONSE',
       pageSize: 1,
     },
@@ -1816,6 +1856,100 @@ test('Workspace pageのC照合順cursorをclientは変更せずUnicode IDも欠�
     gateway.workspacePageRequests.map(request => request.afterEventId),
     [null, expected[1], expected[3]],
   )
+  assert.deepEqual(
+    gateway.workspacePageRequests.map(request => request.expectedGeneration),
+    [null, '6', '6'],
+  )
+})
+
+test('Workspace page間のINSERT・UPDATE・DELETEは世代不一致としてfail closedにする', async () => {
+  for (const mutation of ['insert', 'update', 'delete']) {
+    const gateway = new MemoryCloudEventGateway(['workspace-a'])
+    const repository = createCloudEventRepository(gateway, { workspacePageSize: 1 })
+    for (const eventId of ['event-a', 'event-b', 'event-c']) {
+      assert.equal((await repository.saveEvent(
+        'workspace-a',
+        createMinimalSnapshot(eventId),
+      )).ok, true)
+    }
+
+    const loadPage = gateway.loadAuthorizedWorkspacePage.bind(gateway)
+    let pageCalls = 0
+    gateway.loadAuthorizedWorkspacePage = async (...args) => {
+      pageCalls += 1
+      const pageResult = await loadPage(...args)
+      if (pageCalls === 1) {
+        if (mutation === 'insert') {
+          await gateway.saveRow({
+            workspaceId: 'workspace-a',
+            snapshot: createMinimalSnapshot('event-z'),
+          })
+        } else if (mutation === 'update') {
+          await gateway.saveRow({
+            workspaceId: 'workspace-a',
+            snapshot: createMinimalSnapshot('event-c'),
+          })
+        } else {
+          await gateway.deleteAuthorizedEvent('workspace-a', 'event-c')
+        }
+      }
+      return pageResult
+    }
+
+    const result = await repository.loadWorkspaceEvents('workspace-a')
+    assert.equal(result.ok, false, mutation)
+    assert.equal(
+      !result.ok && result.error.code,
+      'WORKSPACE_SNAPSHOT_CHANGED',
+      mutation,
+    )
+    assert.equal(pageCalls, 2, mutation)
+    assert.deepEqual(
+      gateway.workspacePageRequests.map(request => request.expectedGeneration),
+      [null, '3'],
+      mutation,
+    )
+  }
+})
+
+test('Workspace世代不一致時はdomain stateとCloud cacheを部分更新しない', async () => {
+  const gateway = new MemoryCloudEventGateway(['workspace-a'])
+  const repository = createCloudEventRepository(gateway, { workspacePageSize: 1 })
+  for (const eventId of ['event-a', 'event-b']) {
+    assert.equal((await repository.saveEvent(
+      'workspace-a',
+      createMinimalSnapshot(eventId),
+    )).ok, true)
+  }
+  const loadPage = gateway.loadAuthorizedWorkspacePage.bind(gateway)
+  let pageCalls = 0
+  gateway.loadAuthorizedWorkspacePage = async (...args) => {
+    pageCalls += 1
+    const pageResult = await loadPage(...args)
+    if (pageCalls === 1) {
+      await gateway.saveRow({
+        workspaceId: 'workspace-a',
+        snapshot: createMinimalSnapshot('event-c'),
+      })
+    }
+    return pageResult
+  }
+
+  const initialState = createDemoData()
+  const before = structuredClone(initialState)
+  const harness = createHydrationHarness(initialState)
+  const completed = await harness.run(() => loadCloudWorkspaceEvents(
+    repository,
+    'workspace-a',
+    harness.domainState,
+  ))
+
+  assert.equal(completed.kind, 'error')
+  assert.deepEqual(harness.domainState, before)
+  assert.deepEqual(harness.latestDomainState, before)
+  assert.equal(harness.storageValue, 'existing-cache')
+  assert.equal(harness.storageSetCalls, 0)
+  assert.equal(harness.storageRemoveCalls, 0)
 })
 
 test('Workspace bulk loadの途中失敗はhydrate stateを部分commitしない', async () => {
@@ -3762,6 +3896,8 @@ test('migration実ファイルはAuth→Cloud Event→RPC/権限変更の依存�
     migrations.indexOf('20261008150000_cloud_event_authorized_save.sql'))
   assert.ok(migrations.indexOf('20261008150000_cloud_event_authorized_save.sql') <
     migrations.indexOf('20261008160000_cloud_event_rpc_only_save.sql'))
+  assert.ok(migrations.indexOf('20261008160000_cloud_event_rpc_only_save.sql') <
+    migrations.indexOf('20261008170000_cloud_event_workspace_generation.sql'))
   assert.equal(migrations.includes('20261007120000_cloud_event_persistence.sql'), false)
 })
 
@@ -3971,6 +4107,44 @@ test('authorized page migrationは各pageでMembershipをlockしC照合順envelo
   assert.doesNotMatch(repositoryWorkspaceLoad, /\.sort\(/)
 })
 
+test('Workspace generation migrationはmutationとpage snapshotを同じ世代行lockで直列化する', async () => {
+  const sql = await readFile(new URL(
+    '../supabase/migrations/20261008170000_cloud_event_workspace_generation.sql',
+    import.meta.url,
+  ), 'utf8')
+  const repositorySource = await readFile(new URL(
+    '../src/cloud/cloudEventRepository.ts',
+    import.meta.url,
+  ), 'utf8')
+
+  const executableSql = sql.replace(/^\s*--.*$/gmu, '').trim()
+  assert.match(executableSql, /^begin;\s*create table public\.cloud_event_workspace_generations/i)
+  assert.equal(executableSql.match(/\bbegin;/giu)?.length, 1)
+  assert.equal(executableSql.match(/\bcommit;/giu)?.length, 1)
+  assert.match(executableSql,
+    /create table public\.cloud_event_workspace_generations[\s\S]*lock table public\.workspaces in share row exclusive mode[\s\S]*insert into public\.cloud_event_workspace_generations[\s\S]*create trigger workspaces_initialize_cloud_event_generation[\s\S]*create trigger cloud_events_advance_workspace_generation[\s\S]*drop function public\.load_cloud_events_page_authorized\(uuid, text, integer\)[\s\S]*create function public\.load_cloud_events_page_authorized\([\s\S]*grant execute on function public\.load_cloud_events_page_authorized\(uuid, text, integer, text\)[\s\S]*commit;$/i)
+
+  assert.match(sql, /create table public\.cloud_event_workspace_generations/i)
+  assert.match(sql, /generation bigint not null default 0 check \(generation >= 0\)/i)
+  assert.match(sql,
+    /lock table public\.workspaces in share row exclusive mode[\s\S]*insert into public\.cloud_event_workspace_generations[\s\S]*workspaces_initialize_cloud_event_generation/i)
+  assert.match(sql,
+    /after insert or update or delete on public\.cloud_events[\s\S]*advance_cloud_event_workspace_generation/i)
+  assert.match(sql,
+    /update public\.cloud_event_workspace_generations[\s\S]*set generation = generation \+ 1/i)
+  assert.match(sql,
+    /select cloud_event_workspace_generations\.generation[\s\S]*for share/i)
+  assert.match(sql,
+    /p_expected_generation::bigint <> workspace_generation[\s\S]*errcode = '40001'/i)
+  assert.match(sql,
+    /'workspace_generation', workspace_generation::text/i)
+  assert.match(sql,
+    /grant execute on function public\.load_cloud_events_page_authorized\(uuid, text, integer, text\)[\s\S]*to authenticated/i)
+  assert.match(repositorySource, /p_expected_generation: expectedGeneration/)
+  assert.match(repositorySource,
+    /expectedGeneration !== null[\s\S]*page\.generation !== expectedGeneration/)
+})
+
 test('upgrade migrationは直接DELETEを取り消し継承実効権限をfail closedにする', async () => {
   const sql = await readFile(new URL(
     '../supabase/migrations/20261008130000_cloud_event_rpc_only_delete.sql',
@@ -4041,6 +4215,13 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   assert.match(coreSql, /cross-workspace page read unexpectedly succeeded/i)
   assert.match(coreSql, /anonymous page read unexpectedly succeeded/i)
   assert.match(coreSql, /C-collated page order is unexpected/i)
+  assert.match(coreSql, /inter-page INSERT did not invalidate/i)
+  assert.match(coreSql, /inter-page UPDATE did not invalidate/i)
+  assert.match(coreSql, /inter-page DELETE did not invalidate/i)
+  assert.match(coreSql,
+    /create temporary table cloud_event_page_generation_probe[\s\S]*grant select, insert on table cloud_event_page_generation_probe\s+to authenticated;[\s\S]*set local role authenticated/i)
+  assert.doesNotMatch(coreSql,
+    /grant\s+(?:all|update|delete|truncate)[^;]*cloud_event_page_generation_probe[^;]*authenticated/i)
   assert.match(coreSql, /invalid-version-string/i)
   assert.match(coreSql, /invalid-app-version-string/i)
   assert.match(coreSql, /missing-version/i)
@@ -4065,8 +4246,18 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   assert.match(concurrencySql, /membership DELETE did not wait/i)
   assert.match(concurrencySql, /RPC succeeded after committed downgrade/i)
   assert.match(pageConcurrencySql, /extensions\.dblink_send_query/i)
-  assertAsyncQueriesAreFullyDrained(pageConcurrencySql, 1)
+  assertAsyncQueriesAreFullyDrained(pageConcurrencySql, 4)
+  assert.match(pageConcurrencySql,
+    /create temporary table page_generation_probe[\s\S]*grant select, insert on table page_generation_probe to authenticated;[\s\S]*set local role authenticated/i)
+  assert.doesNotMatch(pageConcurrencySql,
+    /grant\s+(?:all|update|delete|truncate)[^;]*page_generation_probe[^;]*authenticated/i)
+  const fixedFixtureCleanup = /delete from public\.workspaces\s+where id = '30000000-0000-0000-0000-000000000001';\s*delete from auth\.users\s+where id = '00000000-0000-0000-0000-000000000021';/gi
+  assert.equal([...pageConcurrencySql.matchAll(fixedFixtureCleanup)].length, 2)
   assert.match(pageConcurrencySql, /wait_event_type = 'Lock'/i)
+  assert.match(pageConcurrencySql, /Cloud Event UPDATE did not wait for page generation lock/i)
+  assert.match(pageConcurrencySql, /Cloud Event INSERT did not wait for page generation lock/i)
+  assert.match(pageConcurrencySql, /Cloud Event DELETE did not wait for page generation lock/i)
+  assert.match(pageConcurrencySql, /stale Workspace generation unexpectedly succeeded/i)
   assert.match(pageConcurrencySql, /revocation did not wait for page RPC FOR SHARE lock/i)
   assert.match(pageConcurrencySql, /page RPC succeeded after committed membership revocation/i)
   assert.match(instructions, /disposable/i)

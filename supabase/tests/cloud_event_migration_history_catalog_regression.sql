@@ -118,21 +118,21 @@ begin
         to cloud_event_delete_regression_inherited;
       grant cloud_event_delete_regression_inherited to anon;
     when 'page_function_security_invoker' then
-      alter function public.load_cloud_events_page_authorized(uuid, text, integer)
+      alter function public.load_cloud_events_page_authorized(uuid, text, integer, text)
         security invoker;
     when 'page_authenticated_execute_missing' then
       revoke execute on function
-        public.load_cloud_events_page_authorized(uuid, text, integer)
+        public.load_cloud_events_page_authorized(uuid, text, integer, text)
         from authenticated;
     when 'page_public_execute' then
       grant execute on function
-        public.load_cloud_events_page_authorized(uuid, text, integer) to public;
+        public.load_cloud_events_page_authorized(uuid, text, integer, text) to public;
     when 'page_anon_execute' then
       grant execute on function
-        public.load_cloud_events_page_authorized(uuid, text, integer) to anon;
+        public.load_cloud_events_page_authorized(uuid, text, integer, text) to anon;
     when 'page_service_role_execute' then
       grant execute on function
-        public.load_cloud_events_page_authorized(uuid, text, integer)
+        public.load_cloud_events_page_authorized(uuid, text, integer, text)
         to service_role;
     when 'page_anon_inherited_execute' then
       if exists (
@@ -143,9 +143,22 @@ begin
       end if;
       create role cloud_event_page_regression_inherited nologin;
       grant execute on function
-        public.load_cloud_events_page_authorized(uuid, text, integer)
+        public.load_cloud_events_page_authorized(uuid, text, integer, text)
         to cloud_event_page_regression_inherited;
       grant cloud_event_page_regression_inherited to anon;
+    when 'workspace_generation_trigger_missing' then
+      drop trigger cloud_events_advance_workspace_generation
+        on public.cloud_events;
+    when 'workspace_generation_table_missing' then
+      alter table public.cloud_event_workspace_generations
+        rename to catalog_regression_cloud_event_workspace_generations;
+    when 'workspace_generation_function_security_invoker' then
+      alter function public.advance_cloud_event_workspace_generation()
+        security invoker;
+    when 'page_generation_guard_missing' then
+      alter function public.load_cloud_events_page_authorized(
+        uuid, text, integer, text
+      ) rename to catalog_regression_load_cloud_events_page_authorized;
     when 'save_function_security_invoker' then
       alter function public.save_cloud_event_validated(uuid, uuid, jsonb)
         security invoker;

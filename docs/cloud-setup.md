@@ -19,6 +19,24 @@ Supabase Dashboardでprojectを作成します。frontendへ設定するのはPr
 5. `20261008140000_cloud_event_authorized_page.sql`
 6. `20261008150000_cloud_event_authorized_save.sql`
 7. `20261008160000_cloud_event_rpc_only_save.sql`
+8. `20261008170000_cloud_event_workspace_generation.sql`
+
+最後のmigrationはWorkspaceごとの単調増加generationと変更triggerを追加し、
+複数pageのCloud Event読込中にINSERT / UPDATE / DELETEがcommitされた場合、
+次pageをfail closedにします。page RPCはmembershipとgeneration行を同一
+transaction内で`FOR SHARE` lockしてからrowsを読むため、generation照合と
+page snapshotの間にcommit可能な隙間を作りません。
+
+このmigrationはWorkspace tableの明示lockを使用するため、Supabase CLIが各statementを
+暗黙transactionで包まない実行方式でも安全に適用できるよう、ファイル全体を明示的な
+`BEGIN` / `COMMIT`で囲んでいます。CREATE TABLE、backfill、trigger、Page RPC置換、
+権限設定までが同じtransactionです。この境界とWorkspace lockを分離・削除しないでください。
+
+既存環境の`...170000`適用はpage RPCの引数契約も更新するため、maintenance
+windowでCloud Event読込を停止し、新frontendの配備とmigration適用を同じ
+切替作業として行ってください。配備前から開かれているtabをreloadでdrainし、
+旧3引数RPCを呼ぶclientが残っていないことを確認してから利用を再開します。
+旧RPCを互換用に残すと世代照合を迂回できるため、final stateでは残しません。
 
 ファイル名は通常の文字列順でもこの依存順になりますが、Supabase CLI等での適用済み判定はmigration historyに基づきます。旧開発名`20261007120000_cloud_event_persistence.sql`を適用済みの可能性がある環境では、rename後のbase migrationを再適用しないでください。対象判定・catalog照合・承認済みrepair・中断復帰・完了確認は、専用の[Cloud Event migration履歴移行runbook](./cloud-event-migration-history-repair.md)に従って通常のmigration適用より前に実施します。外部環境へpackage install / build / App起動から自動repairは行いません。
 

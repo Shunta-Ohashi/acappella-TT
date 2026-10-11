@@ -20,6 +20,7 @@ const LATER_VERSIONS = {
   authorizedPage: '20261008140000',
   authorizedSave: '20261008150000',
   rpcOnlySave: '20261008160000',
+  workspaceGeneration: '20261008170000',
 }
 
 const createInspection = ({
@@ -63,6 +64,10 @@ const createInspection = ({
       publicPageExecute: false,
       anonPageExecute: false,
       serviceRolePageExecute: false,
+      workspaceGenerationTable: applied.has(LATER_VERSIONS.workspaceGeneration),
+      workspaceGenerationFunctions: applied.has(LATER_VERSIONS.workspaceGeneration),
+      workspaceGenerationTriggers: applied.has(LATER_VERSIONS.workspaceGeneration),
+      authorizedPageGenerationGuard: applied.has(LATER_VERSIONS.workspaceGeneration),
       authorizedSaveFunction: applied.has(LATER_VERSIONS.authorizedSave),
       authorizedSaveSecurityDefiner: applied.has(LATER_VERSIONS.authorizedSave),
       saveFunctionPermissionCatalogReady: applied.has(LATER_VERSIONS.authorizedSave),
@@ -879,6 +884,10 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'page_anon_execute',
     'page_service_role_execute',
     'page_anon_inherited_execute',
+    'workspace_generation_trigger_missing',
+    'workspace_generation_table_missing',
+    'workspace_generation_function_security_invoker',
+    'page_generation_guard_missing',
     'save_function_security_invoker',
     'save_public_execute',
     'save_anon_execute',

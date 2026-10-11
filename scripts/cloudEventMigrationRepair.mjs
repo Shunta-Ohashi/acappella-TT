@@ -13,6 +13,7 @@ const LATER_MIGRATIONS = {
   authorizedPage: '20261008140000',
   authorizedSave: '20261008150000',
   rpcOnlySave: '20261008160000',
+  workspaceGeneration: '20261008170000',
 }
 
 const LATER_MIGRATION_VERSIONS = Object.values(LATER_MIGRATIONS)
@@ -84,6 +85,10 @@ export const REQUIRED_LATER_SCHEMA_CHECKS = [
   'publicPageExecute',
   'anonPageExecute',
   'serviceRolePageExecute',
+  'workspaceGenerationTable',
+  'workspaceGenerationFunctions',
+  'workspaceGenerationTriggers',
+  'authorizedPageGenerationGuard',
   'authorizedSaveFunction',
   'authorizedSaveSecurityDefiner',
   'saveFunctionPermissionCatalogReady',
@@ -286,6 +291,19 @@ export const analyzeCloudEventMigrationInspection = inspection => {
         inspection.laterSchema[check],
         false,
         `${check} privilege`,
+      )
+    }
+    for (const check of [
+      'workspaceGenerationTable',
+      'workspaceGenerationFunctions',
+      'workspaceGenerationTriggers',
+      'authorizedPageGenerationGuard',
+    ]) {
+      compareExpected(
+        mismatches,
+        inspection.laterSchema[check],
+        laterApplied.workspaceGeneration,
+        `${check}/history`,
       )
     }
     compareExpected(

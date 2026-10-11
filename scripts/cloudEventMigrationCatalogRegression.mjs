@@ -37,6 +37,14 @@ const scenarios = [
   ['page_anon_execute', result => result.laterSchema.anonPageExecute],
   ['page_service_role_execute', result => result.laterSchema.serviceRolePageExecute],
   ['page_anon_inherited_execute', result => result.laterSchema.anonPageExecute],
+  ['workspace_generation_trigger_missing', result =>
+    !result.laterSchema.workspaceGenerationTriggers],
+  ['workspace_generation_table_missing', result =>
+    !result.laterSchema.workspaceGenerationTable],
+  ['workspace_generation_function_security_invoker', result =>
+    !result.laterSchema.workspaceGenerationFunctions],
+  ['page_generation_guard_missing', result =>
+    !result.laterSchema.authorizedPageGenerationGuard],
   ['save_function_security_invoker', result => !result.laterSchema.authorizedSaveSecurityDefiner],
   ['save_public_execute', result => result.laterSchema.publicSaveExecute],
   ['save_anon_execute', result => result.laterSchema.anonSaveExecute],
@@ -132,6 +140,10 @@ const main = async () => {
       baseline.laterSchema.publicPageExecute ||
       baseline.laterSchema.anonPageExecute ||
       baseline.laterSchema.serviceRolePageExecute ||
+      !baseline.laterSchema.workspaceGenerationTable ||
+      !baseline.laterSchema.workspaceGenerationFunctions ||
+      !baseline.laterSchema.workspaceGenerationTriggers ||
+      !baseline.laterSchema.authorizedPageGenerationGuard ||
       !baseline.laterSchema.authorizedSaveSecurityDefiner ||
       !baseline.laterSchema.saveFunctionPermissionCatalogReady ||
       !baseline.laterSchema.serviceRoleSaveExecute ||

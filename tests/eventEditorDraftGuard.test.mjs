@@ -187,6 +187,22 @@ test('Cloud save/delete中だけAppShell navigationをlockする', async () => {
     appShellSource.match(/disabled=\{navigationDisabled\}/g)?.length,
     2,
   )
+  assert.match(
+    appShellSource,
+    /<CloudAccountControls[\s\S]*navigationDisabled=\{navigationDisabled\}/,
+  )
+  assert.equal(
+    appShellSource.match(/disabled=\{navigationDisabled \|\| signingOut\}/g)?.length,
+    2,
+  )
+  const cloudAccountHandlers = appShellSource.slice(
+    appShellSource.indexOf('const signOut = async'),
+    appShellSource.indexOf('return (', appShellSource.indexOf('const selectWorkspace')),
+  )
+  assert.equal(
+    cloudAccountHandlers.match(/if \(navigationDisabled \|\| signingOut\) return/g)?.length,
+    2,
+  )
   assert.match(appSource,
     /const selectedCloudEventOperation = cloudWorkspace && selectedEvent[\s\S]*getCloudEventOperation\(/)
   assert.match(appSource,
