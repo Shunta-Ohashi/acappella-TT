@@ -6,6 +6,8 @@
 -- 20261008160000_cloud_event_rpc_only_save.sql to revoke direct writes. Fresh
 -- environments reach the final state with no browser direct-write access.
 
+begin;
+
 create function public.save_cloud_event_validated(
   p_actor_id uuid,
   p_workspace_id uuid,
@@ -169,3 +171,5 @@ $cloud_event_save_execute_privilege_guard$;
 
 comment on function public.save_cloud_event_validated(uuid, uuid, jsonb) is
   'Backend-only upsert for a snapshot already validated by save-cloud-event. Rechecks and locks actor Workspace membership in the save transaction.';
+
+commit;

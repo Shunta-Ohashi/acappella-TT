@@ -136,6 +136,8 @@ supabase functions serve save-cloud-event
 
 `...150000`はRPC作成・直接REVOKE・`service_role`へのGRANT後に、save RPCが`SECURITY DEFINER`であり、`service_role`だけが実効EXECUTEを持ち、`PUBLIC` / `anon` / `authenticated`が実行できないことを検査します。`...160000`もfinal cutover前に同じbackend-only EXECUTE contractを再検査し、さらにtable/columnへのdirect GRANTをREVOKEした後、`anon`と`authenticated`に継承経由の実効INSERT/UPDATE権限が残っていないことを検査します。残存権限があればfail closedするため、operatorがinherited EXECUTE/WRITE GRANT、role membership、custom role、function default privilegesを修正してからmigrationを再実行してください。migrationは共有role membershipを自動変更しません。
 
+`...150000`はSupabase CLIがstatementごとに実行する環境でも部分適用を残さないよう、RPC作成、REVOKE / GRANT、backend-only guard、function commentを明示的な`BEGIN` / `COMMIT`で囲んでいます。guardが失敗した場合はRPC作成を含む全変更がrollbackされます。fresh適用は、共有・production DBではなく使い捨てのSupabase互換DBだけを指定して、全migration chainを`supabase db push --db-url $env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL`で確認してください。既にmigration historyへ`20261008150000`が記録されたDBではファイル編集による再実行は起きないため、正常適用済み環境へ手動で再適用しません。
+
 ## 9. Security確認
 
 - `profiles`は本人のrowだけSELECT・INSERT・UPDATEできます。

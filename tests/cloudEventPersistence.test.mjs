@@ -3,6 +3,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import test from 'node:test'
 
 import { createDemoData } from '../src/data/demoData.ts'
+import { createEventBasicInfoDraft } from '../src/domain/eventBasicInfo.ts'
 import {
   createCloudEventRepository,
   createSupabaseCloudEventGateway,
@@ -40,6 +41,7 @@ import {
   CURRENT_STORAGE_VERSION,
   createCloudScopedStorageKey,
   createPersistedAppState,
+  isPersistenceScopeReady,
   loadPersistedStateForScope,
   savePersistedState,
 } from '../src/persistence/localPersistence.ts'
@@ -2856,6 +2858,106 @@ test('同一scopeのWorkspace context再生成はCloud hydrate trigger identity�
   assert.notDeepEqual(toTriggerIdentity(refreshedContext, 1), initialIdentity)
 })
 
+test('同じEvent IDのWorkspace切替はEditorを一度外し各scopeの値からdraftを再初期化する', async () => {
+  const sourceState = createDemoData()
+  const sourceEvent = sourceState.events[0]
+  assert.ok(sourceEvent)
+  const sourceDays = sourceState.eventDays.filter(
+    eventDay => eventDay.eventId === sourceEvent.id,
+  )
+  const eventA = { ...sourceEvent, name: 'Workspace A Event' }
+  const eventB = { ...sourceEvent, name: 'Workspace B Event' }
+  const scopeA = createCloudScopedStorageKey({
+    userId: 'user-a',
+    workspaceId: 'workspace-a',
+  })
+  const scopeB = createCloudScopedStorageKey({
+    userId: 'user-a',
+    workspaceId: 'workspace-b',
+  })
+
+  const getMountedDraft = ({
+    activeScopeKey,
+    activeVisitId,
+    requestedScopeKey,
+    requestedVisitId,
+    hydration,
+    event,
+  }) => getCloudEventHydrationView({
+    cloudEnabled: true,
+    persistenceScopeReady: isPersistenceScopeReady(
+      activeScopeKey,
+      requestedScopeKey,
+    ) && activeVisitId === requestedVisitId,
+    requestedScopeKey,
+    requestedVisitId,
+    hydration,
+  }) === 'content'
+    ? createEventBasicInfoDraft(event, sourceDays)
+    : undefined
+
+  const draftA = getMountedDraft({
+    activeScopeKey: scopeA,
+    activeVisitId: 'visit-a-1',
+    requestedScopeKey: scopeA,
+    requestedVisitId: 'visit-a-1',
+    hydration: { scopeKey: scopeA, visitId: 'visit-a-1', kind: 'ready' },
+    event: eventA,
+  })
+  assert.equal(draftA?.name, 'Workspace A Event')
+  draftA.name = 'Workspace A unsaved draft'
+
+  assert.equal(getMountedDraft({
+    activeScopeKey: scopeA,
+    activeVisitId: 'visit-a-1',
+    requestedScopeKey: scopeB,
+    requestedVisitId: 'visit-b-1',
+    hydration: { scopeKey: scopeA, visitId: 'visit-a-1', kind: 'ready' },
+    event: eventB,
+  }), undefined)
+
+  const draftB = getMountedDraft({
+    activeScopeKey: scopeB,
+    activeVisitId: 'visit-b-1',
+    requestedScopeKey: scopeB,
+    requestedVisitId: 'visit-b-1',
+    hydration: { scopeKey: scopeB, visitId: 'visit-b-1', kind: 'ready' },
+    event: eventB,
+  })
+  assert.equal(eventA.id, eventB.id)
+  assert.equal(draftB?.name, 'Workspace B Event')
+  assert.notEqual(draftB?.name, draftA.name)
+
+  assert.equal(getMountedDraft({
+    activeScopeKey: scopeB,
+    activeVisitId: 'visit-b-1',
+    requestedScopeKey: scopeA,
+    requestedVisitId: 'visit-a-2',
+    hydration: { scopeKey: scopeB, visitId: 'visit-b-1', kind: 'ready' },
+    event: eventA,
+  }), undefined)
+  const revisitedDraftA = getMountedDraft({
+    activeScopeKey: scopeA,
+    activeVisitId: 'visit-a-2',
+    requestedScopeKey: scopeA,
+    requestedVisitId: 'visit-a-2',
+    hydration: { scopeKey: scopeA, visitId: 'visit-a-2', kind: 'ready' },
+    event: eventA,
+  })
+  assert.equal(revisitedDraftA?.name, 'Workspace A Event')
+  assert.notEqual(revisitedDraftA?.name, draftA.name)
+
+  const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  const hydrationGate = appSource.indexOf("if (cloudEventHydrationView === 'loading')")
+  const editorRender = appSource.indexOf('<EventEditorShell', hydrationGate)
+  assert.notEqual(hydrationGate, -1)
+  assert.ok(editorRender > hydrationGate)
+  assert.match(
+    appSource.slice(hydrationGate, editorRender),
+    /return \([\s\S]*className="app-loading"/,
+  )
+})
+
 test('Event別の並行操作は一方の完了で他方の占有を解除しない', async () => {
   const registry = createCloudEventOperationRegistry()
   const eventA = createDeferred()
@@ -3922,6 +4024,13 @@ test('authorized save migrationはbackend専用RPCとclient直接write取消し�
     '../supabase/functions/save-cloud-event/index.ts',
     import.meta.url,
   ), 'utf8')
+
+  const executableSql = sql.replace(/^\s*--.*$/gmu, '').trim()
+  assert.match(executableSql, /^begin;\s*create function public\.save_cloud_event_validated/i)
+  assert.equal(executableSql.match(/\bbegin;/giu)?.length, 1)
+  assert.equal(executableSql.match(/\bcommit;/giu)?.length, 1)
+  assert.match(executableSql,
+    /create function public\.save_cloud_event_validated[\s\S]*revoke all on function public\.save_cloud_event_validated[\s\S]*grant execute on function public\.save_cloud_event_validated[\s\S]*do \$cloud_event_save_execute_privilege_guard\$[\s\S]*comment on function public\.save_cloud_event_validated[\s\S]*commit;$/i)
 
   assert.match(sql, /create function public\.save_cloud_event_validated\s*\(/i)
   assert.match(sql, /language plpgsql\s+volatile\s+security definer\s+set search_path = ''/i)

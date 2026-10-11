@@ -155,7 +155,7 @@ test('Step 1〜5のclean draftはCloud save開始後に共通interaction lockへ
   }
 })
 
-test('temporary Cloud lockはviewer readOnlyと区別しdelete dialogをinertにしない', () => {
+test('temporary Cloud lockはviewer readOnlyと区別しmodal delete dialogをinertにしない', async () => {
   assert.deepEqual(getEventEditorInteractionState({
     readOnly: true,
   }), {
@@ -171,6 +171,17 @@ test('temporary Cloud lockはviewer readOnlyと区別しdelete dialogをinertに
     navigationDisabled: true,
     statusLabel: 'Cloud削除中',
   })
+
+  const [dialogSource, basicInfoSource] = await Promise.all([
+    readFile(new URL('../src/components/DeleteConfirmationDialog.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/components/EventBasicInfo.tsx', import.meta.url), 'utf8'),
+  ])
+  assert.match(dialogSource, /dialog\.showModal\(\)/)
+  assert.match(dialogSource,
+    /onCancel=\{\(event\) => \{[\s\S]*event\.preventDefault\(\)[\s\S]*canDismissDeleteConfirmation\(isPending\)/)
+  assert.equal(dialogSource.match(/disabled=\{isPending\}/g)?.length, 2)
+  assert.match(basicInfoSource,
+    /pendingEventDeletion[\s\S]*<DeleteConfirmationDialog[\s\S]*isPending=\{isDeletingEvent\}/)
 })
 
 test('Cloud save/delete中だけAppShell navigationをlockする', async () => {
