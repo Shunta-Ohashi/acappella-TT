@@ -2682,6 +2682,46 @@ test('Cloud hydrate表示はcurrent scopeの成功時だけdomain contentを表�
   }), 'content')
 })
 
+test('同一scopeのWorkspace context再生成はCloud hydrate trigger identityを変えない', () => {
+  const initialContext = {
+    user: { id: 'user-a' },
+    workspace: { id: 'workspace-a' },
+    workspaceVisitId: 'visit-a',
+  }
+  const refreshedContext = {
+    ...initialContext,
+    user: { id: 'user-a', email: 'refreshed@example.com' },
+    workspace: { id: 'workspace-a' },
+  }
+  assert.notEqual(refreshedContext, initialContext)
+  assert.notEqual(refreshedContext.user, initialContext.user)
+
+  const toTriggerIdentity = (context, reloadToken = 0) => ({
+    workspaceId: context.workspace.id,
+    persistenceStorageKey: createCloudScopedStorageKey({
+      userId: context.user.id,
+      workspaceId: context.workspace.id,
+    }),
+    workspaceVisitId: context.workspaceVisitId,
+    reloadToken,
+  })
+  const initialIdentity = toTriggerIdentity(initialContext)
+  assert.deepEqual(toTriggerIdentity(refreshedContext), initialIdentity)
+  assert.notDeepEqual(toTriggerIdentity({
+    ...refreshedContext,
+    workspace: { id: 'workspace-b' },
+  }), initialIdentity)
+  assert.notDeepEqual(toTriggerIdentity({
+    ...refreshedContext,
+    user: { id: 'user-b' },
+  }), initialIdentity)
+  assert.notDeepEqual(toTriggerIdentity({
+    ...refreshedContext,
+    workspaceVisitId: 'visit-a-2',
+  }), initialIdentity)
+  assert.notDeepEqual(toTriggerIdentity(refreshedContext, 1), initialIdentity)
+})
+
 test('Event別の並行操作は一方の完了で他方の占有を解除しない', async () => {
   const registry = createCloudEventOperationRegistry()
   const eventA = createDeferred()
@@ -3265,9 +3305,9 @@ test('Appの初回起動とscope切替は同じCloud非破壊loaderへ接続す�
   const source = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
   assert.equal(source.match(/loadPersistedStateForScope\(\{/g)?.length, 2)
   assert.match(source,
-    /const \[initialAppState\][\s\S]*loadPersistedStateForScope\(\{[\s\S]*cloudEnabled: Boolean\(cloudWorkspace\)/)
+    /const \[initialAppState\][\s\S]*loadPersistedStateForScope\(\{[\s\S]*cloudEnabled,/)
   assert.match(source,
-    /rehydratePersistenceScope\(loadPersistedStateForScope\(\{[\s\S]*cloudEnabled: Boolean\(cloudWorkspace\)/)
+    /rehydratePersistenceScope\(loadPersistedStateForScope\(\{[\s\S]*cloudEnabled,/)
   assert.doesNotMatch(source, /loadPersistedStateOrFallback/)
 
   const rehydrateScope = source.slice(
@@ -3294,6 +3334,11 @@ test('Appの初回起動とscope切替は同じCloud非破壊loaderへ接続す�
     /loadCloudWorkspaceEvents\([\s\S]*cloudEventRepository,[\s\S]*workspaceId,[\s\S]*localBaseState/)
   assert.doesNotMatch(cloudLoad, /workspaceId,[\s\S]*domainState/)
   assert.match(cloudLoad, /cloudEventLocalBaseRef\.current === localBase/)
+  assert.doesNotMatch(cloudLoad, /\bcloudWorkspace\b/)
+  assert.match(
+    cloudLoad,
+    /\[\s*cloudEventReloadToken,\s*cloudEventRepository,\s*persistenceScopeReady,\s*requestedCloudWorkspaceId,\s*requestedCloudWorkspaceVisitId,\s*requestedPersistenceStorageKey,?\s*\]/,
+  )
 })
 
 test('malformed raw Cloud cacheはhydrate失敗・例外でも元文字列を保持する', async () => {

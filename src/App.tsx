@@ -356,6 +356,7 @@ const READ_ONLY_WORKSPACE_MESSAGE =
 
 function App() {
   const cloudWorkspace = useOptionalCloudWorkspace()
+  const cloudEnabled = cloudWorkspace !== null
   const canEditWorkspace = cloudWorkspace === null ||
     canEditCloudWorkspace(cloudWorkspace.membership.role)
   const canEditWorkspaceRef = useRef(canEditWorkspace)
@@ -376,6 +377,7 @@ function App() {
       })
     : STORAGE_KEY
   const requestedCloudWorkspaceVisitId = cloudWorkspace?.workspaceVisitId ?? ''
+  const requestedCloudWorkspaceId = cloudWorkspace?.workspace.id ?? ''
   const [activePersistenceStorageKey, setActivePersistenceStorageKey] = useState(
     requestedPersistenceStorageKey,
   )
@@ -385,7 +387,7 @@ function App() {
   const [initialAppState] = useState(() =>
     loadPersistedStateForScope({
       createFallback: createDemoData,
-      cloudEnabled: Boolean(cloudWorkspace),
+      cloudEnabled,
       storageKey: requestedPersistenceStorageKey,
     }),
   )
@@ -707,7 +709,7 @@ function App() {
     )
     // Invalidate a previous visit's ready state before this scope becomes
     // active, including A -> B -> A transitions that reuse the same key.
-    if (cloudWorkspace) {
+    if (cloudEnabled) {
       setCloudEventLoadState({ scopeKey: storageKey, visitId, kind: 'loading' })
     }
     const nextEventId = snapshot.events.some(event => event.id === selectedEventId)
@@ -765,7 +767,7 @@ function App() {
       if (cancelled) return
       rehydratePersistenceScope(loadPersistedStateForScope({
         createFallback: createDemoData,
-        cloudEnabled: Boolean(cloudWorkspace),
+        cloudEnabled,
         storageKey: requestedPersistenceStorageKey,
       }), requestedPersistenceStorageKey, requestedCloudWorkspaceVisitId)
     })
@@ -775,7 +777,7 @@ function App() {
   }, [
     activePersistenceStorageKey,
     activePersistenceVisitId,
-    cloudWorkspace,
+    cloudEnabled,
     requestedCloudWorkspaceVisitId,
     requestedPersistenceStorageKey,
   ])
@@ -785,7 +787,7 @@ function App() {
     requestedPersistenceStorageKey,
   ) && activePersistenceVisitId === requestedCloudWorkspaceVisitId
   const cloudEventScopeReady = isCloudEventCacheWriteReady({
-    cloudEnabled: Boolean(cloudWorkspace),
+    cloudEnabled,
     persistenceScopeReady,
     requestedScopeKey: requestedPersistenceStorageKey,
     requestedVisitId: requestedCloudWorkspaceVisitId,
@@ -982,15 +984,16 @@ function App() {
   })
 
   useEffect(() => {
-    if (!cloudWorkspace || !cloudEventRepository || !persistenceScopeReady) return
+    if (!requestedCloudWorkspaceId || !cloudEventRepository || !persistenceScopeReady) return
     let cancelled = false
+    const workspaceId = requestedCloudWorkspaceId
     const scopeKey = requestedPersistenceStorageKey
     const visitId = requestedCloudWorkspaceVisitId
     const localBase = cloudEventLocalBaseRef.current
     if (!getCloudEventLocalBaseState(localBase, scopeKey, visitId)) return
     queueMicrotask(() => {
       void loadCloudEventScope(
-        cloudWorkspace.workspace.id,
+        workspaceId,
         scopeKey,
         visitId,
         localBase,
@@ -1003,8 +1006,8 @@ function App() {
   }, [
     cloudEventReloadToken,
     cloudEventRepository,
-    cloudWorkspace,
     persistenceScopeReady,
+    requestedCloudWorkspaceId,
     requestedCloudWorkspaceVisitId,
     requestedPersistenceStorageKey,
   ])
@@ -3389,7 +3392,7 @@ function App() {
       : null
 
   const cloudEventHydrationView = getCloudEventHydrationView({
-    cloudEnabled: Boolean(cloudWorkspace),
+    cloudEnabled,
     persistenceScopeReady,
     requestedScopeKey: requestedPersistenceStorageKey,
     requestedVisitId: requestedCloudWorkspaceVisitId,
