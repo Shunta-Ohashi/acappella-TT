@@ -197,7 +197,9 @@ begin
       alter table public.profiles rename column display_name
         to catalog_regression_display_name;
     when 'profiles_column_type' then
-      alter table public.profiles alter column display_name type varchar(80);
+      -- Unbounded varchar remains intentionally different from text without
+      -- rejecting any pre-existing display_name value during fixture setup.
+      alter table public.profiles alter column display_name type varchar;
     when 'membership_primary_key_missing' then
       alter table public.workspace_members
         drop constraint workspace_members_pkey;
@@ -219,6 +221,13 @@ begin
       create table public.catalog_regression_workspaces (
         id uuid primary key
       );
+      -- Preserve referential validity for every existing membership so the
+      -- scenario reaches the preflight with a valid-but-wrong FK target.
+      -- DISTINCT makes both an empty database and multiple members of one
+      -- Workspace safe without changing production Workspace rows.
+      insert into public.catalog_regression_workspaces (id)
+      select distinct workspace_id
+      from public.workspace_members;
       alter table public.workspace_members
         add constraint workspace_members_workspace_id_fkey
         foreign key (workspace_id)

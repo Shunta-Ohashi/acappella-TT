@@ -848,6 +848,18 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     catalogRegressionSql,
     /when 'membership_role_check_broad'[\s\S]*check \(role in \('owner', 'editor', 'viewer', 'guest'\)\)/i,
   )
+  assert.match(
+    catalogRegressionSql,
+    /when 'membership_foreign_key_wrong_target'[\s\S]*create table public\.catalog_regression_workspaces[\s\S]*insert into public\.catalog_regression_workspaces \(id\)\s*select distinct workspace_id\s*from public\.workspace_members;[\s\S]*references public\.catalog_regression_workspaces\(id\)/i,
+  )
+  assert.match(
+    catalogRegressionSql,
+    /when 'profiles_column_type'[\s\S]*alter column display_name type varchar;/i,
+  )
+  assert.doesNotMatch(
+    catalogRegressionSql,
+    /alter column display_name type varchar\s*\(\s*\d+\s*\)/i,
+  )
   for (const scenario of [
     'cloud_anon_column_insert',
     'cloud_anon_column_update',
