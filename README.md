@@ -61,7 +61,7 @@ Vercelではrepository rootをプロジェクトとして登録し、次の設�
 
 Supabase用envを設定した環境では、通常の編集画面を登録済みユーザーのEmail Magic Link認証とWorkspace所属で保護できます。env未設定時は開発用のlocal-only modeとなり、認証なしで従来どおり起動します。事前共有URLは引き続き公開閲覧用です。
 
-認証後も編集データはCloudへ保存されません。共同編集・クラウド永続化・リアルタイム同期は後続対応です。
+認証後は、明示的な「Cloudへ保存」操作でEvent単位snapshotをWorkspaceへ保存できます。自動Cloud保存・共同編集・リアルタイム同期・revision conflict解決は後続対応です。
 
 ## Cloud development
 

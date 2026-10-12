@@ -13,6 +13,7 @@ export interface CloudWorkspaceContextValue {
   workspace: CloudWorkspace
   membership: CloudWorkspaceMembership
   availableWorkspaces: CloudWorkspaceAccess[]
+  workspaceVisitId: string
   selectWorkspace: (workspaceId: string) => void
   signOut: () => Promise<void>
   supabase: SupabaseClient

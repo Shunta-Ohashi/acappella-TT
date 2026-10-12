@@ -16,6 +16,7 @@ import {
   isPersistedAppStateV5,
   isPersistenceScopeReady,
   loadPersistedState,
+  loadPersistedStateForScope,
   loadPersistedStateOrFallback,
   parsePersistedState,
   savePersistedState,
@@ -35,6 +36,31 @@ class MemoryStorage {
 
   removeItem(key) {
     this.values.delete(key)
+  }
+}
+
+class TrackingStorage extends MemoryStorage {
+  getCalls = []
+  setCalls = []
+  removeCalls = []
+
+  getItem(key) {
+    this.getCalls.push(key)
+    return super.getItem(key)
+  }
+
+  setItem(key, value) {
+    this.setCalls.push({ key, value })
+    super.setItem(key, value)
+  }
+
+  removeItem(key) {
+    this.removeCalls.push(key)
+    super.removeItem(key)
+  }
+
+  seed(key, value) {
+    this.values.set(key, value)
   }
 }
 
@@ -438,6 +464,106 @@ test('壊れたJSONを例外なく拒否しstorage entryを削除する', () => 
   assert.doesNotThrow(() => loadPersistedState(storage))
   assert.equal(loadPersistedState(storage), undefined)
   assert.equal(storage.getItem(STORAGE_KEY), null)
+})
+
+test('Cloud scope loaderはvalid・invalid・missing cacheを読み取りだけで扱う', () => {
+  const key = createCloudScopedStorageKey({
+    userId: 'user-a',
+    workspaceId: 'workspace-a',
+  })
+  const fallback = createDemoData()
+  const validState = {
+    ...createEmptyState(),
+    members: [{ id: 'member-cloud', realName: 'Cloud Cache', active: true }],
+  }
+  const validRaw = serializePersistedState(validState)
+  const validStorage = new TrackingStorage()
+  validStorage.seed(key, validRaw)
+
+  assert.deepEqual(loadPersistedStateForScope({
+    createFallback: () => fallback,
+    cloudEnabled: true,
+    storage: validStorage,
+    storageKey: key,
+  }), createPersistedAppState(validState))
+  assert.equal(validStorage.values.get(key), validRaw)
+  assert.deepEqual(validStorage.setCalls, [])
+  assert.deepEqual(validStorage.removeCalls, [])
+
+  const invalidRawValues = [
+    '{broken json',
+    JSON.stringify({ version: CURRENT_STORAGE_VERSION }),
+    JSON.stringify({ ...createPersistedAppState(createEmptyState()), version: 999 }),
+    '',
+  ]
+  for (const raw of invalidRawValues) {
+    const storage = new TrackingStorage()
+    storage.seed(key, raw)
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      assert.deepEqual(loadPersistedStateForScope({
+        createFallback: () => fallback,
+        cloudEnabled: true,
+        storage,
+        storageKey: key,
+      }), createPersistedAppState(fallback))
+      assert.equal(storage.values.get(key), raw)
+    }
+    assert.deepEqual(storage.setCalls, [])
+    assert.deepEqual(storage.removeCalls, [])
+  }
+
+  const missingStorage = new TrackingStorage()
+  assert.deepEqual(loadPersistedStateForScope({
+    createFallback: () => fallback,
+    cloudEnabled: true,
+    storage: missingStorage,
+    storageKey: key,
+  }), createPersistedAppState(fallback))
+  assert.equal(missingStorage.values.has(key), false)
+  assert.deepEqual(missingStorage.setCalls, [])
+  assert.deepEqual(missingStorage.removeCalls, [])
+})
+
+test('Cloud scope loaderはgetItem例外時もcleanupせずlocal-only既定cleanupは維持する', () => {
+  const key = createCloudScopedStorageKey({
+    userId: 'user-a',
+    workspaceId: 'workspace-a',
+  })
+  const fallback = createDemoData()
+  let setCalls = 0
+  let removeCalls = 0
+  const unavailableStorage = {
+    getItem() {
+      throw new Error('storage unavailable')
+    },
+    setItem() {
+      setCalls += 1
+    },
+    removeItem() {
+      removeCalls += 1
+    },
+  }
+
+  assert.doesNotThrow(() => loadPersistedStateForScope({
+    createFallback: () => fallback,
+    cloudEnabled: true,
+    storage: unavailableStorage,
+    storageKey: key,
+  }))
+  assert.equal(setCalls, 0)
+  assert.equal(removeCalls, 0)
+
+  const localStorage = new TrackingStorage()
+  localStorage.seed(STORAGE_KEY, '{broken json')
+  assert.deepEqual(loadPersistedStateForScope({
+    createFallback: () => fallback,
+    cloudEnabled: false,
+    storage: localStorage,
+    storageKey: STORAGE_KEY,
+  }), createPersistedAppState(fallback))
+  assert.equal(localStorage.values.has(STORAGE_KEY), false)
+  assert.deepEqual(localStorage.setCalls, [])
+  assert.deepEqual(localStorage.removeCalls, [STORAGE_KEY])
 })
 
 test('必須collection不足とtop-level不正を拒否する', () => {

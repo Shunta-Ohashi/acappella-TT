@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type FormEvent,
+} from 'react'
 import type {
   Event,
   EventBand,
@@ -19,6 +26,10 @@ import {
   type FixedPositionMode,
 } from '../domain/eventBandConditions'
 import { getEventBandDayFeasibility } from '../domain/eventBandSettings'
+import {
+  hasSemanticDraftChanges,
+  type EventEditorDraftHandle,
+} from '../ui/eventEditorDraftGuard'
 
 interface EventBandConditionDialogProps {
   event: Event
@@ -44,7 +55,10 @@ const formatAvailabilityWindows = (
     ? emptyLabel
     : windows.map((window) => formatConditionTimeRange(window)).join(' / ')
 
-export function EventBandConditionDialog({
+export const EventBandConditionDialog = forwardRef<
+EventEditorDraftHandle,
+EventBandConditionDialogProps
+>(function EventBandConditionDialog({
   event,
   eventBand,
   item,
@@ -57,7 +71,7 @@ export function EventBandConditionDialog({
   eventBands,
   onCancel,
   onApply,
-}: EventBandConditionDialogProps) {
+}: EventBandConditionDialogProps, ref) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [draft, setDraft] = useState<EventBandConditionItemDraft>(() => ({
     ...item,
@@ -66,6 +80,11 @@ export function EventBandConditionDialog({
     fixedPlacement: { ...item.fixedPlacement },
   }))
   const [errors, setErrors] = useState<EventBandConditionItemErrors>({})
+
+  useImperativeHandle(ref, () => ({
+    hasUnsavedChanges: () => hasSemanticDraftChanges(draft, item),
+    reportUnsavedChanges: () => {},
+  }), [draft, item])
   const availableStages = stages.filter((stage) =>
     stage.eventDayId === eventBand.eventDayId,
   )
@@ -448,4 +467,4 @@ export function EventBandConditionDialog({
       </form>
     </dialog>
   )
-}
+})

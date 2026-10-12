@@ -1,4 +1,10 @@
-import { useState, type FormEvent } from 'react'
+import {
+  forwardRef,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type FormEvent,
+} from 'react'
 import type {
   Event,
   EventBand,
@@ -36,6 +42,10 @@ import { CsvFileButton } from './CsvFileButton'
 import { CsvImportPreviewDialog, type CsvImportPreview } from './CsvImportPreviewDialog'
 import { EVENT_MEMBER_CSV_HELP } from '../csv/csvHelp'
 import { CsvImportHelpPopover } from './CsvImportHelpPopover'
+import {
+  hasSemanticDraftChanges,
+  type EventEditorDraftHandle,
+} from '../ui/eventEditorDraftGuard'
 
 interface EventMemberSettingsProps {
   event: Event
@@ -47,6 +57,7 @@ interface EventMemberSettingsProps {
   createDraftId: () => string
   onSave: (draft: EventMemberSettingsDraft) => EventMemberSettingsUpdateResult
   onSaveAndNext: () => void
+  readOnly?: boolean
 }
 
 const participationStatusOptions: Array<{
@@ -89,7 +100,12 @@ const matchesMemberSearch = (member: Member, searchText: string): boolean => {
   )
 }
 
-export function EventMemberSettings({
+export type EventMemberSettingsHandle = EventEditorDraftHandle
+
+export const EventMemberSettings = forwardRef<
+EventMemberSettingsHandle,
+EventMemberSettingsProps
+>(function EventMemberSettings({
   event,
   eventDays,
   members,
@@ -99,13 +115,16 @@ export function EventMemberSettings({
   createDraftId,
   onSave,
   onSaveAndNext,
-}: EventMemberSettingsProps) {
-  const [draft, setDraft] = useState(() => createEventMemberSettingsDraft(
+  readOnly = false,
+}: EventMemberSettingsProps, ref) {
+  const initialDraft = createEventMemberSettingsDraft(
     event,
     eventDays,
     eventMembers,
     eventMemberDays,
-  ))
+  )
+  const [draft, setDraft] = useState(initialDraft)
+  const [savedDraft, setSavedDraft] = useState(initialDraft)
   const [searchText, setSearchText] = useState('')
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
   const [detailsEditor, setDetailsEditor] =
@@ -119,6 +138,8 @@ export function EventMemberSettings({
     preview: CsvImportPreview
     candidate?: EventMemberSettingsDraft
   }>()
+  const addMembersDialogRef = useRef<EventEditorDraftHandle>(null)
+  const memberDetailsDialogRef = useRef<EventEditorDraftHandle>(null)
   const memberById = new Map(members.map((member) => [member.id, member]))
   const orderedEventDays = eventDays
     .filter((eventDay) => eventDay.eventId === event.id)
@@ -155,6 +176,20 @@ export function EventMemberSettings({
   const detailsMember = detailsMemberDraft
     ? memberById.get(detailsMemberDraft.memberId)
     : undefined
+
+  useImperativeHandle(ref, () => ({
+    hasUnsavedChanges: () => hasSemanticDraftChanges(draft, savedDraft) ||
+      Boolean(addMembersDialogRef.current?.hasUnsavedChanges()) ||
+      Boolean(memberDetailsDialogRef.current?.hasUnsavedChanges()) ||
+      Boolean(csvImport?.candidate),
+    reportUnsavedChanges: () => {
+      setErrors((previous) => ({
+        ...previous,
+        form: 'イベントメンバーに未保存の変更があります。先にこの画面を保存してください。',
+      }))
+      setSaveMessage('')
+    },
+  }), [csvImport?.candidate, draft, savedDraft])
 
   const clearFeedback = () => {
     setSaveMessage('')
@@ -355,12 +390,14 @@ export function EventMemberSettings({
       return
     }
 
-    setDraft(createEventMemberSettingsDraft(
+    const normalizedSavedDraft = createEventMemberSettingsDraft(
       event,
       orderedEventDays,
       result.eventMembers,
       result.eventMemberDays,
-    ))
+    )
+    setDraft(normalizedSavedDraft)
+    setSavedDraft(normalizedSavedDraft)
     if (moveToNext) {
       onSaveAndNext()
     } else {
@@ -388,30 +425,32 @@ export function EventMemberSettings({
             />
           </div>
           <div className="csv-action-buttons">
-            <div className="csv-import-control">
-              <CsvFileButton
-                onRead={(fileName, text) => {
-                  const plan = planEventMemberCsvImport({
-                    csv: text, event, eventDays, members, eventMembers, eventMemberDays,
-                    draft, createDraftId,
-                  })
-                  setCsvImport(plan.ok
-                    ? { candidate: plan.candidate, preview: {
-                        datasetName: 'イベントメンバー', eventName: event.name,
-                        fileName, errors: [], draftOnly: true, ...plan,
-                      } }
-                    : { preview: {
-                        datasetName: 'イベントメンバー', eventName: event.name,
-                        fileName, errors: plan.errors,
-                      } })
-                }}
-                onError={(fileName, csvErrors) => setCsvImport({ preview: {
-                  datasetName: 'イベントメンバー', eventName: event.name,
-                  fileName, errors: csvErrors,
-                } })}
-              />
-              <CsvImportHelpPopover content={EVENT_MEMBER_CSV_HELP} />
-            </div>
+            {!readOnly && (
+              <div className="csv-import-control">
+                <CsvFileButton
+                  onRead={(fileName, text) => {
+                    const plan = planEventMemberCsvImport({
+                      csv: text, event, eventDays, members, eventMembers, eventMemberDays,
+                      draft, createDraftId,
+                    })
+                    setCsvImport(plan.ok
+                      ? { candidate: plan.candidate, preview: {
+                          datasetName: 'イベントメンバー', eventName: event.name,
+                          fileName, errors: [], draftOnly: true, ...plan,
+                        } }
+                      : { preview: {
+                          datasetName: 'イベントメンバー', eventName: event.name,
+                          fileName, errors: plan.errors,
+                        } })
+                  }}
+                  onError={(fileName, csvErrors) => setCsvImport({ preview: {
+                    datasetName: 'イベントメンバー', eventName: event.name,
+                    fileName, errors: csvErrors,
+                  } })}
+                />
+                <CsvImportHelpPopover content={EVENT_MEMBER_CSV_HELP} />
+              </div>
+            )}
             <button type="button" className="secondary-button"
               onClick={() => downloadCsv(
                 createEventMemberCsv({ event, eventDays, members, draft }),
@@ -419,22 +458,25 @@ export function EventMemberSettings({
               )}>
               CSV書き出し
             </button>
-            <button
-              type="button"
-              className="primary-button"
-              onClick={() => {
-                clearFeedback()
-                setIsAddDialogOpen(true)
-              }}
-            >
-              <span aria-hidden="true">＋</span> メンバーを追加
-            </button>
+            {!readOnly && (
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => {
+                  clearFeedback()
+                  setIsAddDialogOpen(true)
+                }}
+              >
+                <span aria-hidden="true">＋</span> メンバーを追加
+              </button>
+            )}
           </div>
         </div>
         <p className="csv-id-help">
           ID列は既存データの特定に使用します。CSV取り込み後は内容を確認して保存してください。
         </p>
 
+        <fieldset className="read-only-form-controls" disabled={readOnly}>
         <div className="event-member-settings__table-card">
           <div className="event-member-settings__table-scroll">
             <table className="event-member-settings__table">
@@ -649,17 +691,20 @@ export function EventMemberSettings({
             </button>
           </div>
         </footer>
+        </fieldset>
       </form>
 
-      {isAddDialogOpen && (
+      {!readOnly && isAddDialogOpen && (
         <AddEventMembersDialog
+          ref={addMembersDialogRef}
           members={addableMembers}
           onCancel={() => setIsAddDialogOpen(false)}
           onAdd={handleAddMembers}
         />
       )}
-      {detailsEditor && detailsMemberDraft && detailsMember && (
+      {!readOnly && detailsEditor && detailsMemberDraft && detailsMember && (
         <EventMemberDayDetailsDialog
+          ref={memberDetailsDialogRef}
           key={`${detailsEditor.memberDraftId}:${detailsEditor.initialEventDayId}`}
           member={detailsMember}
           memberDraft={detailsMemberDraft}
@@ -679,7 +724,7 @@ export function EventMemberSettings({
           )}
         />
       )}
-      {csvImport && (
+      {!readOnly && csvImport && (
         <CsvImportPreviewDialog
           preview={csvImport.preview}
           onCancel={() => setCsvImport(undefined)}
@@ -691,7 +736,7 @@ export function EventMemberSettings({
           } : undefined}
         />
       )}
-      {pendingDeletion && (() => {
+      {!readOnly && pendingDeletion && (() => {
         const copy = getDeleteConfirmationCopy(
           'event-member',
           pendingDeletion.label,
@@ -706,4 +751,4 @@ export function EventMemberSettings({
       })()}
     </section>
   )
-}
+})

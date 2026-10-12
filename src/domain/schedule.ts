@@ -12,7 +12,7 @@ import type {
   SectionId,
   Stage,
   StageId,
-} from './models'
+} from './models.ts'
 
 export interface TimetableSelection {
   eventDayId?: EventDayId

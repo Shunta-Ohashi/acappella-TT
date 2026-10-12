@@ -8,7 +8,7 @@ import type {
   SectionId,
   Stage,
   StageId,
-} from './models'
+} from './models.ts'
 import {
   compareScheduleItemOrder,
   getSectionsForStage,

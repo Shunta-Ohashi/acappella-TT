@@ -1,4 +1,4 @@
-import type { LocalTime, Section, Stage } from './models'
+import type { LocalTime, Section, Stage } from './models.ts'
 import { isValidLocalTime, parseLocalTimeToMinute } from './timeline.ts'
 
 export const isValidStageTimeRange = (

@@ -1,26 +1,36 @@
 import { useEffect, useId, useRef } from 'react'
+import { canDismissDeleteConfirmation } from '../ui/deleteConfirmation'
 
 interface DeleteConfirmationDialogProps {
   title: string
   description: string
+  warningMessage?: string
   confirmLabel: string
   cancelLabel: string
   onConfirm: () => void
   onCancel: () => void
+  isPending?: boolean
+  pendingLabel?: string
+  errorMessage?: string
 }
 
 export function DeleteConfirmationDialog({
   title,
   description,
+  warningMessage,
   confirmLabel,
   cancelLabel,
   onConfirm,
   onCancel,
+  isPending = false,
+  pendingLabel = confirmLabel,
+  errorMessage,
 }: DeleteConfirmationDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const id = useId()
   const titleId = `${id}-title`
   const descriptionId = `${id}-description`
+  const warningId = `${id}-warning`
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -37,10 +47,13 @@ export function DeleteConfirmationDialog({
       className="delete-confirmation-dialog"
       aria-modal="true"
       aria-labelledby={titleId}
-      aria-describedby={descriptionId}
+      aria-describedby={warningMessage
+        ? `${descriptionId} ${warningId}`
+        : descriptionId}
+      aria-busy={isPending || undefined}
       onCancel={(event) => {
         event.preventDefault()
-        onCancel()
+        if (canDismissDeleteConfirmation(isPending)) onCancel()
       }}
     >
       <div className="delete-confirmation-dialog__content">
@@ -48,21 +61,33 @@ export function DeleteConfirmationDialog({
           <h2 id={titleId}>{title}</h2>
         </header>
         <p id={descriptionId}>{description}</p>
+        {warningMessage && (
+          <p id={warningId} className="form-error" role="alert">
+            {warningMessage}
+          </p>
+        )}
+        {errorMessage && (
+          <p className="form-error" role="alert">{errorMessage}</p>
+        )}
         <footer className="delete-confirmation-dialog__actions">
           <button
             type="button"
             className="secondary-button"
             autoFocus
-            onClick={onCancel}
+            disabled={isPending}
+            onClick={() => {
+              if (canDismissDeleteConfirmation(isPending)) onCancel()
+            }}
           >
             {cancelLabel}
           </button>
           <button
             type="button"
             className="delete-confirmation-dialog__confirm"
+            disabled={isPending}
             onClick={onConfirm}
           >
-            {confirmLabel}
+            {isPending ? pendingLabel : confirmLabel}
           </button>
         </footer>
       </div>

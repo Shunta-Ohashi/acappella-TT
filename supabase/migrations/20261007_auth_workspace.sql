@@ -1,3 +1,5 @@
+begin;
+
 create extension if not exists pgcrypto with schema extensions;
 
 create table public.profiles (
@@ -84,3 +86,5 @@ create policy "workspaces_select_for_member"
         and workspace_members.user_id = (select auth.uid())
     )
   );
+
+commit;

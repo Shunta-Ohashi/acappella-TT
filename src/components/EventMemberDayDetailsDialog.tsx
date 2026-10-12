@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type FormEvent,
+} from 'react'
 import type { EventDay, EventDayId, Member } from '../domain/models'
 import type {
   EventMemberDaySettingsDraft,
@@ -12,6 +19,10 @@ import {
   type EventMemberDayDetailsDraft,
   type EventMemberDayDetailsValidationErrors,
 } from '../domain/eventMemberDayDetails'
+import {
+  hasSemanticDraftChanges,
+  type EventEditorDraftHandle,
+} from '../ui/eventEditorDraftGuard'
 
 interface EventMemberDayDetailsDialogProps {
   member: Member
@@ -37,7 +48,10 @@ const participationStatusLabels = {
 
 const emptyTimeRange = (): EditableTimeRange => ({ from: '', until: '' })
 
-export function EventMemberDayDetailsDialog({
+export const EventMemberDayDetailsDialog = forwardRef<
+EventEditorDraftHandle,
+EventMemberDayDetailsDialogProps
+>(function EventMemberDayDetailsDialog({
   member,
   memberDraft,
   eventDays,
@@ -45,17 +59,18 @@ export function EventMemberDayDetailsDialog({
   dayErrors,
   onCancel,
   onApply,
-}: EventMemberDayDetailsDialogProps) {
+}: EventMemberDayDetailsDialogProps, ref) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [selectedEventDayId, setSelectedEventDayId] = useState(
     initialEventDayId,
   )
-  const [detailDrafts, setDetailDrafts] = useState(() => Object.fromEntries(
+  const [initialDetailDrafts] = useState(() => Object.fromEntries(
     memberDraft.days.map((day) => [
       day.eventDayId,
       createEventMemberDayDetailsDraft(day),
     ]),
   ) as Record<EventDayId, EventMemberDayDetailsDraft>)
+  const [detailDrafts, setDetailDrafts] = useState(initialDetailDrafts)
   const [validationErrors, setValidationErrors] = useState<
     Record<EventDayId, EventMemberDayDetailsValidationErrors>
   >({})
@@ -68,6 +83,14 @@ export function EventMemberDayDetailsDialog({
   const selectedDetails = detailDrafts[selectedEventDayId]
   const selectedErrors = validationErrors[selectedEventDayId] ?? {}
   const isAbsent = selectedDay?.participationStatus === 'absent'
+
+  useImperativeHandle(ref, () => ({
+    hasUnsavedChanges: () => hasSemanticDraftChanges(
+      detailDrafts,
+      initialDetailDrafts,
+    ),
+    reportUnsavedChanges: () => {},
+  }), [detailDrafts, initialDetailDrafts])
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -431,4 +454,4 @@ export function EventMemberDayDetailsDialog({
       </form>
     </dialog>
   )
-}
+})

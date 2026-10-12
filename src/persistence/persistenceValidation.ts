@@ -18,7 +18,7 @@ import type {
   Stage,
   TimeRange,
   TimetableLock,
-} from '../domain/models'
+} from '../domain/models.ts'
 import { isValidLocalDate } from '../domain/eventCreation.ts'
 import { getTimeRangeValidationError } from '../domain/eventMemberDayDetails.ts'
 import { validatePerformanceSlotMinutes } from '../domain/eventStageSettings.ts'

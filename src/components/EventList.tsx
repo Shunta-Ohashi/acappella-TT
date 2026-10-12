@@ -17,14 +17,16 @@ interface EventListProps {
   eventBands: EventBand[]
   onOpenEvent: (eventId: EventId) => void
   onCreateEvent: () => void
+  readOnly?: boolean
 }
 
 interface EventCardProps {
   event: EventListItem
   onOpen: () => void
+  readOnly: boolean
 }
 
-function EventCard({ event, onOpen }: EventCardProps) {
+function EventCard({ event, onOpen, readOnly }: EventCardProps) {
   return (
     <article className="event-card">
       <header className="event-card__header">
@@ -58,10 +60,10 @@ function EventCard({ event, onOpen }: EventCardProps) {
         <button
           type="button"
           className="event-card__open"
-          aria-label={`${event.name}の編集を続ける`}
+          aria-label={readOnly ? `${event.name}の内容を見る` : `${event.name}の編集を続ける`}
           onClick={onOpen}
         >
-          編集を続ける <span aria-hidden="true">→</span>
+          {readOnly ? '内容を見る' : '編集を続ける'} <span aria-hidden="true">→</span>
         </button>
       </footer>
     </article>
@@ -75,6 +77,7 @@ export function EventList({
   eventBands,
   onOpenEvent,
   onCreateEvent,
+  readOnly = false,
 }: EventListProps) {
   const eventListItems = createEventListItems({
     events,
@@ -91,7 +94,7 @@ export function EventList({
           <h1 id="event-list-title">イベント</h1>
           <p>イベントのタイムテーブルを作成・管理します。</p>
         </div>
-        <div className="event-list-page__create">
+        {!readOnly && <div className="event-list-page__create">
           <button
             type="button"
             className="primary-button"
@@ -99,7 +102,7 @@ export function EventList({
           >
             <span aria-hidden="true">＋</span> 新規イベント作成
           </button>
-        </div>
+        </div>}
       </header>
 
       {eventListItems.length === 0 ? (
@@ -113,6 +116,7 @@ export function EventList({
             <EventCard
               key={event.eventId}
               event={event}
+              readOnly={readOnly}
               onOpen={() => onOpenEvent(event.eventId)}
             />
           ))}

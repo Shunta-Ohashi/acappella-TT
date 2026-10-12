@@ -14,12 +14,15 @@ import type { CloudWorkspaceContextValue } from './CloudWorkspaceContext.ts'
 import { CloudWorkspaceProvider } from './CloudWorkspaceProvider.tsx'
 import {
   createCloudAppBoundaryKey,
+  createCloudWorkspaceVisitId,
   parseCloudProfile,
   parseCloudWorkspace,
   parseCloudWorkspaceMembership,
   sortCloudWorkspaceAccesses,
+  selectCloudWorkspaceVisit,
   type CloudProfile,
   type CloudWorkspaceAccess,
+  type CloudWorkspaceSelection,
 } from './cloudWorkspace.ts'
 import {
   createSupabaseBrowserClient,
@@ -308,10 +311,8 @@ function EnabledCloudAppGate({
     value: AccessState
   }>()
   const [reloadToken, setReloadToken] = useState(0)
-  const [workspaceSelection, setWorkspaceSelection] = useState<{
-    authRevision: number
-    workspaceId: string
-  }>()
+  const [workspaceSelection, setWorkspaceSelection] =
+    useState<CloudWorkspaceSelection>()
 
   useEffect(() => observeCloudAuth(client.auth, dispatchAuthChange), [client])
 
@@ -356,6 +357,10 @@ function EnabledCloudAppGate({
     ? access.accesses.find(candidate => candidate.workspace.id === selectedWorkspaceId) ??
       access.accesses[0]
     : undefined
+  const selectedVisitRevision = workspaceSelection?.authRevision === authRevision &&
+    workspaceSelection.workspaceId === selectedAccess?.workspace.id
+    ? workspaceSelection.visitRevision
+    : 0
   const contextValue = useMemo<CloudWorkspaceContextValue | undefined>(() => {
     if (!user || access.kind !== 'ready' || !selectedAccess) return undefined
     return {
@@ -364,14 +369,36 @@ function EnabledCloudAppGate({
       workspace: selectedAccess.workspace,
       membership: selectedAccess.membership,
       availableWorkspaces: access.accesses,
-      selectWorkspace: workspaceId => setWorkspaceSelection({ authRevision, workspaceId }),
+      workspaceVisitId: createCloudWorkspaceVisitId(
+        authRevision,
+        user.id,
+        reloadToken,
+        selectedVisitRevision,
+      ),
+      selectWorkspace: workspaceId => setWorkspaceSelection(current =>
+        selectCloudWorkspaceVisit({
+          current,
+          authRevision,
+          currentWorkspaceId: current?.authRevision === authRevision
+            ? current.workspaceId
+            : selectedAccess.workspace.id,
+          nextWorkspaceId: workspaceId,
+        })),
       signOut: async () => {
         const result = await client.auth.signOut()
         if (result.error) throw result.error
       },
       supabase: client,
     }
-  }, [access, authRevision, client, selectedAccess, user])
+  }, [
+    access,
+    authRevision,
+    client,
+    reloadToken,
+    selectedAccess,
+    selectedVisitRevision,
+    user,
+  ])
 
   if (user === undefined) {
     return <CloudGateLayout title="読み込み中"><p>ログイン状態を確認しています…</p></CloudGateLayout>

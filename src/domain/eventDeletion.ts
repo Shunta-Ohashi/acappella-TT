@@ -14,7 +14,7 @@ import type {
   Stage,
   TimetableLock,
   TimetableOrderConstraint,
-} from './models'
+} from './models.ts'
 
 export interface EventDeletionInput {
   eventId: EventId

@@ -14,7 +14,7 @@ import type {
   Stage,
   TimetableLock,
   TimetableOrderConstraint,
-} from '../domain/models'
+} from '../domain/models.ts'
 import { isSectionWithinStageTimeRange } from '../domain/stageTimeRanges.ts'
 import { isTimetableOrderConstraint } from '../domain/timetableOrderConstraints.ts'
 import {
@@ -81,6 +81,10 @@ export interface StorageLike {
   getItem: (key: string) => string | null
   setItem: (key: string, value: string) => void
   removeItem: (key: string) => void
+}
+
+export interface PersistedStateLoadOptions {
+  invalidStatePolicy?: 'remove' | 'preserve'
 }
 
 const hasResolvablePerformanceEventBands = ({
@@ -207,6 +211,7 @@ const getBrowserStorage = (): StorageLike | undefined => {
 export const loadPersistedState = (
   storage: StorageLike | undefined = getBrowserStorage(),
   storageKey: string = STORAGE_KEY,
+  options: PersistedStateLoadOptions = {},
 ): PersistedAppStateV5 | undefined => {
   if (!storage) return undefined
 
@@ -217,7 +222,9 @@ export const loadPersistedState = (
     const state = parsePersistedState(serialized)
     if (state) return state
 
-    storage.removeItem(storageKey)
+    if (options.invalidStatePolicy !== 'preserve') {
+      storage.removeItem(storageKey)
+    }
     return undefined
   } catch {
     return undefined
@@ -228,8 +235,28 @@ export const loadPersistedStateOrFallback = (
   createFallback: () => PersistedDomainState,
   storage: StorageLike | undefined = getBrowserStorage(),
   storageKey: string = STORAGE_KEY,
+  options: PersistedStateLoadOptions = {},
 ): PersistedAppStateV5 =>
-  loadPersistedState(storage, storageKey) ?? createPersistedAppState(createFallback())
+  loadPersistedState(storage, storageKey, options) ?? createPersistedAppState(createFallback())
+
+export const loadPersistedStateForScope = ({
+  createFallback,
+  cloudEnabled,
+  storage = getBrowserStorage(),
+  storageKey = STORAGE_KEY,
+}: {
+  createFallback: () => PersistedDomainState
+  cloudEnabled: boolean
+  storage?: StorageLike
+  storageKey?: string
+}): PersistedAppStateV5 => loadPersistedStateOrFallback(
+  createFallback,
+  storage,
+  storageKey,
+  // A Cloud-scoped snapshot is only a cache until authoritative hydration
+  // succeeds. Keep even malformed raw data untouched during that read phase.
+  { invalidStatePolicy: cloudEnabled ? 'preserve' : 'remove' },
+)
 
 export const savePersistedState = (
   state: PersistedDomainState,

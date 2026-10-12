@@ -76,6 +76,21 @@ export const createEventBasicInfoDraft = (
     })),
 })
 
+export const hasEventBasicInfoDraftChanges = (
+  draft: EventBasicInfoDraft,
+  savedDraft: EventBasicInfoDraft,
+): boolean =>
+  draft.name !== savedDraft.name ||
+  draft.description !== savedDraft.description ||
+  draft.notes !== savedDraft.notes ||
+  draft.eventDays.length !== savedDraft.eventDays.length ||
+  draft.eventDays.some((eventDay, index) => {
+    const savedEventDay = savedDraft.eventDays[index]
+    return savedEventDay === undefined ||
+      eventDay.eventDayId !== savedEventDay.eventDayId ||
+      eventDay.date !== savedEventDay.date
+  })
+
 export const validateEventBasicInfoDraft = (
   draft: EventBasicInfoDraft,
 ): EventBasicInfoValidationErrors => validateNewEventDraft({

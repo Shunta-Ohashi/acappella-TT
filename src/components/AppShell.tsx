@@ -6,6 +6,7 @@ export type AppSection = 'events' | 'shared-data' | 'settings'
 interface AppShellProps {
   activeSection: AppSection
   onNavigate: (section: AppSection) => void
+  navigationDisabled?: boolean
   onBeforeSignOut?: () => boolean
   onBeforeWorkspaceChange?: () => boolean
   children: ReactNode
@@ -18,9 +19,11 @@ const navigationItems: Array<{ id: AppSection; label: string }> = [
 ]
 
 function CloudAccountControls({
+  navigationDisabled,
   onBeforeSignOut,
   onBeforeWorkspaceChange,
 }: {
+  navigationDisabled: boolean
   onBeforeSignOut?: () => boolean
   onBeforeWorkspaceChange?: () => boolean
 }) {
@@ -30,6 +33,7 @@ function CloudAccountControls({
   if (!cloud) return null
 
   const signOut = async () => {
+    if (navigationDisabled || signingOut) return
     setSignOutError('')
     if (onBeforeSignOut && !onBeforeSignOut()) return
     setSigningOut(true)
@@ -43,6 +47,7 @@ function CloudAccountControls({
   }
 
   const selectWorkspace = (workspaceId: string) => {
+    if (navigationDisabled || signingOut) return
     if (workspaceId === cloud.workspace.id) return
     if (onBeforeWorkspaceChange && !onBeforeWorkspaceChange()) return
     cloud.selectWorkspace(workspaceId)
@@ -54,6 +59,7 @@ function CloudAccountControls({
         <select
           aria-label="ワークスペース"
           value={cloud.workspace.id}
+          disabled={navigationDisabled || signingOut}
           onChange={event => selectWorkspace(event.target.value)}
         >
           {cloud.availableWorkspaces.map(access => (
@@ -66,7 +72,11 @@ function CloudAccountControls({
         <span className="top-navigation__workspace-name">{cloud.workspace.name}</span>
       )}
       <span className="top-navigation__profile-name">{cloud.profile.displayName}</span>
-      <button type="button" disabled={signingOut} onClick={() => void signOut()}>
+      <button
+        type="button"
+        disabled={navigationDisabled || signingOut}
+        onClick={() => void signOut()}
+      >
         {signingOut ? 'ログアウト中…' : 'ログアウト'}
       </button>
       {signOutError && <span className="top-navigation__cloud-error" role="alert">{signOutError}</span>}
@@ -77,6 +87,7 @@ function CloudAccountControls({
 export function AppShell({
   activeSection,
   onNavigate,
+  navigationDisabled = false,
   onBeforeSignOut,
   onBeforeWorkspaceChange,
   children,
@@ -88,6 +99,7 @@ export function AppShell({
           <button
             type="button"
             className="top-navigation__brand"
+            disabled={navigationDisabled}
             onClick={() => onNavigate('events')}
           >
             Acappella TT
@@ -103,6 +115,7 @@ export function AppShell({
                     ? 'top-navigation__link top-navigation__link--active'
                     : 'top-navigation__link'}
                   aria-current={item.id === activeSection ? 'page' : undefined}
+                  disabled={navigationDisabled}
                   onClick={() => onNavigate(item.id)}
                 >
                   {item.label}
@@ -110,6 +123,7 @@ export function AppShell({
               ))}
             </nav>
             <CloudAccountControls
+              navigationDisabled={navigationDisabled}
               onBeforeSignOut={onBeforeSignOut}
               onBeforeWorkspaceChange={onBeforeWorkspaceChange}
             />

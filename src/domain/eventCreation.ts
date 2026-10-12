@@ -4,7 +4,7 @@ import type {
   EventDayId,
   EventId,
   LocalDate,
-} from './models'
+} from './models.ts'
 
 export interface NewEventDraft {
   name: string

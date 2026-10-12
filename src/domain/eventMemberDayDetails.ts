@@ -1,7 +1,7 @@
 import type {
   EventMemberDaySettingsDraft,
-} from './eventMemberSettings'
-import type { TimeRange } from './models'
+} from './eventMemberSettings.ts'
+import type { TimeRange } from './models.ts'
 import {
   formatMinuteAsLocalTime,
   isValidLocalTime,

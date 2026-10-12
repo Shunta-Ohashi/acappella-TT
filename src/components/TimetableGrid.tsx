@@ -101,6 +101,7 @@ interface TimetableGridProps {
   onAssignSelection: () => void
   onAutoAssignSelection: () => void
   onDeleteSelectionAssignments: () => void
+  readOnly?: boolean
 }
 
 export function TimetableLockRepairPanel({
@@ -109,12 +110,14 @@ export function TimetableLockRepairPanel({
   scheduleItems,
   eventBands,
   onUnlockTimetableLock,
+  readOnly = false,
 }: {
   violations: TimetableLockViolation[]
   timetableLocks: TimetableLock[]
   scheduleItems: ScheduleItem[]
   eventBands: EventBand[]
   onUnlockTimetableLock: (lockId: TimetableLockId) => void
+  readOnly?: boolean
 }) {
   const repairSummary = getTimetableLockRepairSummary(violations)
   if (!repairSummary.visible) return null
@@ -126,7 +129,7 @@ export function TimetableLockRepairPanel({
         {violations.map((violation, index) => (
           <li key={`${violation.code}-${violation.lockIds.join('-')}-${index}`}>
             <span>{violation.message}</span>
-            {getUniqueLockIdsForViolation(violation).map((lockId) => (
+            {!readOnly && getUniqueLockIdsForViolation(violation).map((lockId) => (
               <button
                 type="button"
                 key={lockId}
@@ -179,6 +182,7 @@ interface AssignmentCellInteractionProps {
     row: TimetableWorkspaceRow,
     target: TimetableGridAssignmentTarget,
   ) => void
+  readOnly: boolean
 }
 
 const getAssignmentCellProps = (
@@ -193,14 +197,14 @@ const getAssignmentCellProps = (
     interaction.rangeEnd ? 'timetable-grid__assignment-cell--range-end' : '',
   ].filter(Boolean).join(' '),
   role: 'cell',
-  tabIndex: 0,
+  tabIndex: interaction.readOnly ? undefined : 0,
   'aria-label': `${interaction.targetLabel} ${formatMinuteAsLocalTime(interaction.row.calculatedItem.plannedStartMinute)}〜${formatMinuteAsLocalTime(interaction.row.calculatedItem.plannedEndMinute)}を選択${interaction.selected ? '（選択中）' : ''}${interaction.currentAssignmentLabel ? `。現在の担当: ${interaction.currentAssignmentLabel}` : ''}`,
-  onPointerDown: (event: PointerEvent<HTMLDivElement>) =>
+  onPointerDown: interaction.readOnly ? undefined : (event: PointerEvent<HTMLDivElement>) =>
     interaction.onPointerDown(event, interaction.row, interaction.target),
-  onPointerEnter: (event: PointerEvent<HTMLDivElement>) =>
+  onPointerEnter: interaction.readOnly ? undefined : (event: PointerEvent<HTMLDivElement>) =>
     interaction.onPointerEnter(event, interaction.row),
-  onPointerUp: interaction.onPointerUp,
-  onKeyDown: (event: KeyboardEvent<HTMLDivElement>) =>
+  onPointerUp: interaction.readOnly ? undefined : interaction.onPointerUp,
+  onKeyDown: interaction.readOnly ? undefined : (event: KeyboardEvent<HTMLDivElement>) =>
     interaction.onKeyDown(event, interaction.row, interaction.target),
 })
 
@@ -286,6 +290,7 @@ const TimetableRow = ({
   onOrderConstraintBlockHighlightChange,
   onSetTimetableLock,
   onUnlockTimetableLock,
+  readOnly,
 }: {
   row: TimetableWorkspaceRow
   index: number
@@ -300,6 +305,7 @@ const TimetableRow = ({
     mode: TimetableLockMode,
   ) => void
   onUnlockTimetableLock: (lockId: TimetableLockId) => void
+  readOnly: boolean
 }) => {
   const labels = issueLabels(row)
   const isBreak = row.scheduleItem.kind === 'break'
@@ -311,7 +317,7 @@ const TimetableRow = ({
     <Draggable
       draggableId={row.scheduleItem.id}
       index={index}
-      isDragDisabled={timetableLock !== undefined}
+      isDragDisabled={readOnly || timetableLock !== undefined}
     >
       {(provided) => (
         <div
@@ -383,7 +389,7 @@ const TimetableRow = ({
                 aria-label={isBreak
                   ? `${itemLabel}を削除`
                   : `${itemLabel}を未配置バンドへ戻す`}
-                disabled={timetableLock !== undefined}
+                disabled={readOnly || timetableLock !== undefined}
                 title={timetableLock ? '先にTT固定を解除してください。' : undefined}
                 onClick={() => onRemoveScheduleItem(row.scheduleItem.id)}
               >
@@ -421,6 +427,7 @@ const TimetableRow = ({
                     <span aria-hidden="true">{timetableLock ? '🔒' : '🔓'}</span>
                     <span className="visually-hidden">TT固定</span>
                     <select
+                      disabled={readOnly}
                       aria-label={getTimetableLockControlAccessibleName(itemLabel)}
                       value={timetableLock
                         ? timetableLock.position.kind === 'index'
@@ -466,6 +473,7 @@ const InterSectionBreakRow = ({
   onRemoveScheduleItem,
   timetableLock,
   assignmentCells,
+  readOnly,
 }: {
   row?: TimetableWorkspaceRow
   index: number
@@ -476,6 +484,7 @@ const InterSectionBreakRow = ({
   onRemoveScheduleItem: (scheduleItemId: ScheduleItemId) => void
   timetableLock?: TimetableLock
   assignmentCells?: ReactNode
+  readOnly: boolean
 }) => {
   const item = row?.scheduleItem.kind === 'break' ? row.scheduleItem : undefined
   const presentation = getInterSectionBreakPresentation(previousSection, nextSection, columns, item)
@@ -527,7 +536,7 @@ const InterSectionBreakRow = ({
               type="button"
               className="timetable-grid__remove"
               aria-label={presentation.removeAccessibleName}
-              disabled={timetableLock !== undefined}
+              disabled={readOnly || timetableLock !== undefined}
               title={timetableLock ? '先にTT固定を解除してください。' : undefined}
               onClick={() => onRemoveScheduleItem(item.id)}
             >削除</button>}
@@ -539,7 +548,7 @@ const InterSectionBreakRow = ({
     </div>
   )
   return item ? (
-    <Draggable draggableId={item.id} index={index} isDragDisabled={timetableLock !== undefined}>
+    <Draggable draggableId={item.id} index={index} isDragDisabled={readOnly || timetableLock !== undefined}>
       {renderRow}
     </Draggable>
   ) : renderRow()
@@ -577,6 +586,7 @@ export function TimetableGrid({
   onAssignSelection,
   onAutoAssignSelection,
   onDeleteSelectionAssignments,
+  readOnly = false,
 }: TimetableGridProps) {
   const timetableGridColumns = createTimetableGridColumns(dutyTypes)
   const gridTemplateColumns = timetableGridColumns
@@ -594,7 +604,7 @@ export function TimetableGrid({
   const timetableLockByScheduleItemId = new Map(
     timetableLocks.map((lock) => [lock.scheduleItemId, lock]),
   )
-  const resolvedSelection = selection
+  const resolvedSelection = !readOnly && selection
     ? resolveTimetableGridSelection(selection, rows)
     : undefined
   const selectionAssignmentTargets = resolvedSelection
@@ -701,6 +711,7 @@ export function TimetableGrid({
         rangeStart: selected && selectedIndex === 0,
         rangeEnd: selected && selectedIndex ===
           (resolvedSelection?.scheduleItemIds.length ?? 0) - 1,
+        readOnly,
         onPointerDown: handleAssignmentPointerDown,
         onPointerEnter: handleAssignmentPointerEnter,
         onPointerUp: () => {
@@ -746,7 +757,7 @@ export function TimetableGrid({
   const renderBreakForm = (
     targetName: string,
     sectionId?: SectionId,
-  ) => (
+  ) => readOnly ? null : (
     <form
       className="timetable-grid__break-form"
       onSubmit={(event: FormEvent<HTMLFormElement>) => {
@@ -772,7 +783,7 @@ export function TimetableGrid({
   const renderInterSectionBreakForm = (
     previousSection: Section,
     nextSection: Section,
-  ) => (
+  ) => readOnly ? null : (
     <form
       className="timetable-grid__break-form"
       onSubmit={(event: FormEvent<HTMLFormElement>) => {
@@ -825,6 +836,7 @@ export function TimetableGrid({
               onRemoveScheduleItem={onRemoveScheduleItem}
               timetableLock={timetableLockByScheduleItemId.get(row.scheduleItem.id)}
               assignmentCells={renderAssignmentCells(row)}
+              readOnly={readOnly}
             />
           ) : (
             <TimetableRow
@@ -844,6 +856,7 @@ export function TimetableGrid({
               onOrderConstraintBlockHighlightChange={onOrderConstraintBlockHighlightChange}
               onSetTimetableLock={onSetTimetableLock}
               onUnlockTimetableLock={onUnlockTimetableLock}
+              readOnly={readOnly}
             />
           ))}
           {laneRows.length === 0 && (interSection ? (
@@ -853,6 +866,7 @@ export function TimetableGrid({
               columns={timetableGridColumns}
               addBreakForm={renderInterSectionBreakForm(interSection.previousSection, interSection.nextSection)}
               onRemoveScheduleItem={onRemoveScheduleItem}
+              readOnly={readOnly}
             />
           ) : (
             <div className="timetable-grid__empty" role="row">
@@ -876,7 +890,7 @@ export function TimetableGrid({
           <h3 id="timetable-grid-title">{stage.name}</h3>
         </div>
         {orderedSections.length === 0 && renderBreakForm(stage.name)}
-        {timetableLocks.length > 0 && (
+        {!readOnly && timetableLocks.length > 0 && (
           <button
             type="button"
             className="secondary-button"
@@ -909,6 +923,7 @@ export function TimetableGrid({
         scheduleItems={scheduleItems}
         eventBands={eventBands}
         onUnlockTimetableLock={onUnlockTimetableLock}
+        readOnly={readOnly}
       />
 
       {unresolvedPaAssignments.length > 0 && (
@@ -970,9 +985,9 @@ export function TimetableGrid({
         </div>
       )}
 
-      <p className="timetable-grid__selection-hint">
+      {!readOnly && <p className="timetable-grid__selection-hint">
         PA・当日運営のセルをドラッグ、またはShift+クリックすると担当範囲を選択できます。
-      </p>
+      </p>}
 
       {assignmentFeedback && (
         <p

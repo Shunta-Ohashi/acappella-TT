@@ -32,6 +32,7 @@ interface CommonBandListProps {
   onDeleteBand: (bandId: BandId) => CommonBandDeletionResult
   onImportBands: (bands: Band[]) => void
   createBandId: () => BandId
+  readOnly?: boolean
 }
 
 type BandEditorState =
@@ -71,6 +72,7 @@ export function CommonBandList({
   onDeleteBand,
   onImportBands,
   createBandId,
+  readOnly = false,
 }: CommonBandListProps) {
   const [searchText, setSearchText] = useState('')
   const [statusFilter, setStatusFilter] =
@@ -128,7 +130,7 @@ export function CommonBandList({
           <p>複数のイベントで利用する固定バンドを管理します。</p>
         </div>
         <div className="csv-action-buttons">
-          <div className="csv-import-control">
+          {!readOnly && <div className="csv-import-control">
             <CsvFileButton
               onRead={(fileName, text) => {
                 const plan = planCommonBandCsvImport({ csv: text, bands, members, createBandId })
@@ -143,18 +145,18 @@ export function CommonBandList({
               })}
             />
             <CsvImportHelpPopover content={COMMON_BAND_CSV_HELP} />
-          </div>
+          </div>}
           <button type="button" className="secondary-button"
             onClick={() => downloadCsv(createCommonBandCsv(bands, members), 'acappella-tt-bands.csv')}>
             CSV書き出し
           </button>
-          <button
+          {!readOnly && <button
             type="button"
             className="primary-button"
             onClick={() => setBandEditor({ mode: 'create' })}
           >
             <span aria-hidden="true">＋</span> 固定バンドを追加
-          </button>
+          </button>}
         </div>
       </header>
       <p className="csv-id-help">
@@ -224,7 +226,7 @@ export function CommonBandList({
                       </span>
                     </td>
                     <td>
-                      <div className="common-data-list__actions">
+                      {!readOnly && <div className="common-data-list__actions">
                         <button
                           type="button"
                           className="common-band-list__edit"
@@ -244,7 +246,7 @@ export function CommonBandList({
                         >
                           削除
                         </button>
-                      </div>
+                      </div>}
                     </td>
                   </tr>
                 )
@@ -266,7 +268,7 @@ export function CommonBandList({
         )}
       </div>
 
-      {bandEditor && (
+      {!readOnly && bandEditor && (
         <BandEditorDialog
           key={bandEditor.mode === 'edit' ? bandEditor.bandId : 'new-band'}
           band={editingBand}
@@ -275,7 +277,7 @@ export function CommonBandList({
           onSave={handleSaveBand}
         />
       )}
-      {csvImport && (
+      {!readOnly && csvImport && (
         <CsvImportPreviewDialog
           preview={csvImport.preview}
           onCancel={() => setCsvImport(undefined)}
@@ -285,7 +287,7 @@ export function CommonBandList({
           } : undefined}
         />
       )}
-      {pendingDeletion && (() => {
+      {!readOnly && pendingDeletion && (() => {
         const copy = getDeleteConfirmationCopy(
           'common-band',
           pendingDeletion.label,
