@@ -53,6 +53,59 @@ const scenarios = [
   ['save_authenticated_inherited_execute', result =>
     result.laterSchema.authenticatedSaveExecute],
   ['save_service_role_execute_missing', result => !result.laterSchema.serviceRoleSaveExecute],
+  ['workspace_master_table_missing', result => !result.laterSchema.workspaceMasterTables],
+  ['workspace_master_constraint_missing', result =>
+    !result.laterSchema.workspaceMasterConstraints],
+  ['workspace_master_state_initializer_missing', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_cascade_trigger_missing', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_cascade_trigger_after', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_cascade_cleanup_incomplete', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_initializer_after_update', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_initializer_statement_level', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_member_delete_guard_missing', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_band_delete_guard_missing', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_member_delete_guard_after', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_delete_guard_misplaced', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_delete_guard_unlocked', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_metadata_initialize_missing', result =>
+    !result.laterSchema.workspaceMasterMetadataTriggers],
+  ['workspace_master_member_metadata_protect_missing', result =>
+    !result.laterSchema.workspaceMasterMetadataTriggers],
+  ['workspace_master_band_metadata_protect_missing', result =>
+    !result.laterSchema.workspaceMasterMetadataTriggers],
+  ['workspace_master_metadata_trigger_disabled', result =>
+    !result.laterSchema.workspaceMasterMetadataTriggers],
+  ['workspace_master_metadata_trigger_after_insert', result =>
+    !result.laterSchema.workspaceMasterMetadataTriggers],
+  ['workspace_master_state_updated_at_missing', result =>
+    !result.laterSchema.workspaceMasterMetadataTriggers],
+  ['workspace_master_relation_identity_trigger_missing', result =>
+    !result.laterSchema.workspaceMasterMetadataTriggers],
+  ['workspace_master_metadata_trigger_wrong_table', result =>
+    !result.laterSchema.workspaceMasterMetadataTriggers],
+  ['workspace_master_metadata_trigger_wrong_function', result =>
+    !result.laterSchema.workspaceMasterMetadataTriggers],
+  ['workspace_master_nonlegacy_state', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_generation_trigger_missing', result =>
+    !result.laterSchema.workspaceMasterGenerationTriggers],
+  ['workspace_master_rls_disabled', result =>
+    !result.laterSchema.workspaceMasterRowLevelSecurity],
+  ['workspace_master_authenticated_table_write', result =>
+    !result.laterSchema.workspaceMasterPrivileges],
+  ['workspace_master_authenticated_inherited_write', result =>
+    !result.laterSchema.workspaceMasterPrivileges],
   ['profiles_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_type', result => !result.authWorkspaceChecks.profilesColumns],
@@ -159,7 +212,14 @@ const main = async () => {
       baseline.laterSchema.anonTableWrite ||
       baseline.laterSchema.anonColumnWrite ||
       baseline.laterSchema.publicTableWrite ||
-      baseline.laterSchema.publicColumnWrite
+      baseline.laterSchema.publicColumnWrite ||
+      !baseline.laterSchema.workspaceMasterTables ||
+      !baseline.laterSchema.workspaceMasterConstraints ||
+      !baseline.laterSchema.workspaceMasterStateInitializer ||
+      !baseline.laterSchema.workspaceMasterMetadataTriggers ||
+      !baseline.laterSchema.workspaceMasterGenerationTriggers ||
+      !baseline.laterSchema.workspaceMasterRowLevelSecurity ||
+      !baseline.laterSchema.workspaceMasterPrivileges
     ) {
       throw new Error('baseline: expected known safe catalog')
     }

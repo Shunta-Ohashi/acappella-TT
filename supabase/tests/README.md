@@ -20,6 +20,7 @@ They create rows in `auth.users` and require an administrator connection.
    - `20261008150000_cloud_event_authorized_save.sql`
    - `20261008160000_cloud_event_rpc_only_save.sql`
    - `20261008170000_cloud_event_workspace_generation.sql`
+   - `20261012100000_cloud_workspace_master_foundation.sql`
 
    These names are ordered both by their migration version prefixes and by
    ordinary filename sorting; do not infer that every external migration tool
@@ -46,6 +47,13 @@ psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
 psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
   -v "test_db_url=$env:ACAPPELLA_TT_DBLINK_DATABASE_URL" `
   -f supabase/tests/cloud_event_authorized_page_concurrency.sql
+psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
+  -f supabase/tests/cloud_workspace_master_foundation.sql
+psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
+  -f supabase/tests/cloud_workspace_master_cascade.sql
+psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
+  -v "test_db_url=$env:ACAPPELLA_TT_DBLINK_DATABASE_URL" `
+  -f supabase/tests/cloud_workspace_master_foundation_concurrency.sql
 node scripts/cloudEventMigrationCatalogRegression.mjs `
   --db-url-env ACAPPELLA_TT_TEST_DATABASE_URL `
   --confirm-disposable
@@ -58,8 +66,9 @@ Supabase on Windows and Docker Desktop, keep the outer URL on
 example `postgresql://postgres:postgres@host.docker.internal:54322/postgres`.
 Other environments may continue to use the same URL for both variables.
 
-The first script is wrapped in a transaction and rolls back all fixtures. The
-concurrency scripts must commit between two database connections to prove lock
+The core and Workspace-master foundation scripts are wrapped in transactions
+and roll back all fixtures. The concurrency scripts, including the Workspace
+Master status/delete test, must commit between two database connections to prove lock
 ordering, so they clean up their fixed-ID fixtures when successful. Use a disposable
 database because an interrupted run can leave those fixtures behind.
 
@@ -91,6 +100,23 @@ regressions cover inherited EXECUTE through custom roles for both browser roles.
 Repair inherited GRANTs, role memberships/custom roles, or unsafe function
 default privileges explicitly and rerun; do not grant browser access merely to
 make a fixture pass.
+
+The Page concurrency test also performs an internal Workspace Member mutation
+to prove that the new master trigger waits on the same generation-row lock and
+invalidates a stale page generation. The Workspace-master foundation test
+checks ordered Band members, same-Workspace composite FKs, Event reference
+cascade/direct-delete behavior, legacy delete blocking, RLS/direct-ACL denial,
+and monotonic generation updates without exposing any production endpoint. The
+focused Workspace-master cascade test covers member-only, Band relation,
+shared-Member, Event-reference, and legacy/ready/conflict Workspaces. It proves
+that a parent Workspace DELETE removes the whole graph in one statement while
+the same RESTRICT references still reject direct deletion of referenced Members
+and Bands; its fixtures stay inside one transaction and roll back.
+The Workspace-master concurrency test deterministically observes both lock
+orders between a direct Master DELETE and ready-to-conflict/legacy status
+changes. It verifies fail-closed status-first deletion, valid delete-first
+serialization, generation changes, bounded timeouts, and parent Workspace
+cascading without weakening the production ACL/RLS contract.
 
 The concurrency tests use a bounded polling loop only to observe the second
 connection waiting on a PostgreSQL lock; ordering is established by the RPC call

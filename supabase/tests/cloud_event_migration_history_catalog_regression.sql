@@ -19,6 +19,7 @@ declare
   scenario text := current_setting('acappella_tt.catalog_scenario');
   inherited_role_name name := 'cloud_event_catalog_regression_inherited';
   inherited_member_name name;
+  fixture_workspace_id uuid := extensions.gen_random_uuid();
 begin
   if scenario in (
     'cloud_anon_inherited_delete',
@@ -28,7 +29,8 @@ begin
     'cloud_authenticated_inherited_table_insert',
     'cloud_authenticated_inherited_table_update',
     'cloud_anon_inherited_column_write',
-    'cloud_authenticated_inherited_column_write'
+    'cloud_authenticated_inherited_column_write',
+    'workspace_master_authenticated_inherited_write'
   ) then
     if exists (
       select 1 from pg_catalog.pg_roles
@@ -62,6 +64,11 @@ begin
       when scenario like '%_inherited_column_write' then
         execute format(
           'grant update (event_name) on table public.cloud_events to %I',
+          inherited_role_name
+        );
+      when scenario = 'workspace_master_authenticated_inherited_write' then
+        execute format(
+          'grant update on table public.workspace_master_members to %I',
           inherited_role_name
         );
     end case;
@@ -191,6 +198,153 @@ begin
     when 'save_service_role_execute_missing' then
       revoke execute on function
         public.save_cloud_event_validated(uuid, uuid, jsonb) from service_role;
+    when 'workspace_master_table_missing' then
+      alter table public.workspace_master_members
+        rename to catalog_regression_workspace_master_members;
+    when 'workspace_master_constraint_missing' then
+      alter table public.workspace_master_band_members
+        drop constraint workspace_master_band_members_workspace_id_band_id_position_key;
+    when 'workspace_master_state_initializer_missing' then
+      drop trigger workspaces_initialize_cloud_workspace_master_state
+        on public.workspaces;
+    when 'workspace_master_cascade_trigger_missing' then
+      drop trigger workspaces_prepare_workspace_master_cascade
+        on public.workspaces;
+    when 'workspace_master_cascade_trigger_after' then
+      drop trigger workspaces_prepare_workspace_master_cascade
+        on public.workspaces;
+      create trigger workspaces_prepare_workspace_master_cascade
+        after delete on public.workspaces
+        for each row execute function public.prepare_workspace_master_cascade();
+    when 'workspace_master_cascade_cleanup_incomplete' then
+      create or replace function public.prepare_workspace_master_cascade()
+      returns trigger
+      language plpgsql
+      security definer
+      set search_path = ''
+      as $function$
+      begin
+        perform 1
+        from public.cloud_workspace_master_states
+        where cloud_workspace_master_states.workspace_id = old.id
+        for share;
+        delete from public.cloud_event_member_references
+        where cloud_event_member_references.workspace_id = old.id;
+        delete from public.cloud_event_band_references
+        where cloud_event_band_references.workspace_id = old.id;
+        return old;
+      end;
+      $function$;
+    when 'workspace_master_initializer_after_update' then
+      drop trigger workspaces_initialize_cloud_workspace_master_state
+        on public.workspaces;
+      create trigger workspaces_initialize_cloud_workspace_master_state
+        after update on public.workspaces
+        for each row execute function
+          public.initialize_cloud_workspace_master_state();
+    when 'workspace_master_initializer_statement_level' then
+      drop trigger workspaces_initialize_cloud_workspace_master_state
+        on public.workspaces;
+      create trigger workspaces_initialize_cloud_workspace_master_state
+        after insert on public.workspaces
+        for each statement execute function
+          public.initialize_cloud_workspace_master_state();
+    when 'workspace_master_member_delete_guard_missing' then
+      drop trigger workspace_master_members_guard_delete_until_ready
+        on public.workspace_master_members;
+    when 'workspace_master_band_delete_guard_missing' then
+      drop trigger workspace_master_bands_guard_delete_until_ready
+        on public.workspace_master_bands;
+    when 'workspace_master_member_delete_guard_after' then
+      drop trigger workspace_master_members_guard_delete_until_ready
+        on public.workspace_master_members;
+      create trigger workspace_master_members_guard_delete_until_ready
+        after delete on public.workspace_master_members
+        for each row execute function
+          public.guard_workspace_master_delete_until_ready();
+    when 'workspace_master_delete_guard_misplaced' then
+      drop trigger workspace_master_members_guard_delete_until_ready
+        on public.workspace_master_members;
+      -- Preserve the old aggregate count of two guard triggers while placing
+      -- both on Bands. A per-table preflight must still reject this catalog.
+      create trigger catalog_regression_workspace_master_bands_guard_duplicate
+        before delete on public.workspace_master_bands
+        for each row execute function
+          public.guard_workspace_master_delete_until_ready();
+    when 'workspace_master_delete_guard_unlocked' then
+      create or replace function public.guard_workspace_master_delete_until_ready()
+      returns trigger
+      language plpgsql
+      security definer
+      set search_path = ''
+      as $function$
+      begin
+        if exists (
+          select 1 from public.workspaces
+          where workspaces.id = old.workspace_id
+        ) and not exists (
+          select 1 from public.cloud_workspace_master_states
+          where cloud_workspace_master_states.workspace_id = old.workspace_id
+            and cloud_workspace_master_states.status = 'ready'
+        ) then
+          raise exception 'Workspace master deletion requires ready migration state'
+            using errcode = '55000';
+        end if;
+        return old;
+      end;
+      $function$;
+    when 'workspace_master_metadata_initialize_missing' then
+      drop trigger workspace_master_members_initialize_metadata
+        on public.workspace_master_members;
+    when 'workspace_master_member_metadata_protect_missing' then
+      drop trigger workspace_master_members_protect_identity_and_revision
+        on public.workspace_master_members;
+    when 'workspace_master_band_metadata_protect_missing' then
+      drop trigger workspace_master_bands_protect_identity_and_revision
+        on public.workspace_master_bands;
+    when 'workspace_master_metadata_trigger_disabled' then
+      alter table public.workspace_master_bands
+        disable trigger workspace_master_bands_initialize_metadata;
+    when 'workspace_master_metadata_trigger_after_insert' then
+      drop trigger workspace_master_bands_initialize_metadata
+        on public.workspace_master_bands;
+      create trigger workspace_master_bands_initialize_metadata
+        after insert on public.workspace_master_bands
+        for each row execute function
+          public.initialize_workspace_master_record_metadata();
+    when 'workspace_master_state_updated_at_missing' then
+      drop trigger cloud_workspace_master_states_set_current_updated_at
+        on public.cloud_workspace_master_states;
+    when 'workspace_master_relation_identity_trigger_missing' then
+      drop trigger workspace_master_band_members_protect_identity
+        on public.workspace_master_band_members;
+    when 'workspace_master_metadata_trigger_wrong_table' then
+      drop trigger workspace_master_members_initialize_metadata
+        on public.workspace_master_members;
+      create trigger workspace_master_members_initialize_metadata
+        before insert on public.workspace_master_bands
+        for each row execute function
+          public.initialize_workspace_master_record_metadata();
+    when 'workspace_master_metadata_trigger_wrong_function' then
+      drop trigger workspace_master_members_protect_identity_and_revision
+        on public.workspace_master_members;
+      create trigger workspace_master_members_protect_identity_and_revision
+        before update on public.workspace_master_members
+        for each row execute function
+          public.protect_workspace_master_band_identity_and_revision();
+    when 'workspace_master_nonlegacy_state' then
+      insert into public.workspaces (id, name)
+      values (fixture_workspace_id, 'Catalog regression master state');
+      update public.cloud_workspace_master_states
+      set status = 'ready'
+      where workspace_id = fixture_workspace_id;
+    when 'workspace_master_generation_trigger_missing' then
+      drop trigger workspace_master_band_members_advance_workspace_generation
+        on public.workspace_master_band_members;
+    when 'workspace_master_rls_disabled' then
+      alter table public.workspace_master_bands disable row level security;
+    when 'workspace_master_authenticated_table_write' then
+      grant update on table public.workspace_master_members to authenticated;
     when 'profiles_missing' then
       alter table public.profiles rename to catalog_regression_profiles;
     when 'profiles_column_missing' then
