@@ -968,7 +968,24 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   assert.match(guide, /Expected the inherited DELETE privilege guard to reject the cutover/i)
   assert.match(guide, /where version = '20261008130000'/i)
   assert.match(guide, /where version = '20261008160000'/i)
-  assert.match(guide, /ports `54322` or `54422`/i)
+  assert.match(guide, /ports `54322`, `54422`, or\s+`54522`/i)
+  assert.match(guide, /All eight repository migrations have one explicit `BEGIN` \/ `COMMIT` boundary/i)
+  assert.match(guide,
+    /migration-history write is a separate runner responsibility[\s\S]*PostgreSQL catalog[\s\S]*supabase_migrations\.schema_migrations/i)
+  const fullTransactionExercise = guide.slice(
+    guide.indexOf('### Full migration transaction rollback exercise'),
+    guide.indexOf('### RPC-only cutover rollback exercise'),
+  )
+  assert.match(fullTransactionExercise, /select 1 \/ 0;/i)
+  assert.match(fullTransactionExercise, /finally/i)
+  assert.match(fullTransactionExercise, /to_regclass\('public\.profiles'\) is null/i)
+  assert.match(fullTransactionExercise, /to_regclass\('public\.cloud_events'\) is null/i)
+  assert.match(fullTransactionExercise,
+    /to_regprocedure\('public\.delete_cloud_event_authorized\(uuid,text\)'\) is null/i)
+  assert.match(fullTransactionExercise,
+    /to_regprocedure\('public\.load_cloud_events_page_authorized\(uuid,text,integer\)'\) is null/i)
+  assert.match(fullTransactionExercise, /where version = 'TARGET_VERSION'/i)
+  assert.match(fullTransactionExercise, /rerun `supabase db push`/i)
   const disposableExercise = guide.slice(
     guide.indexOf('## Disposable-database exercise'),
   )

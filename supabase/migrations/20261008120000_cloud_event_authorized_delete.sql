@@ -1,3 +1,5 @@
+begin;
+
 create function public.delete_cloud_event_authorized(
   p_workspace_id uuid,
   p_event_id text
@@ -56,3 +58,5 @@ grant execute on function public.delete_cloud_event_authorized(uuid, text) to au
 
 comment on function public.delete_cloud_event_authorized(uuid, text) is
   'Deletes one Cloud Event after locking and validating the caller membership; an authorized missing row is an idempotent success.';
+
+commit;

@@ -3989,6 +3989,7 @@ test('migration実ファイルはAuth→Cloud Event→RPC/権限変更の依存�
   ))).filter(name => name.endsWith('.sql')).sort()
   const versions = migrations.map(name => name.split('_', 1)[0])
 
+  assert.equal(migrations.length, 8)
   assert.equal(new Set(versions).size, versions.length)
   assert.ok(migrations.indexOf('20261007_auth_workspace.sql') <
     migrations.indexOf('20261008110000_cloud_event_persistence.sql'))
@@ -4001,6 +4002,25 @@ test('migration実ファイルはAuth→Cloud Event→RPC/権限変更の依存�
   assert.ok(migrations.indexOf('20261008160000_cloud_event_rpc_only_save.sql') <
     migrations.indexOf('20261008170000_cloud_event_workspace_generation.sql'))
   assert.equal(migrations.includes('20261007120000_cloud_event_persistence.sql'), false)
+
+  for (const migration of migrations) {
+    const sql = await readFile(new URL(
+      `../supabase/migrations/${migration}`,
+      import.meta.url,
+    ), 'utf8')
+    const executableSql = sql.replace(/^\s*--.*$/gmu, '').trim()
+
+    assert.match(executableSql, /^begin;/i, migration)
+    assert.match(executableSql, /commit;$/i, migration)
+    assert.equal(executableSql.match(/\bbegin;/giu)?.length, 1, migration)
+    assert.equal(executableSql.match(/\bcommit;/giu)?.length, 1, migration)
+    assert.doesNotMatch(executableSql, /\brollback;/i, migration)
+    assert.doesNotMatch(
+      executableSql,
+      /\b(?:create\s+index\s+concurrently|reindex\s+concurrently|vacuum|create\s+database|alter\s+system)\b/i,
+      migration,
+    )
+  }
 })
 
 test('authorized save migrationはbackend専用RPCとclient直接write取消しを定義する', async () => {
@@ -4136,6 +4156,10 @@ test('authorized delete migrationはMembershipをlockして認可済み結果だ
     import.meta.url,
   ), 'utf8')
 
+  const executableSql = sql.replace(/^\s*--.*$/gmu, '').trim()
+  assert.match(executableSql,
+    /^begin;\s*create function public\.delete_cloud_event_authorized[\s\S]*revoke all on function public\.delete_cloud_event_authorized[\s\S]*grant execute on function public\.delete_cloud_event_authorized[\s\S]*comment on function public\.delete_cloud_event_authorized[\s\S]*commit;$/i)
+
   assert.match(sql, /create function public\.delete_cloud_event_authorized\s*\(/i)
   assert.match(sql, /language plpgsql\s+security definer\s+set search_path = ''/i)
   assert.match(sql, /caller_id uuid := auth\.uid\(\)/i)
@@ -4176,6 +4200,10 @@ test('authorized page migrationは各pageでMembershipをlockしC照合順envelo
     '../src/cloud/cloudEventRepository.ts',
     import.meta.url,
   ), 'utf8')
+
+  const executableSql = sql.replace(/^\s*--.*$/gmu, '').trim()
+  assert.match(executableSql,
+    /^begin;\s*create index cloud_events_workspace_event_id_c_idx[\s\S]*create function public\.load_cloud_events_page_authorized[\s\S]*revoke all on function public\.load_cloud_events_page_authorized[\s\S]*grant execute on function public\.load_cloud_events_page_authorized[\s\S]*comment on function public\.load_cloud_events_page_authorized[\s\S]*commit;$/i)
 
   assert.match(sql, /create function public\.load_cloud_events_page_authorized\s*\(/i)
   assert.match(sql,

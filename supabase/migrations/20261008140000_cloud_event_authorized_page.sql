@@ -2,6 +2,8 @@
 -- boundary. The membership row lock orders a concurrent role change or
 -- revocation against this page only; it does not create a cross-request
 -- snapshot for the complete pagination run.
+begin;
+
 create index cloud_events_workspace_event_id_c_idx
   on public.cloud_events(workspace_id, event_id collate "C");
 
@@ -112,3 +114,5 @@ grant execute on function public.load_cloud_events_page_authorized(uuid, text, i
 
 comment on function public.load_cloud_events_page_authorized(uuid, text, integer) is
   'Locks and validates the caller membership, then returns one C-collated Cloud Event page in an authorization envelope.';
+
+commit;

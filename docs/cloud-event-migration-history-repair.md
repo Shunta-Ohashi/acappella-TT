@@ -188,10 +188,55 @@ GRANTs, unsafe role memberships or custom roles, and unsafe function default
 privileges, then rerun the migration; migrations do not alter shared custom
 roles automatically.
 
+All eight repository migrations have one explicit `BEGIN` / `COMMIT` boundary.
+A failure rolls back the DDL, DML, and ACL changes made by that migration. The
+Supabase CLI migration-history write is a separate runner responsibility, so a
+failed run must still be checked in both the PostgreSQL catalog and
+`supabase_migrations.schema_migrations` before it is retried.
+
 Already-recorded migration versions are not rerun when these files change. Do
-not manually rerun a successfully applied cutover on an existing environment.
-The rollback exercise below requires a brand-new disposable database and must
-never target the retained browser-test databases on ports `54322` or `54422`.
+not manually rerun a successfully applied migration on an existing environment.
+The rollback exercises below require a brand-new disposable database and must
+never target the retained browser-test databases on ports `54322`, `54422`, or
+`54522`.
+
+### Full migration transaction rollback exercise
+
+Run this only against a newly created disposable database, using a separate
+validation worktree. Never edit a migration and then point the CLI at an
+existing environment. For each target migration, stage a fresh database at the
+immediately preceding version, keep a byte-for-byte backup of the target SQL,
+and insert `select 1 / 0;` immediately before its final `COMMIT`. Apply the real
+migration through Supabase CLI and require a non-zero exit code. In a `finally`
+block, restore the original migration file before any retry.
+
+After the intentional failure, verify that both a target-specific catalog
+sentinel and the migration-history row are absent. Suggested sentinels are:
+
+- `20261007`: `to_regclass('public.profiles') is null`
+- `20261008110000`: `to_regclass('public.cloud_events') is null`
+- `20261008120000`: `to_regprocedure('public.delete_cloud_event_authorized(uuid,text)') is null`
+- `20261008140000`: both
+  `to_regclass('public.cloud_events_workspace_event_id_c_idx') is null` and
+  `to_regprocedure('public.load_cloud_events_page_authorized(uuid,text,integer)') is null`
+
+Use the target version in the following history check and require `false`:
+
+```sql
+select exists (
+  select 1
+  from supabase_migrations.schema_migrations
+  where version = 'TARGET_VERSION'
+) as failed_migration_recorded;
+```
+
+Restore the unmodified file, rerun `supabase db push`, and require both the
+catalog sentinel and history row to be present. Use a new disposable database
+or restage from scratch for each target; do not reuse a database whose intended
+failure or repair state is uncertain. This exercise deliberately distinguishes
+PostgreSQL transaction rollback from the CLI's separate history bookkeeping.
+The RPC-only cutover exercise below is stronger for `...130000` and `...160000`:
+it uses the production privilege guards rather than a synthetic error.
 
 ### RPC-only cutover rollback exercise
 
@@ -204,8 +249,8 @@ $cutoverDbUrl = $env:ACAPPELLA_TT_CUTOVER_ROLLBACK_DB_URL
 if ([string]::IsNullOrWhiteSpace($cutoverDbUrl)) {
   throw 'Set ACAPPELLA_TT_CUTOVER_ROLLBACK_DB_URL to a new disposable database.'
 }
-if ($cutoverDbUrl -match '(127\.0\.0\.1|localhost):(54322|54422)(/|$)') {
-  throw 'Refusing to use the retained dbtest or freshcheck database.'
+if ($cutoverDbUrl -match '(127\.0\.0\.1|localhost):(54322|54422|54522)(/|$)') {
+  throw 'Refusing to use the retained dbtest, freshcheck, or cutovercheck database.'
 }
 ```
 

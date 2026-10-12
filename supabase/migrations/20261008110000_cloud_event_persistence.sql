@@ -1,3 +1,5 @@
+begin;
+
 create table public.cloud_events (
   workspace_id uuid not null references public.workspaces(id) on delete cascade,
   event_id text not null check (btrim(event_id) <> ''),
@@ -140,3 +142,5 @@ create policy "cloud_events_delete_for_editor"
         and workspace_members.role in ('owner', 'editor')
     )
   );
+
+commit;
