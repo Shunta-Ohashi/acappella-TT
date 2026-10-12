@@ -22,13 +22,15 @@ Supabase Dashboardでprojectを作成します。frontendへ設定するのはPr
 8. `20261008170000_cloud_event_workspace_generation.sql`
 9. `20261012100000_cloud_workspace_master_foundation.sql`
 
-最後のmigrationはWorkspaceごとの単調増加generationと変更triggerを追加し、
+8番目の`20261008170000_cloud_event_workspace_generation.sql`は、
+Workspaceごとの単調増加generationと変更triggerを追加し、
 複数pageのCloud Event読込中にINSERT / UPDATE / DELETEがcommitされた場合、
 次pageをfail closedにします。page RPCはmembershipとgeneration行を同一
 transaction内で`FOR SHARE` lockしてからrowsを読むため、generation照合と
 page snapshotの間にcommit可能な隙間を作りません。
 
-このmigrationはWorkspace tableの明示lockを使用するため、Supabase CLIが各statementを
+`20261008170000_cloud_event_workspace_generation.sql`はWorkspace tableの
+明示lockを使用するため、Supabase CLIが各statementを
 暗黙transactionで包まない実行方式でも安全に適用できるよう、ファイル全体を明示的な
 `BEGIN` / `COMMIT`で囲んでいます。CREATE TABLE、backfill、trigger、Page RPC置換、
 権限設定までが同じtransactionです。この境界とWorkspace lockを分離・削除しないでください。

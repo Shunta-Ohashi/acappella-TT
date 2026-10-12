@@ -899,6 +899,54 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     /'unique\(workspace_id,band_id,"position"\)'/i)
   assert.match(workspaceMasterConstraintsSql,
     /not convalidated or condeferrable or condeferred/i)
+  const workspaceMasterStateInitializerStart = preflightSql.indexOf(
+    "'workspaceMasterStateInitializer'",
+  )
+  const workspaceMasterStateInitializerEnd = preflightSql.indexOf(
+    "\n    'workspaceMasterGenerationTriggers'",
+    workspaceMasterStateInitializerStart,
+  )
+  assert.ok(
+    workspaceMasterStateInitializerStart >= 0 &&
+      workspaceMasterStateInitializerEnd > workspaceMasterStateInitializerStart,
+  )
+  const workspaceMasterStateInitializerSql = preflightSql.slice(
+    workspaceMasterStateInitializerStart,
+    workspaceMasterStateInitializerEnd,
+  )
+  assert.match(workspaceMasterStateInitializerSql,
+    /workspaces_initialize_cloud_workspace_master_state[\s\S]*tgtype = 5/i)
+  assert.match(workspaceMasterStateInitializerSql,
+    /workspace_master_members_guard_delete_until_ready[\s\S]*tgtype = 11/i)
+  assert.match(workspaceMasterStateInitializerSql,
+    /workspace_master_bands_guard_delete_until_ready[\s\S]*tgtype = 11/i)
+  assert.match(workspaceMasterStateInitializerSql,
+    /select count\(\*\) = 2[\s\S]*guard_master_delete_function/i)
+  const workspaceMasterGenerationTriggersStart = preflightSql.indexOf(
+    "'workspaceMasterGenerationTriggers'",
+  )
+  const workspaceMasterGenerationTriggersEnd = preflightSql.indexOf(
+    "\n    'workspaceMasterRowLevelSecurity'",
+    workspaceMasterGenerationTriggersStart,
+  )
+  assert.ok(
+    workspaceMasterGenerationTriggersStart >= 0 &&
+      workspaceMasterGenerationTriggersEnd > workspaceMasterGenerationTriggersStart,
+  )
+  const workspaceMasterGenerationTriggersSql = preflightSql.slice(
+    workspaceMasterGenerationTriggersStart,
+    workspaceMasterGenerationTriggersEnd,
+  )
+  for (const triggerName of [
+    'workspace_master_members_advance_workspace_generation',
+    'workspace_master_bands_advance_workspace_generation',
+    'workspace_master_band_members_advance_workspace_generation',
+    'cloud_workspace_master_states_advance_workspace_generation',
+  ]) {
+    assert.match(workspaceMasterGenerationTriggersSql, new RegExp(triggerName), triggerName)
+  }
+  assert.match(workspaceMasterGenerationTriggersSql, /29[\s\S]*17/)
+  assert.match(workspaceMasterGenerationTriggersSql, /select count\(\*\) = 4/i)
   assert.doesNotMatch(
     preflightSql,
     /aclexplode\s*\(\s*coalesce\(pg_attribute\.attacl,\s*'\{\}'::aclitem\[\]\s*\)/i,
@@ -932,6 +980,22 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   assert.match(
     catalogRegressionSql,
     /when 'profiles_column_type'[\s\S]*alter column display_name type varchar;/i,
+  )
+  assert.match(
+    catalogRegressionSql,
+    /when 'workspace_master_initializer_after_update'[\s\S]*after update on public\.workspaces[\s\S]*for each row/i,
+  )
+  assert.match(
+    catalogRegressionSql,
+    /when 'workspace_master_initializer_statement_level'[\s\S]*after insert on public\.workspaces[\s\S]*for each statement/i,
+  )
+  assert.match(
+    catalogRegressionSql,
+    /when 'workspace_master_member_delete_guard_after'[\s\S]*after delete on public\.workspace_master_members[\s\S]*for each row/i,
+  )
+  assert.match(
+    catalogRegressionSql,
+    /when 'workspace_master_delete_guard_misplaced'[\s\S]*drop trigger workspace_master_members_guard_delete_until_ready[\s\S]*before delete on public\.workspace_master_bands/i,
   )
   assert.doesNotMatch(
     catalogRegressionSql,
@@ -987,6 +1051,12 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'workspace_master_table_missing',
     'workspace_master_constraint_missing',
     'workspace_master_state_initializer_missing',
+    'workspace_master_initializer_after_update',
+    'workspace_master_initializer_statement_level',
+    'workspace_master_member_delete_guard_missing',
+    'workspace_master_band_delete_guard_missing',
+    'workspace_master_member_delete_guard_after',
+    'workspace_master_delete_guard_misplaced',
     'workspace_master_nonlegacy_state',
     'workspace_master_generation_trigger_missing',
     'workspace_master_rls_disabled',
@@ -996,6 +1066,13 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     assert.match(catalogRegressionSql, new RegExp(`'${scenario}'`), scenario)
     assert.match(catalogRegressionRunner, new RegExp(`'${scenario}'`), scenario)
   }
+  const scenarioRegistry = catalogRegressionRunner.slice(
+    catalogRegressionRunner.indexOf('const scenarios = ['),
+    catalogRegressionRunner.indexOf('const parseArguments ='),
+  )
+  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 67)
+  assert.match(catalogRegressionRunner,
+    /JSON\.stringify\(\{ ok: true, scenarios: scenarios\.length \+ 1 \}\)/)
   for (const removedScenario of [
     'save_service_role_missing',
     'required_role_missing',

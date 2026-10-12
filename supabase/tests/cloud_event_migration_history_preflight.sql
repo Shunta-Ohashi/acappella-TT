@@ -1339,8 +1339,10 @@ later_schema as (
           and lower(initialize_master_state_function.prosrc)
             like '%values (new.id, ''legacy'')%'
       )
-      and exists (
-        select 1 from pg_catalog.pg_trigger
+      -- pg_trigger.tgtype is a bit mask: ROW=1, BEFORE=2, INSERT=4,
+      -- DELETE=8, UPDATE=16. AFTER INSERT FOR EACH ROW is therefore 5.
+      and (
+        select count(*) = 1 from pg_catalog.pg_trigger
         join initialize_master_state_function
           on initialize_master_state_function.oid = pg_trigger.tgfoid
         where pg_trigger.tgrelid = to_regclass('public.workspaces')
@@ -1348,6 +1350,7 @@ later_schema as (
             'workspaces_initialize_cloud_workspace_master_state'
           and not pg_trigger.tgisinternal
           and pg_trigger.tgenabled = 'O'
+          and pg_trigger.tgtype = 5
       )
       and exists (
         select 1 from guard_master_delete_function
@@ -1368,36 +1371,87 @@ later_schema as (
           )
           and not pg_trigger.tgisinternal
           and pg_trigger.tgenabled = 'O'
+      )
+      -- BEFORE DELETE FOR EACH ROW is ROW + BEFORE + DELETE = 11. Check
+      -- each table independently so a duplicate on one cannot hide a missing
+      -- guard on the other.
+      and (
+        select count(*) = 1 from pg_catalog.pg_trigger
+        join guard_master_delete_function
+          on guard_master_delete_function.oid = pg_trigger.tgfoid
+        where pg_trigger.tgrelid =
+            to_regclass('public.workspace_master_members')
+          and pg_trigger.tgname =
+            'workspace_master_members_guard_delete_until_ready'
+          and not pg_trigger.tgisinternal
+          and pg_trigger.tgenabled = 'O'
+          and pg_trigger.tgtype = 11
+      )
+      and (
+        select count(*) = 1 from pg_catalog.pg_trigger
+        join guard_master_delete_function
+          on guard_master_delete_function.oid = pg_trigger.tgfoid
+        where pg_trigger.tgrelid =
+            to_regclass('public.workspace_master_bands')
+          and pg_trigger.tgname =
+            'workspace_master_bands_guard_delete_until_ready'
+          and not pg_trigger.tgisinternal
+          and pg_trigger.tgenabled = 'O'
+          and pg_trigger.tgtype = 11
       ),
-    'workspaceMasterGenerationTriggers', (
-      select count(*) = 4
-      from pg_catalog.pg_trigger
-      join advance_generation_function
-        on advance_generation_function.oid = pg_trigger.tgfoid
-      where pg_trigger.tgrelid in (
-          to_regclass('public.workspace_master_members'),
-          to_regclass('public.workspace_master_bands'),
-          to_regclass('public.workspace_master_band_members'),
-          to_regclass('public.cloud_workspace_master_states')
-        )
-        and not pg_trigger.tgisinternal
-        and pg_trigger.tgenabled = 'O'
-        and (
-          (
-            pg_trigger.tgrelid = to_regclass(
-              'public.cloud_workspace_master_states'
-            )
-            and lower(pg_get_triggerdef(pg_trigger.oid, true))
-              like '%after update%'
-          ) or (
-            pg_trigger.tgrelid <> to_regclass(
-              'public.cloud_workspace_master_states'
-            )
-            and lower(pg_get_triggerdef(pg_trigger.oid, true))
-              like '%after insert or delete or update%'
+    'workspaceMasterGenerationTriggers',
+      -- AFTER INSERT OR UPDATE OR DELETE FOR EACH ROW is 29; AFTER UPDATE
+      -- FOR EACH ROW is 17. Validate each table/name pair independently.
+      (select count(*) = 4
+        from pg_catalog.pg_trigger
+        join advance_generation_function
+          on advance_generation_function.oid = pg_trigger.tgfoid
+        where pg_trigger.tgrelid in (
+            to_regclass('public.workspace_master_members'),
+            to_regclass('public.workspace_master_bands'),
+            to_regclass('public.workspace_master_band_members'),
+            to_regclass('public.cloud_workspace_master_states')
           )
-        )
-    ),
+          and not pg_trigger.tgisinternal
+          and pg_trigger.tgenabled = 'O')
+      and not exists (
+        select 1
+        from (values
+          (
+            'workspace_master_members',
+            'workspace_master_members_advance_workspace_generation',
+            29
+          ),
+          (
+            'workspace_master_bands',
+            'workspace_master_bands_advance_workspace_generation',
+            29
+          ),
+          (
+            'workspace_master_band_members',
+            'workspace_master_band_members_advance_workspace_generation',
+            29
+          ),
+          (
+            'cloud_workspace_master_states',
+            'cloud_workspace_master_states_advance_workspace_generation',
+            17
+          )
+        ) as expected_generation_trigger(table_name, trigger_name, trigger_type)
+        where (
+          select count(*)
+          from pg_catalog.pg_trigger
+          join advance_generation_function
+            on advance_generation_function.oid = pg_trigger.tgfoid
+          where pg_trigger.tgrelid = to_regclass(format(
+              'public.%I', expected_generation_trigger.table_name
+            ))
+            and pg_trigger.tgname = expected_generation_trigger.trigger_name
+            and not pg_trigger.tgisinternal
+            and pg_trigger.tgenabled = 'O'
+            and pg_trigger.tgtype = expected_generation_trigger.trigger_type
+        ) <> 1
+      ),
     'workspaceMasterRowLevelSecurity',
       (select count(*) = 6 and bool_and(relrowsecurity)
         from workspace_master_tables)

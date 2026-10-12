@@ -4349,6 +4349,10 @@ test('Workspace master foundationは正規化schemaをadditiveかつ非公開で
     '../supabase/migrations/20261012100000_cloud_workspace_master_foundation.sql',
     import.meta.url,
   ), 'utf8')
+  const cloudSetup = await readFile(new URL(
+    '../docs/cloud-setup.md',
+    import.meta.url,
+  ), 'utf8')
   const executableSql = sql.replace(/^\s*--.*$/gmu, '').trim()
 
   assert.match(executableSql, /^begin;\s*create table public\.cloud_workspace_master_states/i)
@@ -4425,6 +4429,9 @@ test('Workspace master foundationは正規化schemaをadditiveかつ非公開で
   assert.doesNotMatch(sql, /alter table public\.cloud_events\b/i)
   assert.doesNotMatch(sql, /update public\.cloud_events\b/i)
   assert.doesNotMatch(sql, /event_snapshot\s*=/i)
+  assert.match(cloudSetup,
+    /8番目の`20261008170000_cloud_event_workspace_generation\.sql`/i)
+  assert.doesNotMatch(cloudSetup, /最後のmigrationはWorkspaceごとの単調増加generation/i)
 })
 
 test('upgrade migrationは直接DELETEを取り消し継承実効権限をfail closedにする', async () => {
@@ -4565,6 +4572,20 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   assert.match(instructions, /host\.docker\.internal:54322/)
   assert.match(masterFoundationSql, /^\\set ON_ERROR_STOP on/m)
   assert.match(masterFoundationSql, /^begin;[\s\S]*rollback;$/m)
+  assert.match(masterFoundationSql,
+    /99, timestamptz '2000-01-01 00:00:00\+00'/i)
+  assert.match(masterFoundationSql,
+    /Workspace Member INSERT metadata was not normalized/i)
+  assert.match(masterFoundationSql,
+    /Workspace Band INSERT metadata was not normalized/i)
+  assert.match(masterFoundationSql,
+    /Workspace Member (?:ID|ownership) mutation was accepted[\s\S]*sqlstate '42501'/i)
+  assert.match(masterFoundationSql,
+    /Workspace Band (?:ID|ownership) mutation was accepted[\s\S]*sqlstate '42501'/i)
+  assert.match(masterFoundationSql,
+    /Workspace Member UPDATE metadata contract was not preserved/i)
+  assert.match(masterFoundationSql,
+    /Workspace Band UPDATE metadata contract was not preserved/i)
   assert.match(masterFoundationSql, /Band Member order was not preserved/i)
   assert.match(masterFoundationSql,
     /'band-a',\s*'member-a4',\s*1\s*\);[\s\S]*exception when unique_violation/i)

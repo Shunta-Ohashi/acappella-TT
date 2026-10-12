@@ -58,6 +58,18 @@ const scenarios = [
     !result.laterSchema.workspaceMasterConstraints],
   ['workspace_master_state_initializer_missing', result =>
     !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_initializer_after_update', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_initializer_statement_level', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_member_delete_guard_missing', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_band_delete_guard_missing', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_member_delete_guard_after', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_delete_guard_misplaced', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
   ['workspace_master_nonlegacy_state', result =>
     !result.laterSchema.workspaceMasterStateInitializer],
   ['workspace_master_generation_trigger_missing', result =>

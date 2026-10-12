@@ -207,6 +207,42 @@ begin
     when 'workspace_master_state_initializer_missing' then
       drop trigger workspaces_initialize_cloud_workspace_master_state
         on public.workspaces;
+    when 'workspace_master_initializer_after_update' then
+      drop trigger workspaces_initialize_cloud_workspace_master_state
+        on public.workspaces;
+      create trigger workspaces_initialize_cloud_workspace_master_state
+        after update on public.workspaces
+        for each row execute function
+          public.initialize_cloud_workspace_master_state();
+    when 'workspace_master_initializer_statement_level' then
+      drop trigger workspaces_initialize_cloud_workspace_master_state
+        on public.workspaces;
+      create trigger workspaces_initialize_cloud_workspace_master_state
+        after insert on public.workspaces
+        for each statement execute function
+          public.initialize_cloud_workspace_master_state();
+    when 'workspace_master_member_delete_guard_missing' then
+      drop trigger workspace_master_members_guard_delete_until_ready
+        on public.workspace_master_members;
+    when 'workspace_master_band_delete_guard_missing' then
+      drop trigger workspace_master_bands_guard_delete_until_ready
+        on public.workspace_master_bands;
+    when 'workspace_master_member_delete_guard_after' then
+      drop trigger workspace_master_members_guard_delete_until_ready
+        on public.workspace_master_members;
+      create trigger workspace_master_members_guard_delete_until_ready
+        after delete on public.workspace_master_members
+        for each row execute function
+          public.guard_workspace_master_delete_until_ready();
+    when 'workspace_master_delete_guard_misplaced' then
+      drop trigger workspace_master_members_guard_delete_until_ready
+        on public.workspace_master_members;
+      -- Preserve the old aggregate count of two guard triggers while placing
+      -- both on Bands. A per-table preflight must still reject this catalog.
+      create trigger catalog_regression_workspace_master_bands_guard_duplicate
+        before delete on public.workspace_master_bands
+        for each row execute function
+          public.guard_workspace_master_delete_until_ready();
     when 'workspace_master_nonlegacy_state' then
       insert into public.workspaces (id, name)
       values (fixture_workspace_id, 'Catalog regression master state');

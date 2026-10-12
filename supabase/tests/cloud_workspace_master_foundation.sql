@@ -86,10 +86,20 @@ where workspace_id = '70000000-0000-0000-0000-000000000001';
 
 insert into public.workspace_master_members (
   workspace_id, member_id, real_name, aca_name,
-  entry_academic_year, notes, active
+  entry_academic_year, notes, active, revision, created_at, updated_at
 ) values
-  ('70000000-0000-0000-0000-000000000001', 'member-a', 'Alice', 'A', 2024, null, true),
-  ('70000000-0000-0000-0000-000000000002', 'member-b', 'Bob', null, null, null, true);
+  (
+    '70000000-0000-0000-0000-000000000001',
+    'member-a', 'Alice', 'A', 2024, null, true,
+    99, timestamptz '2000-01-01 00:00:00+00',
+    timestamptz '2000-01-01 00:00:00+00'
+  ),
+  (
+    '70000000-0000-0000-0000-000000000002',
+    'member-b', 'Bob', null, null, null, true,
+    99, timestamptz '2000-01-01 00:00:00+00',
+    timestamptz '2000-01-01 00:00:00+00'
+  );
 
 insert into master_generation_probe
 select 'after-member', generation
@@ -97,10 +107,21 @@ from public.cloud_event_workspace_generations
 where workspace_id = '70000000-0000-0000-0000-000000000001';
 
 insert into public.workspace_master_bands (
-  workspace_id, band_id, name, notes, active
+  workspace_id, band_id, name, notes, active,
+  revision, created_at, updated_at
 ) values
-  ('70000000-0000-0000-0000-000000000001', 'band-a', 'Alpha', null, true),
-  ('70000000-0000-0000-0000-000000000002', 'band-b', 'Beta', null, true);
+  (
+    '70000000-0000-0000-0000-000000000001',
+    'band-a', 'Alpha', null, true,
+    99, timestamptz '2000-01-01 00:00:00+00',
+    timestamptz '2000-01-01 00:00:00+00'
+  ),
+  (
+    '70000000-0000-0000-0000-000000000002',
+    'band-b', 'Beta', null, true,
+    99, timestamptz '2000-01-01 00:00:00+00',
+    timestamptz '2000-01-01 00:00:00+00'
+  );
 
 insert into master_generation_probe
 select 'after-band', generation
@@ -137,6 +158,122 @@ begin
     or band_generation <> member_generation + 1
     or relation_generation <> band_generation + 1 then
     raise exception 'Member, Band, and ordered relation mutations must advance generation';
+  end if;
+end;
+$$;
+
+do $$
+declare
+  member_created_at timestamptz;
+  band_created_at timestamptz;
+  invalid_timestamp constant timestamptz := timestamptz '2001-01-01 00:00:00+00';
+begin
+  select created_at into member_created_at
+  from public.workspace_master_members
+  where workspace_id = '70000000-0000-0000-0000-000000000001'
+    and member_id = 'member-a';
+  if not exists (
+    select 1 from public.workspace_master_members
+    where workspace_id = '70000000-0000-0000-0000-000000000001'
+      and member_id = 'member-a'
+      and revision = 1
+      and created_at = transaction_timestamp()
+      and updated_at = transaction_timestamp()
+  ) then
+    raise exception 'Workspace Member INSERT metadata was not normalized';
+  end if;
+
+  select created_at into band_created_at
+  from public.workspace_master_bands
+  where workspace_id = '70000000-0000-0000-0000-000000000001'
+    and band_id = 'band-a';
+  if not exists (
+    select 1 from public.workspace_master_bands
+    where workspace_id = '70000000-0000-0000-0000-000000000001'
+      and band_id = 'band-a'
+      and revision = 1
+      and created_at = transaction_timestamp()
+      and updated_at = transaction_timestamp()
+  ) then
+    raise exception 'Workspace Band INSERT metadata was not normalized';
+  end if;
+
+  begin
+    update public.workspace_master_members
+    set member_id = 'member-a-renamed'
+    where workspace_id = '70000000-0000-0000-0000-000000000001'
+      and member_id = 'member-a';
+    raise exception 'Workspace Member ID mutation was accepted';
+  exception when sqlstate '42501' then
+    null;
+  end;
+  begin
+    update public.workspace_master_members
+    set workspace_id = '70000000-0000-0000-0000-000000000002'
+    where workspace_id = '70000000-0000-0000-0000-000000000001'
+      and member_id = 'member-a';
+    raise exception 'Workspace Member ownership mutation was accepted';
+  exception when sqlstate '42501' then
+    null;
+  end;
+
+  update public.workspace_master_members
+  set real_name = 'Alice Updated',
+    revision = 999,
+    created_at = invalid_timestamp,
+    updated_at = invalid_timestamp
+  where workspace_id = '70000000-0000-0000-0000-000000000001'
+    and member_id = 'member-a';
+  if not exists (
+    select 1 from public.workspace_master_members
+    where workspace_id = '70000000-0000-0000-0000-000000000001'
+      and member_id = 'member-a'
+      and real_name = 'Alice Updated'
+      and revision = 2
+      and created_at = member_created_at
+      and updated_at = transaction_timestamp()
+      and updated_at <> invalid_timestamp
+  ) then
+    raise exception 'Workspace Member UPDATE metadata contract was not preserved';
+  end if;
+
+  begin
+    update public.workspace_master_bands
+    set band_id = 'band-a-renamed'
+    where workspace_id = '70000000-0000-0000-0000-000000000001'
+      and band_id = 'band-a';
+    raise exception 'Workspace Band ID mutation was accepted';
+  exception when sqlstate '42501' then
+    null;
+  end;
+  begin
+    update public.workspace_master_bands
+    set workspace_id = '70000000-0000-0000-0000-000000000002'
+    where workspace_id = '70000000-0000-0000-0000-000000000001'
+      and band_id = 'band-a';
+    raise exception 'Workspace Band ownership mutation was accepted';
+  exception when sqlstate '42501' then
+    null;
+  end;
+
+  update public.workspace_master_bands
+  set name = 'Alpha Updated',
+    revision = 999,
+    created_at = invalid_timestamp,
+    updated_at = invalid_timestamp
+  where workspace_id = '70000000-0000-0000-0000-000000000001'
+    and band_id = 'band-a';
+  if not exists (
+    select 1 from public.workspace_master_bands
+    where workspace_id = '70000000-0000-0000-0000-000000000001'
+      and band_id = 'band-a'
+      and name = 'Alpha Updated'
+      and revision = 2
+      and created_at = band_created_at
+      and updated_at = transaction_timestamp()
+      and updated_at <> invalid_timestamp
+  ) then
+    raise exception 'Workspace Band UPDATE metadata contract was not preserved';
   end if;
 end;
 $$;
