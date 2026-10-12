@@ -196,9 +196,65 @@ deno check supabase/functions/workspace-masters/index.ts
 supabase functions serve workspace-masters
 ```
 
+`supabase/functions/workspace-masters/deno.json`は、このFunction専用のDeno import
+mapです。Edge Runtimeはhandlerを起動する前に依存graphを解決するため、このimport
+mapがない、または`@supabase/supabase-js`の指定がentrypointと一致しない場合、request
+処理へ到達する前にbootが失敗し、gatewayから503が返ることがあります。これはRPCや
+Workspace認可が返すapplication errorではありません。
+
+現在は`index.ts`と`deno.json`の両方で`@supabase/supabase-js@2.117.2`をexact
+versionへ固定し、Vite/React側のnpm dependencyは同じrelease lineの`^2.117.2`です。
+versionを更新する場合は3箇所を同じ変更で更新し、`deno check`と実HTTP smokeを両方
+実行してください。`deno.json`はFunction directoryに置いたままversion管理し、rootの
+Vite/React向けmodule解決設定へ統合・流用しません。
+
 Functionには`save-cloud-event`と同じ3つのserver-side環境変数を設定し、JWT検証を
 無効化しません。Master backfill、reference index完成、ready切替、App hydrate切替は
 後続PRで原子的なmigration手順として実施します。
+
+### Workspace Master Edge Functionの実HTTP smoke
+
+dependency injectionだけでなく、実Auth JWT→Edge HTTP route→`auth.getUser()`→
+service-role限定RPCまでを確認するsmoke runnerを用意しています。既存の検証DBや共有・
+production環境では実行せず、全migrationをfresh適用した新しいloopback専用Supabaseを
+使用してください。runnerは既存検証DBの54322〜55122を拒否します。
+
+まずrepository rootで`deno check supabase/functions/workspace-masters/index.ts`を実行し、
+dependency graphを解決できることを確認します。次に別terminalでJWT verificationを
+無効化せずFunctionを起動し、boot logにimport解決エラーがなく、HTTP routeが待受状態に
+なったことを確認してからrunnerを実行します。起動直後から全requestが503になる場合は、
+handlerやDBを調査する前にFunction logと上記`deno.json`の存在・version整合を確認します。
+
+別terminalでJWT verificationを無効化せずFunctionを起動します。
+
+```powershell
+supabase functions serve workspace-masters
+```
+
+実行terminalへ、使い捨て環境の値だけを設定します。key・JWT・passwordをrepository、
+shell script、ログへ保存しないでください。Function URLを省略するとSupabase URL配下の
+`/functions/v1/workspace-masters`を使用します。
+
+```powershell
+$env:ACAPPELLA_TT_SMOKE_SUPABASE_URL = 'http://127.0.0.1:<new-api-port>'
+$env:ACAPPELLA_TT_SMOKE_SUPABASE_ANON_KEY = '<disposable-anon-key>'
+$env:ACAPPELLA_TT_SMOKE_SUPABASE_SERVICE_ROLE_KEY = '<disposable-service-role-key>'
+$env:ACAPPELLA_TT_SMOKE_DATABASE_URL = 'postgresql://postgres:<password>@127.0.0.1:<new-db-port>/postgres'
+# 別routeでserveした場合のみ指定:
+# $env:ACAPPELLA_TT_SMOKE_FUNCTION_URL = 'http://127.0.0.1:<port>/functions/v1/workspace-masters'
+npm run test:cloud-workspace-master-http-smoke
+```
+
+runnerがPASSすれば、実Auth JWT、Edge HTTP route、dependency boot、`auth.getUser()`、
+service-role限定RPCまでを通過しています。503のまま、またはcleanup failureがある状態を
+成功扱いにせず、専用fixtureのcleanupを確認してから同じ使い捨て環境で再実行します。
+
+runnerは専用の固定Workspace ID 3件と専用email 4件だけをstartup/final cleanupの
+対象にします。Auth Admin APIで実ユーザーを作成してpassword sign-inから異なるJWTを
+取得し、owner作成、editor更新、viewer/Workspace外拒否、認証拒否、legacy拒否、
+revision競合、PMA01、Band順序、正式read RPC、browser roleからのbackend-only RPC
+拒否を検証します。途中失敗でもcleanupを試行しますが、cleanup failure時は表示された
+失敗を解消して同じrunnerを再実行し、専用fixture以外を手動削除しないでください。
 
 ## 9. Security確認
 

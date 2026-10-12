@@ -123,6 +123,102 @@ test('Snapshot V2はEvent所有dataとexactなMaster参照だけを保存しV1/V
   assert.equal(parseCloudEventSnapshotV2(v1.snapshot), undefined)
 })
 
+test('Snapshot V2生成は元stateのdangling・重複・不正Master参照を拒否する', () => {
+  const expectInvalid = (mutate, message) => {
+    const state = createDomainState()
+    mutate(state)
+    assert.deepEqual(createCloudEventSnapshotV2(state, 'event-a'), {
+      ok: false,
+      reason: 'INVALID_SNAPSHOT',
+    }, message)
+  }
+
+  expectInvalid(state => {
+    state.eventMembers[0].memberId = 'missing-event-member-master'
+  }, 'EventMember.memberId')
+  expectInvalid(state => {
+    state.eventBands[0].memberIds = ['missing-event-band-member']
+  }, 'EventBand.memberIds')
+  expectInvalid(state => {
+    state.eventBands[0].bandId = 'missing-band'
+  }, 'EventBand.bandId')
+  expectInvalid(state => {
+    state.bands[0].defaultMemberIds = ['missing-default-member']
+  }, 'Band.defaultMemberIds')
+
+  const createAssignmentState = () => {
+    const state = createDomainState()
+    state.stages = [{
+      id: 'stage-a',
+      eventDayId: 'day-a',
+      name: 'Main',
+      order: 0,
+      plannedStartTime: '10:00',
+      plannedEndTime: '12:00',
+    }]
+    state.dutyTypes = [{ id: 'duty-a', eventId: 'event-a', name: 'Reception', order: 0 }]
+    state.paAssignments = [{
+      id: 'pa-a',
+      eventId: 'event-a',
+      eventDayId: 'day-a',
+      stageId: 'stage-a',
+      memberId: 'member-a',
+      role: 'main',
+      from: { kind: 'time', time: '10:00' },
+      until: { kind: 'time', time: '11:00' },
+    }]
+    state.dutyAssignments = [{
+      id: 'duty-assignment-a',
+      dutyTypeId: 'duty-a',
+      eventDayId: 'day-a',
+      stageId: 'stage-a',
+      memberId: 'member-a',
+      from: { kind: 'time', time: '10:00' },
+      until: { kind: 'time', time: '11:00' },
+    }]
+    return state
+  }
+  const validAssignments = createAssignmentState()
+  assert.equal(createCloudEventSnapshotV2(validAssignments, 'event-a').ok, true)
+
+  const danglingPa = createAssignmentState()
+  danglingPa.paAssignments[0].memberId = 'missing-pa-member'
+  assert.equal(createCloudEventSnapshotV2(danglingPa, 'event-a').ok, false)
+
+  const danglingDuty = createAssignmentState()
+  danglingDuty.dutyAssignments[0].memberId = 'missing-duty-member'
+  assert.equal(createCloudEventSnapshotV2(danglingDuty, 'event-a').ok, false)
+
+  expectInvalid(state => {
+    state.members.push(structuredClone(memberA))
+  }, 'duplicate Member ID')
+  expectInvalid(state => {
+    state.bands.push(structuredClone(bandA))
+  }, 'duplicate Band ID')
+  expectInvalid(state => {
+    delete state.members[0].active
+  }, 'invalid referenced Member record')
+
+  const withUnreferencedMasters = createDomainState()
+  withUnreferencedMasters.members.push({
+    id: 'member-extra', realName: 'Extra', active: true,
+  })
+  withUnreferencedMasters.bands.push({
+    id: 'band-extra', name: 'Extra Band', defaultMemberIds: ['member-extra'], active: true,
+  })
+  const v2 = createCloudEventSnapshotV2(withUnreferencedMasters, 'event-a')
+  assert.equal(v2.ok, true)
+  if (v2.ok) {
+    assert.equal(v2.snapshot.masterReferences.memberIds.includes('member-extra'), false)
+    assert.equal(v2.snapshot.masterReferences.bandIds.includes('band-extra'), false)
+    assert.deepEqual(parseCloudEventSnapshotV2(v2.snapshot), v2.snapshot)
+  }
+
+  const v1 = createCloudEventSnapshot(createDomainState(), 'event-a')
+  assert.equal(v1.ok, true)
+  if (v1.ok) assert.deepEqual(parseCloudEventSnapshot(v1.snapshot), v1.snapshot)
+})
+
 test('Snapshot V2は欠落・余分・重複Master参照とEvent ownership破損をfail closedする', () => {
   const created = createCloudEventSnapshotV2(createDomainState(), 'event-a')
   assert.equal(created.ok, true)
@@ -686,6 +782,94 @@ test('Master Edge adapterはauth.getUserとservice-role限定RPCを分離する'
   assert.doesNotMatch(source, /\.from\('workspace_master_/)
 })
 
+test('Workspace Master EdgeのDeno import mapはentrypointと同じSupabase versionを固定する', async () => {
+  const [source, denoConfigText, packageJsonText] = await Promise.all([
+    readFile(new URL(
+      '../supabase/functions/workspace-masters/index.ts',
+      import.meta.url,
+    ), 'utf8'),
+    readFile(new URL(
+      '../supabase/functions/workspace-masters/deno.json',
+      import.meta.url,
+    ), 'utf8'),
+    readFile(new URL('../package.json', import.meta.url), 'utf8'),
+  ])
+  const denoConfig = JSON.parse(denoConfigText)
+  const packageJson = JSON.parse(packageJsonText)
+
+  assert.deepEqual(denoConfig, {
+    imports: {
+      '@supabase/supabase-js': 'npm:@supabase/supabase-js@2.117.2',
+    },
+  })
+
+  const entrypointVersion = source.match(
+    /from 'npm:@supabase\/supabase-js@([^']+)'/,
+  )?.[1]
+  const importMapVersion = denoConfig.imports['@supabase/supabase-js'].match(
+    /^npm:@supabase\/supabase-js@(.+)$/,
+  )?.[1]
+
+  assert.equal(entrypointVersion, importMapVersion)
+  assert.equal(
+    packageJson.dependencies['@supabase/supabase-js'],
+    `^${importMapVersion}`,
+  )
+})
+
+test('Workspace Master実HTTP smokeは実JWT・Edge route・限定fixture cleanupを要求する', async () => {
+  const [runner, setup, cleanup, packageJson, runbook] = await Promise.all([
+    readFile(new URL(
+      '../scripts/cloudWorkspaceMasterHttpSmoke.mjs', import.meta.url,
+    ), 'utf8'),
+    readFile(new URL(
+      '../supabase/tests/cloud_workspace_master_http_smoke_setup.sql', import.meta.url,
+    ), 'utf8'),
+    readFile(new URL(
+      '../supabase/tests/cloud_workspace_master_http_smoke_cleanup.sql', import.meta.url,
+    ), 'utf8'),
+    readFile(new URL('../package.json', import.meta.url), 'utf8'),
+    readFile(new URL('../docs/cloud-setup.md', import.meta.url), 'utf8'),
+  ])
+
+  assert.match(runner, /--confirm-disposable/)
+  assert.match(runner, /PROTECTED_DATABASE_PORTS/)
+  assert.match(runner, /auth\.admin\.createUser/)
+  assert.match(runner, /auth\.signInWithPassword/)
+  assert.match(runner, /fetch\(functionUrl/)
+  assert.match(runner, /expectAuthenticationRejected\('', deniedMember\)/)
+  assert.match(runner, /sessions\.viewer\.accessToken[\s\S]*ACCESS_DENIED/)
+  assert.match(runner, /sessions\.outsider\.accessToken[\s\S]*ACCESS_DENIED/)
+  assert.match(runner, /WORKSPACE_NOT_READY/)
+  assert.match(runner, /REVISION_CONFLICT/)
+  assert.match(runner, /MASTER_MEMBER_NOT_FOUND/)
+  assert.match(runner, /load_workspace_masters_page_authorized/)
+  assert.match(runner, /sessions\.owner\.client\.rpc\('mutate_workspace_master_validated'/)
+  assert.doesNotMatch(runner, /handleCloudWorkspaceMasterRequest/)
+  assert.doesNotMatch(runner, /console\.(log|error)\([^\n]*(serviceRoleKey|accessToken|anonKey)/)
+
+  for (const id of [
+    '68000000-0000-0000-0000-000000000001',
+    '68000000-0000-0000-0000-000000000002',
+    '68000000-0000-0000-0000-000000000003',
+  ]) {
+    assert.match(setup, new RegExp(id, 'u'))
+    assert.match(cleanup, new RegExp(id, 'u'))
+  }
+  assert.match(setup, /:'owner_user_id'::uuid/)
+  assert.match(setup, /:'editor_user_id'::uuid/)
+  assert.match(setup, /:'viewer_user_id'::uuid/)
+  assert.match(setup, /:'outsider_user_id'::uuid/)
+  assert.match(setup, /set status = 'ready'/)
+  assert.match(setup, /status = 'ready'[\s\S]*status[^;]*is distinct from 'legacy'/)
+  assert.match(cleanup, /delete from public\.workspaces[\s\S]*where id in/)
+  assert.doesNotMatch(cleanup, /delete from auth\.users/)
+  assert.match(JSON.parse(packageJson).scripts['test:cloud-workspace-master-http-smoke'],
+    /--confirm-disposable/)
+  assert.match(runbook, /ACAPPELLA_TT_SMOKE_SUPABASE_URL/)
+  assert.match(runbook, /JWT verificationを無効化せず/)
+})
+
 test('Master migrationはready gate・CAS・generation・backend-only ACLを同一transactionで定義する', async () => {
   const source = await readFile(
     new URL('../supabase/migrations/20261012110000_cloud_workspace_master_contracts_v2.sql', import.meta.url),
@@ -697,6 +881,10 @@ test('Master migrationはready gate・CAS・generation・backend-only ACLを同�
   assert.match(source, /from public\.workspace_members[\s\S]*for share/i)
   assert.match(source, /cloud_workspace_master_states[\s\S]*for share/i)
   assert.match(source, /master_status is distinct from 'ready'/i)
+  assert.match(source, /p_operation is null/i)
+  assert.match(source, /p_master_kind is null/i)
+  assert.match(source, /p_payload is null/i)
+  assert.match(source, /jsonb_typeof\(p_payload\) <> 'object'/i)
   assert.match(source, /p_expected_revision[\s\S]*errcode = '40001'/i)
   assert.match(source, /Workspace Band references an unknown Member[\s\S]*errcode = 'PMA01'/i)
   assert.match(source, /delete from public\.workspace_master_band_members[\s\S]*insert into public\.workspace_master_band_members/i)
@@ -718,6 +906,12 @@ test('実DB fixtureはCRUD/CAS/role/generationとasync concurrencyをrollbackま
   assert.match(integration, /exception when sqlstate '40001'/i)
   assert.match(integration, /exception when sqlstate '42501'/i)
   assert.match(integration, /exception when sqlstate '55000'/i)
+  assert.match(integration, /SQL NULL operation[\s\S]*SQL NULL kind/i)
+  assert.match(integration, /SQL NULL payload[\s\S]*JSON null payload/i)
+  assert.match(integration, /create revision[\s\S]*missing update revision/i)
+  assert.match(integration, /missing delete revision/i)
+  assert.match(integration, /Rejected invalid mutation changed Master or generation state/i)
+  assert.match(integration, /exception when sqlstate '22023'/i)
   assert.match(integration, /exception when sqlstate 'PMA01'/i)
   assert.match(integration, /exception when foreign_key_violation/i)
   assert.match(integration, /load_workspace_masters_page_authorized[\s\S]*workspaceGeneration/i)

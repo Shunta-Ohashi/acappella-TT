@@ -884,6 +884,17 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     preflightSql,
     /workspace_master_mutation_function\.prosrc[\s\S]*errcode = ''pma01''/i,
   )
+  for (const nullGuard of [
+    'p_operation is null',
+    'p_master_kind is null',
+    'p_payload is null',
+  ]) {
+    assert.match(
+      preflightSql,
+      new RegExp(`workspace_master_mutation_function\\.prosrc[\\s\\S]*${nullGuard}`, 'i'),
+      nullGuard,
+    )
+  }
   assert.match(preflightSql, /aclexplode\s*\(coalesce\([\s\S]*acldefault\('f'/i)
   const authWorkspaceChecksStart = preflightSql.indexOf('auth_workspace_checks as (')
   const authWorkspaceChecksEnd = preflightSql.indexOf('\nbase_checks as (')

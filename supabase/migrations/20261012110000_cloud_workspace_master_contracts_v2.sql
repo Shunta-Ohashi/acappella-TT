@@ -210,6 +210,9 @@ declare
   default_member_ids jsonb;
 begin
   if p_actor_id is null or p_workspace_id is null
+    or p_operation is null
+    or p_master_kind is null
+    or p_payload is null
     or p_operation not in ('create', 'update', 'delete')
     or p_master_kind not in ('member', 'band')
     or jsonb_typeof(p_payload) <> 'object'

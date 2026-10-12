@@ -120,6 +120,118 @@ select public.mutate_workspace_master_validated(
   null
 );
 
+-- SQL NULL discriminators must not slip through PostgreSQL three-valued
+-- boolean expressions. Every invalid call must fail before any Master or
+-- Workspace generation state changes.
+do $$
+declare
+  invalid_case record;
+  members_before jsonb;
+  bands_before jsonb;
+  relations_before jsonb;
+  generation_before bigint;
+begin
+  select coalesce(
+    jsonb_agg(to_jsonb(member_row) order by member_row.member_id),
+    '[]'::jsonb
+  )
+  into members_before
+  from public.workspace_master_members as member_row
+  where workspace_id = '71000000-0000-0000-0000-000000000001';
+
+  select coalesce(
+    jsonb_agg(to_jsonb(band_row) order by band_row.band_id),
+    '[]'::jsonb
+  )
+  into bands_before
+  from public.workspace_master_bands as band_row
+  where workspace_id = '71000000-0000-0000-0000-000000000001';
+
+  select coalesce(
+    jsonb_agg(
+      to_jsonb(relation_row)
+      order by relation_row.band_id, relation_row.position
+    ),
+    '[]'::jsonb
+  )
+  into relations_before
+  from public.workspace_master_band_members as relation_row
+  where workspace_id = '71000000-0000-0000-0000-000000000001';
+
+  select generation into generation_before
+  from public.cloud_event_workspace_generations
+  where workspace_id = '71000000-0000-0000-0000-000000000001';
+
+  for invalid_case in
+    select *
+    from (values
+      ('SQL NULL operation', null::text, 'member'::text,
+       '{"id":"invalid-null-operation","realName":"Invalid","active":true}'::jsonb,
+       null::bigint),
+      ('SQL NULL kind', 'create', null,
+       '{"id":"invalid-null-kind","realName":"Invalid","active":true}'::jsonb, null),
+      ('SQL NULL payload', 'create', 'member', null::jsonb, null),
+      ('JSON null payload', 'create', 'member', 'null'::jsonb, null),
+      ('invalid operation', 'rename', 'member',
+       '{"id":"member-a","realName":"Invalid","active":true}'::jsonb, 1),
+      ('invalid kind', 'create', 'ensemble',
+       '{"id":"invalid-kind","name":"Invalid","defaultMemberIds":[],"active":true}'::jsonb,
+       null),
+      ('create revision', 'create', 'member',
+       '{"id":"invalid-create-revision","realName":"Invalid","active":true}'::jsonb, 1),
+      ('missing update revision', 'update', 'member',
+       '{"id":"member-a","realName":"Invalid","active":true}'::jsonb, null),
+      ('missing delete revision', 'delete', 'band', '{"id":"band-a"}'::jsonb, null)
+    ) as cases(label, operation, master_kind, payload, expected_revision)
+  loop
+    begin
+      perform public.mutate_workspace_master_validated(
+        '00000000-0000-0000-0000-000000000071',
+        '71000000-0000-0000-0000-000000000001',
+        invalid_case.operation,
+        invalid_case.master_kind,
+        invalid_case.payload,
+        invalid_case.expected_revision
+      );
+      raise exception 'Invalid mutation was accepted: %', invalid_case.label;
+    exception when sqlstate '22023' then null;
+    end;
+  end loop;
+
+  if members_before is distinct from (
+      select coalesce(
+        jsonb_agg(to_jsonb(member_row) order by member_row.member_id),
+        '[]'::jsonb
+      )
+      from public.workspace_master_members as member_row
+      where workspace_id = '71000000-0000-0000-0000-000000000001'
+    ) or bands_before is distinct from (
+      select coalesce(
+        jsonb_agg(to_jsonb(band_row) order by band_row.band_id),
+        '[]'::jsonb
+      )
+      from public.workspace_master_bands as band_row
+      where workspace_id = '71000000-0000-0000-0000-000000000001'
+    ) or relations_before is distinct from (
+      select coalesce(
+        jsonb_agg(
+          to_jsonb(relation_row)
+          order by relation_row.band_id, relation_row.position
+        ),
+        '[]'::jsonb
+      )
+      from public.workspace_master_band_members as relation_row
+      where workspace_id = '71000000-0000-0000-0000-000000000001'
+    ) or generation_before is distinct from (
+      select generation
+      from public.cloud_event_workspace_generations
+      where workspace_id = '71000000-0000-0000-0000-000000000001'
+    ) then
+    raise exception 'Rejected invalid mutation changed Master or generation state';
+  end if;
+end;
+$$;
+
 do $$
 begin
   if (select array_agg(member_id order by position)

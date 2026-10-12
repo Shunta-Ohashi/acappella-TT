@@ -536,6 +536,18 @@ export const createCloudEventSnapshotV2 = (
   const selected = createEventOwnedState(state, eventId)
   if (!selected.ok) return selected
 
+  // V2 persists only Master IDs, so its serializer must prove those IDs came
+  // from valid, unique source records before placeholder records are used for
+  // structural parsing. Extra valid Workspace masters remain out of scope.
+  if (
+    !Array.isArray(state.members) ||
+    !Array.isArray(state.bands) ||
+    !state.members.every(isMember) ||
+    !state.bands.every(isBand) ||
+    !hasUniqueIds(state.members) ||
+    !hasUniqueIds(state.bands)
+  ) return { ok: false, reason: 'INVALID_SNAPSHOT' }
+
   const referenced = collectReferencedMasterIds(selected.eventState, state.bands)
   const snapshot: CloudEventSnapshotV2 = {
     format: CLOUD_EVENT_SNAPSHOT_FORMAT,
@@ -546,7 +558,8 @@ export const createCloudEventSnapshotV2 = (
       bandIds: [...referenced.bandIds].sort(),
     },
   }
-  return validateCloudEventSnapshotV2(snapshot)
+  return validateCloudEventSnapshotV2(snapshot) &&
+    hasResolvedCloudEventSnapshotV2Masters(snapshot, state.members, state.bands)
     ? { ok: true, snapshot }
     : { ok: false, reason: 'INVALID_SNAPSHOT' }
 }

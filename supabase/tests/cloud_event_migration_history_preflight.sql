@@ -1827,6 +1827,12 @@ later_schema as (
             like '%insert into public.workspace_master_band_members%'
           and lower(workspace_master_mutation_function.prosrc)
             like '%errcode = ''pma01''%'
+          and lower(workspace_master_mutation_function.prosrc)
+            like '%p_operation is null%'
+          and lower(workspace_master_mutation_function.prosrc)
+            like '%p_master_kind is null%'
+          and lower(workspace_master_mutation_function.prosrc)
+            like '%p_payload is null%'
         )
         from workspace_master_mutation_function),
     'workspaceMasterContractPrivileges',

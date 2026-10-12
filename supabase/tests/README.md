@@ -65,6 +65,24 @@ node scripts/cloudEventMigrationCatalogRegression.mjs `
   --confirm-disposable
 ```
 
+The deployed Workspace-master Edge adapter has a separate real-HTTP smoke
+runner. It creates real local Auth users through the Admin API, signs each user
+in to obtain distinct JWTs, calls the running Function route, and verifies the
+backend-only RPC boundary. It deliberately refuses database ports 54322 through
+55122. Follow the environment and two-terminal instructions in
+[`docs/cloud-setup.md`](../../docs/cloud-setup.md#workspace-master-edge-functionの実http-smoke),
+then run:
+
+```powershell
+npm run test:cloud-workspace-master-http-smoke
+```
+
+The runner requires `--confirm-disposable` through the package script, a
+loopback Supabase/API/Function/Database URL, `psql`, and a new disposable
+database. Its setup and cleanup SQL target only Workspace IDs reserved by the
+fixture; Auth cleanup targets only the fixture's exact email addresses. It does
+not disable JWT verification and must never receive production keys or tokens.
+
 `test_db_url` is opened by the PostgreSQL server through `dblink`, so it may
 need a different host from the outer `psql` URL. In particular, with local
 Supabase on Windows and Docker Desktop, keep the outer URL on
