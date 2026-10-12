@@ -1136,7 +1136,18 @@ test('Master migrationはready gate・CAS・generation・backend-only ACLを同�
   assert.match(source, /p_operation is null/i)
   assert.match(source, /p_master_kind is null/i)
   assert.match(source, /p_payload is null/i)
-  assert.match(source, /jsonb_typeof\(p_payload\) <> 'object'/i)
+  assert.match(source, /jsonb_typeof\(p_payload\) is distinct from 'object'/i)
+  assert.match(source,
+    /jsonb_typeof\(p_payload -> 'realName'\) is distinct from 'string'/i)
+  assert.match(source,
+    /jsonb_typeof\(p_payload -> 'active'\) is distinct from 'boolean'/i)
+  assert.match(source, /jsonb_typeof\(p_payload -> 'name'\) is distinct from 'string'/i)
+  assert.match(source,
+    /jsonb_typeof\(p_payload -> 'defaultMemberIds'\) is distinct from 'array'/i)
+  assert.ok(
+    source.indexOf("jsonb_typeof(p_payload -> 'defaultMemberIds') is distinct from 'array'") <
+      source.indexOf("jsonb_array_elements(p_payload -> 'defaultMemberIds')"),
+  )
   assert.match(source, /p_expected_revision[\s\S]*errcode = '40001'/i)
   assert.match(source, /Workspace Band references an unknown Member[\s\S]*errcode = 'PMA01'/i)
   assert.match(source, /delete from public\.workspace_master_band_members[\s\S]*insert into public\.workspace_master_band_members/i)
@@ -1162,7 +1173,14 @@ test('実DB fixtureはCRUD/CAS/role/generationとasync concurrencyをrollbackま
   assert.match(integration, /SQL NULL payload[\s\S]*JSON null payload/i)
   assert.match(integration, /create revision[\s\S]*missing update revision/i)
   assert.match(integration, /missing delete revision/i)
+  assert.match(integration,
+    /Member create missing realName[\s\S]*Member update missing realName/i)
+  assert.match(integration,
+    /Band create missing defaultMemberIds[\s\S]*Band update missing defaultMemberIds/i)
+  assert.match(integration,
+    /Band create object defaultMemberIds[\s\S]*Band update string defaultMemberIds/i)
   assert.match(integration, /Rejected invalid mutation changed Master or generation state/i)
+  assert.match(integration, /Valid optional\/empty-relation mutation contract failed/i)
   assert.match(integration, /exception when sqlstate '22023'/i)
   assert.match(integration, /exception when sqlstate 'PMA01'/i)
   assert.match(integration, /exception when foreign_key_violation/i)

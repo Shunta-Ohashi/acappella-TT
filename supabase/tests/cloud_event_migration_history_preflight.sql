@@ -1833,6 +1833,16 @@ later_schema as (
             like '%p_master_kind is null%'
           and lower(workspace_master_mutation_function.prosrc)
             like '%p_payload is null%'
+          and lower(workspace_master_mutation_function.prosrc)
+            like '%jsonb_typeof(p_payload -> ''realname'') is distinct from ''string''%'
+          and lower(workspace_master_mutation_function.prosrc)
+            like '%jsonb_typeof(p_payload -> ''active'') is distinct from ''boolean''%'
+          and lower(workspace_master_mutation_function.prosrc)
+            like '%jsonb_typeof(p_payload -> ''name'') is distinct from ''string''%'
+          and lower(workspace_master_mutation_function.prosrc)
+            like '%jsonb_typeof(p_payload -> ''defaultmemberids'') is distinct from ''array''%'
+          and lower(workspace_master_mutation_function.prosrc) like
+            '%jsonb_typeof(p_payload -> ''realname'') is distinct from ''string''%jsonb_typeof(p_payload -> ''active'') is distinct from ''boolean''%jsonb_typeof(p_payload -> ''name'') is distinct from ''string''%jsonb_typeof(p_payload -> ''active'') is distinct from ''boolean''%jsonb_typeof(p_payload -> ''defaultmemberids'') is distinct from ''array''%'
         )
         from workspace_master_mutation_function),
     'workspaceMasterContractPrivileges',

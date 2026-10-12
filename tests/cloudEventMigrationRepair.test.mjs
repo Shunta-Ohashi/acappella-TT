@@ -895,6 +895,18 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
       nullGuard,
     )
   }
+  for (const requiredJsonGuard of [
+    "jsonb_typeof(p_payload -> ''realname'') is distinct from ''string''",
+    "jsonb_typeof(p_payload -> ''active'') is distinct from ''boolean''",
+    "jsonb_typeof(p_payload -> ''name'') is distinct from ''string''",
+    "jsonb_typeof(p_payload -> ''defaultmemberids'') is distinct from ''array''",
+  ]) {
+    assert.match(
+      preflightSql,
+      new RegExp(requiredJsonGuard.replace(/[()]/gu, '\\$&'), 'i'),
+      requiredJsonGuard,
+    )
+  }
   assert.match(preflightSql, /aclexplode\s*\(coalesce\([\s\S]*acldefault\('f'/i)
   const authWorkspaceChecksStart = preflightSql.indexOf('auth_workspace_checks as (')
   const authWorkspaceChecksEnd = preflightSql.indexOf('\nbase_checks as (')

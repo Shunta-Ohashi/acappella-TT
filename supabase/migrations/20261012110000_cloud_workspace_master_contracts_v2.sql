@@ -215,7 +215,7 @@ begin
     or p_payload is null
     or p_operation not in ('create', 'update', 'delete')
     or p_master_kind not in ('member', 'band')
-    or jsonb_typeof(p_payload) <> 'object'
+    or jsonb_typeof(p_payload) is distinct from 'object'
     or (p_operation = 'create' and p_expected_revision is not null)
     or (p_operation in ('update', 'delete') and (
       p_expected_revision is null or p_expected_revision < 1
@@ -225,7 +225,7 @@ begin
   end if;
 
   target_id := p_payload ->> 'id';
-  if jsonb_typeof(p_payload -> 'id') <> 'string'
+  if jsonb_typeof(p_payload -> 'id') is distinct from 'string'
     or target_id is null or btrim(target_id) = '' then
     raise exception 'Workspace Master ID is invalid' using errcode = '22023';
   end if;
@@ -239,17 +239,26 @@ begin
     if p_payload - array[
         'id', 'realName', 'acaName', 'entryAcademicYear', 'notes', 'active'
       ] <> '{}'::jsonb
-      or jsonb_typeof(p_payload -> 'id') <> 'string'
-      or jsonb_typeof(p_payload -> 'realName') <> 'string'
+      or jsonb_typeof(p_payload -> 'id') is distinct from 'string'
+      or jsonb_typeof(p_payload -> 'realName') is distinct from 'string'
       or btrim(p_payload ->> 'realName') = ''
-      or jsonb_typeof(p_payload -> 'active') <> 'boolean'
-      or (p_payload ? 'acaName' and jsonb_typeof(p_payload -> 'acaName') <> 'string')
-      or (p_payload ? 'notes' and jsonb_typeof(p_payload -> 'notes') <> 'string')
-      or (p_payload ? 'entryAcademicYear' and (
-        jsonb_typeof(p_payload -> 'entryAcademicYear') <> 'number'
-        or (p_payload ->> 'entryAcademicYear') !~ '^[1-9][0-9]*$'
-        or (p_payload ->> 'entryAcademicYear')::numeric > 2147483647
-      )) then
+      or jsonb_typeof(p_payload -> 'active') is distinct from 'boolean'
+      or (p_payload ? 'acaName' and
+        jsonb_typeof(p_payload -> 'acaName') is distinct from 'string')
+      or (p_payload ? 'notes' and
+        jsonb_typeof(p_payload -> 'notes') is distinct from 'string')
+      or (p_payload ? 'entryAcademicYear' and
+        jsonb_typeof(p_payload -> 'entryAcademicYear') is distinct from 'number') then
+      raise exception 'Workspace Member payload is invalid'
+        using errcode = '22023';
+    end if;
+
+    -- Numeric type is established before parsing/range checks, so a malformed
+    -- optional value cannot leak a cast error instead of the input SQLSTATE.
+    if p_payload ? 'entryAcademicYear' and (
+      (p_payload ->> 'entryAcademicYear') !~ '^[1-9][0-9]*$'
+      or (p_payload ->> 'entryAcademicYear')::numeric > 2147483647
+    ) then
       raise exception 'Workspace Member payload is invalid'
         using errcode = '22023';
     end if;
@@ -257,16 +266,23 @@ begin
     if p_payload - array[
         'id', 'name', 'defaultMemberIds', 'notes', 'active'
       ] <> '{}'::jsonb
-      or jsonb_typeof(p_payload -> 'id') <> 'string'
-      or jsonb_typeof(p_payload -> 'name') <> 'string'
+      or jsonb_typeof(p_payload -> 'id') is distinct from 'string'
+      or jsonb_typeof(p_payload -> 'name') is distinct from 'string'
       or btrim(p_payload ->> 'name') = ''
-      or jsonb_typeof(p_payload -> 'active') <> 'boolean'
-      or jsonb_typeof(p_payload -> 'defaultMemberIds') <> 'array'
-      or (p_payload ? 'notes' and jsonb_typeof(p_payload -> 'notes') <> 'string')
-      or exists (
+      or jsonb_typeof(p_payload -> 'active') is distinct from 'boolean'
+      or jsonb_typeof(p_payload -> 'defaultMemberIds') is distinct from 'array'
+      or (p_payload ? 'notes' and
+        jsonb_typeof(p_payload -> 'notes') is distinct from 'string') then
+      raise exception 'Workspace Band payload is invalid'
+        using errcode = '22023';
+    end if;
+
+    -- Array shape is established above, so malformed/missing values cannot
+    -- reach a set-returning JSON function and leak a lower-level SQL error.
+    if exists (
         select 1
         from jsonb_array_elements(p_payload -> 'defaultMemberIds') as item(value)
-        where jsonb_typeof(item.value) <> 'string'
+        where jsonb_typeof(item.value) is distinct from 'string'
           or btrim(item.value #>> '{}') = ''
       )
       or (

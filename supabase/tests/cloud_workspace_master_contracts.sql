@@ -181,7 +181,109 @@ begin
        '{"id":"invalid-create-revision","realName":"Invalid","active":true}'::jsonb, 1),
       ('missing update revision', 'update', 'member',
        '{"id":"member-a","realName":"Invalid","active":true}'::jsonb, null),
-      ('missing delete revision', 'delete', 'band', '{"id":"band-a"}'::jsonb, null)
+      ('missing delete revision', 'delete', 'band', '{"id":"band-a"}'::jsonb, null),
+      ('Member create missing id', 'create', 'member',
+       '{"realName":"Invalid","active":true}'::jsonb, null),
+      ('Member create null id', 'create', 'member',
+       '{"id":null,"realName":"Invalid","active":true}'::jsonb, null),
+      ('Member create wrong id type', 'create', 'member',
+       '{"id":7,"realName":"Invalid","active":true}'::jsonb, null),
+      ('Member create missing realName', 'create', 'member',
+       '{"id":"invalid-member-create-missing-name","active":true}'::jsonb, null),
+      ('Member create missing active', 'create', 'member',
+       '{"id":"invalid-member-create-missing-active","realName":"Invalid"}'::jsonb,
+       null),
+      ('Member create null realName', 'create', 'member',
+       '{"id":"invalid-member-create-null-name","realName":null,"active":true}'::jsonb,
+       null),
+      ('Member create null active', 'create', 'member',
+       '{"id":"invalid-member-create-null-active","realName":"Invalid","active":null}'::jsonb,
+       null),
+      ('Member create wrong realName type', 'create', 'member',
+       '{"id":"invalid-member-create-name-type","realName":7,"active":true}'::jsonb,
+       null),
+      ('Member create wrong active type', 'create', 'member',
+       '{"id":"invalid-member-create-active-type","realName":"Invalid","active":"true"}'::jsonb,
+       null),
+      ('Member create null entryAcademicYear', 'create', 'member',
+       '{"id":"invalid-member-create-null-year","realName":"Invalid","entryAcademicYear":null,"active":true}'::jsonb,
+       null),
+      ('Member create wrong entryAcademicYear type', 'create', 'member',
+       '{"id":"invalid-member-create-year-type","realName":"Invalid","entryAcademicYear":"2024","active":true}'::jsonb,
+       null),
+      ('Member create entryAcademicYear overflow', 'create', 'member',
+       '{"id":"invalid-member-create-year-overflow","realName":"Invalid","entryAcademicYear":2147483648,"active":true}'::jsonb,
+       null),
+      ('Member update missing realName', 'update', 'member',
+       '{"id":"member-a","active":true}'::jsonb, 1),
+      ('Member update missing active', 'update', 'member',
+       '{"id":"member-a","realName":"Invalid"}'::jsonb, 1),
+      ('Member update null realName', 'update', 'member',
+       '{"id":"member-a","realName":null,"active":true}'::jsonb, 1),
+      ('Member update null active', 'update', 'member',
+       '{"id":"member-a","realName":"Invalid","active":null}'::jsonb, 1),
+      ('Member update wrong realName type', 'update', 'member',
+       '{"id":"member-a","realName":7,"active":true}'::jsonb, 1),
+      ('Member update wrong active type', 'update', 'member',
+       '{"id":"member-a","realName":"Invalid","active":"true"}'::jsonb, 1),
+      ('Band create missing id', 'create', 'band',
+       '{"name":"Invalid","defaultMemberIds":[],"active":true}'::jsonb, null),
+      ('Band create null id', 'create', 'band',
+       '{"id":null,"name":"Invalid","defaultMemberIds":[],"active":true}'::jsonb,
+       null),
+      ('Band create wrong id type', 'create', 'band',
+       '{"id":7,"name":"Invalid","defaultMemberIds":[],"active":true}'::jsonb,
+       null),
+      ('Band create missing name', 'create', 'band',
+       '{"id":"invalid-band-create-missing-name","defaultMemberIds":[],"active":true}'::jsonb,
+       null),
+      ('Band create missing active', 'create', 'band',
+       '{"id":"invalid-band-create-missing-active","name":"Invalid","defaultMemberIds":[]}'::jsonb,
+       null),
+      ('Band create missing defaultMemberIds', 'create', 'band',
+       '{"id":"invalid-band-create-missing-members","name":"Invalid","active":true}'::jsonb,
+       null),
+      ('Band create null name', 'create', 'band',
+       '{"id":"invalid-band-create-null-name","name":null,"defaultMemberIds":[],"active":true}'::jsonb,
+       null),
+      ('Band create null active', 'create', 'band',
+       '{"id":"invalid-band-create-null-active","name":"Invalid","defaultMemberIds":[],"active":null}'::jsonb,
+       null),
+      ('Band create null defaultMemberIds', 'create', 'band',
+       '{"id":"invalid-band-create-null-members","name":"Invalid","defaultMemberIds":null,"active":true}'::jsonb,
+       null),
+      ('Band create object defaultMemberIds', 'create', 'band',
+       '{"id":"invalid-band-create-object-members","name":"Invalid","defaultMemberIds":{},"active":true}'::jsonb,
+       null),
+      ('Band create string defaultMemberIds', 'create', 'band',
+       '{"id":"invalid-band-create-string-members","name":"Invalid","defaultMemberIds":"member-a","active":true}'::jsonb,
+       null),
+      ('Band create wrong name type', 'create', 'band',
+       '{"id":"invalid-band-create-name-type","name":7,"defaultMemberIds":[],"active":true}'::jsonb,
+       null),
+      ('Band create wrong active type', 'create', 'band',
+       '{"id":"invalid-band-create-active-type","name":"Invalid","defaultMemberIds":[],"active":"true"}'::jsonb,
+       null),
+      ('Band update missing name', 'update', 'band',
+       '{"id":"band-a","defaultMemberIds":[],"active":true}'::jsonb, 1),
+      ('Band update missing active', 'update', 'band',
+       '{"id":"band-a","name":"Invalid","defaultMemberIds":[]}'::jsonb, 1),
+      ('Band update missing defaultMemberIds', 'update', 'band',
+       '{"id":"band-a","name":"Invalid","active":true}'::jsonb, 1),
+      ('Band update null name', 'update', 'band',
+       '{"id":"band-a","name":null,"defaultMemberIds":[],"active":true}'::jsonb, 1),
+      ('Band update null active', 'update', 'band',
+       '{"id":"band-a","name":"Invalid","defaultMemberIds":[],"active":null}'::jsonb, 1),
+      ('Band update null defaultMemberIds', 'update', 'band',
+       '{"id":"band-a","name":"Invalid","defaultMemberIds":null,"active":true}'::jsonb, 1),
+      ('Band update object defaultMemberIds', 'update', 'band',
+       '{"id":"band-a","name":"Invalid","defaultMemberIds":{},"active":true}'::jsonb, 1),
+      ('Band update string defaultMemberIds', 'update', 'band',
+       '{"id":"band-a","name":"Invalid","defaultMemberIds":"member-a","active":true}'::jsonb, 1),
+      ('Band update wrong name type', 'update', 'band',
+       '{"id":"band-a","name":7,"defaultMemberIds":[],"active":true}'::jsonb, 1),
+      ('Band update wrong active type', 'update', 'band',
+       '{"id":"band-a","name":"Invalid","defaultMemberIds":[],"active":"true"}'::jsonb, 1)
     ) as cases(label, operation, master_kind, payload, expected_revision)
   loop
     begin
@@ -231,6 +333,60 @@ begin
   end if;
 end;
 $$;
+
+-- Valid create/update payloads may omit optional fields, and an empty ordered
+-- Band membership is a valid relation set. CAS still advances each revision.
+select public.mutate_workspace_master_validated(
+  '00000000-0000-0000-0000-000000000071',
+  '71000000-0000-0000-0000-000000000001',
+  'update', 'member',
+  '{"id":"member-b","realName":"Bob updated","active":true}'::jsonb,
+  1
+);
+select public.mutate_workspace_master_validated(
+  '00000000-0000-0000-0000-000000000071',
+  '71000000-0000-0000-0000-000000000001',
+  'create', 'band',
+  '{"id":"empty-band","name":"Empty","defaultMemberIds":[],"active":true}'::jsonb,
+  null
+);
+select public.mutate_workspace_master_validated(
+  '00000000-0000-0000-0000-000000000071',
+  '71000000-0000-0000-0000-000000000001',
+  'update', 'band',
+  '{"id":"empty-band","name":"Empty updated","defaultMemberIds":[],"active":true}'::jsonb,
+  1
+);
+
+do $$
+begin
+  if not exists (
+    select 1 from public.workspace_master_members
+    where workspace_id = '71000000-0000-0000-0000-000000000001'
+      and member_id = 'member-b'
+      and real_name = 'Bob updated'
+      and revision = 2
+  ) or not exists (
+    select 1 from public.workspace_master_bands
+    where workspace_id = '71000000-0000-0000-0000-000000000001'
+      and band_id = 'empty-band'
+      and name = 'Empty updated'
+      and revision = 2
+  ) or exists (
+    select 1 from public.workspace_master_band_members
+    where workspace_id = '71000000-0000-0000-0000-000000000001'
+      and band_id = 'empty-band'
+  ) then
+    raise exception 'Valid optional/empty-relation mutation contract failed';
+  end if;
+end;
+$$;
+
+select public.mutate_workspace_master_validated(
+  '00000000-0000-0000-0000-000000000071',
+  '71000000-0000-0000-0000-000000000001',
+  'delete', 'band', '{"id":"empty-band"}'::jsonb, 2
+);
 
 do $$
 begin
