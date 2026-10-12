@@ -19,6 +19,7 @@ declare
   scenario text := current_setting('acappella_tt.catalog_scenario');
   inherited_role_name name := 'cloud_event_catalog_regression_inherited';
   inherited_member_name name;
+  fixture_workspace_id uuid := extensions.gen_random_uuid();
 begin
   if scenario in (
     'cloud_anon_inherited_delete',
@@ -28,7 +29,8 @@ begin
     'cloud_authenticated_inherited_table_insert',
     'cloud_authenticated_inherited_table_update',
     'cloud_anon_inherited_column_write',
-    'cloud_authenticated_inherited_column_write'
+    'cloud_authenticated_inherited_column_write',
+    'workspace_master_authenticated_inherited_write'
   ) then
     if exists (
       select 1 from pg_catalog.pg_roles
@@ -62,6 +64,11 @@ begin
       when scenario like '%_inherited_column_write' then
         execute format(
           'grant update (event_name) on table public.cloud_events to %I',
+          inherited_role_name
+        );
+      when scenario = 'workspace_master_authenticated_inherited_write' then
+        execute format(
+          'grant update on table public.workspace_master_members to %I',
           inherited_role_name
         );
     end case;
@@ -191,6 +198,28 @@ begin
     when 'save_service_role_execute_missing' then
       revoke execute on function
         public.save_cloud_event_validated(uuid, uuid, jsonb) from service_role;
+    when 'workspace_master_table_missing' then
+      alter table public.workspace_master_members
+        rename to catalog_regression_workspace_master_members;
+    when 'workspace_master_constraint_missing' then
+      alter table public.workspace_master_band_members
+        drop constraint workspace_master_band_members_workspace_id_band_id_position_key;
+    when 'workspace_master_state_initializer_missing' then
+      drop trigger workspaces_initialize_cloud_workspace_master_state
+        on public.workspaces;
+    when 'workspace_master_nonlegacy_state' then
+      insert into public.workspaces (id, name)
+      values (fixture_workspace_id, 'Catalog regression master state');
+      update public.cloud_workspace_master_states
+      set status = 'ready'
+      where workspace_id = fixture_workspace_id;
+    when 'workspace_master_generation_trigger_missing' then
+      drop trigger workspace_master_band_members_advance_workspace_generation
+        on public.workspace_master_band_members;
+    when 'workspace_master_rls_disabled' then
+      alter table public.workspace_master_bands disable row level security;
+    when 'workspace_master_authenticated_table_write' then
+      grant update on table public.workspace_master_members to authenticated;
     when 'profiles_missing' then
       alter table public.profiles rename to catalog_regression_profiles;
     when 'profiles_column_missing' then

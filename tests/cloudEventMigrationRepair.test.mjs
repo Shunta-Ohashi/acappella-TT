@@ -21,6 +21,7 @@ const LATER_VERSIONS = {
   authorizedSave: '20261008150000',
   rpcOnlySave: '20261008160000',
   workspaceGeneration: '20261008170000',
+  workspaceMasterFoundation: '20261012100000',
 }
 
 const createInspection = ({
@@ -88,10 +89,26 @@ const createInspection = ({
       anonColumnWrite: false,
       publicTableWrite: false,
       publicColumnWrite: false,
+      workspaceMasterTables: applied.has(LATER_VERSIONS.workspaceMasterFoundation),
+      workspaceMasterConstraints: applied.has(LATER_VERSIONS.workspaceMasterFoundation),
+      workspaceMasterStateInitializer:
+        applied.has(LATER_VERSIONS.workspaceMasterFoundation),
+      workspaceMasterGenerationTriggers:
+        applied.has(LATER_VERSIONS.workspaceMasterFoundation),
+      workspaceMasterRowLevelSecurity:
+        applied.has(LATER_VERSIONS.workspaceMasterFoundation),
+      workspaceMasterPrivileges:
+        applied.has(LATER_VERSIONS.workspaceMasterFoundation),
     },
     cloudData: {
       rowCount: cloudEventsExists ? 1 : 0,
       digest: cloudEventsExists ? 'fixture-digest' : 'absent',
+    },
+    workspaceMasterData: {
+      rowCount: applied.has(LATER_VERSIONS.workspaceMasterFoundation) ? 1 : 0,
+      digest: applied.has(LATER_VERSIONS.workspaceMasterFoundation)
+        ? 'fixture-master-digest'
+        : 'absent',
     },
     ...overrides,
   }
@@ -243,6 +260,35 @@ test('Auth / Workspaceの既知catalog契約は1項目でも不一致ならunkno
     assert.equal(result.kind, 'unknown', check)
     assert.match(result.mismatches.join('\n'), new RegExp(check), check)
   }
+})
+
+test('Workspace master foundationの既知catalog契約はhistoryと一致しなければunknownになる', () => {
+  for (const check of [
+    'workspaceMasterTables',
+    'workspaceMasterConstraints',
+    'workspaceMasterStateInitializer',
+    'workspaceMasterGenerationTriggers',
+    'workspaceMasterRowLevelSecurity',
+    'workspaceMasterPrivileges',
+  ]) {
+    const inspection = createInspection({
+      versions: createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION),
+    })
+    inspection.laterSchema[check] = false
+    const result = analyzeCloudEventMigrationInspection(inspection)
+    assert.equal(result.kind, 'unknown', check)
+    assert.match(result.mismatches.join('\n'), new RegExp(check), check)
+  }
+
+  const prematureCatalog = createInspection({
+    versions: createKnownVersions(OLD_CLOUD_EVENT_MIGRATION_VERSION)
+      .filter(version => version !== LATER_VERSIONS.workspaceMasterFoundation),
+  })
+  prematureCatalog.laterSchema.workspaceMasterTables = true
+  assert.equal(
+    analyzeCloudEventMigrationInspection(prematureCatalog).kind,
+    'unknown',
+  )
 })
 
 test('Cloud Eventのbrowser/PUBLIC実効table・column権限とcatalog不明を個別に拒否する', () => {
@@ -574,6 +620,9 @@ test('各repair直前の再inspectionは初回mutation前のschema・data・hist
   const cases = [
     ['schema', inspection => { inspection.baseSchemaChecks.columns = false }],
     ['data', inspection => { inspection.cloudData.digest = 'changed-before-repair' }],
+    ['master data', inspection => {
+      inspection.workspaceMasterData.digest = 'changed-master-before-repair'
+    }],
     ['unknown history', inspection => {
       inspection.appliedVersions.push('20990101000000')
     }],
@@ -656,6 +705,9 @@ test('old-onlyの1回目後も2回目直前にschema/data/historyを再検査し
   const cases = [
     ['schema', inspection => { inspection.baseSchemaChecks.columns = false }],
     ['data', inspection => { inspection.cloudData.digest = 'changed-between-repairs' }],
+    ['master data', inspection => {
+      inspection.workspaceMasterData.digest = 'changed-master-between-repairs'
+    }],
     ['history', inspection => { inspection.appliedVersions.push('20990101000000') }],
   ]
   for (const [label, mutate] of cases) {
@@ -782,6 +834,11 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   assert.match(preflightSql, /supabase_migrations\.schema_migrations/i)
   assert.match(preflightSql, /cloud_events_snapshot_shape_check/i)
   assert.match(preflightSql, /cloud_data_digest/i)
+  assert.match(preflightSql, /workspace_master_data_digest/i)
+  assert.match(preflightSql,
+    /workspace_master_foundation_state_safe[\s\S]*status <> 'legacy'/i)
+  assert.match(preflightSql,
+    /to_jsonb\(workspace_master_band_members\)[\s\S]*order by kind, row_key/i)
   for (const check of REQUIRED_AUTH_WORKSPACE_SCHEMA_CHECKS) {
     assert.match(preflightSql, new RegExp(`'${check}'`), check)
   }
@@ -822,6 +879,26 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     "'check((role=any(array[''owner''::text,''editor''::text,''viewer''::text])))'",
   ))
   assert.doesNotMatch(authWorkspaceChecksSql, /guest/i)
+  const workspaceMasterConstraintsStart = preflightSql.indexOf(
+    "'workspaceMasterConstraints'",
+  )
+  const workspaceMasterConstraintsEnd = preflightSql.indexOf(
+    "\n    'workspaceMasterStateInitializer'",
+    workspaceMasterConstraintsStart,
+  )
+  assert.ok(
+    workspaceMasterConstraintsStart >= 0 &&
+      workspaceMasterConstraintsEnd > workspaceMasterConstraintsStart,
+  )
+  const workspaceMasterConstraintsSql = preflightSql.slice(
+    workspaceMasterConstraintsStart,
+    workspaceMasterConstraintsEnd,
+  )
+  assert.match(workspaceMasterConstraintsSql, /'check\("position">=0\)'/i)
+  assert.match(workspaceMasterConstraintsSql,
+    /'unique\(workspace_id,band_id,"position"\)'/i)
+  assert.match(workspaceMasterConstraintsSql,
+    /not convalidated or condeferrable or condeferred/i)
   assert.doesNotMatch(
     preflightSql,
     /aclexplode\s*\(\s*coalesce\(pg_attribute\.attacl,\s*'\{\}'::aclitem\[\]\s*\)/i,
@@ -907,6 +984,14 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'save_anon_inherited_execute',
     'save_authenticated_inherited_execute',
     'save_service_role_execute_missing',
+    'workspace_master_table_missing',
+    'workspace_master_constraint_missing',
+    'workspace_master_state_initializer_missing',
+    'workspace_master_nonlegacy_state',
+    'workspace_master_generation_trigger_missing',
+    'workspace_master_rls_disabled',
+    'workspace_master_authenticated_table_write',
+    'workspace_master_authenticated_inherited_write',
   ]) {
     assert.match(catalogRegressionSql, new RegExp(`'${scenario}'`), scenario)
     assert.match(catalogRegressionRunner, new RegExp(`'${scenario}'`), scenario)
@@ -955,6 +1040,20 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
       privilege,
     )
   }
+  for (const check of [
+    'workspaceMasterTables',
+    'workspaceMasterConstraints',
+    'workspaceMasterStateInitializer',
+    'workspaceMasterGenerationTriggers',
+    'workspaceMasterRowLevelSecurity',
+    'workspaceMasterPrivileges',
+  ]) {
+    assert.match(
+      baselineGuard,
+      new RegExp(`\\|\\|\\s*!baseline\\.laterSchema\\.${check}\\b`),
+      check,
+    )
+  }
   assert.match(catalogRegressionRunner, /--confirm-disposable/)
   assert.match(guide, /20261008110000[\s\S]*--status applied/)
   assert.match(guide, /20261007120000[\s\S]*--status reverted/)
@@ -968,8 +1067,8 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   assert.match(guide, /Expected the inherited DELETE privilege guard to reject the cutover/i)
   assert.match(guide, /where version = '20261008130000'/i)
   assert.match(guide, /where version = '20261008160000'/i)
-  assert.match(guide, /ports `54322`, `54422`, or\s+`54522`/i)
-  assert.match(guide, /All eight repository migrations have one explicit `BEGIN` \/ `COMMIT` boundary/i)
+  assert.match(guide, /ports `54322`, `54422`,\s+`54522`, or `54622`/i)
+  assert.match(guide, /All nine repository migrations have one explicit `BEGIN` \/ `COMMIT` boundary/i)
   assert.match(guide,
     /migration-history write is a separate runner responsibility[\s\S]*PostgreSQL catalog[\s\S]*supabase_migrations\.schema_migrations/i)
   const fullTransactionExercise = guide.slice(

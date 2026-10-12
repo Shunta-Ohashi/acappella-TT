@@ -7,6 +7,10 @@
 \set cloud_events_exists false
 \set cloud_row_count 0
 \set cloud_data_digest 'absent'
+\set workspace_master_tables_exist false
+\set workspace_master_foundation_state_safe false
+\set workspace_master_row_count 0
+\set workspace_master_data_digest 'absent'
 
 select (to_regclass('supabase_migrations.schema_migrations') is not null)::text
   as history_table_exists
@@ -31,6 +35,68 @@ select
     ''
   )) as cloud_data_digest
 from public.cloud_events
+\gset
+\endif
+
+select (
+  to_regclass('public.cloud_workspace_master_states') is not null
+  and to_regclass('public.workspace_master_members') is not null
+  and to_regclass('public.workspace_master_bands') is not null
+  and to_regclass('public.workspace_master_band_members') is not null
+  and to_regclass('public.cloud_event_member_references') is not null
+  and to_regclass('public.cloud_event_band_references') is not null
+)::text as workspace_master_tables_exist
+\gset
+
+\if :workspace_master_tables_exist
+select (
+  not exists (
+    select 1
+    from public.workspaces
+    left join public.cloud_workspace_master_states
+      on cloud_workspace_master_states.workspace_id = workspaces.id
+    where cloud_workspace_master_states.workspace_id is null
+  )
+  and not exists (
+    select 1 from public.cloud_workspace_master_states
+    where status <> 'legacy'
+  )
+)::text as workspace_master_foundation_state_safe
+\gset
+
+with master_rows as (
+  select 'state'::text as kind, array[workspace_id::text] as row_key,
+    to_jsonb(cloud_workspace_master_states)::text as payload
+  from public.cloud_workspace_master_states
+  union all
+  select 'member', array[workspace_id::text, member_id],
+    to_jsonb(workspace_master_members)::text
+  from public.workspace_master_members
+  union all
+  select 'band', array[workspace_id::text, band_id],
+    to_jsonb(workspace_master_bands)::text
+  from public.workspace_master_bands
+  union all
+  select 'band-member', array[workspace_id::text, band_id, member_id],
+    to_jsonb(workspace_master_band_members)::text
+  from public.workspace_master_band_members
+  union all
+  select 'event-member-reference', array[workspace_id::text, event_id, member_id],
+    to_jsonb(cloud_event_member_references)::text
+  from public.cloud_event_member_references
+  union all
+  select 'event-band-reference', array[workspace_id::text, event_id, band_id],
+    to_jsonb(cloud_event_band_references)::text
+  from public.cloud_event_band_references
+)
+select
+  count(*)::text as workspace_master_row_count,
+  md5(coalesce(
+    string_agg(md5(kind || ':' || to_jsonb(row_key)::text || ':' || payload), ''
+      order by kind, row_key),
+    ''
+  )) as workspace_master_data_digest
+from master_rows
 \gset
 \endif
 
@@ -127,6 +193,51 @@ workspace_generation_table as (
   where pg_namespace.nspname = 'public'
     and pg_class.relname = 'cloud_event_workspace_generations'
     and pg_class.relkind = 'r'
+),
+workspace_master_tables as (
+  select pg_class.relname, pg_class.oid, pg_class.relacl,
+    pg_class.relowner, pg_class.relrowsecurity
+  from pg_catalog.pg_class
+  join pg_catalog.pg_namespace on pg_namespace.oid = pg_class.relnamespace
+  where pg_namespace.nspname = 'public'
+    and pg_class.relname in (
+      'cloud_workspace_master_states',
+      'workspace_master_members',
+      'workspace_master_bands',
+      'workspace_master_band_members',
+      'cloud_event_member_references',
+      'cloud_event_band_references'
+    )
+    and pg_class.relkind = 'r'
+),
+initialize_master_state_function as (
+  select pg_proc.oid, pg_proc.prosecdef, pg_proc.prosrc
+  from pg_catalog.pg_proc
+  where pg_proc.oid = to_regprocedure(
+    'public.initialize_cloud_workspace_master_state()'
+  )
+),
+guard_master_delete_function as (
+  select pg_proc.oid, pg_proc.prosecdef, pg_proc.prosrc
+  from pg_catalog.pg_proc
+  where pg_proc.oid = to_regprocedure(
+    'public.guard_workspace_master_delete_until_ready()'
+  )
+),
+workspace_master_internal_functions as (
+  select pg_proc.oid, pg_proc.proacl, pg_proc.proowner
+  from pg_catalog.pg_proc
+  where pg_proc.oid in (
+    to_regprocedure('public.initialize_cloud_workspace_master_state()'),
+    to_regprocedure('public.initialize_workspace_master_record_metadata()'),
+    to_regprocedure(
+      'public.protect_workspace_master_member_identity_and_revision()'
+    ),
+    to_regprocedure(
+      'public.protect_workspace_master_band_identity_and_revision()'
+    ),
+    to_regprocedure('public.guard_workspace_master_delete_until_ready()')
+  )
 ),
 authenticated_role as (
   select oid from pg_catalog.pg_roles where rolname = 'authenticated'
@@ -899,6 +1010,493 @@ later_schema as (
         and lower(generation_page_function.prosrc)
           like '%''workspace_generation'', workspace_generation::text%'
     ),
+    'workspaceMasterTables',
+      (select count(*) = 6 from workspace_master_tables)
+      and (
+        select count(*) = 4 and bool_and(case column_name
+          when 'workspace_id' then udt_name = 'uuid' and is_nullable = 'NO'
+          when 'status' then udt_name = 'text' and is_nullable = 'NO'
+            and column_default like '%legacy%'
+          when 'created_at' then udt_name = 'timestamptz'
+            and is_nullable = 'NO' and column_default = 'now()'
+          when 'updated_at' then udt_name = 'timestamptz'
+            and is_nullable = 'NO' and column_default = 'now()'
+          else false end)
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'cloud_workspace_master_states'
+      )
+      and (
+        select count(*) = 10 and bool_and(case column_name
+          when 'workspace_id' then udt_name = 'uuid' and is_nullable = 'NO'
+          when 'member_id' then udt_name = 'text' and is_nullable = 'NO'
+          when 'real_name' then udt_name = 'text' and is_nullable = 'NO'
+          when 'aca_name' then udt_name = 'text' and is_nullable = 'YES'
+          when 'entry_academic_year' then udt_name = 'int4'
+            and is_nullable = 'YES'
+          when 'notes' then udt_name = 'text' and is_nullable = 'YES'
+          when 'active' then udt_name = 'bool' and is_nullable = 'NO'
+          when 'revision' then udt_name = 'int8' and is_nullable = 'NO'
+            and column_default like '%1%'
+          when 'created_at' then udt_name = 'timestamptz'
+            and is_nullable = 'NO' and column_default = 'now()'
+          when 'updated_at' then udt_name = 'timestamptz'
+            and is_nullable = 'NO' and column_default = 'now()'
+          else false end)
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'workspace_master_members'
+      )
+      and (
+        select count(*) = 8 and bool_and(case column_name
+          when 'workspace_id' then udt_name = 'uuid' and is_nullable = 'NO'
+          when 'band_id' then udt_name = 'text' and is_nullable = 'NO'
+          when 'name' then udt_name = 'text' and is_nullable = 'NO'
+          when 'notes' then udt_name = 'text' and is_nullable = 'YES'
+          when 'active' then udt_name = 'bool' and is_nullable = 'NO'
+          when 'revision' then udt_name = 'int8' and is_nullable = 'NO'
+            and column_default like '%1%'
+          when 'created_at' then udt_name = 'timestamptz'
+            and is_nullable = 'NO' and column_default = 'now()'
+          when 'updated_at' then udt_name = 'timestamptz'
+            and is_nullable = 'NO' and column_default = 'now()'
+          else false end)
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'workspace_master_bands'
+      )
+      and (
+        select count(*) = 4 and bool_and(case column_name
+          when 'workspace_id' then udt_name = 'uuid' and is_nullable = 'NO'
+          when 'band_id' then udt_name = 'text' and is_nullable = 'NO'
+          when 'member_id' then udt_name = 'text' and is_nullable = 'NO'
+          when 'position' then udt_name = 'int4' and is_nullable = 'NO'
+          else false end)
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'workspace_master_band_members'
+      )
+      and (
+        select count(*) = 3 and bool_and(case column_name
+          when 'workspace_id' then udt_name = 'uuid' and is_nullable = 'NO'
+          when 'event_id' then udt_name = 'text' and is_nullable = 'NO'
+          when 'member_id' then udt_name = 'text' and is_nullable = 'NO'
+          else false end)
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'cloud_event_member_references'
+      )
+      and (
+        select count(*) = 3 and bool_and(case column_name
+          when 'workspace_id' then udt_name = 'uuid' and is_nullable = 'NO'
+          when 'event_id' then udt_name = 'text' and is_nullable = 'NO'
+          when 'band_id' then udt_name = 'text' and is_nullable = 'NO'
+          else false end)
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'cloud_event_band_references'
+      ),
+    'workspaceMasterConstraints',
+      (select count(*) = 6
+        from pg_catalog.pg_constraint
+        where conrelid in (
+            to_regclass('public.cloud_workspace_master_states'),
+            to_regclass('public.workspace_master_members'),
+            to_regclass('public.workspace_master_bands'),
+            to_regclass('public.workspace_master_band_members'),
+            to_regclass('public.cloud_event_member_references'),
+            to_regclass('public.cloud_event_band_references')
+          )
+          and contype = 'p')
+      and not exists (
+        select 1
+        from pg_catalog.pg_constraint
+        where conrelid in (
+            to_regclass('public.cloud_workspace_master_states'),
+            to_regclass('public.workspace_master_members'),
+            to_regclass('public.workspace_master_bands'),
+            to_regclass('public.workspace_master_band_members'),
+            to_regclass('public.cloud_event_member_references'),
+            to_regclass('public.cloud_event_band_references')
+          )
+          and contype in ('p', 'u', 'f', 'c')
+          and (not convalidated or condeferrable or condeferred)
+      )
+      and not exists (
+        select 1
+        from (values
+          ('cloud_workspace_master_states', 'primarykey(workspace_id)'),
+          ('workspace_master_members', 'primarykey(workspace_id,member_id)'),
+          ('workspace_master_bands', 'primarykey(workspace_id,band_id)'),
+          ('workspace_master_band_members',
+            'primarykey(workspace_id,band_id,member_id)'),
+          ('cloud_event_member_references',
+            'primarykey(workspace_id,event_id,member_id)'),
+          ('cloud_event_band_references',
+            'primarykey(workspace_id,event_id,band_id)')
+        ) as expected_primary_key(table_name, definition)
+        where not exists (
+          select 1 from pg_catalog.pg_constraint
+          where conrelid = to_regclass(format(
+              'public.%I', expected_primary_key.table_name
+            ))
+            and contype = 'p'
+            and regexp_replace(
+              lower(pg_get_constraintdef(oid, true)), '\s+', '', 'g'
+            ) = expected_primary_key.definition
+        )
+      )
+      and exists (
+        select 1 from pg_catalog.pg_constraint
+        where conrelid = to_regclass('public.cloud_workspace_master_states')
+          and contype = 'c'
+          and regexp_replace(
+            lower(pg_get_constraintdef(oid, true)), '\s+', '', 'g'
+          ) in (
+            'check(status=any(array[''legacy''::text,''conflict''::text,''ready''::text]))',
+            'check((status=any(array[''legacy''::text,''conflict''::text,''ready''::text])))'
+          )
+      )
+      and (
+        select count(*) = 3
+        from pg_catalog.pg_constraint
+        where conrelid in (
+            to_regclass('public.cloud_workspace_master_states'),
+            to_regclass('public.workspace_master_members'),
+            to_regclass('public.workspace_master_bands')
+          )
+          and contype = 'f'
+          and confrelid = to_regclass('public.workspaces')
+          and confdeltype = 'c'
+      )
+      and not exists (
+        select 1
+        from (values
+          ('cloud_workspace_master_states'),
+          ('workspace_master_members'),
+          ('workspace_master_bands')
+        ) as expected_workspace_foreign_key(table_name)
+        where not exists (
+          select 1 from pg_catalog.pg_constraint
+          where conrelid = to_regclass(format(
+              'public.%I', expected_workspace_foreign_key.table_name
+            ))
+            and contype = 'f'
+            and confrelid = to_regclass('public.workspaces')
+            and confdeltype = 'c'
+            and regexp_replace(
+              lower(pg_get_constraintdef(oid, true)), '\s+', '', 'g'
+            ) like 'foreignkey(workspace_id)references%workspaces(id)%'
+        )
+      )
+      and exists (
+        select 1 from pg_catalog.pg_constraint
+        where conrelid = to_regclass('public.workspace_master_members')
+          and contype = 'c'
+          and regexp_replace(
+            lower(pg_get_constraintdef(oid, true)), '\s+', '', 'g'
+          ) like '%btrim(member_id)<>%'
+      )
+      and exists (
+        select 1 from pg_catalog.pg_constraint
+        where conrelid = to_regclass('public.workspace_master_members')
+          and contype = 'c'
+          and regexp_replace(
+            lower(pg_get_constraintdef(oid, true)), '\s+', '', 'g'
+          ) like '%btrim(real_name)<>%'
+      )
+      and exists (
+        select 1 from pg_catalog.pg_constraint
+        where conrelid = to_regclass('public.workspace_master_members')
+          and contype = 'c'
+          and regexp_replace(
+            lower(pg_get_constraintdef(oid, true)), '\s+', '', 'g'
+          ) like '%entry_academic_year>0%'
+      )
+      and exists (
+        select 1 from pg_catalog.pg_constraint
+        where conrelid = to_regclass('public.workspace_master_members')
+          and contype = 'c'
+          and regexp_replace(
+            lower(pg_get_constraintdef(oid, true)), '\s+', '', 'g'
+          ) like '%revision>0%'
+      )
+      and exists (
+        select 1 from pg_catalog.pg_constraint
+        where conrelid = to_regclass('public.workspace_master_bands')
+          and contype = 'c'
+          and regexp_replace(
+            lower(pg_get_constraintdef(oid, true)), '\s+', '', 'g'
+          ) like '%btrim(band_id)<>%'
+      )
+      and exists (
+        select 1 from pg_catalog.pg_constraint
+        where conrelid = to_regclass('public.workspace_master_bands')
+          and contype = 'c'
+          and regexp_replace(
+            lower(pg_get_constraintdef(oid, true)), '\s+', '', 'g'
+          ) like '%btrim(name)<>%'
+      )
+      and exists (
+        select 1 from pg_catalog.pg_constraint
+        where conrelid = to_regclass('public.workspace_master_bands')
+          and contype = 'c'
+          and regexp_replace(
+            lower(pg_get_constraintdef(oid, true)), '\s+', '', 'g'
+          ) like '%revision>0%'
+      )
+      and exists (
+        select 1 from pg_catalog.pg_constraint
+        where conrelid = to_regclass('public.workspace_master_band_members')
+          and contype = 'c'
+          and regexp_replace(
+            lower(pg_get_constraintdef(oid, true)), '\s+', '', 'g'
+          ) in (
+            'check(position>=0)',
+            'check((position>=0))',
+            'check("position">=0)',
+            'check(("position">=0))'
+          )
+      )
+      and exists (
+        select 1 from pg_catalog.pg_constraint
+        where conrelid = to_regclass('public.workspace_master_band_members')
+          and contype = 'u'
+          and regexp_replace(
+            lower(pg_get_constraintdef(oid, true)), '\s+', '', 'g'
+          ) in (
+            'unique(workspace_id,band_id,position)',
+            'unique(workspace_id,band_id,"position")'
+          )
+      )
+      and exists (
+        select 1 from pg_catalog.pg_constraint
+        where conrelid = to_regclass('public.workspace_master_band_members')
+          and contype = 'f'
+          and confrelid = to_regclass('public.workspace_master_bands')
+          and confdeltype = 'c'
+          and regexp_replace(
+            lower(pg_get_constraintdef(oid, true)), '\s+', '', 'g'
+          ) like 'foreignkey(workspace_id,band_id)references%workspace_master_bands(workspace_id,band_id)%'
+      )
+      and exists (
+        select 1 from pg_catalog.pg_constraint
+        where conrelid = to_regclass('public.workspace_master_band_members')
+          and contype = 'f'
+          and confrelid = to_regclass('public.workspace_master_members')
+          and confdeltype = 'r'
+          and regexp_replace(
+            lower(pg_get_constraintdef(oid, true)), '\s+', '', 'g'
+          ) like 'foreignkey(workspace_id,member_id)references%workspace_master_members(workspace_id,member_id)%'
+      )
+      and exists (
+        select 1 from pg_catalog.pg_constraint
+        where conrelid = to_regclass('public.cloud_event_member_references')
+          and contype = 'f'
+          and confrelid = to_regclass('public.cloud_events')
+          and confdeltype = 'c'
+          and regexp_replace(
+            lower(pg_get_constraintdef(oid, true)), '\s+', '', 'g'
+          ) like 'foreignkey(workspace_id,event_id)references%cloud_events(workspace_id,event_id)%'
+      )
+      and exists (
+        select 1 from pg_catalog.pg_constraint
+        where conrelid = to_regclass('public.cloud_event_member_references')
+          and contype = 'f'
+          and confrelid = to_regclass('public.workspace_master_members')
+          and confdeltype = 'r'
+          and regexp_replace(
+            lower(pg_get_constraintdef(oid, true)), '\s+', '', 'g'
+          ) like 'foreignkey(workspace_id,member_id)references%workspace_master_members(workspace_id,member_id)%'
+      )
+      and exists (
+        select 1 from pg_catalog.pg_constraint
+        where conrelid = to_regclass('public.cloud_event_band_references')
+          and contype = 'f'
+          and confrelid = to_regclass('public.cloud_events')
+          and confdeltype = 'c'
+          and regexp_replace(
+            lower(pg_get_constraintdef(oid, true)), '\s+', '', 'g'
+          ) like 'foreignkey(workspace_id,event_id)references%cloud_events(workspace_id,event_id)%'
+      )
+      and exists (
+        select 1 from pg_catalog.pg_constraint
+        where conrelid = to_regclass('public.cloud_event_band_references')
+          and contype = 'f'
+          and confrelid = to_regclass('public.workspace_master_bands')
+          and confdeltype = 'r'
+          and regexp_replace(
+            lower(pg_get_constraintdef(oid, true)), '\s+', '', 'g'
+          ) like 'foreignkey(workspace_id,band_id)references%workspace_master_bands(workspace_id,band_id)%'
+      ),
+    'workspaceMasterStateInitializer',
+      :'workspace_master_foundation_state_safe'::boolean
+      and exists (
+        select 1 from initialize_master_state_function
+        where initialize_master_state_function.prosecdef
+          and lower(initialize_master_state_function.prosrc)
+            like '%insert into public.cloud_workspace_master_states%'
+          and lower(initialize_master_state_function.prosrc)
+            like '%values (new.id, ''legacy'')%'
+      )
+      and exists (
+        select 1 from pg_catalog.pg_trigger
+        join initialize_master_state_function
+          on initialize_master_state_function.oid = pg_trigger.tgfoid
+        where pg_trigger.tgrelid = to_regclass('public.workspaces')
+          and pg_trigger.tgname =
+            'workspaces_initialize_cloud_workspace_master_state'
+          and not pg_trigger.tgisinternal
+          and pg_trigger.tgenabled = 'O'
+      )
+      and exists (
+        select 1 from guard_master_delete_function
+        where guard_master_delete_function.prosecdef
+          and lower(guard_master_delete_function.prosrc)
+            like '%status = ''ready''%'
+          and lower(guard_master_delete_function.prosrc)
+            like '%errcode = ''55000''%'
+      )
+      and (
+        select count(*) = 2
+        from pg_catalog.pg_trigger
+        join guard_master_delete_function
+          on guard_master_delete_function.oid = pg_trigger.tgfoid
+        where pg_trigger.tgrelid in (
+            to_regclass('public.workspace_master_members'),
+            to_regclass('public.workspace_master_bands')
+          )
+          and not pg_trigger.tgisinternal
+          and pg_trigger.tgenabled = 'O'
+      ),
+    'workspaceMasterGenerationTriggers', (
+      select count(*) = 4
+      from pg_catalog.pg_trigger
+      join advance_generation_function
+        on advance_generation_function.oid = pg_trigger.tgfoid
+      where pg_trigger.tgrelid in (
+          to_regclass('public.workspace_master_members'),
+          to_regclass('public.workspace_master_bands'),
+          to_regclass('public.workspace_master_band_members'),
+          to_regclass('public.cloud_workspace_master_states')
+        )
+        and not pg_trigger.tgisinternal
+        and pg_trigger.tgenabled = 'O'
+        and (
+          (
+            pg_trigger.tgrelid = to_regclass(
+              'public.cloud_workspace_master_states'
+            )
+            and lower(pg_get_triggerdef(pg_trigger.oid, true))
+              like '%after update%'
+          ) or (
+            pg_trigger.tgrelid <> to_regclass(
+              'public.cloud_workspace_master_states'
+            )
+            and lower(pg_get_triggerdef(pg_trigger.oid, true))
+              like '%after insert or delete or update%'
+          )
+        )
+    ),
+    'workspaceMasterRowLevelSecurity',
+      (select count(*) = 6 and bool_and(relrowsecurity)
+        from workspace_master_tables)
+      and not exists (
+        select 1 from pg_catalog.pg_policy
+        join workspace_master_tables
+          on workspace_master_tables.oid = pg_policy.polrelid
+      ),
+    'workspaceMasterPrivileges',
+      (select count(*) = 6 from workspace_master_tables)
+      and (select count(*) = 5 from workspace_master_internal_functions)
+      and (select count(*) = 1 from authenticated_role)
+      and (select count(*) = 1 from anon_role)
+      and (select count(*) = 1 from service_role)
+      and not exists (
+        select 1
+        from workspace_master_tables
+        cross join (
+          select authenticated_role.oid from authenticated_role
+          union all select anon_role.oid from anon_role
+          union all select service_role.oid from service_role
+        ) as direct_role
+        cross join (values
+          ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'),
+          ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')
+        ) as privileges(privilege_name)
+        where has_table_privilege(
+          direct_role.oid,
+          workspace_master_tables.oid,
+          privileges.privilege_name
+        )
+      )
+      and not exists (
+        select 1
+        from workspace_master_tables
+        join pg_catalog.pg_attribute
+          on pg_attribute.attrelid = workspace_master_tables.oid
+        cross join (
+          select authenticated_role.oid from authenticated_role
+          union all select anon_role.oid from anon_role
+          union all select service_role.oid from service_role
+        ) as direct_role
+        cross join (values
+          ('SELECT'), ('INSERT'), ('UPDATE'), ('REFERENCES')
+        ) as privileges(privilege_name)
+        where pg_attribute.attnum > 0 and not pg_attribute.attisdropped
+          and has_column_privilege(
+            direct_role.oid,
+            workspace_master_tables.oid,
+            pg_attribute.attnum,
+            privileges.privilege_name
+          )
+      )
+      and not exists (
+        select 1
+        from workspace_master_tables
+        cross join lateral pg_catalog.aclexplode(coalesce(
+          workspace_master_tables.relacl,
+          pg_catalog.acldefault('r', workspace_master_tables.relowner)
+        )) as table_acl
+        where table_acl.grantee = 0
+      )
+      and not exists (
+        select 1
+        from workspace_master_tables
+        join pg_catalog.pg_attribute
+          on pg_attribute.attrelid = workspace_master_tables.oid
+        cross join lateral pg_catalog.aclexplode(pg_attribute.attacl)
+          as column_acl
+        where pg_attribute.attnum > 0 and not pg_attribute.attisdropped
+          and pg_attribute.attacl is not null
+          and column_acl.grantee = 0
+      )
+      and not exists (
+        select 1
+        from workspace_master_internal_functions
+        cross join (
+          select authenticated_role.oid from authenticated_role
+          union all select anon_role.oid from anon_role
+          union all select service_role.oid from service_role
+        ) as direct_role
+        where has_function_privilege(
+          direct_role.oid,
+          workspace_master_internal_functions.oid,
+          'EXECUTE'
+        )
+      )
+      and not exists (
+        select 1
+        from workspace_master_internal_functions
+        cross join lateral pg_catalog.aclexplode(coalesce(
+          workspace_master_internal_functions.proacl,
+          pg_catalog.acldefault(
+            'f', workspace_master_internal_functions.proowner
+          )
+        )) as function_acl
+        where function_acl.grantee = 0
+          and function_acl.privilege_type = 'EXECUTE'
+      ),
     'authorizedSaveFunction', exists (
       select 1 from authorized_save_function
       where lower(prosrc) like '%from public.workspace_members%'
@@ -1038,6 +1636,10 @@ select jsonb_build_object(
   'cloudData', jsonb_build_object(
     'rowCount', :'cloud_row_count'::bigint,
     'digest', :'cloud_data_digest'
+  ),
+  'workspaceMasterData', jsonb_build_object(
+    'rowCount', :'workspace_master_row_count'::bigint,
+    'digest', :'workspace_master_data_digest'
   )
 )::text
 from auth_workspace_checks cross join base_checks cross join later_schema;

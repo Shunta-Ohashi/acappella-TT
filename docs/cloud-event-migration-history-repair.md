@@ -74,11 +74,15 @@ The catalog check covers:
 - later delete/page/save functions, the `COLLATE "C"` page index, and the
   Workspace generation table/functions/triggers used to reject mixed-version
   pagination;
+- the additive Workspace master foundation tables, same-Workspace composite
+  references, legacy-state initializer/delete guard, generation triggers, RLS,
+  and absence of direct/effective table, column, or internal-function access;
 - each authorization RPC's SECURITY DEFINER mode and effective EXECUTE
   contract (authenticated only for delete/page, service role only for save,
   with no access for the other client/backend roles or PUBLIC);
-- complete row count and a deterministic digest including snapshot, revision,
-  and timestamps.
+- complete Cloud Event row count/digest plus a separate deterministic digest
+  of all normalized Workspace master/state/reference rows, so history repair
+  stops if either data set changes between inspections.
 
 The final old migration immediately before rename is byte-identical to the new
 base file. Earlier development revisions had a weaker snapshot CHECK. Therefore
@@ -188,7 +192,7 @@ GRANTs, unsafe role memberships or custom roles, and unsafe function default
 privileges, then rerun the migration; migrations do not alter shared custom
 roles automatically.
 
-All eight repository migrations have one explicit `BEGIN` / `COMMIT` boundary.
+All nine repository migrations have one explicit `BEGIN` / `COMMIT` boundary.
 A failure rolls back the DDL, DML, and ACL changes made by that migration. The
 Supabase CLI migration-history write is a separate runner responsibility, so a
 failed run must still be checked in both the PostgreSQL catalog and
@@ -197,8 +201,8 @@ failed run must still be checked in both the PostgreSQL catalog and
 Already-recorded migration versions are not rerun when these files change. Do
 not manually rerun a successfully applied migration on an existing environment.
 The rollback exercises below require a brand-new disposable database and must
-never target the retained browser-test databases on ports `54322`, `54422`, or
-`54522`.
+never target the retained browser-test databases on ports `54322`, `54422`,
+`54522`, or `54622`.
 
 ### Full migration transaction rollback exercise
 
@@ -219,6 +223,9 @@ sentinel and the migration-history row are absent. Suggested sentinels are:
 - `20261008140000`: both
   `to_regclass('public.cloud_events_workspace_event_id_c_idx') is null` and
   `to_regprocedure('public.load_cloud_events_page_authorized(uuid,text,integer)') is null`
+- `20261012100000`:
+  `to_regclass('public.workspace_master_members') is null` and
+  `to_regclass('public.cloud_workspace_master_states') is null`
 
 Use the target version in the following history check and require `false`:
 
@@ -249,7 +256,7 @@ $cutoverDbUrl = $env:ACAPPELLA_TT_CUTOVER_ROLLBACK_DB_URL
 if ([string]::IsNullOrWhiteSpace($cutoverDbUrl)) {
   throw 'Set ACAPPELLA_TT_CUTOVER_ROLLBACK_DB_URL to a new disposable database.'
 }
-if ($cutoverDbUrl -match '(127\.0\.0\.1|localhost):(54322|54422|54522)(/|$)') {
+if ($cutoverDbUrl -match '(127\.0\.0\.1|localhost):(54322|54422|54522|54622)(/|$)') {
   throw 'Refusing to use the retained dbtest, freshcheck, or cutovercheck database.'
 }
 ```
@@ -428,6 +435,7 @@ version as applied. This temporary file is needed only to manufacture an
    - `20261008150000_cloud_event_authorized_save.sql`
    - `20261008160000_cloud_event_rpc_only_save.sql`
    - `20261008170000_cloud_event_workspace_generation.sql`
+   - `20261012100000_cloud_workspace_master_foundation.sql`
 
 The temporary old migration is exclusively an artificial disposable-exercise
 fixture. Never create it during production or staging repair, never commit or

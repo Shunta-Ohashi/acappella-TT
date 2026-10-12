@@ -372,6 +372,99 @@ $$;
 rollback;
 
 truncate page_generation_probe;
+begin;
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-0000-0000-000000000021',
+  true
+);
+do $$
+declare
+  result jsonb;
+begin
+  result := public.load_cloud_events_page_authorized(
+    '30000000-0000-0000-0000-000000000001', null, 1, null
+  );
+  insert into page_generation_probe (generation)
+  values (result ->> 'workspace_generation');
+end
+$$;
+reset role;
+do $send_master_generation_insert$
+begin
+  if extensions.dblink_send_query(
+    'page_membership_change',
+    $remote$
+      insert into public.workspace_master_members (
+        workspace_id, member_id, real_name, active
+      ) values (
+        '30000000-0000-0000-0000-000000000001',
+        'page-race-master-member',
+        'Page Race Master Member',
+        true
+      )
+    $remote$
+  ) <> 1 then
+    raise exception 'could not send asynchronous Workspace master INSERT';
+  end if;
+end
+$send_master_generation_insert$;
+do $$
+declare
+  attempt integer;
+  lock_wait_observed boolean := false;
+begin
+  for attempt in 1..200 loop
+    select exists (
+      select 1 from pg_stat_activity
+      where application_name = 'cloud-event-page-generation-change'
+        and wait_event_type = 'Lock'
+    ) into lock_wait_observed;
+    exit when lock_wait_observed;
+    perform pg_sleep(0.01);
+  end loop;
+  if not lock_wait_observed then
+    raise exception 'Workspace master INSERT did not wait for page generation lock';
+  end if;
+end
+$$;
+commit;
+select * from extensions.dblink_get_result('page_membership_change') as result(status text);
+do $drain_master_generation_insert$
+declare
+  remaining_result_count bigint;
+begin
+  select count(*) into remaining_result_count
+  from extensions.dblink_get_result('page_membership_change') as result(status text);
+  if remaining_result_count <> 0 then
+    raise exception 'Workspace master INSERT returned an unexpected trailing result';
+  end if;
+end
+$drain_master_generation_insert$;
+begin;
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-0000-0000-000000000021',
+  true
+);
+do $$
+begin
+  begin
+    perform public.load_cloud_events_page_authorized(
+      '30000000-0000-0000-0000-000000000001', null, 1,
+      (select generation from page_generation_probe limit 1)
+    );
+    raise exception 'stale generation after Workspace master INSERT unexpectedly succeeded';
+  exception when sqlstate '40001' then
+    null;
+  end;
+end
+$$;
+rollback;
+
+truncate page_generation_probe;
 select extensions.dblink_exec(
   'page_membership_change',
   'set application_name = ''cloud-event-page-membership-change'''

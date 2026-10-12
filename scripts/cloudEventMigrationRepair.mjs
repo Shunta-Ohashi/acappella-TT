@@ -14,6 +14,7 @@ const LATER_MIGRATIONS = {
   authorizedSave: '20261008150000',
   rpcOnlySave: '20261008160000',
   workspaceGeneration: '20261008170000',
+  workspaceMasterFoundation: '20261012100000',
 }
 
 const LATER_MIGRATION_VERSIONS = Object.values(LATER_MIGRATIONS)
@@ -107,6 +108,12 @@ export const REQUIRED_LATER_SCHEMA_CHECKS = [
   'anonColumnWrite',
   'publicTableWrite',
   'publicColumnWrite',
+  'workspaceMasterTables',
+  'workspaceMasterConstraints',
+  'workspaceMasterStateInitializer',
+  'workspaceMasterGenerationTriggers',
+  'workspaceMasterRowLevelSecurity',
+  'workspaceMasterPrivileges',
 ]
 
 const isRecord = value =>
@@ -137,7 +144,11 @@ const isInspection = value =>
   isRecord(value.cloudData) &&
   Number.isSafeInteger(value.cloudData.rowCount) &&
   value.cloudData.rowCount >= 0 &&
-  typeof value.cloudData.digest === 'string'
+  typeof value.cloudData.digest === 'string' &&
+  isRecord(value.workspaceMasterData) &&
+  Number.isSafeInteger(value.workspaceMasterData.rowCount) &&
+  value.workspaceMasterData.rowCount >= 0 &&
+  typeof value.workspaceMasterData.digest === 'string'
 
 const compareExpected = (mismatches, actual, expected, label) => {
   if (actual !== expected) {
@@ -306,6 +317,21 @@ export const analyzeCloudEventMigrationInspection = inspection => {
         `${check}/history`,
       )
     }
+    for (const check of [
+      'workspaceMasterTables',
+      'workspaceMasterConstraints',
+      'workspaceMasterStateInitializer',
+      'workspaceMasterGenerationTriggers',
+      'workspaceMasterRowLevelSecurity',
+      'workspaceMasterPrivileges',
+    ]) {
+      compareExpected(
+        mismatches,
+        inspection.laterSchema[check],
+        laterApplied.workspaceMasterFoundation,
+        `${check}/history`,
+      )
+    }
     compareExpected(
       mismatches,
       inspection.laterSchema.authorizedSaveFunction,
@@ -452,7 +478,9 @@ const sameNonHistoryState = (before, after) =>
   before.cloudEventsExists === after.cloudEventsExists &&
   JSON.stringify(before.baseSchemaChecks) === JSON.stringify(after.baseSchemaChecks) &&
   JSON.stringify(before.laterSchema) === JSON.stringify(after.laterSchema) &&
-  JSON.stringify(before.cloudData) === JSON.stringify(after.cloudData)
+  JSON.stringify(before.cloudData) === JSON.stringify(after.cloudData) &&
+  JSON.stringify(before.workspaceMasterData) ===
+    JSON.stringify(after.workspaceMasterData)
 
 const sameMigrationHistory = (expected, actual) =>
   expected.historyTableExists === actual.historyTableExists &&

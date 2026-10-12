@@ -4042,7 +4042,7 @@ test('migration実ファイルはAuth→Cloud Event→RPC/権限変更の依存�
   ))).filter(name => name.endsWith('.sql')).sort()
   const versions = migrations.map(name => name.split('_', 1)[0])
 
-  assert.equal(migrations.length, 8)
+  assert.equal(migrations.length, 9)
   assert.equal(new Set(versions).size, versions.length)
   assert.ok(migrations.indexOf('20261007_auth_workspace.sql') <
     migrations.indexOf('20261008110000_cloud_event_persistence.sql'))
@@ -4054,6 +4054,8 @@ test('migration実ファイルはAuth→Cloud Event→RPC/権限変更の依存�
     migrations.indexOf('20261008160000_cloud_event_rpc_only_save.sql'))
   assert.ok(migrations.indexOf('20261008160000_cloud_event_rpc_only_save.sql') <
     migrations.indexOf('20261008170000_cloud_event_workspace_generation.sql'))
+  assert.ok(migrations.indexOf('20261008170000_cloud_event_workspace_generation.sql') <
+    migrations.indexOf('20261012100000_cloud_workspace_master_foundation.sql'))
   assert.equal(migrations.includes('20261007120000_cloud_event_persistence.sql'), false)
 
   for (const migration of migrations) {
@@ -4342,6 +4344,89 @@ test('Workspace generation migrationはmutationとpage snapshotを同じ世代�
     /expectedGeneration !== null[\s\S]*page\.generation !== expectedGeneration/)
 })
 
+test('Workspace master foundationは正規化schemaをadditiveかつ非公開で追加する', async () => {
+  const sql = await readFile(new URL(
+    '../supabase/migrations/20261012100000_cloud_workspace_master_foundation.sql',
+    import.meta.url,
+  ), 'utf8')
+  const executableSql = sql.replace(/^\s*--.*$/gmu, '').trim()
+
+  assert.match(executableSql, /^begin;\s*create table public\.cloud_workspace_master_states/i)
+  assert.match(executableSql, /commit;$/i)
+  assert.equal(executableSql.match(/\bbegin;/giu)?.length, 1)
+  assert.equal(executableSql.match(/\bcommit;/giu)?.length, 1)
+
+  for (const table of [
+    'cloud_workspace_master_states',
+    'workspace_master_members',
+    'workspace_master_bands',
+    'workspace_master_band_members',
+    'cloud_event_member_references',
+    'cloud_event_band_references',
+  ]) {
+    assert.match(sql, new RegExp(`create table public\\.${table}\\b`, 'i'), table)
+    assert.match(
+      sql,
+      new RegExp(`alter table public\\.${table} enable row level security`, 'i'),
+      table,
+    )
+    assert.match(
+      sql,
+      new RegExp(`revoke all on table public\\.${table}[\\s\\S]*from public, anon, authenticated, service_role`, 'i'),
+      table,
+    )
+  }
+  assert.match(sql,
+    /after update on public\.cloud_workspace_master_states[\s\S]*advance_cloud_event_workspace_generation/i)
+
+  assert.match(sql,
+    /status text not null default 'legacy'[\s\S]*status in \('legacy', 'conflict', 'ready'\)/i)
+  assert.match(sql,
+    /lock table public\.workspaces in share row exclusive mode[\s\S]*insert into public\.cloud_workspace_master_states[\s\S]*select workspaces\.id from public\.workspaces[\s\S]*workspaces_initialize_cloud_workspace_master_state/i)
+  assert.match(sql, /values \(new\.id, 'legacy'\)/i)
+
+  assert.match(sql,
+    /workspace_master_members[\s\S]*primary key \(workspace_id, member_id\)/i)
+  assert.match(sql,
+    /workspace_master_bands[\s\S]*primary key \(workspace_id, band_id\)/i)
+  assert.match(sql,
+    /workspace_master_band_members[\s\S]*position integer not null check \(position >= 0\)[\s\S]*unique \(workspace_id, band_id, position\)/i)
+  assert.match(sql,
+    /foreign key \(workspace_id, band_id\)[\s\S]*references public\.workspace_master_bands\(workspace_id, band_id\)[\s\S]*on delete cascade/i)
+  assert.match(sql,
+    /foreign key \(workspace_id, member_id\)[\s\S]*references public\.workspace_master_members\(workspace_id, member_id\)[\s\S]*on delete restrict/i)
+  assert.match(sql,
+    /cloud_event_member_references[\s\S]*foreign key \(workspace_id, event_id\)[\s\S]*references public\.cloud_events\(workspace_id, event_id\)[\s\S]*on delete cascade/i)
+  assert.match(sql,
+    /cloud_event_band_references[\s\S]*foreign key \(workspace_id, band_id\)[\s\S]*references public\.workspace_master_bands\(workspace_id, band_id\)[\s\S]*on delete restrict/i)
+
+  assert.match(sql,
+    /guard_workspace_master_delete_until_ready[\s\S]*status = 'ready'[\s\S]*errcode = '55000'/i)
+  for (const table of [
+    'workspace_master_members',
+    'workspace_master_bands',
+    'workspace_master_band_members',
+  ]) {
+    assert.match(
+      sql,
+      new RegExp(`after insert or update or delete on public\\.${table}[\\s\\S]*advance_cloud_event_workspace_generation`, 'i'),
+      table,
+    )
+  }
+  assert.match(sql,
+    /foreach role_name in array array\['anon', 'authenticated', 'service_role'\][\s\S]*has_table_privilege[\s\S]*errcode = '42501'/i)
+  assert.match(sql, /has_any_column_privilege[\s\S]*SELECT,INSERT,UPDATE,REFERENCES/i)
+  assert.match(sql,
+    /has_function_privilege\(role_name, function_oid, 'EXECUTE'\)/i)
+
+  assert.doesNotMatch(sql, /create (?:or replace )?function public\.(?:load|save|delete)_/i)
+  assert.doesNotMatch(sql, /grant (?:select|insert|update|delete|execute)/i)
+  assert.doesNotMatch(sql, /create policy/i)
+  assert.doesNotMatch(sql, /alter table public\.cloud_events\b/i)
+  assert.doesNotMatch(sql, /update public\.cloud_events\b/i)
+  assert.doesNotMatch(sql, /event_snapshot\s*=/i)
+})
+
 test('upgrade migrationは直接DELETEを取り消し継承実効権限をfail closedにする', async () => {
   const sql = await readFile(new URL(
     '../supabase/migrations/20261008130000_cloud_event_rpc_only_delete.sql',
@@ -4382,6 +4467,10 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   ), 'utf8')
   const pageConcurrencySql = await readFile(new URL(
     '../supabase/tests/cloud_event_authorized_page_concurrency.sql',
+    import.meta.url,
+  ), 'utf8')
+  const masterFoundationSql = await readFile(new URL(
+    '../supabase/tests/cloud_workspace_master_foundation.sql',
     import.meta.url,
   ), 'utf8')
   const instructions = await readFile(new URL(
@@ -4451,7 +4540,7 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   assert.match(concurrencySql, /membership DELETE did not wait/i)
   assert.match(concurrencySql, /RPC succeeded after committed downgrade/i)
   assert.match(pageConcurrencySql, /extensions\.dblink_send_query/i)
-  assertAsyncQueriesAreFullyDrained(pageConcurrencySql, 4)
+  assertAsyncQueriesAreFullyDrained(pageConcurrencySql, 5)
   assert.match(pageConcurrencySql,
     /create temporary table page_generation_probe[\s\S]*grant select, insert on table page_generation_probe to authenticated;[\s\S]*set local role authenticated/i)
   assert.doesNotMatch(pageConcurrencySql,
@@ -4462,6 +4551,10 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   assert.match(pageConcurrencySql, /Cloud Event UPDATE did not wait for page generation lock/i)
   assert.match(pageConcurrencySql, /Cloud Event INSERT did not wait for page generation lock/i)
   assert.match(pageConcurrencySql, /Cloud Event DELETE did not wait for page generation lock/i)
+  assert.match(pageConcurrencySql,
+    /Workspace master INSERT did not wait for page generation lock/i)
+  assert.match(pageConcurrencySql,
+    /stale generation after Workspace master INSERT unexpectedly succeeded/i)
   assert.match(pageConcurrencySql, /stale Workspace generation unexpectedly succeeded/i)
   assert.match(pageConcurrencySql, /revocation did not wait for page RPC FOR SHARE lock/i)
   assert.match(pageConcurrencySql, /page RPC succeeded after committed membership revocation/i)
@@ -4470,6 +4563,22 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   assert.match(instructions, /cloud_event_authorized_page_concurrency\.sql/i)
   assert.match(instructions, /ACAPPELLA_TT_DBLINK_DATABASE_URL/)
   assert.match(instructions, /host\.docker\.internal:54322/)
+  assert.match(masterFoundationSql, /^\\set ON_ERROR_STOP on/m)
+  assert.match(masterFoundationSql, /^begin;[\s\S]*rollback;$/m)
+  assert.match(masterFoundationSql, /Band Member order was not preserved/i)
+  assert.match(masterFoundationSql,
+    /'band-a',\s*'member-a4',\s*1\s*\);[\s\S]*exception when unique_violation/i)
+  assert.match(masterFoundationSql,
+    /'band-a',\s*'member-b',\s*3\s*\);[\s\S]*exception when foreign_key_violation/i)
+  assert.match(masterFoundationSql, /Cross-Workspace Band-to-Member reference/i)
+  assert.match(masterFoundationSql, /Cross-Workspace Event-to-Member reference/i)
+  assert.match(masterFoundationSql, /Legacy Workspace Member deletion was accepted/i)
+  assert.match(masterFoundationSql, /Referenced Workspace Band deletion was accepted/i)
+  assert.match(masterFoundationSql,
+    /Member, Band, and ordered relation mutations must advance generation/i)
+  assert.match(masterFoundationSql,
+    /foreach role_name in array array\['anon', 'authenticated', 'service_role'\]/i)
+  assert.match(instructions, /cloud_workspace_master_foundation\.sql/i)
   assert.match(instructions, /20261008110000_cloud_event_persistence\.sql/i)
   assert.match(instructions, /20261008150000_cloud_event_authorized_save\.sql/i)
   assert.match(instructions, /not a passing database test/i)
