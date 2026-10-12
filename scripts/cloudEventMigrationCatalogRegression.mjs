@@ -58,6 +58,12 @@ const scenarios = [
     !result.laterSchema.workspaceMasterConstraints],
   ['workspace_master_state_initializer_missing', result =>
     !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_cascade_trigger_missing', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_cascade_trigger_after', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_cascade_cleanup_incomplete', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
   ['workspace_master_initializer_after_update', result =>
     !result.laterSchema.workspaceMasterStateInitializer],
   ['workspace_master_initializer_statement_level', result =>

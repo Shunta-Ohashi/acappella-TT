@@ -224,6 +224,13 @@ guard_master_delete_function as (
     'public.guard_workspace_master_delete_until_ready()'
   )
 ),
+prepare_master_cascade_function as (
+  select pg_proc.oid, pg_proc.prosecdef, pg_proc.prosrc
+  from pg_catalog.pg_proc
+  where pg_proc.oid = to_regprocedure(
+    'public.prepare_workspace_master_cascade()'
+  )
+),
 workspace_master_internal_functions as (
   select pg_proc.oid, pg_proc.proacl, pg_proc.proowner
   from pg_catalog.pg_proc
@@ -239,6 +246,7 @@ workspace_master_internal_functions as (
     to_regprocedure(
       'public.protect_workspace_master_band_member_identity()'
     ),
+    to_regprocedure('public.prepare_workspace_master_cascade()'),
     to_regprocedure('public.guard_workspace_master_delete_until_ready()')
   )
 ),
@@ -1356,6 +1364,28 @@ later_schema as (
           and pg_trigger.tgtype = 5
       )
       and exists (
+        select 1 from prepare_master_cascade_function
+        where prepare_master_cascade_function.prosecdef
+          and lower(prepare_master_cascade_function.prosrc)
+            like '%cloud_workspace_master_states%for share%'
+          and lower(prepare_master_cascade_function.prosrc)
+            like '%delete from public.cloud_event_member_references%'
+          and lower(prepare_master_cascade_function.prosrc)
+            like '%delete from public.cloud_event_band_references%'
+          and lower(prepare_master_cascade_function.prosrc)
+            like '%delete from public.workspace_master_band_members%'
+      )
+      and (
+        select count(*) = 1 from pg_catalog.pg_trigger
+        join prepare_master_cascade_function
+          on prepare_master_cascade_function.oid = pg_trigger.tgfoid
+        where pg_trigger.tgrelid = to_regclass('public.workspaces')
+          and pg_trigger.tgname = 'workspaces_prepare_workspace_master_cascade'
+          and not pg_trigger.tgisinternal
+          and pg_trigger.tgenabled = 'O'
+          and pg_trigger.tgtype = 11
+      )
+      and exists (
         select 1 from guard_master_delete_function
         where guard_master_delete_function.prosecdef
           and lower(guard_master_delete_function.prosrc)
@@ -1617,7 +1647,7 @@ later_schema as (
       ),
     'workspaceMasterPrivileges',
       (select count(*) = 6 from workspace_master_tables)
-      and (select count(*) = 6 from workspace_master_internal_functions)
+      and (select count(*) = 7 from workspace_master_internal_functions)
       and (select count(*) = 1 from authenticated_role)
       and (select count(*) = 1 from anon_role)
       and (select count(*) = 1 from service_role)

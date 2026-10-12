@@ -902,6 +902,10 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     /'unique\(workspace_id,band_id,"position"\)'/i)
   assert.match(workspaceMasterConstraintsSql,
     /not convalidated or condeferrable or condeferred/i)
+  assert.equal(
+    (workspaceMasterConstraintsSql.match(/confdeltype\s*=\s*'r'/gi) ?? []).length,
+    3,
+  )
   const workspaceMasterStateInitializerStart = preflightSql.indexOf(
     "'workspaceMasterStateInitializer'",
   )
@@ -917,6 +921,12 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     workspaceMasterStateInitializerStart,
     workspaceMasterStateInitializerEnd,
   )
+  assert.match(workspaceMasterStateInitializerSql,
+    /prepare_master_cascade_function[\s\S]*prosecdef/i)
+  assert.match(workspaceMasterStateInitializerSql,
+    /cloud_event_member_references[\s\S]*cloud_event_band_references[\s\S]*workspace_master_band_members/i)
+  assert.match(workspaceMasterStateInitializerSql,
+    /workspaces_prepare_workspace_master_cascade[\s\S]*tgtype = 11/i)
   assert.match(workspaceMasterStateInitializerSql,
     /workspaces_initialize_cloud_workspace_master_state[\s\S]*tgtype = 5/i)
   assert.match(workspaceMasterStateInitializerSql,
@@ -1100,6 +1110,9 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'workspace_master_table_missing',
     'workspace_master_constraint_missing',
     'workspace_master_state_initializer_missing',
+    'workspace_master_cascade_trigger_missing',
+    'workspace_master_cascade_trigger_after',
+    'workspace_master_cascade_cleanup_incomplete',
     'workspace_master_initializer_after_update',
     'workspace_master_initializer_statement_level',
     'workspace_master_member_delete_guard_missing',
@@ -1129,7 +1142,7 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     catalogRegressionRunner.indexOf('const scenarios = ['),
     catalogRegressionRunner.indexOf('const parseArguments ='),
   )
-  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 77)
+  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 80)
   assert.match(catalogRegressionRunner,
     /JSON\.stringify\(\{ ok: true, scenarios: scenarios\.length \+ 1 \}\)/)
   for (const removedScenario of [

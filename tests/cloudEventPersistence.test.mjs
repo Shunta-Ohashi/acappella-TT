@@ -4398,11 +4398,17 @@ test('Workspace master foundationは正規化schemaをadditiveかつ非公開で
   assert.match(sql,
     /foreign key \(workspace_id, band_id\)[\s\S]*references public\.workspace_master_bands\(workspace_id, band_id\)[\s\S]*on delete cascade/i)
   assert.match(sql,
-    /foreign key \(workspace_id, member_id\)[\s\S]*references public\.workspace_master_members\(workspace_id, member_id\)[\s\S]*on delete restrict/i)
+    /workspace_master_band_members[\s\S]*foreign key \(workspace_id, member_id\)[\s\S]*references public\.workspace_master_members\(workspace_id, member_id\)[\s\S]*on delete restrict/i)
   assert.match(sql,
     /cloud_event_member_references[\s\S]*foreign key \(workspace_id, event_id\)[\s\S]*references public\.cloud_events\(workspace_id, event_id\)[\s\S]*on delete cascade/i)
   assert.match(sql,
+    /cloud_event_member_references[\s\S]*foreign key \(workspace_id, member_id\)[\s\S]*references public\.workspace_master_members\(workspace_id, member_id\)[\s\S]*on delete restrict/i)
+  assert.match(sql,
     /cloud_event_band_references[\s\S]*foreign key \(workspace_id, band_id\)[\s\S]*references public\.workspace_master_bands\(workspace_id, band_id\)[\s\S]*on delete restrict/i)
+  assert.match(sql,
+    /create function public\.prepare_workspace_master_cascade\(\)[\s\S]*security definer[\s\S]*for share[\s\S]*delete from public\.cloud_event_member_references[\s\S]*delete from public\.cloud_event_band_references[\s\S]*delete from public\.workspace_master_band_members/i)
+  assert.match(sql,
+    /create trigger workspaces_prepare_workspace_master_cascade[\s\S]*before delete on public\.workspaces[\s\S]*prepare_workspace_master_cascade/i)
 
   assert.match(sql,
     /guard_workspace_master_delete_until_ready[\s\S]*for share[\s\S]*master_status is distinct from 'ready'[\s\S]*errcode = '55000'/i)
@@ -4482,6 +4488,10 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   ), 'utf8')
   const masterFoundationSql = await readFile(new URL(
     '../supabase/tests/cloud_workspace_master_foundation.sql',
+    import.meta.url,
+  ), 'utf8')
+  const masterFoundationCascadeSql = await readFile(new URL(
+    '../supabase/tests/cloud_workspace_master_cascade.sql',
     import.meta.url,
   ), 'utf8')
   const masterFoundationConcurrencySql = await readFile(new URL(
@@ -4618,6 +4628,27 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   assert.match(masterFoundationSql,
     /foreach role_name in array array\['anon', 'authenticated', 'service_role'\]/i)
   assert.match(instructions, /cloud_workspace_master_foundation\.sql/i)
+  assert.match(instructions, /cloud_workspace_master_cascade\.sql/i)
+  for (const expectedCase of [
+    'Cascade A member only',
+    'Cascade B member and band',
+    'Cascade C multiple members',
+    'Cascade D shared member',
+    'Cascade E event references',
+    'Cascade F legacy',
+    'Cascade F ready',
+    'Cascade F conflict',
+  ]) {
+    assert.match(masterFoundationCascadeSql, new RegExp(expectedCase), expectedCase)
+  }
+  assert.match(masterFoundationCascadeSql,
+    /Band-referenced Workspace Member deletion was accepted[\s\S]*foreign_key_violation/i)
+  assert.match(masterFoundationCascadeSql,
+    /Event-referenced Workspace Member deletion was accepted[\s\S]*foreign_key_violation/i)
+  assert.match(masterFoundationCascadeSql,
+    /Referenced Workspace Band deletion was accepted[\s\S]*foreign_key_violation/i)
+  assert.match(masterFoundationCascadeSql,
+    /Workspace cascade left rows[\s\S]*rollback;/i)
   assert.match(instructions,
     /cloud_workspace_master_foundation_concurrency\.sql/i)
   assert.match(masterFoundationConcurrencySql, /wait_event_type = 'Lock'/i)

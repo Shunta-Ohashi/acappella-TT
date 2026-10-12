@@ -217,6 +217,41 @@ create trigger workspace_master_band_members_protect_identity
   before update on public.workspace_master_band_members
   for each row execute function public.protect_workspace_master_band_member_identity();
 
+-- PostgreSQL does not topologically order sibling FK cascades. Remove only
+-- Workspace-owned reference edges before the parent row starts cascading so
+-- RESTRICT continues to protect direct Master deletion without making parent
+-- Workspace deletion depend on internal constraint-trigger order.
+create function public.prepare_workspace_master_cascade()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  -- Keep the existing state-then-generation lock order: deleting Band-member
+  -- edges advances generation before the state row itself is cascaded away.
+  perform 1
+  from public.cloud_workspace_master_states
+  where cloud_workspace_master_states.workspace_id = old.id
+  for share;
+
+  delete from public.cloud_event_member_references
+  where cloud_event_member_references.workspace_id = old.id;
+  delete from public.cloud_event_band_references
+  where cloud_event_band_references.workspace_id = old.id;
+  delete from public.workspace_master_band_members
+  where workspace_master_band_members.workspace_id = old.id;
+  return old;
+end;
+$$;
+
+revoke all on function public.prepare_workspace_master_cascade()
+  from public, anon, authenticated, service_role;
+
+create trigger workspaces_prepare_workspace_master_cascade
+  before delete on public.workspaces
+  for each row execute function public.prepare_workspace_master_cascade();
+
 -- Existing Workspace snapshots have not been backfilled into the reference
 -- tables. Deleting normalized masters is therefore fail-closed until a later
 -- migration has made the Workspace ready. Parent Workspace cascades remain
@@ -406,6 +441,7 @@ begin
     'public.protect_workspace_master_member_identity_and_revision()',
     'public.protect_workspace_master_band_identity_and_revision()',
     'public.protect_workspace_master_band_member_identity()',
+    'public.prepare_workspace_master_cascade()',
     'public.guard_workspace_master_delete_until_ready()'
   ] loop
     function_oid := to_regprocedure(function_signature);

@@ -50,6 +50,8 @@ psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
 psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
   -f supabase/tests/cloud_workspace_master_foundation.sql
 psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
+  -f supabase/tests/cloud_workspace_master_cascade.sql
+psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
   -v "test_db_url=$env:ACAPPELLA_TT_DBLINK_DATABASE_URL" `
   -f supabase/tests/cloud_workspace_master_foundation_concurrency.sql
 node scripts/cloudEventMigrationCatalogRegression.mjs `
@@ -103,8 +105,13 @@ The Page concurrency test also performs an internal Workspace Member mutation
 to prove that the new master trigger waits on the same generation-row lock and
 invalidates a stale page generation. The Workspace-master foundation test
 checks ordered Band members, same-Workspace composite FKs, Event reference
-cascade/restrict behavior, legacy delete blocking, RLS/direct-ACL denial, and
-monotonic generation updates without exposing any production endpoint.
+cascade/direct-delete behavior, legacy delete blocking, RLS/direct-ACL denial,
+and monotonic generation updates without exposing any production endpoint. The
+focused Workspace-master cascade test covers member-only, Band relation,
+shared-Member, Event-reference, and legacy/ready/conflict Workspaces. It proves
+that a parent Workspace DELETE removes the whole graph in one statement while
+the same RESTRICT references still reject direct deletion of referenced Members
+and Bands; its fixtures stay inside one transaction and roll back.
 The Workspace-master concurrency test deterministically observes both lock
 orders between a direct Master DELETE and ready-to-conflict/legacy status
 changes. It verifies fail-closed status-first deletion, valid delete-first

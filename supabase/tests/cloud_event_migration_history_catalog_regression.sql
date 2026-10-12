@@ -207,6 +207,34 @@ begin
     when 'workspace_master_state_initializer_missing' then
       drop trigger workspaces_initialize_cloud_workspace_master_state
         on public.workspaces;
+    when 'workspace_master_cascade_trigger_missing' then
+      drop trigger workspaces_prepare_workspace_master_cascade
+        on public.workspaces;
+    when 'workspace_master_cascade_trigger_after' then
+      drop trigger workspaces_prepare_workspace_master_cascade
+        on public.workspaces;
+      create trigger workspaces_prepare_workspace_master_cascade
+        after delete on public.workspaces
+        for each row execute function public.prepare_workspace_master_cascade();
+    when 'workspace_master_cascade_cleanup_incomplete' then
+      create or replace function public.prepare_workspace_master_cascade()
+      returns trigger
+      language plpgsql
+      security definer
+      set search_path = ''
+      as $function$
+      begin
+        perform 1
+        from public.cloud_workspace_master_states
+        where cloud_workspace_master_states.workspace_id = old.id
+        for share;
+        delete from public.cloud_event_member_references
+        where cloud_event_member_references.workspace_id = old.id;
+        delete from public.cloud_event_band_references
+        where cloud_event_band_references.workspace_id = old.id;
+        return old;
+      end;
+      $function$;
     when 'workspace_master_initializer_after_update' then
       drop trigger workspaces_initialize_cloud_workspace_master_state
         on public.workspaces;
