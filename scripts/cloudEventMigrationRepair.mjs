@@ -15,6 +15,7 @@ const LATER_MIGRATIONS = {
   rpcOnlySave: '20261008160000',
   workspaceGeneration: '20261008170000',
   workspaceMasterFoundation: '20261012100000',
+  workspaceMasterContracts: '20261012110000',
 }
 
 const LATER_MIGRATION_VERSIONS = Object.values(LATER_MIGRATIONS)
@@ -115,6 +116,8 @@ export const REQUIRED_LATER_SCHEMA_CHECKS = [
   'workspaceMasterGenerationTriggers',
   'workspaceMasterRowLevelSecurity',
   'workspaceMasterPrivileges',
+  'workspaceMasterContractFunctions',
+  'workspaceMasterContractPrivileges',
 ]
 
 const isRecord = value =>
@@ -331,6 +334,17 @@ export const analyzeCloudEventMigrationInspection = inspection => {
         mismatches,
         inspection.laterSchema[check],
         laterApplied.workspaceMasterFoundation,
+        `${check}/history`,
+      )
+    }
+    for (const check of [
+      'workspaceMasterContractFunctions',
+      'workspaceMasterContractPrivileges',
+    ]) {
+      compareExpected(
+        mismatches,
+        inspection.laterSchema[check],
+        laterApplied.workspaceMasterContracts,
         `${check}/history`,
       )
     }

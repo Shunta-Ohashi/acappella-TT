@@ -21,6 +21,7 @@ Supabase Dashboardでprojectを作成します。frontendへ設定するのはPr
 7. `20261008160000_cloud_event_rpc_only_save.sql`
 8. `20261008170000_cloud_event_workspace_generation.sql`
 9. `20261012100000_cloud_workspace_master_foundation.sql`
+10. `20261012110000_cloud_workspace_master_contracts_v2.sql`
 
 8番目の`20261008170000_cloud_event_workspace_generation.sql`は、
 Workspaceごとの単調増加generationと変更triggerを追加し、
@@ -60,6 +61,24 @@ generationで変更検知できます。trigger更新はmaster DMLと同じtrans
 失敗時にはgenerationもrollbackされます。後続のowner/editor mutation RPCは既存
 Cloud Eventと同じくmembershipを`FOR SHARE`した後にmaster DMLを行うlock順序を
 維持する必要があります。migration自身はmaster mutationを実行しません。
+
+`...12110000`はready状態へ明示移行済みのWorkspaceだけを対象に、正規化
+Member/Bandのgeneration付きread RPCと、backend専用のrevision CAS mutation
+RPCを追加します。このmigrationも既存Workspaceを`ready`へ変更せず、rowのseed、
+reference backfill、Snapshot V1 rowのrewriteを行いません。read RPCは
+authenticatedなowner/editor/viewerのmembership、master state、Workspace
+generationを同一transactionで`FOR SHARE`し、全pageでexpected generationを照合
+します。mutation RPCは`service_role`だけが実行でき、transaction内でactorの
+owner/editor membershipと`ready`状態を再確認し、Member/Bandのrevision CASを行い
+ます。Band本体と順序付き`defaultMemberIds`は同じRPC transactionで更新され、
+順序だけの変更でもBand revisionが増えます。browserからmaster tableへの直接write
+は引き続き禁止です。
+
+`src/cloud/cloudEventSnapshot.ts`にはSnapshot V2のserializer/parserと明示的な
+V1/V2 dispatcherを追加していますが、現行Cloud Event repositoryは引き続きV1だけを
+保存・hydrateします。V2はEvent所有collectionとexactなMember/Band参照IDだけを持ち、
+master本体を複製しません。reference backfillとWorkspace ready切替が完了する後続PRまで、
+V2 Event DB保存とApp hydrate切替は有効化しません。
 
 ファイル名は通常の文字列順でもこの依存順になりますが、Supabase CLI等での適用済み判定はmigration historyに基づきます。旧開発名`20261007120000_cloud_event_persistence.sql`を適用済みの可能性がある環境では、rename後のbase migrationを再適用しないでください。対象判定・catalog照合・承認済みrepair・中断復帰・完了確認は、専用の[Cloud Event migration履歴移行runbook](./cloud-event-migration-history-repair.md)に従って通常のmigration適用より前に実施します。外部環境へpackage install / build / App起動から自動repairは行いません。
 
@@ -159,7 +178,24 @@ supabase functions serve save-cloud-event
 
 `...150000`はRPC作成・直接REVOKE・`service_role`へのGRANT後に、save RPCが`SECURITY DEFINER`であり、`service_role`だけが実効EXECUTEを持ち、`PUBLIC` / `anon` / `authenticated`が実行できないことを検査します。`...160000`もfinal cutover前に同じbackend-only EXECUTE contractを再検査し、さらにtable/columnへのdirect GRANTをREVOKEした後、`anon`と`authenticated`に継承経由の実効INSERT/UPDATE権限が残っていないことを検査します。`...160000`の全REVOKEと両guardは1つの明示transactionに含まれ、いずれかのguardが失敗した場合はtable/column権限変更もrollbackされ、migration historyへversionは記録されません。残存権限があればoperatorがinherited EXECUTE/WRITE GRANT、role membership、custom role、function default privilegesを修正してから同じmigrationを再実行してください。migrationは共有role membershipを自動変更しません。正常適用を確認するまで`...170000`や本番公開へ進まないでください。
 
-全9 migrationは、Supabase CLIがstatementごとに実行する環境でも部分適用を残さないよう、各file全体を1組の明示的な`BEGIN` / `COMMIT`で囲んでいます。後続statementやprivilege guardが失敗した場合、そのfile内のDDL・DML・ACL変更はまとめてrollbackされます。これはPostgreSQL schema transactionの保証であり、CLIによるmigration historyの記録処理そのものと同一の保証ではありません。失敗時はcatalogと`supabase_migrations.schema_migrations`の両方を確認し、対象versionが未記録であることを確認してから原因を解消して再実行してください。fresh適用は、共有・production DBではなく新しい使い捨てのSupabase互換DBだけを指定して、全migration chainを`supabase db push --db-url $env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL`で確認してください。既にmigration historyへ対象versionが記録されたDBではファイル編集による再実行は起きないため、正常適用済み環境へ手動で再適用しません。
+全10 migrationは、Supabase CLIがstatementごとに実行する環境でも部分適用を残さないよう、各file全体を1組の明示的な`BEGIN` / `COMMIT`で囲んでいます。後続statementやprivilege guardが失敗した場合、そのfile内のDDL・DML・ACL変更はまとめてrollbackされます。これはPostgreSQL schema transactionの保証であり、CLIによるmigration historyの記録処理そのものと同一の保証ではありません。失敗時はcatalogと`supabase_migrations.schema_migrations`の両方を確認し、対象versionが未記録であることを確認してから原因を解消して再実行してください。fresh適用は、共有・production DBではなく新しい使い捨てのSupabase互換DBだけを指定して、全migration chainを`supabase db push --db-url $env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL`で確認してください。既にmigration historyへ対象versionが記録されたDBではファイル編集による再実行は起きないため、正常適用済み環境へ手動で再適用しません。
+
+### Workspace Master mutation Function（段階2）
+
+`workspace-masters` Edge FunctionはMember/Band create/update/delete requestをruntime
+検証し、Bearer tokenを`auth.getUser(token)`で確認してから、service-role限定の
+`mutate_workspace_master_validated` RPCへactor IDを渡します。RPCもmembership、
+ready state、expected revisionを再検証します。Functionを配備してもlegacy/conflict
+WorkspaceはDBで拒否され、既存Appはこのendpointをまだ呼びません。
+
+```powershell
+deno check supabase/functions/workspace-masters/index.ts
+supabase functions serve workspace-masters
+```
+
+Functionには`save-cloud-event`と同じ3つのserver-side環境変数を設定し、JWT検証を
+無効化しません。Master backfill、reference index完成、ready切替、App hydrate切替は
+後続PRで原子的なmigration手順として実施します。
 
 ## 9. Security確認
 
@@ -169,14 +205,15 @@ supabase functions serve save-cloud-event
 - `anon`には3 tableへの権限を付与していません。
 - Workspaceとmembershipの変更はbrowser clientへ許可していません。
 - `cloud_events`のbrowser直接INSERT / UPDATE / DELETEは許可していません。
-- Workspace master foundationの6 tableはbrowser/backend roleへ直接公開せず、
-  完成していないread/mutation endpointも公開していません。
+- Workspace masterの6 tableはbrowser/backend roleへ直接公開しません。ready
+  Workspace向けread RPCだけをauthenticated memberへ、mutation RPCだけを
+  `service_role`へ公開します。legacy/conflict Workspaceはfail closedです。
 - 内部保存RPCは`service_role`だけが実行でき、保存transaction内でもactorのowner/editor membershipを`FOR SHARE`で再確認します。
 - データ保護はPublishable keyの秘匿ではなくRLSで行います。
 
 ## 10. 現在の制限
 
-Cloudへ保存したEvent snapshotはWorkspace内で共有できますが、Realtime、revision conflict / CAS、Presence、offline draft復元、Member/Bandの独立Cloud tableへの切替は後続実装です。正規化tableのadditive foundationは存在しますが、未backfillの`legacy`状態で非公開です。共有masterは引き続きEvent snapshotへ暫定的に複製し、snapshot間で矛盾した場合はsilent mergeせずWorkspace hydrateをfail closedします。
+Cloudへ保存したEvent snapshotはWorkspace内で共有できますが、Realtime、Cloud Eventのrevision conflict / CAS、Presence、offline draft復元、Member/Bandの独立Cloud tableへのApp切替は後続実装です。正規化tableとAPI契約は存在しますが、既存Workspaceは未backfillの`legacy`状態で、通常mutationと正式readを拒否します。共有masterは引き続きEvent snapshotへ暫定的に複製し、snapshot間で矛盾した場合はsilent mergeせずWorkspace hydrateをfail closedします。
 
 このfail-closedは、古いMember/Bandで新しい値を黙って上書きすることと、不整合時にlocal cacheを正式データとして表示・保存することを防ぎます。一方、Event A/Bが同じ共有masterを含む状態でmasterを編集し、片方だけをCloud保存すると、不整合なsnapshot集合自体は作成され得ます。新しいEventを初めてCloud保存する場合も、既存Event側のcopyが古ければ同様です。競合はWorkspaceのCloud rowsに保存されるため、保存した本人だけでなく、別のAuthユーザー、F5、logout後の再loginでも次回hydrateが`SHARED_MASTER_CONFLICT`で停止します。参照中Member/BandのHard Deleteはdomain guardで拒否され、参照されないmasterの追加・削除はsnapshot closureへ含まれないため、この競合原因にはなりません。
 

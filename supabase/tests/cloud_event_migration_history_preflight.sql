@@ -314,6 +314,42 @@ authorized_save_function as (
   where pg_proc.oid =
     to_regprocedure('public.save_cloud_event_validated(uuid,uuid,jsonb)')
 ),
+workspace_master_read_function as (
+  select
+    pg_proc.oid,
+    pg_proc.proacl,
+    pg_proc.proowner,
+    pg_proc.prosecdef,
+    pg_proc.prosrc,
+    pg_proc.proconfig,
+    pg_proc.provolatile,
+    pg_proc.prorettype,
+    pg_proc.pronargs,
+    pg_language.lanname
+  from pg_catalog.pg_proc
+  join pg_catalog.pg_language on pg_language.oid = pg_proc.prolang
+  where pg_proc.oid = to_regprocedure(
+    'public.load_workspace_masters_page_authorized(uuid,text,text,integer,text)'
+  )
+),
+workspace_master_mutation_function as (
+  select
+    pg_proc.oid,
+    pg_proc.proacl,
+    pg_proc.proowner,
+    pg_proc.prosecdef,
+    pg_proc.prosrc,
+    pg_proc.proconfig,
+    pg_proc.provolatile,
+    pg_proc.prorettype,
+    pg_proc.pronargs,
+    pg_language.lanname
+  from pg_catalog.pg_proc
+  join pg_catalog.pg_language on pg_language.oid = pg_proc.prolang
+  where pg_proc.oid = to_regprocedure(
+    'public.mutate_workspace_master_validated(uuid,uuid,text,text,jsonb,bigint)'
+  )
+),
 constraint_definitions as (
   select
     pg_constraint.contype,
@@ -1732,6 +1768,110 @@ later_schema as (
           pg_catalog.acldefault(
             'f', workspace_master_internal_functions.proowner
           )
+        )) as function_acl
+        where function_acl.grantee = 0
+          and function_acl.privilege_type = 'EXECUTE'
+      ),
+    'workspaceMasterContractFunctions',
+      (select count(*) = 1
+        and bool_and(
+          workspace_master_read_function.prosecdef
+          and workspace_master_read_function.provolatile = 'v'
+          and workspace_master_read_function.prorettype = 'jsonb'::regtype
+          and workspace_master_read_function.pronargs = 5
+          and workspace_master_read_function.lanname = 'plpgsql'
+          and array_to_string(workspace_master_read_function.proconfig, ',')
+            in ('search_path=""', 'search_path=')
+          and lower(workspace_master_read_function.prosrc)
+            like '%from public.workspace_members%'
+          and lower(workspace_master_read_function.prosrc) like '%for share%'
+          and lower(workspace_master_read_function.prosrc)
+            like '%cloud_workspace_master_states%'
+          and lower(workspace_master_read_function.prosrc)
+            like '%cloud_event_workspace_generations%'
+          and lower(workspace_master_read_function.prosrc)
+            like '%p_expected_generation%'
+          and lower(workspace_master_read_function.prosrc)
+            like '%workspace_master_members%'
+          and lower(workspace_master_read_function.prosrc)
+            like '%workspace_master_bands%'
+          and lower(workspace_master_read_function.prosrc)
+            like '%workspace_master_band_members%'
+        )
+        from workspace_master_read_function)
+      and (select count(*) = 1
+        and bool_and(
+          workspace_master_mutation_function.prosecdef
+          and workspace_master_mutation_function.provolatile = 'v'
+          and workspace_master_mutation_function.prorettype = 'jsonb'::regtype
+          and workspace_master_mutation_function.pronargs = 6
+          and workspace_master_mutation_function.lanname = 'plpgsql'
+          and array_to_string(workspace_master_mutation_function.proconfig, ',')
+            in ('search_path=""', 'search_path=')
+          and lower(workspace_master_mutation_function.prosrc)
+            like '%from public.workspace_members%'
+          and lower(workspace_master_mutation_function.prosrc) like '%for share%'
+          and lower(workspace_master_mutation_function.prosrc)
+            like '%master_status is distinct from ''ready''%'
+          and lower(workspace_master_mutation_function.prosrc)
+            like '%p_expected_revision%'
+          and lower(workspace_master_mutation_function.prosrc)
+            like '%for update%'
+          and lower(workspace_master_mutation_function.prosrc)
+            like '%insert into public.workspace_master_members%'
+          and lower(workspace_master_mutation_function.prosrc)
+            like '%update public.workspace_master_members%'
+          and lower(workspace_master_mutation_function.prosrc)
+            like '%delete from public.workspace_master_members%'
+          and lower(workspace_master_mutation_function.prosrc)
+            like '%insert into public.workspace_master_band_members%'
+        )
+        from workspace_master_mutation_function),
+    'workspaceMasterContractPrivileges',
+      (select count(*) = 1 from workspace_master_read_function)
+      and (select count(*) = 1 from workspace_master_mutation_function)
+      and (select count(*) = 1 from authenticated_role)
+      and (select count(*) = 1 from anon_role)
+      and (select count(*) = 1 from service_role)
+      and coalesce((select has_function_privilege(
+        authenticated_role.oid,
+        workspace_master_read_function.oid,
+        'EXECUTE'
+      ) from authenticated_role cross join workspace_master_read_function), false)
+      and not coalesce((select has_function_privilege(
+        anon_role.oid,
+        workspace_master_read_function.oid,
+        'EXECUTE'
+      ) from anon_role cross join workspace_master_read_function), false)
+      and not coalesce((select has_function_privilege(
+        service_role.oid,
+        workspace_master_read_function.oid,
+        'EXECUTE'
+      ) from service_role cross join workspace_master_read_function), false)
+      and coalesce((select has_function_privilege(
+        service_role.oid,
+        workspace_master_mutation_function.oid,
+        'EXECUTE'
+      ) from service_role cross join workspace_master_mutation_function), false)
+      and not coalesce((select has_function_privilege(
+        authenticated_role.oid,
+        workspace_master_mutation_function.oid,
+        'EXECUTE'
+      ) from authenticated_role cross join workspace_master_mutation_function), false)
+      and not coalesce((select has_function_privilege(
+        anon_role.oid,
+        workspace_master_mutation_function.oid,
+        'EXECUTE'
+      ) from anon_role cross join workspace_master_mutation_function), false)
+      and not exists (
+        select 1 from (
+          select oid, proacl, proowner from workspace_master_read_function
+          union all
+          select oid, proacl, proowner from workspace_master_mutation_function
+        ) as contract_function
+        cross join lateral pg_catalog.aclexplode(coalesce(
+          contract_function.proacl,
+          pg_catalog.acldefault('f', contract_function.proowner)
         )) as function_acl
         where function_acl.grantee = 0
           and function_acl.privilege_type = 'EXECUTE'

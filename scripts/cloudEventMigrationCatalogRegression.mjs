@@ -106,6 +106,18 @@ const scenarios = [
     !result.laterSchema.workspaceMasterPrivileges],
   ['workspace_master_authenticated_inherited_write', result =>
     !result.laterSchema.workspaceMasterPrivileges],
+  ['workspace_master_read_function_missing', result =>
+    !result.laterSchema.workspaceMasterContractFunctions],
+  ['workspace_master_mutation_function_missing', result =>
+    !result.laterSchema.workspaceMasterContractFunctions],
+  ['workspace_master_authenticated_mutation_execute', result =>
+    !result.laterSchema.workspaceMasterContractPrivileges],
+  ['workspace_master_authenticated_inherited_mutation_execute', result =>
+    !result.laterSchema.workspaceMasterContractPrivileges],
+  ['workspace_master_anon_read_execute', result =>
+    !result.laterSchema.workspaceMasterContractPrivileges],
+  ['workspace_master_public_read_execute', result =>
+    !result.laterSchema.workspaceMasterContractPrivileges],
   ['profiles_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_type', result => !result.authWorkspaceChecks.profilesColumns],
@@ -219,7 +231,9 @@ const main = async () => {
       !baseline.laterSchema.workspaceMasterMetadataTriggers ||
       !baseline.laterSchema.workspaceMasterGenerationTriggers ||
       !baseline.laterSchema.workspaceMasterRowLevelSecurity ||
-      !baseline.laterSchema.workspaceMasterPrivileges
+      !baseline.laterSchema.workspaceMasterPrivileges ||
+      !baseline.laterSchema.workspaceMasterContractFunctions ||
+      !baseline.laterSchema.workspaceMasterContractPrivileges
     ) {
       throw new Error('baseline: expected known safe catalog')
     }

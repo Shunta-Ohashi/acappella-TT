@@ -22,6 +22,7 @@ const LATER_VERSIONS = {
   rpcOnlySave: '20261008160000',
   workspaceGeneration: '20261008170000',
   workspaceMasterFoundation: '20261012100000',
+  workspaceMasterContracts: '20261012110000',
 }
 
 const createInspection = ({
@@ -101,6 +102,10 @@ const createInspection = ({
         applied.has(LATER_VERSIONS.workspaceMasterFoundation),
       workspaceMasterPrivileges:
         applied.has(LATER_VERSIONS.workspaceMasterFoundation),
+      workspaceMasterContractFunctions:
+        applied.has(LATER_VERSIONS.workspaceMasterContracts),
+      workspaceMasterContractPrivileges:
+        applied.has(LATER_VERSIONS.workspaceMasterContracts),
     },
     cloudData: {
       rowCount: cloudEventsExists ? 1 : 0,
@@ -292,6 +297,27 @@ test('Workspace master foundationの既知catalog契約はhistoryと一致しな
     analyzeCloudEventMigrationInspection(prematureCatalog).kind,
     'unknown',
   )
+})
+
+test('Workspace Master API契約はfunctionまたはACL不一致をfail closedする', () => {
+  const versions = createKnownVersions(NEW_CLOUD_EVENT_MIGRATION_VERSION)
+  for (const check of [
+    'workspaceMasterContractFunctions',
+    'workspaceMasterContractPrivileges',
+  ]) {
+    const inspection = createInspection({
+      versions,
+      overrides: {
+        laterSchema: {
+          ...createInspection({ versions }).laterSchema,
+          [check]: false,
+        },
+      },
+    })
+    const result = analyzeCloudEventMigrationInspection(inspection)
+    assert.equal(result.kind, 'unknown', check)
+    assert.match(result.mismatches.join('\n'), new RegExp(check, 'i'), check)
+  }
 })
 
 test('Cloud Eventのbrowser/PUBLIC実効table・column権限とcatalog不明を個別に拒否する', () => {
@@ -1134,6 +1160,12 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'workspace_master_rls_disabled',
     'workspace_master_authenticated_table_write',
     'workspace_master_authenticated_inherited_write',
+    'workspace_master_read_function_missing',
+    'workspace_master_mutation_function_missing',
+    'workspace_master_authenticated_mutation_execute',
+    'workspace_master_authenticated_inherited_mutation_execute',
+    'workspace_master_anon_read_execute',
+    'workspace_master_public_read_execute',
   ]) {
     assert.match(catalogRegressionSql, new RegExp(`'${scenario}'`), scenario)
     assert.match(catalogRegressionRunner, new RegExp(`'${scenario}'`), scenario)
@@ -1142,7 +1174,7 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     catalogRegressionRunner.indexOf('const scenarios = ['),
     catalogRegressionRunner.indexOf('const parseArguments ='),
   )
-  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 80)
+  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 86)
   assert.match(catalogRegressionRunner,
     /JSON\.stringify\(\{ ok: true, scenarios: scenarios\.length \+ 1 \}\)/)
   for (const removedScenario of [
@@ -1218,7 +1250,7 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   assert.match(guide, /where version = '20261008130000'/i)
   assert.match(guide, /where version = '20261008160000'/i)
   assert.match(guide, /ports `54322`, `54422`,\s+`54522`, or `54622`/i)
-  assert.match(guide, /All nine repository migrations have one explicit `BEGIN` \/ `COMMIT` boundary/i)
+  assert.match(guide, /All ten repository migrations have one explicit `BEGIN` \/ `COMMIT` boundary/i)
   assert.match(guide,
     /migration-history write is a separate runner responsibility[\s\S]*PostgreSQL catalog[\s\S]*supabase_migrations\.schema_migrations/i)
   const fullTransactionExercise = guide.slice(

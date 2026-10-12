@@ -15,9 +15,14 @@ import {
   type PersistedAppStateV5,
   type PersistedDomainState,
 } from '../persistence/localPersistence.ts'
-import { isRecord } from '../persistence/persistenceValidation.ts'
+import {
+  isBand,
+  isMember,
+  isRecord,
+} from '../persistence/persistenceValidation.ts'
 
 export const CLOUD_EVENT_SNAPSHOT_VERSION = 1 as const
+export const CLOUD_EVENT_SNAPSHOT_V2_VERSION = 2 as const
 export const CLOUD_EVENT_SNAPSHOT_FORMAT = 'acappella-tt-cloud-event' as const
 
 export interface CloudEventSnapshotV1 {
@@ -26,8 +31,32 @@ export interface CloudEventSnapshotV1 {
   appState: PersistedAppStateV5
 }
 
+export type CloudEventOwnedStateV2 = Pick<
+  PersistedAppStateV5,
+  'version' | EventOwnedCollectionKey
+>
+
+export interface CloudEventSnapshotV2 {
+  format: typeof CLOUD_EVENT_SNAPSHOT_FORMAT
+  version: typeof CLOUD_EVENT_SNAPSHOT_V2_VERSION
+  eventState: CloudEventOwnedStateV2
+  masterReferences: {
+    memberIds: string[]
+    bandIds: string[]
+  }
+}
+
+export type CloudEventSnapshot = CloudEventSnapshotV1 | CloudEventSnapshotV2
+
 export type CloudEventSnapshotResult =
   | { ok: true; snapshot: CloudEventSnapshotV1 }
+  | {
+      ok: false
+      reason: 'EVENT_NOT_FOUND' | 'EVENT_RELATIONSHIP_CONFLICT' | 'INVALID_SNAPSHOT'
+    }
+
+export type CloudEventSnapshotV2Result =
+  | { ok: true; snapshot: CloudEventSnapshotV2 }
   | {
       ok: false
       reason: 'EVENT_NOT_FOUND' | 'EVENT_RELATIONSHIP_CONFLICT' | 'INVALID_SNAPSHOT'
@@ -120,6 +149,35 @@ const collectReferencedMasterIds = (
   return { memberIds, bandIds }
 }
 
+const collectDirectReferencedMasterIds = (
+  eventState: Pick<
+    PersistedDomainState,
+    | 'eventMembers'
+    | 'eventBands'
+    | 'paAssignments'
+    | 'dutyAssignments'
+  >,
+): { memberIds: Set<string>; bandIds: Set<string> } => {
+  const memberIds = new Set<string>()
+  const bandIds = new Set<string>()
+
+  for (const eventMember of eventState.eventMembers) {
+    memberIds.add(eventMember.memberId)
+  }
+  for (const eventBand of eventState.eventBands) {
+    for (const memberId of eventBand.memberIds) memberIds.add(memberId)
+    if (eventBand.bandId) bandIds.add(eventBand.bandId)
+  }
+  for (const assignment of eventState.paAssignments) {
+    memberIds.add(assignment.memberId)
+  }
+  for (const assignment of eventState.dutyAssignments) {
+    memberIds.add(assignment.memberId)
+  }
+
+  return { memberIds, bandIds }
+}
+
 const hasExactReferencedMasters = (state: PersistedAppStateV5): boolean => {
   const referenced = collectReferencedMasterIds(state, state.bands)
   const includedMemberIds = new Set(state.members.map(member => member.id))
@@ -132,6 +190,10 @@ const hasExactReferencedMasters = (state: PersistedAppStateV5): boolean => {
 
 const hasUniqueIds = (items: readonly { id: string }[]): boolean =>
   new Set(items.map(item => item.id)).size === items.length
+
+const hasUniqueNonEmptyStrings = (items: readonly string[]): boolean =>
+  Array.from(items).every(item => typeof item === 'string' && item.trim().length > 0) &&
+  new Set(items).size === items.length
 
 const hasUniqueEventOwnedCollectionIds = (
   state: Pick<PersistedDomainState, EventOwnedCollectionKey>,
@@ -302,33 +364,9 @@ export const createCloudEventSnapshot = (
   state: PersistedDomainState,
   eventId: EventId,
 ): CloudEventSnapshotResult => {
-  const deletion = createEventDeletion(createDeletionInput(state, eventId))
-  if (!deletion.ok) return deletion
-
-  const eventState = {
-    events: selectRemovedRecords(state.events, deletion.events),
-    eventDays: selectRemovedRecords(state.eventDays, deletion.eventDays),
-    stages: selectRemovedRecords(state.stages, deletion.stages),
-    sections: selectRemovedRecords(state.sections, deletion.sections),
-    eventMembers: selectRemovedRecords(state.eventMembers, deletion.eventMembers),
-    eventMemberDays: selectRemovedRecords(
-      state.eventMemberDays,
-      deletion.eventMemberDays,
-    ),
-    eventBands: selectRemovedRecords(state.eventBands, deletion.eventBands),
-    scheduleItems: selectRemovedRecords(state.scheduleItems, deletion.scheduleItems),
-    paAssignments: selectRemovedRecords(state.paAssignments, deletion.paAssignments),
-    dutyTypes: selectRemovedRecords(state.dutyTypes, deletion.dutyTypes),
-    dutyAssignments: selectRemovedRecords(
-      state.dutyAssignments,
-      deletion.dutyAssignments,
-    ),
-    timetableLocks: selectRemovedRecords(state.timetableLocks, deletion.timetableLocks),
-    timetableOrderConstraints: selectRemovedRecords(
-      state.timetableOrderConstraints,
-      deletion.timetableOrderConstraints,
-    ),
-  }
+  const selected = createEventOwnedState(state, eventId)
+  if (!selected.ok) return selected
+  const eventState = selected.eventState
   const referenced = collectReferencedMasterIds(eventState, state.bands)
   const appState = createPersistedAppState({
     members: state.members.filter(member => referenced.memberIds.has(member.id)),
@@ -358,6 +396,127 @@ export const createCloudEventSnapshot = (
   }
 }
 
+const createEventOwnedState = (
+  state: PersistedDomainState,
+  eventId: EventId,
+): { ok: true; eventState: CloudEventOwnedStateV2 } | Exclude<
+  CloudEventSnapshotV2Result,
+  { ok: true }
+> => {
+  const deletion = createEventDeletion(createDeletionInput(state, eventId))
+  if (!deletion.ok) return deletion
+
+  return {
+    ok: true,
+    eventState: {
+      version: 5,
+      events: selectRemovedRecords(state.events, deletion.events),
+      eventDays: selectRemovedRecords(state.eventDays, deletion.eventDays),
+      stages: selectRemovedRecords(state.stages, deletion.stages),
+      sections: selectRemovedRecords(state.sections, deletion.sections),
+      eventMembers: selectRemovedRecords(state.eventMembers, deletion.eventMembers),
+      eventMemberDays: selectRemovedRecords(
+        state.eventMemberDays,
+        deletion.eventMemberDays,
+      ),
+      eventBands: selectRemovedRecords(state.eventBands, deletion.eventBands),
+      scheduleItems: selectRemovedRecords(state.scheduleItems, deletion.scheduleItems),
+      paAssignments: selectRemovedRecords(state.paAssignments, deletion.paAssignments),
+      dutyTypes: selectRemovedRecords(state.dutyTypes, deletion.dutyTypes),
+      dutyAssignments: selectRemovedRecords(
+        state.dutyAssignments,
+        deletion.dutyAssignments,
+      ),
+      timetableLocks: selectRemovedRecords(state.timetableLocks, deletion.timetableLocks),
+      timetableOrderConstraints: selectRemovedRecords(
+        state.timetableOrderConstraints,
+        deletion.timetableOrderConstraints,
+      ),
+    },
+  }
+}
+
+const createReferenceMember = (id: string): Member => ({
+  id,
+  realName: id,
+  active: true,
+})
+
+const createReferenceBand = (id: string): Band => ({
+  id,
+  name: id,
+  defaultMemberIds: [],
+  active: true,
+})
+
+const materializeV2ValidationState = (
+  snapshot: CloudEventSnapshotV2,
+): PersistedAppStateV5 => ({
+  ...snapshot.eventState,
+  members: snapshot.masterReferences.memberIds.map(createReferenceMember),
+  bands: snapshot.masterReferences.bandIds.map(createReferenceBand),
+})
+
+const hasCompleteV2DirectMasterReferences = (
+  state: CloudEventOwnedStateV2,
+  references: CloudEventSnapshotV2['masterReferences'],
+): boolean => {
+  if (
+    !hasUniqueNonEmptyStrings(references.memberIds) ||
+    !hasUniqueNonEmptyStrings(references.bandIds)
+  ) return false
+
+  const referenced = collectDirectReferencedMasterIds(state)
+  return referenced.memberIds.size <= references.memberIds.length &&
+    referenced.bandIds.size === references.bandIds.length &&
+    [...referenced.memberIds].every(memberId => references.memberIds.includes(memberId)) &&
+    references.bandIds.every(bandId => referenced.bandIds.has(bandId))
+}
+
+const validateCloudEventSnapshotV2 = (
+  snapshot: CloudEventSnapshotV2,
+): boolean => {
+  if (!hasCompleteV2DirectMasterReferences(
+    snapshot.eventState,
+    snapshot.masterReferences,
+  )) {
+    return false
+  }
+  const state = materializeV2ValidationState(snapshot)
+  return isPersistedAppStateV5(state) &&
+    hasUniqueEventOwnedCollectionIds(state) &&
+    hasOnlyOneEvent(state) &&
+    hasValidCloudEventIdentity(state) &&
+    hasValidCloudEventRelationships(state)
+}
+
+/**
+ * Builds the normalized-master Snapshot V2 contract without enabling it in
+ * the production Cloud Event save path. V2 stores only Event-owned data and
+ * the exact IDs of Workspace masters that data references.
+ */
+export const createCloudEventSnapshotV2 = (
+  state: PersistedDomainState,
+  eventId: EventId,
+): CloudEventSnapshotV2Result => {
+  const selected = createEventOwnedState(state, eventId)
+  if (!selected.ok) return selected
+
+  const referenced = collectReferencedMasterIds(selected.eventState, state.bands)
+  const snapshot: CloudEventSnapshotV2 = {
+    format: CLOUD_EVENT_SNAPSHOT_FORMAT,
+    version: CLOUD_EVENT_SNAPSHOT_V2_VERSION,
+    eventState: selected.eventState,
+    masterReferences: {
+      memberIds: [...referenced.memberIds].sort(),
+      bandIds: [...referenced.bandIds].sort(),
+    },
+  }
+  return validateCloudEventSnapshotV2(snapshot)
+    ? { ok: true, snapshot }
+    : { ok: false, reason: 'INVALID_SNAPSHOT' }
+}
+
 export const parseCloudEventSnapshot = (
   value: unknown,
 ): CloudEventSnapshotV1 | undefined => {
@@ -381,6 +540,76 @@ export const parseCloudEventSnapshot = (
     return undefined
   }
   return snapshot
+}
+
+export const parseCloudEventSnapshotV2 = (
+  value: unknown,
+): CloudEventSnapshotV2 | undefined => {
+  if (
+    !isRecord(value) ||
+    value.format !== CLOUD_EVENT_SNAPSHOT_FORMAT ||
+    value.version !== CLOUD_EVENT_SNAPSHOT_V2_VERSION ||
+    !isRecord(value.eventState) ||
+    !isRecord(value.masterReferences) ||
+    !Array.isArray(value.masterReferences.memberIds) ||
+    !Array.isArray(value.masterReferences.bandIds) ||
+    !Array.from(value.masterReferences.memberIds).every(item => typeof item === 'string') ||
+    !Array.from(value.masterReferences.bandIds).every(item => typeof item === 'string')
+  ) return undefined
+
+  const snapshot = value as unknown as CloudEventSnapshotV2
+  return validateCloudEventSnapshotV2(snapshot) ? snapshot : undefined
+}
+
+/** Explicit version dispatch for later V1/V2 hydrate integration. */
+export const parseCloudEventSnapshotEnvelope = (
+  value: unknown,
+): CloudEventSnapshot | undefined => {
+  if (!isRecord(value) || value.format !== CLOUD_EVENT_SNAPSHOT_FORMAT) {
+    return undefined
+  }
+  if (value.version === CLOUD_EVENT_SNAPSHOT_VERSION) {
+    return parseCloudEventSnapshot(value)
+  }
+  if (value.version === CLOUD_EVENT_SNAPSHOT_V2_VERSION) {
+    return parseCloudEventSnapshotV2(value)
+  }
+  return undefined
+}
+
+/**
+ * Resolves V2 references against one generation-consistent Workspace master
+ * read. Extra Workspace masters are allowed; every referenced master and each
+ * persisted Band member edge must resolve.
+ */
+export const hasResolvedCloudEventSnapshotV2Masters = (
+  snapshot: CloudEventSnapshotV2,
+  members: readonly Member[],
+  bands: readonly Band[],
+): boolean => {
+  if (
+    !parseCloudEventSnapshotV2(snapshot) ||
+    !members.every(isMember) ||
+    !bands.every(isBand) ||
+    !hasUniqueIds(members) ||
+    !hasUniqueIds(bands)
+  ) return false
+
+  const memberIds = new Set(members.map(member => member.id))
+  const bandById = new Map(bands.map(band => [band.id, band]))
+  if (
+    !snapshot.masterReferences.memberIds.every(memberId => memberIds.has(memberId)) ||
+    !snapshot.masterReferences.bandIds.every(bandId => bandById.has(bandId))
+  ) return false
+
+  const expected = collectDirectReferencedMasterIds(snapshot.eventState)
+  for (const bandId of snapshot.masterReferences.bandIds) {
+    const band = bandById.get(bandId)
+    if (!band) return false
+    for (const memberId of band.defaultMemberIds) expected.memberIds.add(memberId)
+  }
+  return expected.memberIds.size === snapshot.masterReferences.memberIds.length &&
+    snapshot.masterReferences.memberIds.every(memberId => expected.memberIds.has(memberId))
 }
 
 const mergeMasterRecords = <T extends Member | Band>(
