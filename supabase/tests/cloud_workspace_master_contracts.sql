@@ -35,6 +35,17 @@ update public.cloud_workspace_master_states
 set status = 'ready'
 where workspace_id = '71000000-0000-0000-0000-000000000001';
 
+-- This Member exists only in the other Workspace. It must not satisfy a Band
+-- relation in the ready Workspace under test.
+insert into public.workspace_master_members (
+  workspace_id, member_id, real_name, active
+) values (
+  '71000000-0000-0000-0000-000000000002',
+  'foreign-only-member',
+  'Foreign only',
+  true
+);
+
 do $$
 declare
   table_name text;
@@ -156,7 +167,7 @@ begin
       null
     );
     raise exception 'Band with an unknown Member was accepted';
-  exception when foreign_key_violation then null;
+  exception when sqlstate 'PMA01' then null;
   end;
   if exists (
     select 1 from public.workspace_master_bands
@@ -164,6 +175,38 @@ begin
       and band_id = 'missing-member-band'
   ) then
     raise exception 'Rejected Band relation left a partial Band row';
+  end if;
+  begin
+    perform public.mutate_workspace_master_validated(
+      '00000000-0000-0000-0000-000000000071',
+      '71000000-0000-0000-0000-000000000001',
+      'create', 'band',
+      '{"id":"foreign-member-band","name":"Foreign","defaultMemberIds":["foreign-only-member"],"active":true}'::jsonb,
+      null
+    );
+    raise exception 'Cross-Workspace Band Member reference was accepted';
+  exception when sqlstate 'PMA01' then null;
+  end;
+  begin
+    perform public.mutate_workspace_master_validated(
+      '00000000-0000-0000-0000-000000000071',
+      '71000000-0000-0000-0000-000000000001',
+      'update', 'band',
+      '{"id":"band-a","name":"Should Roll Back","defaultMemberIds":["unknown"],"active":true}'::jsonb,
+      2
+    );
+    raise exception 'Band update with an unknown Member was accepted';
+  exception when sqlstate 'PMA01' then null;
+  end;
+  if not exists (
+    select 1 from public.workspace_master_bands
+    where workspace_id = '71000000-0000-0000-0000-000000000001'
+      and band_id = 'band-a' and name = 'Alpha' and revision = 2
+  ) or (select array_agg(member_id order by position)
+        from public.workspace_master_band_members
+        where workspace_id = '71000000-0000-0000-0000-000000000001'
+          and band_id = 'band-a') <> array['member-a', 'member-b'] then
+    raise exception 'Rejected Band update left partial body or relation changes';
   end if;
   begin
     perform public.mutate_workspace_master_validated(
@@ -234,6 +277,40 @@ begin
   end;
 end;
 $$;
+
+-- A real FK reference remains a 23503 deletion conflict; it is intentionally
+-- distinct from the PMA01 input-reference error above.
+insert into public.cloud_events (
+  workspace_id, event_id, event_name, event_snapshot
+) values (
+  '71000000-0000-0000-0000-000000000001',
+  'master-contract-event',
+  'Master Contract Event',
+  '{"format":"acappella-tt-cloud-event","version":1,"appState":{"version":5,"events":[{"id":"master-contract-event","name":"Master Contract Event"}]}}'::jsonb
+);
+insert into public.cloud_event_band_references (
+  workspace_id, event_id, band_id
+) values (
+  '71000000-0000-0000-0000-000000000001',
+  'master-contract-event',
+  'band-a'
+);
+do $$
+begin
+  begin
+    perform public.mutate_workspace_master_validated(
+      '00000000-0000-0000-0000-000000000071',
+      '71000000-0000-0000-0000-000000000001',
+      'delete', 'band', '{"id":"band-a"}'::jsonb, 2
+    );
+    raise exception 'Referenced Band deletion was accepted';
+  exception when foreign_key_violation then null;
+  end;
+end;
+$$;
+delete from public.cloud_events
+where workspace_id = '71000000-0000-0000-0000-000000000001'
+  and event_id = 'master-contract-event';
 
 set local role authenticated;
 select set_config(

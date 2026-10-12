@@ -1825,6 +1825,8 @@ later_schema as (
             like '%delete from public.workspace_master_members%'
           and lower(workspace_master_mutation_function.prosrc)
             like '%insert into public.workspace_master_band_members%'
+          and lower(workspace_master_mutation_function.prosrc)
+            like '%errcode = ''pma01''%'
         )
         from workspace_master_mutation_function),
     'workspaceMasterContractPrivileges',

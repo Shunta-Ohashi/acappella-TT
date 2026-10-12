@@ -880,6 +880,10 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   assert.match(preflightSql, /authorized_delete_function\.prosecdef/i)
   assert.match(preflightSql, /authorized_page_function\.prosecdef/i)
   assert.match(preflightSql, /authorized_save_function\.prosecdef/i)
+  assert.match(
+    preflightSql,
+    /workspace_master_mutation_function\.prosrc[\s\S]*errcode = ''pma01''/i,
+  )
   assert.match(preflightSql, /aclexplode\s*\(coalesce\([\s\S]*acldefault\('f'/i)
   const authWorkspaceChecksStart = preflightSql.indexOf('auth_workspace_checks as (')
   const authWorkspaceChecksEnd = preflightSql.indexOf('\nbase_checks as (')

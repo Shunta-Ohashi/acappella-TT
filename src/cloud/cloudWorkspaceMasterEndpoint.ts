@@ -28,6 +28,7 @@ type EndpointErrorCode =
   | 'CONFIGURATION_ERROR'
   | 'INVALID_REQUEST'
   | 'INVALID_RESPONSE'
+  | 'MASTER_MEMBER_NOT_FOUND'
   | 'MASTER_NOT_FOUND'
   | 'MASTER_REFERENCED'
   | 'METHOD_NOT_ALLOWED'
@@ -72,13 +73,38 @@ const readRequestText = async (request: Request): Promise<string> => {
     declaredLength &&
     /^\d+$/u.test(declaredLength) &&
     Number(declaredLength) > CLOUD_WORKSPACE_MASTER_MAX_REQUEST_BYTES
-  ) throw new RequestBodyTooLargeError()
-
-  const text = await request.text()
-  if (new TextEncoder().encode(text).byteLength > CLOUD_WORKSPACE_MASTER_MAX_REQUEST_BYTES) {
+  ) {
+    if (request.body) await request.body.cancel().catch(() => undefined)
     throw new RequestBodyTooLargeError()
   }
-  return text
+
+  if (!request.body) return ''
+
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let byteLength = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      byteLength += value.byteLength
+      if (byteLength > CLOUD_WORKSPACE_MASTER_MAX_REQUEST_BYTES) {
+        await reader.cancel().catch(() => undefined)
+        throw new RequestBodyTooLargeError()
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  const body = new Uint8Array(byteLength)
+  let offset = 0
+  for (const chunk of chunks) {
+    body.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new TextDecoder().decode(body)
 }
 
 const isPositiveRevision = (value: unknown): value is number =>
@@ -197,6 +223,13 @@ const databaseErrorResponse = (error: CloudWorkspaceMasterDatabaseError): Respon
     case '23503':
     case 'MASTER_REFERENCED':
       return errorResponse(409, 'MASTER_REFERENCED', '参照中の共通データは削除できません。')
+    case 'PMA01':
+    case 'MASTER_MEMBER_NOT_FOUND':
+      return errorResponse(
+        409,
+        'MASTER_MEMBER_NOT_FOUND',
+        '指定されたバンドメンバーが見つかりません。',
+      )
     case 'P0002':
     case 'MASTER_NOT_FOUND':
       return errorResponse(404, 'MASTER_NOT_FOUND', 'Workspace共通データが見つかりません。')

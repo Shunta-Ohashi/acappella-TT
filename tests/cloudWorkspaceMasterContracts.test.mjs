@@ -10,10 +10,14 @@ import {
   parseCloudEventSnapshotEnvelope,
   parseCloudEventSnapshotV2,
 } from '../src/cloud/cloudEventSnapshot.ts'
-import { handleCloudWorkspaceMasterRequest } from '../src/cloud/cloudWorkspaceMasterEndpoint.ts'
+import {
+  CLOUD_WORKSPACE_MASTER_MAX_REQUEST_BYTES,
+  handleCloudWorkspaceMasterRequest,
+} from '../src/cloud/cloudWorkspaceMasterEndpoint.ts'
 import { createCloudEventRepository } from '../src/cloud/cloudEventRepository.ts'
 import {
   createCloudWorkspaceMasterRepository,
+  parseCloudWorkspaceMasterMutationValue,
 } from '../src/cloud/cloudWorkspaceMasterRepository.ts'
 import { loadCloudWorkspaceAtOneGeneration } from '../src/cloud/cloudWorkspaceReadModel.ts'
 
@@ -158,6 +162,37 @@ test('Snapshot V2は欠落・余分・重複Master参照とEvent ownership破損
   const foreignDay = structuredClone(created.snapshot)
   foreignDay.eventState.eventDays[0].eventId = 'event-foreign'
   assert.equal(parseCloudEventSnapshotV2(foreignDay), undefined)
+})
+
+test('Snapshot V2はMaster本体とallowlist外のkeyをEnvelope経由でも拒否する', () => {
+  const v1 = createCloudEventSnapshot(createDomainState(), 'event-a')
+  const created = createCloudEventSnapshotV2(createDomainState(), 'event-a')
+  assert.equal(v1.ok, true)
+  assert.equal(created.ok, true)
+  if (!v1.ok || !created.ok) return
+
+  assert.deepEqual(parseCloudEventSnapshotV2(created.snapshot), created.snapshot)
+  assert.deepEqual(parseCloudEventSnapshotEnvelope(created.snapshot), created.snapshot)
+  assert.deepEqual(parseCloudEventSnapshot(v1.snapshot), v1.snapshot)
+
+  for (const [key, value] of [
+    ['members', []],
+    ['bands', []],
+    ['unexpectedCollection', []],
+  ]) {
+    const malformed = structuredClone(created.snapshot)
+    malformed.eventState[key] = value
+    assert.equal(parseCloudEventSnapshotV2(malformed), undefined, key)
+    assert.equal(parseCloudEventSnapshotEnvelope(malformed), undefined, key)
+  }
+
+  const extraReferenceKey = structuredClone(created.snapshot)
+  extraReferenceKey.masterReferences.members = []
+  assert.equal(parseCloudEventSnapshotEnvelope(extraReferenceKey), undefined)
+
+  const extraEnvelopeKey = structuredClone(created.snapshot)
+  extraEnvelopeKey.appState = {}
+  assert.equal(parseCloudEventSnapshotEnvelope(extraEnvelopeKey), undefined)
 })
 
 test('Snapshot V2のMaster解決は参照欠落とBand relation欠落を拒否する', () => {
@@ -351,6 +386,77 @@ test('Master CRUDはrevisionを必須化しCAS/参照/認可errorを区別する
   assert.equal(calls.length, 4)
 })
 
+test('Master mutation responseは要求kind・Workspace・IDが完全一致する場合だけ受理する', async () => {
+  const mutations = [
+    { operation: 'create-member', member: memberA },
+    { operation: 'update-member', member: memberA, expectedRevision: 1 },
+    { operation: 'create-band', band: bandA },
+    { operation: 'update-band', band: bandA, expectedRevision: 1 },
+  ]
+  for (const mutation of mutations) {
+    const isMemberMutation = mutation.operation.endsWith('member')
+    const wrongRecord = isMemberMutation
+      ? memberRow({ ...mutation.member, id: 'different-member' })
+      : bandRow({ ...mutation.band, id: 'different-band' })
+    assert.equal(parseCloudWorkspaceMasterMutationValue(
+      mutationResponse(wrongRecord),
+      workspaceId,
+      mutation,
+    ), undefined, mutation.operation)
+  }
+
+  assert.ok(parseCloudWorkspaceMasterMutationValue(
+    mutationResponse(memberRow()),
+    workspaceId,
+    { operation: 'create-member', member: memberA },
+  ))
+  assert.equal(parseCloudWorkspaceMasterMutationValue(
+    mutationResponse(bandRow()),
+    workspaceId,
+    { operation: 'create-member', member: memberA },
+  ), undefined)
+  assert.equal(parseCloudWorkspaceMasterMutationValue(
+    mutationResponse({ ...memberRow(), workspaceId: '70000000-0000-0000-0000-000000000002' }),
+    workspaceId,
+    { operation: 'create-member', member: memberA },
+  ), undefined)
+
+  const deletionMutation = {
+    operation: 'delete-member', memberId: 'member-a', expectedRevision: 1,
+  }
+  const deletionResponse = id => ({
+    status: 'ok',
+    workspaceId,
+    workspaceGeneration: '4',
+    deletion: { kind: 'member', workspaceId, id, revision: 1 },
+  })
+  assert.ok(parseCloudWorkspaceMasterMutationValue(
+    deletionResponse('member-a'), workspaceId, deletionMutation,
+  ))
+  assert.equal(parseCloudWorkspaceMasterMutationValue(
+    deletionResponse('different-member'), workspaceId, deletionMutation,
+  ), undefined)
+
+  const repository = createCloudWorkspaceMasterRepository({
+    async loadAuthorizedPage() { throw new Error('not used') },
+    async mutate(_workspaceId, mutation) {
+      const record = mutation.operation.endsWith('member')
+        ? memberRow({ ...mutation.member, id: 'different-member' })
+        : bandRow({ ...mutation.band, id: 'different-band' })
+      return { data: mutationResponse(record), error: null }
+    },
+  })
+  for (const result of [
+    await repository.createMember(workspaceId, memberA),
+    await repository.updateMember(workspaceId, memberA, 1),
+    await repository.createBand(workspaceId, bandA),
+    await repository.updateBand(workspaceId, bandA, 1),
+  ]) {
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.equal(result.error.code, 'INVALID_RESPONSE')
+  }
+})
+
 test('同一Masterの古いrevisionだけが競合し異なるIDのmutationは独立して送信される', async () => {
   const revisionById = new Map([['member-a', 1], ['member-b', 1]])
   const repository = createCloudWorkspaceMasterRepository({
@@ -424,6 +530,149 @@ test('Master Edge境界はauth・runtime input・DB outputを検証する', asyn
   assert.equal(calls, 1)
 })
 
+test('Master Edgeは本文をbyte単位でstreamし上限超過時にmutation前で停止する', async () => {
+  let calls = 0
+  const dependencies = {
+    async authenticate() { return { id: 'actor-a' } },
+    async mutateValidatedMaster({ mutation }) {
+      calls += 1
+      return { data: mutationResponse(memberRow(mutation.member, 1)), error: null }
+    },
+  }
+  const headers = {
+    authorization: 'Bearer valid-token',
+    'content-type': 'application/json',
+  }
+  const createBody = (targetBytes, realNameUnit = 'a') => {
+    const value = {
+      workspaceId,
+      operation: 'create-member',
+      member: { id: 'stream-member', realName: '', active: true },
+    }
+    const baseBytes = Buffer.byteLength(JSON.stringify(value))
+    const unitBytes = Buffer.byteLength(realNameUnit)
+    const unitCount = Math.floor((targetBytes - baseBytes) / unitBytes)
+    value.member.realName = realNameUnit.repeat(Math.max(1, unitCount))
+    let text = JSON.stringify(value)
+    while (Buffer.byteLength(text) < targetBytes) {
+      value.member.realName += 'a'
+      text = JSON.stringify(value)
+    }
+    return text
+  }
+  const request = (body, extraHeaders = {}) => new Request(
+    'https://example.test/workspace-masters',
+    { method: 'POST', headers: { ...headers, ...extraHeaders }, body },
+  )
+  const streamRequest = chunks => new Request(
+    'https://example.test/workspace-masters',
+    {
+      method: 'POST',
+      headers,
+      body: new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks) controller.enqueue(chunk)
+          controller.close()
+        },
+      }),
+      duplex: 'half',
+    },
+  )
+
+  const smallJapanese = JSON.stringify({
+    workspaceId,
+    operation: 'create-member',
+    member: { id: 'member-ja', realName: '日本語', active: true },
+  })
+  assert.equal((await handleCloudWorkspaceMasterRequest(
+    request(smallJapanese), dependencies,
+  )).status, 200)
+
+  const exact = createBody(CLOUD_WORKSPACE_MASTER_MAX_REQUEST_BYTES)
+  assert.equal(Buffer.byteLength(exact), CLOUD_WORKSPACE_MASTER_MAX_REQUEST_BYTES)
+  assert.equal((await handleCloudWorkspaceMasterRequest(
+    request(exact), dependencies,
+  )).status, 200)
+
+  const over = createBody(CLOUD_WORKSPACE_MASTER_MAX_REQUEST_BYTES + 1)
+  assert.equal((await handleCloudWorkspaceMasterRequest(
+    request(over, { 'content-length': '1' }), dependencies,
+  )).status, 413)
+
+  const encodedOver = new TextEncoder().encode(over)
+  assert.equal((await handleCloudWorkspaceMasterRequest(
+    streamRequest([encodedOver]), dependencies,
+  )).status, 413)
+
+  let streamCancellationCount = 0
+  const cancellableOverRequest = new Request(
+    'https://example.test/workspace-masters',
+    {
+      method: 'POST',
+      headers,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(encodedOver)
+        },
+        cancel() {
+          streamCancellationCount += 1
+        },
+      }),
+      duplex: 'half',
+    },
+  )
+  assert.equal((await handleCloudWorkspaceMasterRequest(
+    cancellableOverRequest, dependencies,
+  )).status, 413)
+  assert.equal(streamCancellationCount, 1)
+
+  assert.equal((await handleCloudWorkspaceMasterRequest(
+    streamRequest([
+      encodedOver.subarray(0, 600_000),
+      encodedOver.subarray(600_000),
+    ]),
+    dependencies,
+  )).status, 413)
+
+  assert.equal((await handleCloudWorkspaceMasterRequest(
+    request(smallJapanese, { 'content-length': 'not-a-number' }), dependencies,
+  )).status, 200)
+  assert.equal((await handleCloudWorkspaceMasterRequest(
+    request('{not-json'), dependencies,
+  )).status, 400)
+  assert.equal(calls, 3)
+})
+
+test('Band Member参照欠落は削除時のMASTER_REFERENCEDと区別する', async () => {
+  const repository = createCloudWorkspaceMasterRepository({
+    async loadAuthorizedPage() { throw new Error('not used') },
+    async mutate() { return { data: null, error: { code: 'PMA01' } } },
+  })
+  const result = await repository.createBand(workspaceId, bandA)
+  assert.equal(result.ok, false)
+  if (!result.ok) {
+    assert.equal(result.error.code, 'MASTER_MEMBER_NOT_FOUND')
+    assert.match(result.error.message, /バンドメンバー/)
+  }
+
+  const response = await handleCloudWorkspaceMasterRequest(new Request(
+    'https://example.test/workspace-masters',
+    {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer valid-token',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ workspaceId, operation: 'create-band', band: bandA }),
+    },
+  ), {
+    async authenticate() { return { id: 'actor-a' } },
+    async mutateValidatedMaster() { return { data: null, error: { code: 'PMA01' } } },
+  })
+  assert.equal(response.status, 409)
+  assert.equal((await response.json()).error.code, 'MASTER_MEMBER_NOT_FOUND')
+})
+
 test('Master Edge adapterはauth.getUserとservice-role限定RPCを分離する', async () => {
   const source = await readFile(new URL(
     '../supabase/functions/workspace-masters/index.ts',
@@ -449,6 +698,7 @@ test('Master migrationはready gate・CAS・generation・backend-only ACLを同�
   assert.match(source, /cloud_workspace_master_states[\s\S]*for share/i)
   assert.match(source, /master_status is distinct from 'ready'/i)
   assert.match(source, /p_expected_revision[\s\S]*errcode = '40001'/i)
+  assert.match(source, /Workspace Band references an unknown Member[\s\S]*errcode = 'PMA01'/i)
   assert.match(source, /delete from public\.workspace_master_band_members[\s\S]*insert into public\.workspace_master_band_members/i)
   assert.match(source, /grant execute on function public\.load_workspace_masters_page_authorized[\s\S]*to authenticated/i)
   assert.match(source, /grant execute on function public\.mutate_workspace_master_validated[\s\S]*to service_role/i)
@@ -468,6 +718,7 @@ test('実DB fixtureはCRUD/CAS/role/generationとasync concurrencyをrollbackま
   assert.match(integration, /exception when sqlstate '40001'/i)
   assert.match(integration, /exception when sqlstate '42501'/i)
   assert.match(integration, /exception when sqlstate '55000'/i)
+  assert.match(integration, /exception when sqlstate 'PMA01'/i)
   assert.match(integration, /exception when foreign_key_violation/i)
   assert.match(integration, /load_workspace_masters_page_authorized[\s\S]*workspaceGeneration/i)
   assert.match(integration, /rollback;\s*$/i)

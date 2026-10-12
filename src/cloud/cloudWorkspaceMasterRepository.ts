@@ -61,6 +61,7 @@ export type CloudWorkspaceMasterErrorCode =
   | 'CONFIGURATION_ERROR'
   | 'INVALID_ARGUMENT'
   | 'INVALID_RESPONSE'
+  | 'MASTER_MEMBER_NOT_FOUND'
   | 'MASTER_NOT_FOUND'
   | 'MASTER_REFERENCED'
   | 'REVISION_CONFLICT'
@@ -296,6 +297,12 @@ const databaseFailure = (
     case '23503':
     case 'MASTER_REFERENCED':
       return errorResult('MASTER_REFERENCED', '参照中の共通データは削除できません。')
+    case 'PMA01':
+    case 'MASTER_MEMBER_NOT_FOUND':
+      return errorResult(
+        'MASTER_MEMBER_NOT_FOUND',
+        '指定されたバンドメンバーが見つかりません。',
+      )
     case '23505':
     case 'ALREADY_EXISTS':
       return errorResult('ALREADY_EXISTS', '同じIDの共通データが既に存在します。')
@@ -360,7 +367,15 @@ export const parseCloudWorkspaceMasterMutationValue = (
 
   const record = parseRecord(value.record, workspaceId)
   const expectedKind = mutation.operation.endsWith('member') ? 'member' : 'band'
-  if (!record || record.kind !== expectedKind) return undefined
+  const expectedId = mutation.operation === 'create-member' ||
+    mutation.operation === 'update-member'
+    ? mutation.member.id
+    : mutation.band.id
+  if (
+    !record ||
+    record.kind !== expectedKind ||
+    record.value.id !== expectedId
+  ) return undefined
   return { generation: value.workspaceGeneration, record }
 }
 

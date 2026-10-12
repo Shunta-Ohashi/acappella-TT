@@ -87,6 +87,29 @@ const eventOwnedCollectionKeys = [
 
 type EventOwnedCollectionKey = typeof eventOwnedCollectionKeys[number]
 
+const cloudEventSnapshotV2Keys = [
+  'format',
+  'version',
+  'eventState',
+  'masterReferences',
+] as const
+
+const cloudEventOwnedStateV2Keys = [
+  'version',
+  ...eventOwnedCollectionKeys,
+] as const
+
+const cloudEventMasterReferenceKeys = ['memberIds', 'bandIds'] as const
+
+const hasExactKeys = (
+  value: Record<string, unknown>,
+  expectedKeys: readonly string[],
+): boolean => {
+  const actualKeys = Object.keys(value)
+  return actualKeys.length === expectedKeys.length &&
+    expectedKeys.every(key => Object.hasOwn(value, key))
+}
+
 const createDeletionInput = (
   state: PersistedDomainState,
   eventId: EventId,
@@ -476,10 +499,21 @@ const hasCompleteV2DirectMasterReferences = (
 const validateCloudEventSnapshotV2 = (
   snapshot: CloudEventSnapshotV2,
 ): boolean => {
-  if (!hasCompleteV2DirectMasterReferences(
-    snapshot.eventState,
-    snapshot.masterReferences,
-  )) {
+  if (
+    !hasExactKeys(snapshot as unknown as Record<string, unknown>, cloudEventSnapshotV2Keys) ||
+    !hasExactKeys(
+      snapshot.eventState as unknown as Record<string, unknown>,
+      cloudEventOwnedStateV2Keys,
+    ) ||
+    !hasExactKeys(
+      snapshot.masterReferences as unknown as Record<string, unknown>,
+      cloudEventMasterReferenceKeys,
+    ) ||
+    !hasCompleteV2DirectMasterReferences(
+      snapshot.eventState,
+      snapshot.masterReferences,
+    )
+  ) {
     return false
   }
   const state = materializeV2ValidationState(snapshot)
@@ -551,6 +585,9 @@ export const parseCloudEventSnapshotV2 = (
     value.version !== CLOUD_EVENT_SNAPSHOT_V2_VERSION ||
     !isRecord(value.eventState) ||
     !isRecord(value.masterReferences) ||
+    !hasExactKeys(value, cloudEventSnapshotV2Keys) ||
+    !hasExactKeys(value.eventState, cloudEventOwnedStateV2Keys) ||
+    !hasExactKeys(value.masterReferences, cloudEventMasterReferenceKeys) ||
     !Array.isArray(value.masterReferences.memberIds) ||
     !Array.isArray(value.masterReferences.bandIds) ||
     !Array.from(value.masterReferences.memberIds).every(item => typeof item === 'string') ||

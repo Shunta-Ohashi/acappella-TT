@@ -363,7 +363,7 @@ begin
           )
       ) <> jsonb_array_length(p_payload -> 'defaultMemberIds') then
         raise exception 'Workspace Band references an unknown Member'
-          using errcode = '23503';
+          using errcode = 'PMA01';
       end if;
     end if;
 

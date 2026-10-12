@@ -187,6 +187,9 @@ supabase functions serve save-cloud-event
 `mutate_workspace_master_validated` RPCへactor IDを渡します。RPCもmembership、
 ready state、expected revisionを再検証します。Functionを配備してもlegacy/conflict
 WorkspaceはDBで拒否され、既存Appはこのendpointをまだ呼びません。
+Bandの`defaultMemberIds`に同じWorkspace内で解決できないIDがある場合は、専用の
+SQLSTATE `PMA01`を`MASTER_MEMBER_NOT_FOUND`へ変換します。これは参照中Masterの
+削除を拒否するFK由来の`23503` / `MASTER_REFERENCED`とは別の入力エラーです。
 
 ```powershell
 deno check supabase/functions/workspace-masters/index.ts
