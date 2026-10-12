@@ -21,6 +21,7 @@ They create rows in `auth.users` and require an administrator connection.
    - `20261008160000_cloud_event_rpc_only_save.sql`
    - `20261008170000_cloud_event_workspace_generation.sql`
    - `20261012100000_cloud_workspace_master_foundation.sql`
+   - `20261012110000_cloud_workspace_master_contracts_v2.sql`
 
    These names are ordered both by their migration version prefixes and by
    ordinary filename sorting; do not infer that every external migration tool
@@ -54,10 +55,33 @@ psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
 psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
   -v "test_db_url=$env:ACAPPELLA_TT_DBLINK_DATABASE_URL" `
   -f supabase/tests/cloud_workspace_master_foundation_concurrency.sql
+psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
+  -f supabase/tests/cloud_workspace_master_contracts.sql
+psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
+  -v "test_db_url=$env:ACAPPELLA_TT_DBLINK_DATABASE_URL" `
+  -f supabase/tests/cloud_workspace_master_contracts_concurrency.sql
 node scripts/cloudEventMigrationCatalogRegression.mjs `
   --db-url-env ACAPPELLA_TT_TEST_DATABASE_URL `
   --confirm-disposable
 ```
+
+The deployed Workspace-master Edge adapter has a separate real-HTTP smoke
+runner. It creates real local Auth users through the Admin API, signs each user
+in to obtain distinct JWTs, calls the running Function route, and verifies the
+backend-only RPC boundary. It deliberately refuses database ports 54322 through
+55122. Follow the environment and two-terminal instructions in
+[`docs/cloud-setup.md`](../../docs/cloud-setup.md#workspace-master-edge-functionの実http-smoke),
+then run:
+
+```powershell
+npm run test:cloud-workspace-master-http-smoke
+```
+
+The runner requires `--confirm-disposable` through the package script, a
+loopback Supabase/API/Function/Database URL, `psql`, and a new disposable
+database. Its setup and cleanup SQL target only Workspace IDs reserved by the
+fixture; Auth cleanup targets only the fixture's exact email addresses. It does
+not disable JWT verification and must never receive production keys or tokens.
 
 `test_db_url` is opened by the PostgreSQL server through `dblink`, so it may
 need a different host from the outer `psql` URL. In particular, with local
@@ -66,7 +90,7 @@ Supabase on Windows and Docker Desktop, keep the outer URL on
 example `postgresql://postgres:postgres@host.docker.internal:54322/postgres`.
 Other environments may continue to use the same URL for both variables.
 
-The core and Workspace-master foundation scripts are wrapped in transactions
+The core, Workspace-master foundation, and Master contract scripts are wrapped in transactions
 and roll back all fixtures. The concurrency scripts, including the Workspace
 Master status/delete test, must commit between two database connections to prove lock
 ordering, so they clean up their fixed-ID fixtures when successful. Use a disposable

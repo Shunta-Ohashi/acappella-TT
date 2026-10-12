@@ -192,7 +192,7 @@ GRANTs, unsafe role memberships or custom roles, and unsafe function default
 privileges, then rerun the migration; migrations do not alter shared custom
 roles automatically.
 
-All nine repository migrations have one explicit `BEGIN` / `COMMIT` boundary.
+All ten repository migrations have one explicit `BEGIN` / `COMMIT` boundary.
 A failure rolls back the DDL, DML, and ACL changes made by that migration. The
 Supabase CLI migration-history write is a separate runner responsibility, so a
 failed run must still be checked in both the PostgreSQL catalog and
@@ -226,6 +226,10 @@ sentinel and the migration-history row are absent. Suggested sentinels are:
 - `20261012100000`:
   `to_regclass('public.workspace_master_members') is null` and
   `to_regclass('public.cloud_workspace_master_states') is null`
+- `20261012110000`:
+  `to_regprocedure('public.load_workspace_masters_page_authorized(uuid,text,text,integer,text)') is null`
+  and
+  `to_regprocedure('public.mutate_workspace_master_validated(uuid,uuid,text,text,jsonb,bigint)') is null`
 
 Use the target version in the following history check and require `false`:
 
@@ -436,6 +440,7 @@ version as applied. This temporary file is needed only to manufacture an
    - `20261008160000_cloud_event_rpc_only_save.sql`
    - `20261008170000_cloud_event_workspace_generation.sql`
    - `20261012100000_cloud_workspace_master_foundation.sql`
+   - `20261012110000_cloud_workspace_master_contracts_v2.sql`
 
 The temporary old migration is exclusively an artificial disposable-exercise
 fixture. Never create it during production or staging repair, never commit or

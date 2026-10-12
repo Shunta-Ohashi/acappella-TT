@@ -25,6 +25,11 @@ export interface CloudEventRecord extends CloudEventSummary {
   snapshot: CloudEventSnapshotV1
 }
 
+export interface CloudEventWorkspaceSnapshot {
+  generation: string
+  records: CloudEventRecord[]
+}
+
 export type CloudEventDeletionStatus = 'deleted' | 'already_absent'
 
 export interface CloudEventDeletionConfirmation {
@@ -99,6 +104,10 @@ export interface CloudEventRepository {
   loadWorkspaceEvents: (
     workspaceId: string,
   ) => Promise<CloudEventRepositoryResult<CloudEventRecord[]>>
+  loadWorkspaceEventsAtGeneration: (
+    workspaceId: string,
+    expectedGeneration?: string,
+  ) => Promise<CloudEventRepositoryResult<CloudEventWorkspaceSnapshot>>
   saveEvent: (
     workspaceId: string,
     snapshot: CloudEventSnapshotV1,
@@ -309,60 +318,21 @@ export const createCloudEventRepository = (
     ? Number(options.workspacePageSize)
     : CLOUD_EVENT_WORKSPACE_PAGE_SIZE
 
-  return ({
-  async listEvents(workspaceId) {
+  const loadWorkspaceEventsAtGeneration = async (
+    workspaceId: string,
+    initialExpectedGeneration?: string,
+  ): Promise<CloudEventRepositoryResult<CloudEventWorkspaceSnapshot>> => {
     if (!hasValidScope(workspaceId)) return invalidArgument('Workspace IDが必要です。')
-    const access = await requireWorkspaceAccess(gateway, workspaceId, 'read')
-    if (!access.ok) return access
-    try {
-      const result = await gateway.listRows(workspaceId)
-      if (result.error) return databaseFailure(result.error)
-      if (!Array.isArray(result.data)) return invalidSnapshot()
-      const summaries = result.data.map(parseSummary)
-      if (summaries.some(summary => !summary)) return invalidSnapshot()
-      const validSummaries = summaries.filter(summary => summary !== undefined)
-      if (validSummaries.some(summary => summary.workspaceId !== workspaceId)) {
-        return invalidSnapshot()
-      }
-      return {
-        ok: true,
-        value: validSummaries,
-      }
-    } catch {
-      return databaseFailure({})
-    }
-  },
-
-  async loadEvent(workspaceId, eventId) {
-    if (!hasValidScope(workspaceId) || !hasValidScope(eventId)) {
-      return invalidArgument('Workspace IDとEvent IDが必要です。')
-    }
-    const access = await requireWorkspaceAccess(gateway, workspaceId, 'read')
-    if (!access.ok) return access
-    try {
-      const result = await gateway.loadRow(workspaceId, eventId)
-      if (result.error) return databaseFailure(result.error)
-      if (result.data === null) return notFound()
-      const record = parseRecord(result.data)
-      if (
-        !record ||
-        record.workspaceId !== workspaceId ||
-        record.eventId !== eventId
-      ) return invalidSnapshot()
-      return { ok: true, value: record }
-    } catch {
-      return databaseFailure({})
-    }
-  },
-
-  async loadWorkspaceEvents(workspaceId) {
-    if (!hasValidScope(workspaceId)) return invalidArgument('Workspace IDが必要です。')
+    if (
+      initialExpectedGeneration !== undefined &&
+      !/^(0|[1-9][0-9]*)$/u.test(initialExpectedGeneration)
+    ) return invalidArgument('Workspace generationの形式が正しくありません。')
 
     const records: CloudEventRecord[] = []
     const seenEventIds = new Set<EventId>()
     const requestedCursors = new Set<EventId>()
     let afterEventId: EventId | null = null
-    let expectedGeneration: string | null = null
+    let expectedGeneration: string | null = initialExpectedGeneration ?? null
 
     try {
       while (true) {
@@ -413,7 +383,12 @@ export const createCloudEventRepository = (
           records.push(record)
         }
 
-        if (page.nextCursor === null) return { ok: true, value: records }
+        if (page.nextCursor === null) {
+          return {
+            ok: true,
+            value: { generation: expectedGeneration, records },
+          }
+        }
 
         const lastRecord = pageRecords.at(-1)
         if (
@@ -430,6 +405,63 @@ export const createCloudEventRepository = (
     } catch {
       return databaseFailure({})
     }
+  }
+
+  return ({
+  async listEvents(workspaceId) {
+    if (!hasValidScope(workspaceId)) return invalidArgument('Workspace IDが必要です。')
+    const access = await requireWorkspaceAccess(gateway, workspaceId, 'read')
+    if (!access.ok) return access
+    try {
+      const result = await gateway.listRows(workspaceId)
+      if (result.error) return databaseFailure(result.error)
+      if (!Array.isArray(result.data)) return invalidSnapshot()
+      const summaries = result.data.map(parseSummary)
+      if (summaries.some(summary => !summary)) return invalidSnapshot()
+      const validSummaries = summaries.filter(summary => summary !== undefined)
+      if (validSummaries.some(summary => summary.workspaceId !== workspaceId)) {
+        return invalidSnapshot()
+      }
+      return {
+        ok: true,
+        value: validSummaries,
+      }
+    } catch {
+      return databaseFailure({})
+    }
+  },
+
+  async loadEvent(workspaceId, eventId) {
+    if (!hasValidScope(workspaceId) || !hasValidScope(eventId)) {
+      return invalidArgument('Workspace IDとEvent IDが必要です。')
+    }
+    const access = await requireWorkspaceAccess(gateway, workspaceId, 'read')
+    if (!access.ok) return access
+    try {
+      const result = await gateway.loadRow(workspaceId, eventId)
+      if (result.error) return databaseFailure(result.error)
+      if (result.data === null) return notFound()
+      const record = parseRecord(result.data)
+      if (
+        !record ||
+        record.workspaceId !== workspaceId ||
+        record.eventId !== eventId
+      ) return invalidSnapshot()
+      return { ok: true, value: record }
+    } catch {
+      return databaseFailure({})
+    }
+  },
+
+  async loadWorkspaceEvents(workspaceId) {
+    const result = await loadWorkspaceEventsAtGeneration(workspaceId)
+    return result.ok
+      ? { ok: true, value: result.value.records }
+      : result
+  },
+
+  async loadWorkspaceEventsAtGeneration(workspaceId, expectedGeneration) {
+    return loadWorkspaceEventsAtGeneration(workspaceId, expectedGeneration)
   },
 
   async saveEvent(workspaceId, snapshot) {

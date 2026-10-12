@@ -30,7 +30,8 @@ begin
     'cloud_authenticated_inherited_table_update',
     'cloud_anon_inherited_column_write',
     'cloud_authenticated_inherited_column_write',
-    'workspace_master_authenticated_inherited_write'
+    'workspace_master_authenticated_inherited_write',
+    'workspace_master_authenticated_inherited_mutation_execute'
   ) then
     if exists (
       select 1 from pg_catalog.pg_roles
@@ -69,6 +70,11 @@ begin
       when scenario = 'workspace_master_authenticated_inherited_write' then
         execute format(
           'grant update on table public.workspace_master_members to %I',
+          inherited_role_name
+        );
+      when scenario = 'workspace_master_authenticated_inherited_mutation_execute' then
+        execute format(
+          'grant execute on function public.mutate_workspace_master_validated(uuid,uuid,text,text,jsonb,bigint) to %I',
           inherited_role_name
         );
     end case;
@@ -345,6 +351,26 @@ begin
       alter table public.workspace_master_bands disable row level security;
     when 'workspace_master_authenticated_table_write' then
       grant update on table public.workspace_master_members to authenticated;
+    when 'workspace_master_read_function_missing' then
+      drop function public.load_workspace_masters_page_authorized(
+        uuid, text, text, integer, text
+      );
+    when 'workspace_master_mutation_function_missing' then
+      drop function public.mutate_workspace_master_validated(
+        uuid, uuid, text, text, jsonb, bigint
+      );
+    when 'workspace_master_authenticated_mutation_execute' then
+      grant execute on function public.mutate_workspace_master_validated(
+        uuid, uuid, text, text, jsonb, bigint
+      ) to authenticated;
+    when 'workspace_master_anon_read_execute' then
+      grant execute on function public.load_workspace_masters_page_authorized(
+        uuid, text, text, integer, text
+      ) to anon;
+    when 'workspace_master_public_read_execute' then
+      grant execute on function public.load_workspace_masters_page_authorized(
+        uuid, text, text, integer, text
+      ) to public;
     when 'profiles_missing' then
       alter table public.profiles rename to catalog_regression_profiles;
     when 'profiles_column_missing' then
