@@ -4026,11 +4026,18 @@ test('authorized save migrationはbackend専用RPCとclient直接write取消し�
   ), 'utf8')
 
   const executableSql = sql.replace(/^\s*--.*$/gmu, '').trim()
+  const revokeExecutableSql = revokeSql.replace(/^\s*--.*$/gmu, '').trim()
   assert.match(executableSql, /^begin;\s*create function public\.save_cloud_event_validated/i)
   assert.equal(executableSql.match(/\bbegin;/giu)?.length, 1)
   assert.equal(executableSql.match(/\bcommit;/giu)?.length, 1)
   assert.match(executableSql,
     /create function public\.save_cloud_event_validated[\s\S]*revoke all on function public\.save_cloud_event_validated[\s\S]*grant execute on function public\.save_cloud_event_validated[\s\S]*do \$cloud_event_save_execute_privilege_guard\$[\s\S]*comment on function public\.save_cloud_event_validated[\s\S]*commit;$/i)
+  assert.match(revokeExecutableSql,
+    /^begin;\s*revoke insert, update on table public\.cloud_events from public/i)
+  assert.equal(revokeExecutableSql.match(/\bbegin;/giu)?.length, 1)
+  assert.equal(revokeExecutableSql.match(/\bcommit;/giu)?.length, 1)
+  assert.match(revokeExecutableSql,
+    /revoke insert, update on table public\.cloud_events from public[\s\S]*revoke insert \([\s\S]*revoke update \([\s\S]*do \$cloud_event_write_privilege_guard\$[\s\S]*do \$cloud_event_save_execute_privilege_guard\$[\s\S]*commit;$/i)
 
   assert.match(sql, /create function public\.save_cloud_event_validated\s*\(/i)
   assert.match(sql, /language plpgsql\s+volatile\s+security definer\s+set search_path = ''/i)
@@ -4259,6 +4266,14 @@ test('upgrade migrationは直接DELETEを取り消し継承実効権限をfail c
     '../supabase/migrations/20261008130000_cloud_event_rpc_only_delete.sql',
     import.meta.url,
   ), 'utf8')
+
+  const executableSql = sql.replace(/^\s*--.*$/gmu, '').trim()
+  assert.match(executableSql,
+    /^begin;\s*revoke delete on table public\.cloud_events from public/i)
+  assert.equal(executableSql.match(/\bbegin;/giu)?.length, 1)
+  assert.equal(executableSql.match(/\bcommit;/giu)?.length, 1)
+  assert.match(executableSql,
+    /revoke delete on table public\.cloud_events from public[\s\S]*revoke delete on table public\.cloud_events from anon[\s\S]*revoke delete on table public\.cloud_events from authenticated[\s\S]*do \$cloud_event_delete_privilege_guard\$[\s\S]*commit;$/i)
 
   assert.match(sql, /revoke delete on table public\.cloud_events from public/i)
   assert.match(sql, /revoke delete on table public\.cloud_events from anon/i)

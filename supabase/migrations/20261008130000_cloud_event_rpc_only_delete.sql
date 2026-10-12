@@ -2,6 +2,9 @@
 -- which locks and re-checks the caller's Workspace membership. This migration
 -- is intentionally additive so databases that already applied the original
 -- table grant are corrected during upgrade as well as on a fresh install.
+
+begin;
+
 revoke delete on table public.cloud_events from public;
 revoke delete on table public.cloud_events from anon;
 revoke delete on table public.cloud_events from authenticated;
@@ -27,4 +30,6 @@ begin
   end if;
 end
 $cloud_event_delete_privilege_guard$;
+
+commit;
 

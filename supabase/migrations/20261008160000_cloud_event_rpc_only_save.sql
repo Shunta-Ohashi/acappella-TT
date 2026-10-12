@@ -1,6 +1,8 @@
 -- Apply only after save-cloud-event is deployed and the frontend is ready to
 -- use it. Existing browser clients lose direct INSERT/UPDATE after this step.
 
+begin;
+
 revoke insert, update on table public.cloud_events from public;
 revoke insert, update on table public.cloud_events from anon;
 revoke insert, update on table public.cloud_events from authenticated;
@@ -167,3 +169,5 @@ begin
   end if;
 end
 $cloud_event_save_execute_privilege_guard$;
+
+commit;

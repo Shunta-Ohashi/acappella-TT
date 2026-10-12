@@ -53,7 +53,7 @@ windowでCloud Event読込を停止し、新frontendの配備とmigration適用�
 
 旧clientが存在し得る間は`...130000`を先に適用しないでください。新規環境では利用開始前に全migrationを順番に適用し、現在のFunction/frontendを揃えてから公開するため、この段階的切替は不要です。
 
-`...130000`はdirect GRANTのREVOKE後に`anon`と`authenticated`の実効DELETE権限も検査します。custom roleから継承したDELETEが残る場合はfail closedするため、operatorがrole membershipとinherited GRANTを確認・除去してからmigrationを再実行してください。migrationが共有custom roleの権限を自動変更することはありません。
+`...130000`はdirect GRANTのREVOKE後に`anon`と`authenticated`の実効DELETE権限も検査します。REVOKEとguardは1つの明示transactionに含まれるため、custom roleから継承したDELETEをguardが検出した場合は、direct DELETEのREVOKEもrollbackされ、migration historyへversionは記録されません。operatorがrole membershipとinherited GRANTを確認・除去してから同じmigrationを再実行してください。migrationが共有custom roleの権限を自動変更することはありません。guard失敗を未完了cutoverとして扱い、原因を解消して正常適用を確認するまで次のmigrationや本番公開へ進まないでください。
 
 ## 3. Authentication userを作成する
 
@@ -134,9 +134,9 @@ supabase functions serve save-cloud-event
 
 直接write取消し後、旧frontendの直接upsertは意図どおり失敗します。途中状態を長期間残さず、専用環境で一連の順序を検証してからproductionへ反映してください。fresh DBでは全migration適用後にFunctionとfrontendを揃えて公開します。
 
-`...150000`はRPC作成・直接REVOKE・`service_role`へのGRANT後に、save RPCが`SECURITY DEFINER`であり、`service_role`だけが実効EXECUTEを持ち、`PUBLIC` / `anon` / `authenticated`が実行できないことを検査します。`...160000`もfinal cutover前に同じbackend-only EXECUTE contractを再検査し、さらにtable/columnへのdirect GRANTをREVOKEした後、`anon`と`authenticated`に継承経由の実効INSERT/UPDATE権限が残っていないことを検査します。残存権限があればfail closedするため、operatorがinherited EXECUTE/WRITE GRANT、role membership、custom role、function default privilegesを修正してからmigrationを再実行してください。migrationは共有role membershipを自動変更しません。
+`...150000`はRPC作成・直接REVOKE・`service_role`へのGRANT後に、save RPCが`SECURITY DEFINER`であり、`service_role`だけが実効EXECUTEを持ち、`PUBLIC` / `anon` / `authenticated`が実行できないことを検査します。`...160000`もfinal cutover前に同じbackend-only EXECUTE contractを再検査し、さらにtable/columnへのdirect GRANTをREVOKEした後、`anon`と`authenticated`に継承経由の実効INSERT/UPDATE権限が残っていないことを検査します。`...160000`の全REVOKEと両guardは1つの明示transactionに含まれ、いずれかのguardが失敗した場合はtable/column権限変更もrollbackされ、migration historyへversionは記録されません。残存権限があればoperatorがinherited EXECUTE/WRITE GRANT、role membership、custom role、function default privilegesを修正してから同じmigrationを再実行してください。migrationは共有role membershipを自動変更しません。正常適用を確認するまで`...170000`や本番公開へ進まないでください。
 
-`...150000`はSupabase CLIがstatementごとに実行する環境でも部分適用を残さないよう、RPC作成、REVOKE / GRANT、backend-only guard、function commentを明示的な`BEGIN` / `COMMIT`で囲んでいます。guardが失敗した場合はRPC作成を含む全変更がrollbackされます。fresh適用は、共有・production DBではなく使い捨てのSupabase互換DBだけを指定して、全migration chainを`supabase db push --db-url $env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL`で確認してください。既にmigration historyへ`20261008150000`が記録されたDBではファイル編集による再実行は起きないため、正常適用済み環境へ手動で再適用しません。
+`...130000`、`...150000`、`...160000`はSupabase CLIがstatementごとに実行する環境でも部分適用を残さないよう、各fileの変更とguardを明示的な`BEGIN` / `COMMIT`で囲んでいます。guardが失敗した場合は同じfile内の全変更がrollbackされます。fresh適用は、共有・production DBではなく使い捨てのSupabase互換DBだけを指定して、全migration chainを`supabase db push --db-url $env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL`で確認してください。既にmigration historyへ対象versionが記録されたDBではファイル編集による再実行は起きないため、正常適用済み環境へ手動で再適用しません。
 
 ## 9. Security確認
 

@@ -173,9 +173,13 @@ environment, preserve both staged rollout boundaries:
 Do not apply either revoke while its legacy clients may still be active. A
 fresh environment instead applies the complete migration chain before exposing
 the current Function/frontend to users; it does not use this upgrade sequence.
-Both revoke migrations also fail closed after their direct REVOKEs when `anon`
-or `authenticated` retains effective DELETE or INSERT/UPDATE privileges through
-an inherited custom role. The authorized-save migration additionally verifies
+Both revoke migrations perform their direct REVOKEs and privilege guards in one
+explicit transaction. If `anon` or `authenticated` retains effective DELETE or
+INSERT/UPDATE privileges through an inherited custom role, the guard fails and
+the direct REVOKEs roll back with the rest of that migration. Treat that as an
+unfinished cutover: do not apply the next migration or expose the new release,
+inspect and remove the inherited privilege source, and rerun the same migration.
+The authorized-save migration additionally verifies
 the backend-only save RPC as soon as it is created, and the RPC-only save
 migration verifies it again before the final cutover: the function must remain
 `SECURITY DEFINER`, only `service_role` may have effective EXECUTE, and PUBLIC,
@@ -183,6 +187,122 @@ migration verifies it again before the final cutover: the function must remain
 GRANTs, unsafe role memberships or custom roles, and unsafe function default
 privileges, then rerun the migration; migrations do not alter shared custom
 roles automatically.
+
+Already-recorded migration versions are not rerun when these files change. Do
+not manually rerun a successfully applied cutover on an existing environment.
+The rollback exercise below requires a brand-new disposable database and must
+never target the retained browser-test databases on ports `54322` or `54422`.
+
+### RPC-only cutover rollback exercise
+
+Run this only in a separate validation worktree and a newly created disposable
+database. Set a dedicated URL, and fail before any command if it points at either
+retained local environment:
+
+```powershell
+$cutoverDbUrl = $env:ACAPPELLA_TT_CUTOVER_ROLLBACK_DB_URL
+if ([string]::IsNullOrWhiteSpace($cutoverDbUrl)) {
+  throw 'Set ACAPPELLA_TT_CUTOVER_ROLLBACK_DB_URL to a new disposable database.'
+}
+if ($cutoverDbUrl -match '(127\.0\.0\.1|localhost):(54322|54422)(/|$)') {
+  throw 'Refusing to use the retained dbtest or freshcheck database.'
+}
+```
+
+For the Delete case, apply migrations only through `...120000`, record the
+current direct DELETE ACL, then create a test-only custom role, grant it DELETE,
+and grant that role to `authenticated`. Apply `...130000` through Supabase CLI.
+The actual `$cloud_event_delete_privilege_guard$` must fail with SQLSTATE
+`42501`. Verify that the direct ACL is byte-for-byte unchanged and that
+`20261008130000` is absent from `supabase_migrations.schema_migrations`:
+
+```sql
+select relacl from pg_catalog.pg_class
+where oid = 'public.cloud_events'::regclass;
+
+select exists (
+  select 1 from supabase_migrations.schema_migrations
+  where version = '20261008130000'
+) as delete_cutover_recorded;
+```
+
+Use a unique role in that disposable database only:
+
+```sql
+create role cloud_event_delete_guard_probe nologin;
+grant delete on table public.cloud_events
+  to cloud_event_delete_guard_probe;
+grant cloud_event_delete_guard_probe to authenticated;
+```
+
+Run the real migration through the CLI and require failure rather than allowing
+PowerShell to continue silently:
+
+```powershell
+supabase db push --db-url $cutoverDbUrl
+if ($LASTEXITCODE -eq 0) {
+  throw 'Expected the inherited DELETE privilege guard to reject the cutover.'
+}
+```
+
+Remove only the test role membership and its test grants, then rerun the same
+migration and require success. Do not continue to `...140000` after the expected
+failure.
+
+For the Save case, use another new disposable database and apply migrations only
+through `...150000`. Record both the table ACL and every explicit column ACL:
+
+```sql
+select relacl from pg_catalog.pg_class
+where oid = 'public.cloud_events'::regclass;
+
+select attname, attacl
+from pg_catalog.pg_attribute
+where attrelid = 'public.cloud_events'::regclass
+  and attnum > 0 and not attisdropped
+order by attnum;
+```
+
+Create a test-only custom role with inherited INSERT/UPDATE or inherited EXECUTE
+on `save_cloud_event_validated`, grant that role to a browser role, and apply
+`...160000` through Supabase CLI. The real write or EXECUTE guard must fail with
+SQLSTATE `42501`. Require identical table/column ACL query results and confirm
+that version `20261008160000` is absent from migration history. Remove only the
+test role membership and grants, rerun `...160000`, and require success before
+applying `...170000`. Never manufacture the failure with an unrelated `1 / 0`;
+the purpose is to exercise the production privilege guards and transaction
+rollback together.
+
+```sql
+select exists (
+  select 1 from supabase_migrations.schema_migrations
+  where version = '20261008160000'
+) as save_cutover_recorded;
+```
+
+For an inherited table-write failure, the disposable-only setup is:
+
+```sql
+create role cloud_event_save_guard_probe nologin;
+grant insert, update on table public.cloud_events
+  to cloud_event_save_guard_probe;
+grant cloud_event_save_guard_probe to authenticated;
+```
+
+Use the same `supabase db push --db-url $cutoverDbUrl` failure check shown for
+Delete. To exercise the EXECUTE guard separately, use another freshly staged
+disposable database, omit the table grant, and grant only:
+
+```sql
+grant execute on function
+  public.save_cloud_event_validated(uuid, uuid, jsonb)
+  to cloud_event_save_guard_probe;
+```
+
+After each expected failure, revoke the probe role from `authenticated`, revoke
+its object grants, and drop only that probe role. Recheck ACLs and migration
+history before retrying. Never perform this setup against a shared role or a
+retained database.
 
 ## Disposable-database exercise
 

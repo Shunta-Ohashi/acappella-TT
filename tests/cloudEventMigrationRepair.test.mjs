@@ -960,6 +960,15 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   assert.match(guide, /20261007120000[\s\S]*--status reverted/)
   assert.match(guide, /--db-url/)
   assert.match(guide, /--dry-run/)
+  assert.match(guide,
+    /Both revoke migrations perform their direct REVOKEs and privilege guards in one[\s\S]*explicit transaction/i)
+  assert.match(guide, /direct REVOKEs roll back with the rest of that migration/i)
+  assert.match(guide, /cloud_event_delete_guard_probe/i)
+  assert.match(guide, /cloud_event_save_guard_probe/i)
+  assert.match(guide, /Expected the inherited DELETE privilege guard to reject the cutover/i)
+  assert.match(guide, /where version = '20261008130000'/i)
+  assert.match(guide, /where version = '20261008160000'/i)
+  assert.match(guide, /ports `54322` or `54422`/i)
   const disposableExercise = guide.slice(
     guide.indexOf('## Disposable-database exercise'),
   )
