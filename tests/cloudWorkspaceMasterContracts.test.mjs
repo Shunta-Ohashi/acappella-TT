@@ -17,6 +17,7 @@ import {
 import { createCloudEventRepository } from '../src/cloud/cloudEventRepository.ts'
 import {
   createCloudWorkspaceMasterRepository,
+  isValidCloudWorkspaceMember,
   parseCloudWorkspaceMasterMutationValue,
 } from '../src/cloud/cloudWorkspaceMasterRepository.ts'
 import { loadCloudWorkspaceAtOneGeneration } from '../src/cloud/cloudWorkspaceReadModel.ts'
@@ -476,6 +477,141 @@ test('Master repositoryはEvent側generationを初回pageから照合し不一�
   if (result.ok) return
   assert.equal(result.error.code, 'WORKSPACE_SNAPSHOT_CHANGED')
   assert.deepEqual(expectedValues, ['12'])
+})
+
+test('Cloud Memberの入学年度はPostgreSQL integer上限まで全境界で統一する', async () => {
+  const postgresIntegerMax = 2_147_483_647
+  for (const member of [
+    { id: 'without-year', realName: 'No Year', active: true },
+    { ...memberA, entryAcademicYear: 2024 },
+    { ...memberA, entryAcademicYear: postgresIntegerMax },
+  ]) {
+    assert.equal(isValidCloudWorkspaceMember(member), true)
+  }
+  for (const entryAcademicYear of [
+    postgresIntegerMax + 1,
+    Number.MAX_SAFE_INTEGER,
+    0,
+    -1,
+    1.5,
+    '2024',
+    null,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+  ]) {
+    assert.equal(isValidCloudWorkspaceMember({
+      ...memberA,
+      entryAcademicYear,
+    }), false, String(entryAcademicYear))
+  }
+
+  let repositoryMutationCalls = 0
+  const repository = createCloudWorkspaceMasterRepository({
+    async loadAuthorizedPage() {
+      return {
+        data: {
+          status: 'ok',
+          workspaceId,
+          workspaceGeneration: '4',
+          rows: [memberRow({
+            ...memberA,
+            entryAcademicYear: postgresIntegerMax + 1,
+          })],
+          nextCursor: null,
+        },
+        error: null,
+      }
+    },
+    async mutate() {
+      repositoryMutationCalls += 1
+      throw new Error('invalid Member must not reach the gateway')
+    },
+  })
+  for (const result of [
+    await repository.createMember(workspaceId, {
+      ...memberA, entryAcademicYear: postgresIntegerMax + 1,
+    }),
+    await repository.updateMember(workspaceId, {
+      ...memberA, entryAcademicYear: postgresIntegerMax + 1,
+    }, 1),
+  ]) {
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.equal(result.error.code, 'INVALID_ARGUMENT')
+  }
+  assert.equal(repositoryMutationCalls, 0)
+  const invalidRead = await repository.loadWorkspaceMasters(workspaceId)
+  assert.equal(invalidRead.ok, false)
+  if (!invalidRead.ok) assert.equal(invalidRead.error.code, 'INVALID_RESPONSE')
+
+  let endpointMutationCalls = 0
+  const endpointDependencies = {
+    async authenticate() { return { id: 'actor-a' } },
+    async mutateValidatedMaster() {
+      endpointMutationCalls += 1
+      throw new Error('invalid Member must not reach the RPC')
+    },
+  }
+  const endpointRequest = body => new Request('https://example.test/workspace-masters', {
+    method: 'POST',
+    headers: {
+      authorization: 'Bearer valid-token',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  for (const body of [
+    {
+      workspaceId,
+      operation: 'create-member',
+      member: { ...memberA, entryAcademicYear: postgresIntegerMax + 1 },
+    },
+    {
+      workspaceId,
+      operation: 'update-member',
+      member: { ...memberA, entryAcademicYear: postgresIntegerMax + 1 },
+      expectedRevision: 1,
+    },
+  ]) {
+    const response = await handleCloudWorkspaceMasterRequest(
+      endpointRequest(body),
+      endpointDependencies,
+    )
+    assert.equal(response.status, 400)
+    assert.equal((await response.json()).error.code, 'INVALID_REQUEST')
+  }
+  assert.equal(endpointMutationCalls, 0)
+
+  const invalidV2State = createDomainState()
+  invalidV2State.members[0].entryAcademicYear = postgresIntegerMax + 1
+  assert.deepEqual(createCloudEventSnapshotV2(invalidV2State, 'event-a'), {
+    ok: false,
+    reason: 'INVALID_SNAPSHOT',
+  })
+
+  const validV2State = createDomainState()
+  validV2State.members[0].entryAcademicYear = postgresIntegerMax
+  const validV2 = createCloudEventSnapshotV2(validV2State, 'event-a')
+  assert.equal(validV2.ok, true)
+  if (validV2.ok) {
+    assert.equal(hasResolvedCloudEventSnapshotV2Masters(
+      validV2.snapshot,
+      validV2State.members,
+      validV2State.bands,
+    ), true)
+    assert.equal(hasResolvedCloudEventSnapshotV2Masters(
+      validV2.snapshot,
+      [{ ...validV2State.members[0], entryAcademicYear: postgresIntegerMax + 1 }, memberB],
+      validV2State.bands,
+    ), false)
+  }
+
+  const legacyV1State = createDomainState()
+  legacyV1State.members[0].entryAcademicYear = postgresIntegerMax + 1
+  const legacyV1 = createCloudEventSnapshot(legacyV1State, 'event-a')
+  assert.equal(legacyV1.ok, true)
+  if (legacyV1.ok) {
+    assert.deepEqual(parseCloudEventSnapshot(legacyV1.snapshot), legacyV1.snapshot)
+  }
 })
 
 test('Cloud Event repositoryはMaster読込へ渡せるgeneration付きsnapshotを返す', async () => {
