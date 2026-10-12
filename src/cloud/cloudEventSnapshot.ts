@@ -16,10 +16,12 @@ import {
   type PersistedDomainState,
 } from '../persistence/localPersistence.ts'
 import {
-  isBand,
-  isMember,
   isRecord,
 } from '../persistence/persistenceValidation.ts'
+import {
+  isValidCloudWorkspaceBand,
+  isValidCloudWorkspaceMember,
+} from './cloudWorkspaceMasterValidation.ts'
 
 export const CLOUD_EVENT_SNAPSHOT_VERSION = 1 as const
 export const CLOUD_EVENT_SNAPSHOT_V2_VERSION = 2 as const
@@ -472,16 +474,8 @@ const createReferenceBand = (id: string): Band => ({
   active: true,
 })
 
-const materializeV2ValidationState = (
-  snapshot: CloudEventSnapshotV2,
-): PersistedAppStateV5 => ({
-  ...snapshot.eventState,
-  members: snapshot.masterReferences.memberIds.map(createReferenceMember),
-  bands: snapshot.masterReferences.bandIds.map(createReferenceBand),
-})
-
 const hasCompleteV2DirectMasterReferences = (
-  state: CloudEventOwnedStateV2,
+  state: PersistedAppStateV5,
   references: CloudEventSnapshotV2['masterReferences'],
 ): boolean => {
   if (
@@ -497,31 +491,40 @@ const hasCompleteV2DirectMasterReferences = (
 }
 
 const validateCloudEventSnapshotV2 = (
-  snapshot: CloudEventSnapshotV2,
-): boolean => {
+  value: unknown,
+): value is CloudEventSnapshotV2 => {
   if (
-    !hasExactKeys(snapshot as unknown as Record<string, unknown>, cloudEventSnapshotV2Keys) ||
-    !hasExactKeys(
-      snapshot.eventState as unknown as Record<string, unknown>,
-      cloudEventOwnedStateV2Keys,
-    ) ||
-    !hasExactKeys(
-      snapshot.masterReferences as unknown as Record<string, unknown>,
-      cloudEventMasterReferenceKeys,
-    ) ||
-    !hasCompleteV2DirectMasterReferences(
-      snapshot.eventState,
-      snapshot.masterReferences,
-    )
-  ) {
-    return false
+    !isRecord(value) ||
+    value.format !== CLOUD_EVENT_SNAPSHOT_FORMAT ||
+    value.version !== CLOUD_EVENT_SNAPSHOT_V2_VERSION ||
+    !hasExactKeys(value, cloudEventSnapshotV2Keys) ||
+    !isRecord(value.eventState) ||
+    !hasExactKeys(value.eventState, cloudEventOwnedStateV2Keys) ||
+    !isRecord(value.masterReferences) ||
+    !hasExactKeys(value.masterReferences, cloudEventMasterReferenceKeys) ||
+    !Array.isArray(value.masterReferences.memberIds) ||
+    !Array.isArray(value.masterReferences.bandIds) ||
+    !Array.from(value.masterReferences.memberIds).every(item => typeof item === 'string') ||
+    !Array.from(value.masterReferences.bandIds).every(item => typeof item === 'string')
+  ) return false
+
+  // Validate every Event-owned collection before reference collection walks
+  // them. Placeholder masters let the existing V5 boundary validator check
+  // the complete Event-owned shape without persisting Master bodies in V2.
+  const state: unknown = {
+    ...value.eventState,
+    members: value.masterReferences.memberIds.map(createReferenceMember),
+    bands: value.masterReferences.bandIds.map(createReferenceBand),
   }
-  const state = materializeV2ValidationState(snapshot)
-  return isPersistedAppStateV5(state) &&
-    hasUniqueEventOwnedCollectionIds(state) &&
-    hasOnlyOneEvent(state) &&
-    hasValidCloudEventIdentity(state) &&
-    hasValidCloudEventRelationships(state)
+  if (!isPersistedAppStateV5(state)) return false
+
+  const persistedState = state as PersistedAppStateV5
+  const references = value.masterReferences as CloudEventSnapshotV2['masterReferences']
+  return hasCompleteV2DirectMasterReferences(persistedState, references) &&
+    hasUniqueEventOwnedCollectionIds(persistedState) &&
+    hasOnlyOneEvent(persistedState) &&
+    hasValidCloudEventIdentity(persistedState) &&
+    hasValidCloudEventRelationships(persistedState)
 }
 
 /**
@@ -542,8 +545,8 @@ export const createCloudEventSnapshotV2 = (
   if (
     !Array.isArray(state.members) ||
     !Array.isArray(state.bands) ||
-    !state.members.every(isMember) ||
-    !state.bands.every(isBand) ||
+    !state.members.every(isValidCloudWorkspaceMember) ||
+    !state.bands.every(isValidCloudWorkspaceBand) ||
     !hasUniqueIds(state.members) ||
     !hasUniqueIds(state.bands)
   ) return { ok: false, reason: 'INVALID_SNAPSHOT' }
@@ -592,23 +595,7 @@ export const parseCloudEventSnapshot = (
 export const parseCloudEventSnapshotV2 = (
   value: unknown,
 ): CloudEventSnapshotV2 | undefined => {
-  if (
-    !isRecord(value) ||
-    value.format !== CLOUD_EVENT_SNAPSHOT_FORMAT ||
-    value.version !== CLOUD_EVENT_SNAPSHOT_V2_VERSION ||
-    !isRecord(value.eventState) ||
-    !isRecord(value.masterReferences) ||
-    !hasExactKeys(value, cloudEventSnapshotV2Keys) ||
-    !hasExactKeys(value.eventState, cloudEventOwnedStateV2Keys) ||
-    !hasExactKeys(value.masterReferences, cloudEventMasterReferenceKeys) ||
-    !Array.isArray(value.masterReferences.memberIds) ||
-    !Array.isArray(value.masterReferences.bandIds) ||
-    !Array.from(value.masterReferences.memberIds).every(item => typeof item === 'string') ||
-    !Array.from(value.masterReferences.bandIds).every(item => typeof item === 'string')
-  ) return undefined
-
-  const snapshot = value as unknown as CloudEventSnapshotV2
-  return validateCloudEventSnapshotV2(snapshot) ? snapshot : undefined
+  return validateCloudEventSnapshotV2(value) ? value : undefined
 }
 
 /** Explicit version dispatch for later V1/V2 hydrate integration. */
@@ -639,8 +626,10 @@ export const hasResolvedCloudEventSnapshotV2Masters = (
 ): boolean => {
   if (
     !parseCloudEventSnapshotV2(snapshot) ||
-    !members.every(isMember) ||
-    !bands.every(isBand) ||
+    !Array.isArray(members) ||
+    !Array.isArray(bands) ||
+    !members.every(isValidCloudWorkspaceMember) ||
+    !bands.every(isValidCloudWorkspaceBand) ||
     !hasUniqueIds(members) ||
     !hasUniqueIds(bands)
   ) return false

@@ -1,6 +1,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Band, Member } from '../domain/models.ts'
-import { isBand, isMember, isRecord } from '../persistence/persistenceValidation.ts'
+import { isRecord } from '../persistence/persistenceValidation.ts'
+import {
+  isValidCloudWorkspaceBand,
+  isValidCloudWorkspaceMember,
+} from './cloudWorkspaceMasterValidation.ts'
+
+export {
+  isValidCloudWorkspaceBand,
+  isValidCloudWorkspaceMember,
+} from './cloudWorkspaceMasterValidation.ts'
 
 export const CLOUD_WORKSPACE_MASTER_PAGE_SIZE = 100
 
@@ -179,23 +188,6 @@ const isGeneration = (value: unknown): value is string =>
 
 const isTimestamp = (value: unknown): value is string =>
   isNonEmptyString(value) && Number.isFinite(Date.parse(value))
-
-export const isValidCloudWorkspaceMember = (value: unknown): value is Member =>
-  isMember(value) &&
-  Object.keys(value).every(key => [
-    'id', 'realName', 'acaName', 'entryAcademicYear', 'notes', 'active',
-  ].includes(key)) &&
-  value.id.trim().length > 0 && value.realName.trim().length > 0
-
-export const isValidCloudWorkspaceBand = (value: unknown): value is Band =>
-  isBand(value) &&
-  Object.keys(value).every(key => [
-    'id', 'name', 'defaultMemberIds', 'notes', 'active',
-  ].includes(key)) &&
-  value.id.trim().length > 0 &&
-  value.name.trim().length > 0 &&
-  value.defaultMemberIds.every(isNonEmptyString) &&
-  new Set(value.defaultMemberIds).size === value.defaultMemberIds.length
 
 const parseRecord = (
   value: unknown,

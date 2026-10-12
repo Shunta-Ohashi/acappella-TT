@@ -198,6 +198,33 @@ test('Snapshot V2生成は元stateのdangling・重複・不正Master参照を�
   expectInvalid(state => {
     delete state.members[0].active
   }, 'invalid referenced Member record')
+  expectInvalid(state => {
+    state.members[0].id = '   '
+  }, 'blank Member ID')
+  expectInvalid(state => {
+    state.members[0].realName = ''
+  }, 'blank Member realName')
+  expectInvalid(state => {
+    state.members[0].unexpected = true
+  }, 'unknown Member field')
+  expectInvalid(state => {
+    state.bands[0].id = ''
+  }, 'blank Band ID')
+  expectInvalid(state => {
+    state.bands[0].name = '   '
+  }, 'blank Band name')
+  expectInvalid(state => {
+    state.bands[0].defaultMemberIds = ['member-a', 'member-a']
+  }, 'duplicate Band.defaultMemberIds')
+  expectInvalid(state => {
+    state.bands[0].defaultMemberIds = ['']
+  }, 'blank Band.defaultMemberIds')
+  expectInvalid(state => {
+    state.bands[0].defaultMemberIds = null
+  }, 'invalid Band.defaultMemberIds')
+  expectInvalid(state => {
+    state.bands[0].unexpected = true
+  }, 'unknown Band field')
 
   const withUnreferencedMasters = createDomainState()
   withUnreferencedMasters.members.push({
@@ -217,6 +244,18 @@ test('Snapshot V2生成は元stateのdangling・重複・不正Master参照を�
   const v1 = createCloudEventSnapshot(createDomainState(), 'event-a')
   assert.equal(v1.ok, true)
   if (v1.ok) assert.deepEqual(parseCloudEventSnapshot(v1.snapshot), v1.snapshot)
+
+  const v1LegacyMasterShape = createDomainState()
+  v1LegacyMasterShape.members[0].legacyExtra = 'V1 keeps its existing validator'
+  const legacyV1 = createCloudEventSnapshot(v1LegacyMasterShape, 'event-a')
+  assert.equal(legacyV1.ok, true)
+  if (legacyV1.ok) {
+    assert.deepEqual(parseCloudEventSnapshot(legacyV1.snapshot), legacyV1.snapshot)
+    assert.deepEqual(createCloudEventSnapshotV2(v1LegacyMasterShape, 'event-a'), {
+      ok: false,
+      reason: 'INVALID_SNAPSHOT',
+    })
+  }
 })
 
 test('Snapshot V2は欠落・余分・重複Master参照とEvent ownership破損をfail closedする', () => {
@@ -291,6 +330,66 @@ test('Snapshot V2はMaster本体とallowlist外のkeyをEnvelope経由でも拒�
   assert.equal(parseCloudEventSnapshotEnvelope(extraEnvelopeKey), undefined)
 })
 
+test('Snapshot V2 parserはmalformed collectionを例外なくfail closedする', () => {
+  const created = createCloudEventSnapshotV2(createDomainState(), 'event-a')
+  assert.equal(created.ok, true)
+  if (!created.ok) return
+
+  const malformedValues = []
+  for (const key of Object.keys(created.snapshot.eventState)) {
+    if (key === 'version') continue
+    for (const value of [null, {}]) {
+      const malformed = structuredClone(created.snapshot)
+      malformed.eventState[key] = value
+      malformedValues.push([`${key}:${String(value)}`, malformed])
+    }
+  }
+
+  const stringCollection = structuredClone(created.snapshot)
+  stringCollection.eventState.eventBands = 'invalid'
+  malformedValues.push(['string collection', stringCollection])
+
+  const nullCollectionItem = structuredClone(created.snapshot)
+  nullCollectionItem.eventState.eventMembers = [null]
+  malformedValues.push(['null collection item', nullCollectionItem])
+
+  const invalidEventBandMembers = structuredClone(created.snapshot)
+  invalidEventBandMembers.eventState.eventBands[0].memberIds = null
+  malformedValues.push(['null EventBand.memberIds', invalidEventBandMembers])
+
+  const missingCollection = structuredClone(created.snapshot)
+  delete missingCollection.eventState.eventMembers
+  malformedValues.push(['missing required collection', missingCollection])
+
+  const invalidRecord = structuredClone(created.snapshot)
+  invalidRecord.eventState.events[0].validationPolicy = null
+  malformedValues.push(['invalid Event record', invalidRecord])
+
+  for (const [name, mutate] of [
+    ['null masterReferences', snapshot => { snapshot.masterReferences = null }],
+    ['object memberIds', snapshot => { snapshot.masterReferences.memberIds = {} }],
+    ['string bandIds', snapshot => { snapshot.masterReferences.bandIds = 'band-a' }],
+    ['null reference item', snapshot => { snapshot.masterReferences.memberIds = [null] }],
+  ]) {
+    const malformed = structuredClone(created.snapshot)
+    mutate(malformed)
+    malformedValues.push([name, malformed])
+  }
+
+  for (const [name, malformed] of malformedValues) {
+    let direct
+    let envelope
+    assert.doesNotThrow(() => {
+      direct = parseCloudEventSnapshotV2(malformed)
+    }, name)
+    assert.doesNotThrow(() => {
+      envelope = parseCloudEventSnapshotEnvelope(malformed)
+    }, `${name}: envelope`)
+    assert.equal(direct, undefined, name)
+    assert.equal(envelope, undefined, `${name}: envelope`)
+  }
+})
+
 test('Snapshot V2のMaster解決は参照欠落とBand relation欠落を拒否する', () => {
   const created = createCloudEventSnapshotV2(createDomainState(), 'event-a')
   assert.equal(created.ok, true)
@@ -310,6 +409,23 @@ test('Snapshot V2のMaster解決は参照欠落とBand relation欠落を拒否�
     created.snapshot,
     [memberA, memberB],
     [],
+  ), false)
+  assert.equal(hasResolvedCloudEventSnapshotV2Masters(
+    created.snapshot,
+    [memberA, memberB, { id: 'member-extra', realName: 'Extra', active: true }],
+    [bandA, {
+      id: 'band-extra', name: 'Extra', defaultMemberIds: [], active: true,
+    }],
+  ), true)
+  assert.equal(hasResolvedCloudEventSnapshotV2Masters(
+    created.snapshot,
+    [{ ...memberA, unexpected: true }, memberB],
+    [bandA],
+  ), false)
+  assert.equal(hasResolvedCloudEventSnapshotV2Masters(
+    created.snapshot,
+    [memberA, memberB],
+    [{ ...bandA, defaultMemberIds: ['member-a', 'member-a'] }],
   ), false)
 })
 
