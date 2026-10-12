@@ -178,6 +178,25 @@ $$;
 revoke all on function public.protect_workspace_master_band_identity_and_revision()
   from public, anon, authenticated, service_role;
 
+create function public.protect_workspace_master_band_member_identity()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.workspace_id is distinct from old.workspace_id
+    or new.band_id is distinct from old.band_id
+    or new.member_id is distinct from old.member_id then
+    raise exception 'Workspace Band Member identity cannot be changed'
+      using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.protect_workspace_master_band_member_identity()
+  from public, anon, authenticated, service_role;
+
 create trigger workspace_master_members_initialize_metadata
   before insert on public.workspace_master_members
   for each row execute function public.initialize_workspace_master_record_metadata();
@@ -194,6 +213,10 @@ create trigger workspace_master_bands_protect_identity_and_revision
   before update on public.workspace_master_bands
   for each row execute function public.protect_workspace_master_band_identity_and_revision();
 
+create trigger workspace_master_band_members_protect_identity
+  before update on public.workspace_master_band_members
+  for each row execute function public.protect_workspace_master_band_member_identity();
+
 -- Existing Workspace snapshots have not been backfilled into the reference
 -- tables. Deleting normalized masters is therefore fail-closed until a later
 -- migration has made the Workspace ready. Parent Workspace cascades remain
@@ -204,15 +227,24 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  master_status text;
 begin
-  if exists (
-    select 1 from public.workspaces
-    where workspaces.id = old.workspace_id
-  ) and not exists (
-    select 1 from public.cloud_workspace_master_states
-    where cloud_workspace_master_states.workspace_id = old.workspace_id
-      and cloud_workspace_master_states.status = 'ready'
+  -- During a parent Workspace cascade the parent row is no longer visible to
+  -- this trigger. Direct Master deletion must instead serialize with status
+  -- changes by locking the state row before deciding whether deletion is safe.
+  if not exists (
+    select 1 from public.workspaces where workspaces.id = old.workspace_id
   ) then
+    return old;
+  end if;
+
+  select cloud_workspace_master_states.status into master_status
+  from public.cloud_workspace_master_states
+  where cloud_workspace_master_states.workspace_id = old.workspace_id
+  for share;
+
+  if master_status is distinct from 'ready' then
     raise exception 'Workspace master deletion requires ready migration state'
       using errcode = '55000';
   end if;
@@ -232,10 +264,11 @@ create trigger workspace_master_bands_guard_delete_until_ready
   for each row execute function public.guard_workspace_master_delete_until_ready();
 
 -- Future internal master mutations participate in the same generation lock
--- used by Cloud Event page reads. A later owner/editor mutation RPC must keep
--- the existing lock order: Workspace membership FOR SHARE first, then master
--- DML; the row trigger takes the generation UPDATE lock transactionally. No
--- mutation endpoint is exposed here.
+-- used by Cloud Event page reads. Direct deletion locks the master state before
+-- this AFTER trigger locks generation; status UPDATE uses the same state-then-
+-- generation order. A later owner/editor mutation RPC must first take Workspace
+-- membership FOR SHARE, then perform master DML. No mutation endpoint is
+-- exposed here.
 create trigger workspace_master_members_advance_workspace_generation
   after insert or update or delete on public.workspace_master_members
   for each row execute function public.advance_cloud_event_workspace_generation();
@@ -372,6 +405,7 @@ begin
     'public.initialize_workspace_master_record_metadata()',
     'public.protect_workspace_master_member_identity_and_revision()',
     'public.protect_workspace_master_band_identity_and_revision()',
+    'public.protect_workspace_master_band_member_identity()',
     'public.guard_workspace_master_delete_until_ready()'
   ] loop
     function_oid := to_regprocedure(function_signature);

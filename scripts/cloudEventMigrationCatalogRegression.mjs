@@ -70,6 +70,26 @@ const scenarios = [
     !result.laterSchema.workspaceMasterStateInitializer],
   ['workspace_master_delete_guard_misplaced', result =>
     !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_delete_guard_unlocked', result =>
+    !result.laterSchema.workspaceMasterStateInitializer],
+  ['workspace_master_metadata_initialize_missing', result =>
+    !result.laterSchema.workspaceMasterMetadataTriggers],
+  ['workspace_master_member_metadata_protect_missing', result =>
+    !result.laterSchema.workspaceMasterMetadataTriggers],
+  ['workspace_master_band_metadata_protect_missing', result =>
+    !result.laterSchema.workspaceMasterMetadataTriggers],
+  ['workspace_master_metadata_trigger_disabled', result =>
+    !result.laterSchema.workspaceMasterMetadataTriggers],
+  ['workspace_master_metadata_trigger_after_insert', result =>
+    !result.laterSchema.workspaceMasterMetadataTriggers],
+  ['workspace_master_state_updated_at_missing', result =>
+    !result.laterSchema.workspaceMasterMetadataTriggers],
+  ['workspace_master_relation_identity_trigger_missing', result =>
+    !result.laterSchema.workspaceMasterMetadataTriggers],
+  ['workspace_master_metadata_trigger_wrong_table', result =>
+    !result.laterSchema.workspaceMasterMetadataTriggers],
+  ['workspace_master_metadata_trigger_wrong_function', result =>
+    !result.laterSchema.workspaceMasterMetadataTriggers],
   ['workspace_master_nonlegacy_state', result =>
     !result.laterSchema.workspaceMasterStateInitializer],
   ['workspace_master_generation_trigger_missing', result =>
@@ -190,6 +210,7 @@ const main = async () => {
       !baseline.laterSchema.workspaceMasterTables ||
       !baseline.laterSchema.workspaceMasterConstraints ||
       !baseline.laterSchema.workspaceMasterStateInitializer ||
+      !baseline.laterSchema.workspaceMasterMetadataTriggers ||
       !baseline.laterSchema.workspaceMasterGenerationTriggers ||
       !baseline.laterSchema.workspaceMasterRowLevelSecurity ||
       !baseline.laterSchema.workspaceMasterPrivileges

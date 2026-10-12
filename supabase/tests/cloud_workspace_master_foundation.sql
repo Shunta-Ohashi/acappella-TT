@@ -48,7 +48,8 @@ $$;
 insert into public.workspaces (id, name) values
   ('70000000-0000-0000-0000-000000000001', 'Master foundation A'),
   ('70000000-0000-0000-0000-000000000002', 'Master foundation B'),
-  ('70000000-0000-0000-0000-000000000003', 'Master cascade probe');
+  ('70000000-0000-0000-0000-000000000003', 'Master cascade probe'),
+  ('70000000-0000-0000-0000-000000000004', 'Missing state probe');
 
 do $$
 begin
@@ -66,7 +67,8 @@ begin
     where workspace_id in (
       '70000000-0000-0000-0000-000000000001'::uuid,
       '70000000-0000-0000-0000-000000000002'::uuid,
-      '70000000-0000-0000-0000-000000000003'::uuid
+      '70000000-0000-0000-0000-000000000003'::uuid,
+      '70000000-0000-0000-0000-000000000004'::uuid
     ) and status <> 'legacy'
   ) then
     raise exception 'New Workspace master state must be legacy';
@@ -99,6 +101,12 @@ insert into public.workspace_master_members (
     'member-b', 'Bob', null, null, null, true,
     99, timestamptz '2000-01-01 00:00:00+00',
     timestamptz '2000-01-01 00:00:00+00'
+  ),
+  (
+    '70000000-0000-0000-0000-000000000002',
+    'member-a', 'Alice B', null, null, null, true,
+    99, timestamptz '2000-01-01 00:00:00+00',
+    timestamptz '2000-01-01 00:00:00+00'
   );
 
 insert into master_generation_probe
@@ -119,6 +127,12 @@ insert into public.workspace_master_bands (
   (
     '70000000-0000-0000-0000-000000000002',
     'band-b', 'Beta', null, true,
+    99, timestamptz '2000-01-01 00:00:00+00',
+    timestamptz '2000-01-01 00:00:00+00'
+  ),
+  (
+    '70000000-0000-0000-0000-000000000002',
+    'band-a', 'Alpha B', null, true,
     99, timestamptz '2000-01-01 00:00:00+00',
     timestamptz '2000-01-01 00:00:00+00'
   );
@@ -159,6 +173,85 @@ begin
     or relation_generation <> band_generation + 1 then
     raise exception 'Member, Band, and ordered relation mutations must advance generation';
   end if;
+end;
+$$;
+
+do $$
+declare
+  workspace_a_generation bigint;
+  workspace_b_generation bigint;
+begin
+  select generation into workspace_a_generation
+  from public.cloud_event_workspace_generations
+  where workspace_id = '70000000-0000-0000-0000-000000000001';
+  select generation into workspace_b_generation
+  from public.cloud_event_workspace_generations
+  where workspace_id = '70000000-0000-0000-0000-000000000002';
+
+  -- Both Workspaces deliberately contain matching parent IDs, so the
+  -- composite FKs alone would allow this ownership move. The identity trigger
+  -- must reject it before either Workspace generation changes.
+  begin
+    update public.workspace_master_band_members
+    set workspace_id = '70000000-0000-0000-0000-000000000002'
+    where workspace_id = '70000000-0000-0000-0000-000000000001'
+      and band_id = 'band-a'
+      and member_id = 'member-a';
+    raise exception 'Cross-Workspace Band Member identity mutation was accepted';
+  exception when sqlstate '42501' then
+    null;
+  end;
+
+  if not exists (
+    select 1 from public.workspace_master_band_members
+    where workspace_id = '70000000-0000-0000-0000-000000000001'
+      and band_id = 'band-a'
+      and member_id = 'member-a'
+      and position = 0
+  ) or exists (
+    select 1 from public.workspace_master_band_members
+    where workspace_id = '70000000-0000-0000-0000-000000000002'
+      and band_id = 'band-a'
+      and member_id = 'member-a'
+  ) then
+    raise exception 'Rejected Band Member identity mutation changed formal data';
+  end if;
+  if workspace_a_generation <> (
+      select generation from public.cloud_event_workspace_generations
+      where workspace_id = '70000000-0000-0000-0000-000000000001'
+    ) or workspace_b_generation <> (
+      select generation from public.cloud_event_workspace_generations
+      where workspace_id = '70000000-0000-0000-0000-000000000002'
+    ) then
+    raise exception 'Rejected Band Member identity mutation changed generation';
+  end if;
+
+  update public.workspace_master_band_members
+  set position = 4
+  where workspace_id = '70000000-0000-0000-0000-000000000001'
+    and band_id = 'band-a'
+    and member_id = 'member-a';
+  if not exists (
+    select 1 from public.workspace_master_band_members
+    where workspace_id = '70000000-0000-0000-0000-000000000001'
+      and band_id = 'band-a'
+      and member_id = 'member-a'
+      and position = 4
+  ) or workspace_a_generation + 1 <> (
+    select generation from public.cloud_event_workspace_generations
+    where workspace_id = '70000000-0000-0000-0000-000000000001'
+  ) or workspace_b_generation <> (
+    select generation from public.cloud_event_workspace_generations
+    where workspace_id = '70000000-0000-0000-0000-000000000002'
+  ) then
+    raise exception 'Same-Workspace Band Member position update is invalid';
+  end if;
+
+  update public.workspace_master_band_members
+  set position = 0
+  where workspace_id = '70000000-0000-0000-0000-000000000001'
+    and band_id = 'band-a'
+    and member_id = 'member-a';
 end;
 $$;
 
@@ -343,7 +436,7 @@ begin
     ) values (
       '70000000-0000-0000-0000-000000000002',
       'band-a',
-      'member-b',
+      'member-a2',
       0
     );
     raise exception 'Cross-Workspace relation ownership was accepted';
@@ -411,6 +504,27 @@ begin
   where workspace_id = '70000000-0000-0000-0000-000000000001';
 
   begin
+    insert into public.workspace_master_members (
+      workspace_id, member_id, real_name, active
+    ) values (
+      '70000000-0000-0000-0000-000000000001',
+      'deletable-member',
+      'Deletable Member',
+      true
+    );
+    delete from public.workspace_master_members
+    where workspace_id = '70000000-0000-0000-0000-000000000001'
+      and member_id = 'deletable-member';
+    if exists (
+      select 1 from public.workspace_master_members
+      where workspace_id = '70000000-0000-0000-0000-000000000001'
+        and member_id = 'deletable-member'
+    ) then
+      raise exception 'Ready Workspace Member deletion did not complete';
+    end if;
+  end;
+
+  begin
     delete from public.workspace_master_members
     where workspace_id = '70000000-0000-0000-0000-000000000001'
       and member_id = 'member-a';
@@ -425,6 +539,29 @@ begin
       and band_id = 'band-a';
     raise exception 'Referenced Workspace Band deletion was accepted';
   exception when foreign_key_violation then
+    null;
+  end;
+end;
+$$;
+
+insert into public.workspace_master_members (
+  workspace_id, member_id, real_name, active
+) values (
+  '70000000-0000-0000-0000-000000000004',
+  'missing-state-member',
+  'Missing State Member',
+  true
+);
+delete from public.cloud_workspace_master_states
+where workspace_id = '70000000-0000-0000-0000-000000000004';
+do $$
+begin
+  begin
+    delete from public.workspace_master_members
+    where workspace_id = '70000000-0000-0000-0000-000000000004'
+      and member_id = 'missing-state-member';
+    raise exception 'Missing Workspace master state allowed direct deletion';
+  exception when sqlstate '55000' then
     null;
   end;
 end;

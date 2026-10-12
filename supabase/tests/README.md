@@ -49,6 +49,9 @@ psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
   -f supabase/tests/cloud_event_authorized_page_concurrency.sql
 psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
   -f supabase/tests/cloud_workspace_master_foundation.sql
+psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
+  -v "test_db_url=$env:ACAPPELLA_TT_DBLINK_DATABASE_URL" `
+  -f supabase/tests/cloud_workspace_master_foundation_concurrency.sql
 node scripts/cloudEventMigrationCatalogRegression.mjs `
   --db-url-env ACAPPELLA_TT_TEST_DATABASE_URL `
   --confirm-disposable
@@ -62,8 +65,8 @@ example `postgresql://postgres:postgres@host.docker.internal:54322/postgres`.
 Other environments may continue to use the same URL for both variables.
 
 The core and Workspace-master foundation scripts are wrapped in transactions
-and roll back all fixtures. The
-concurrency scripts must commit between two database connections to prove lock
+and roll back all fixtures. The concurrency scripts, including the Workspace
+Master status/delete test, must commit between two database connections to prove lock
 ordering, so they clean up their fixed-ID fixtures when successful. Use a disposable
 database because an interrupted run can leave those fixtures behind.
 
@@ -102,6 +105,11 @@ invalidates a stale page generation. The Workspace-master foundation test
 checks ordered Band members, same-Workspace composite FKs, Event reference
 cascade/restrict behavior, legacy delete blocking, RLS/direct-ACL denial, and
 monotonic generation updates without exposing any production endpoint.
+The Workspace-master concurrency test deterministically observes both lock
+orders between a direct Master DELETE and ready-to-conflict/legacy status
+changes. It verifies fail-closed status-first deletion, valid delete-first
+serialization, generation changes, bounded timeouts, and parent Workspace
+cascading without weakening the production ACL/RLS contract.
 
 The concurrency tests use a bounded polling loop only to observe the second
 connection waiting on a PostgreSQL lock; ordering is established by the RPC call

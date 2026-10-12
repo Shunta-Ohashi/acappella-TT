@@ -4405,7 +4405,11 @@ test('Workspace master foundationは正規化schemaをadditiveかつ非公開で
     /cloud_event_band_references[\s\S]*foreign key \(workspace_id, band_id\)[\s\S]*references public\.workspace_master_bands\(workspace_id, band_id\)[\s\S]*on delete restrict/i)
 
   assert.match(sql,
-    /guard_workspace_master_delete_until_ready[\s\S]*status = 'ready'[\s\S]*errcode = '55000'/i)
+    /guard_workspace_master_delete_until_ready[\s\S]*for share[\s\S]*master_status is distinct from 'ready'[\s\S]*errcode = '55000'/i)
+  assert.match(sql,
+    /create function public\.protect_workspace_master_band_member_identity\(\)[\s\S]*new\.workspace_id is distinct from old\.workspace_id[\s\S]*new\.band_id is distinct from old\.band_id[\s\S]*new\.member_id is distinct from old\.member_id[\s\S]*errcode = '42501'/i)
+  assert.match(sql,
+    /create trigger workspace_master_band_members_protect_identity[\s\S]*before update on public\.workspace_master_band_members[\s\S]*protect_workspace_master_band_member_identity/i)
   for (const table of [
     'workspace_master_members',
     'workspace_master_bands',
@@ -4478,6 +4482,10 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   ), 'utf8')
   const masterFoundationSql = await readFile(new URL(
     '../supabase/tests/cloud_workspace_master_foundation.sql',
+    import.meta.url,
+  ), 'utf8')
+  const masterFoundationConcurrencySql = await readFile(new URL(
+    '../supabase/tests/cloud_workspace_master_foundation_concurrency.sql',
     import.meta.url,
   ), 'utf8')
   const instructions = await readFile(new URL(
@@ -4586,6 +4594,16 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
     /Workspace Member UPDATE metadata contract was not preserved/i)
   assert.match(masterFoundationSql,
     /Workspace Band UPDATE metadata contract was not preserved/i)
+  assert.match(masterFoundationSql,
+    /Cross-Workspace Band Member identity mutation was accepted[\s\S]*sqlstate '42501'/i)
+  assert.match(masterFoundationSql,
+    /Rejected Band Member identity mutation changed generation/i)
+  assert.match(masterFoundationSql,
+    /Same-Workspace Band Member position update is invalid/i)
+  assert.match(masterFoundationSql,
+    /Missing Workspace master state allowed direct deletion/i)
+  assert.match(masterFoundationSql,
+    /Ready Workspace Member deletion did not complete/i)
   assert.match(masterFoundationSql, /Band Member order was not preserved/i)
   assert.match(masterFoundationSql,
     /'band-a',\s*'member-a4',\s*1\s*\);[\s\S]*exception when unique_violation/i)
@@ -4600,6 +4618,27 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   assert.match(masterFoundationSql,
     /foreach role_name in array array\['anon', 'authenticated', 'service_role'\]/i)
   assert.match(instructions, /cloud_workspace_master_foundation\.sql/i)
+  assert.match(instructions,
+    /cloud_workspace_master_foundation_concurrency\.sql/i)
+  assert.match(masterFoundationConcurrencySql, /wait_event_type = 'Lock'/i)
+  assert.match(masterFoundationConcurrencySql,
+    /Master DELETE did not wait for conflict status row lock/i)
+  assert.match(masterFoundationConcurrencySql,
+    /Master DELETE did not wait for legacy status row lock/i)
+  assert.match(masterFoundationConcurrencySql,
+    /Conflict transition did not wait for Master DELETE FOR SHARE lock/i)
+  assert.match(masterFoundationConcurrencySql,
+    /Legacy transition did not wait for Master DELETE FOR SHARE lock/i)
+  assert.match(masterFoundationConcurrencySql,
+    /set statement_timeout = ''?10s''?[\s\S]*set deadlock_timeout = ''?100ms''?/i)
+  assert.match(masterFoundationConcurrencySql,
+    /Parent Workspace cascade did not remove Master rows/i)
+  assertAsyncQueriesAreFullyDrained(masterFoundationConcurrencySql, 4)
+  assert.doesNotMatch(masterFoundationConcurrencySql, /declare\s+trailing\b/i)
+  assert.equal(
+    (masterFoundationConcurrencySql.match(/declare\s+remaining_result_count\s+bigint/gi) ?? []).length,
+    4,
+  )
   assert.match(instructions, /20261008110000_cloud_event_persistence\.sql/i)
   assert.match(instructions, /20261008150000_cloud_event_authorized_save\.sql/i)
   assert.match(instructions, /not a passing database test/i)

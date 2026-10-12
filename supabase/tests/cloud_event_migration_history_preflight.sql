@@ -236,6 +236,9 @@ workspace_master_internal_functions as (
     to_regprocedure(
       'public.protect_workspace_master_band_identity_and_revision()'
     ),
+    to_regprocedure(
+      'public.protect_workspace_master_band_member_identity()'
+    ),
     to_regprocedure('public.guard_workspace_master_delete_until_ready()')
   )
 ),
@@ -1356,7 +1359,9 @@ later_schema as (
         select 1 from guard_master_delete_function
         where guard_master_delete_function.prosecdef
           and lower(guard_master_delete_function.prosrc)
-            like '%status = ''ready''%'
+            like '%for share%'
+          and lower(guard_master_delete_function.prosrc)
+            like '%master_status is distinct from ''ready''%'
           and lower(guard_master_delete_function.prosrc)
             like '%errcode = ''55000''%'
       )
@@ -1398,6 +1403,156 @@ later_schema as (
           and not pg_trigger.tgisinternal
           and pg_trigger.tgenabled = 'O'
           and pg_trigger.tgtype = 11
+      ),
+    'workspaceMasterMetadataTriggers',
+      -- Every metadata/identity function is a non-SECURITY-DEFINER trigger
+      -- function with an empty search_path. Body checks below retain the
+      -- fail-closed metadata and identity contracts.
+      (
+        select count(*) = 5 and bool_and(
+          pg_proc.prorettype = 'trigger'::regtype
+          and pg_proc.pronargs = 0
+          and pg_language.lanname = 'plpgsql'
+          and not pg_proc.prosecdef
+          and pg_proc.provolatile = 'v'
+          and array_to_string(pg_proc.proconfig, ',') in (
+            'search_path=""',
+            'search_path='
+          )
+        )
+        from pg_catalog.pg_proc
+        join pg_catalog.pg_language on pg_language.oid = pg_proc.prolang
+        where pg_proc.oid in (
+          to_regprocedure(
+            'public.initialize_workspace_master_record_metadata()'
+          ),
+          to_regprocedure(
+            'public.protect_workspace_master_member_identity_and_revision()'
+          ),
+          to_regprocedure(
+            'public.protect_workspace_master_band_identity_and_revision()'
+          ),
+          to_regprocedure(
+            'public.protect_workspace_master_band_member_identity()'
+          ),
+          to_regprocedure('public.set_current_updated_at()')
+        )
+      )
+      and exists (
+        select 1 from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+            'public.initialize_workspace_master_record_metadata()'
+          )
+          and lower(pg_proc.prosrc) like '%new.revision = 1%'
+          and lower(pg_proc.prosrc) like '%new.created_at = now()%'
+          and lower(pg_proc.prosrc) like '%new.updated_at = now()%'
+      )
+      and exists (
+        select 1 from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+            'public.protect_workspace_master_member_identity_and_revision()'
+          )
+          and lower(pg_proc.prosrc)
+            like '%new.workspace_id is distinct from old.workspace_id%'
+          and lower(pg_proc.prosrc)
+            like '%new.member_id is distinct from old.member_id%'
+          and lower(pg_proc.prosrc) like '%new.created_at = old.created_at%'
+          and lower(pg_proc.prosrc) like '%new.revision = old.revision + 1%'
+          and lower(pg_proc.prosrc) like '%new.updated_at = now()%'
+          and lower(pg_proc.prosrc) like '%errcode = ''42501''%'
+      )
+      and exists (
+        select 1 from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+            'public.protect_workspace_master_band_identity_and_revision()'
+          )
+          and lower(pg_proc.prosrc)
+            like '%new.workspace_id is distinct from old.workspace_id%'
+          and lower(pg_proc.prosrc)
+            like '%new.band_id is distinct from old.band_id%'
+          and lower(pg_proc.prosrc) like '%new.created_at = old.created_at%'
+          and lower(pg_proc.prosrc) like '%new.revision = old.revision + 1%'
+          and lower(pg_proc.prosrc) like '%new.updated_at = now()%'
+          and lower(pg_proc.prosrc) like '%errcode = ''42501''%'
+      )
+      and exists (
+        select 1 from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+            'public.protect_workspace_master_band_member_identity()'
+          )
+          and lower(pg_proc.prosrc)
+            like '%new.workspace_id is distinct from old.workspace_id%'
+          and lower(pg_proc.prosrc)
+            like '%new.band_id is distinct from old.band_id%'
+          and lower(pg_proc.prosrc)
+            like '%new.member_id is distinct from old.member_id%'
+          and lower(pg_proc.prosrc) like '%errcode = ''42501''%'
+      )
+      and exists (
+        select 1 from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure('public.set_current_updated_at()')
+          and regexp_replace(lower(pg_proc.prosrc), '\s+', '', 'g') =
+            'beginnew.updated_at=now();returnnew;end;'
+      )
+      -- ROW=1, BEFORE=2, INSERT=4, UPDATE=16. Validate every required
+      -- table/name/function/type tuple independently; aggregate counts cannot
+      -- hide a missing or misplaced trigger.
+      and not exists (
+        select 1
+        from (values
+          (
+            'workspace_master_members',
+            'workspace_master_members_initialize_metadata',
+            'public.initialize_workspace_master_record_metadata()',
+            7
+          ),
+          (
+            'workspace_master_members',
+            'workspace_master_members_protect_identity_and_revision',
+            'public.protect_workspace_master_member_identity_and_revision()',
+            19
+          ),
+          (
+            'workspace_master_bands',
+            'workspace_master_bands_initialize_metadata',
+            'public.initialize_workspace_master_record_metadata()',
+            7
+          ),
+          (
+            'workspace_master_bands',
+            'workspace_master_bands_protect_identity_and_revision',
+            'public.protect_workspace_master_band_identity_and_revision()',
+            19
+          ),
+          (
+            'cloud_workspace_master_states',
+            'cloud_workspace_master_states_set_current_updated_at',
+            'public.set_current_updated_at()',
+            19
+          ),
+          (
+            'workspace_master_band_members',
+            'workspace_master_band_members_protect_identity',
+            'public.protect_workspace_master_band_member_identity()',
+            19
+          )
+        ) as expected_metadata_trigger(
+          table_name, trigger_name, function_signature, trigger_type
+        )
+        where (
+          select count(*)
+          from pg_catalog.pg_trigger
+          where pg_trigger.tgrelid = to_regclass(format(
+              'public.%I', expected_metadata_trigger.table_name
+            ))
+            and pg_trigger.tgname = expected_metadata_trigger.trigger_name
+            and pg_trigger.tgfoid = to_regprocedure(
+              expected_metadata_trigger.function_signature
+            )
+            and not pg_trigger.tgisinternal
+            and pg_trigger.tgenabled = 'O'
+            and pg_trigger.tgtype = expected_metadata_trigger.trigger_type
+        ) <> 1
       ),
     'workspaceMasterGenerationTriggers',
       -- AFTER INSERT OR UPDATE OR DELETE FOR EACH ROW is 29; AFTER UPDATE
@@ -1462,7 +1617,7 @@ later_schema as (
       ),
     'workspaceMasterPrivileges',
       (select count(*) = 6 from workspace_master_tables)
-      and (select count(*) = 5 from workspace_master_internal_functions)
+      and (select count(*) = 6 from workspace_master_internal_functions)
       and (select count(*) = 1 from authenticated_role)
       and (select count(*) = 1 from anon_role)
       and (select count(*) = 1 from service_role)
