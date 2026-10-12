@@ -24,6 +24,10 @@ import type {
 } from '../domain/eventDeletion'
 import { DeleteConfirmationDialog } from './DeleteConfirmationDialog'
 import type { EventEditorDraftHandle } from '../ui/eventEditorDraftGuard'
+import {
+  createPendingEventDeletion,
+  type PendingEventDeletion,
+} from '../ui/eventDeletionConfirmation'
 
 interface EventBasicInfoProps {
   event: Event
@@ -48,6 +52,36 @@ interface DateInput {
   key: string
   eventDayId?: EventDayId
   value: LocalDate
+}
+
+export function EventDeletionConfirmationDialog({
+  pendingDeletion,
+  isDeleting,
+  errorMessage,
+  onCancel,
+  onConfirm,
+}: {
+  pendingDeletion: PendingEventDeletion
+  isDeleting: boolean
+  errorMessage: string
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const copy = getDeleteConfirmationCopy(
+    'event',
+    pendingDeletion.label,
+    { hasUnsavedDraft: pendingDeletion.hasUnsavedDraft },
+  )
+  return (
+    <DeleteConfirmationDialog
+      {...copy}
+      isPending={isDeleting}
+      pendingLabel="削除中…"
+      errorMessage={errorMessage}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+    />
+  )
 }
 
 const DELETE_BLOCKED_MESSAGE =
@@ -90,10 +124,8 @@ export const EventBasicInfo = forwardRef<EventBasicInfoHandle, EventBasicInfoPro
   const [saveMessage, setSaveMessage] = useState('')
   const [savedDraft, setSavedDraft] = useState(initialDraft)
   const [pendingDeletion, setPendingDeletion] = useState<Pick<DateInput, 'key' | 'value'>>()
-  const [pendingEventDeletion, setPendingEventDeletion] = useState<{
-    eventId: Event['id']
-    label: string
-  }>()
+  const [pendingEventDeletion, setPendingEventDeletion] =
+    useState<PendingEventDeletion>()
   const [eventDeletionError, setEventDeletionError] = useState('')
   const [isDeletingEvent, setIsDeletingEvent] = useState(false)
   const currentDraft = useMemo<EventBasicInfoDraft>(() => ({
@@ -208,10 +240,11 @@ export const EventBasicInfo = forwardRef<EventBasicInfoHandle, EventBasicInfoPro
       return
     }
     setEventDeletionError('')
-    setPendingEventDeletion({
-      eventId: event.id,
-      label: event.name,
-    })
+    setPendingEventDeletion(createPendingEventDeletion({
+      event,
+      currentDraft,
+      savedDraft,
+    }))
   }
 
   const confirmEventDeletion = async () => {
@@ -452,26 +485,19 @@ export const EventBasicInfo = forwardRef<EventBasicInfoHandle, EventBasicInfoPro
           />
         )
       })()}
-      {!readOnly && pendingEventDeletion && (() => {
-        const copy = getDeleteConfirmationCopy(
-          'event',
-          pendingEventDeletion.label,
-        )
-        return (
-          <DeleteConfirmationDialog
-            {...copy}
-            isPending={isDeletingEvent}
-            pendingLabel="削除中…"
-            errorMessage={eventDeletionError}
-            onCancel={() => {
-              if (canDismissDeleteConfirmation(isDeletingEvent)) {
-                setPendingEventDeletion(undefined)
-              }
-            }}
-            onConfirm={confirmEventDeletion}
-          />
-        )
-      })()}
+      {!readOnly && pendingEventDeletion && (
+        <EventDeletionConfirmationDialog
+          pendingDeletion={pendingEventDeletion}
+          isDeleting={isDeletingEvent}
+          errorMessage={eventDeletionError}
+          onCancel={() => {
+            if (canDismissDeleteConfirmation(isDeletingEvent)) {
+              setPendingEventDeletion(undefined)
+            }
+          }}
+          onConfirm={confirmEventDeletion}
+        />
+      )}
     </section>
   )
 })

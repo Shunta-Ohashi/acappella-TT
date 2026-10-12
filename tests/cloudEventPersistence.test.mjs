@@ -1396,6 +1396,59 @@ test('異なるshared Member snapshotは取得順・updatedAtに関係なくhydr
   assert.deepEqual(staleCache, before)
 })
 
+test('共通Member編集後の一部Event保存と新規Event初回保存は次回hydrateで競合を顕在化する', async () => {
+  const state = createDemoData()
+  const [eventA, eventB] = state.events
+  assert.ok(eventA)
+  assert.ok(eventB)
+  const snapshotA = createSnapshot(state, eventA.id)
+  const snapshotB = createSnapshot(state, eventB.id)
+  const sharedMemberId = snapshotA.appState.members.find(member =>
+    snapshotB.appState.members.some(candidate => candidate.id === member.id))?.id
+  assert.ok(sharedMemberId)
+
+  for (const mode of ['existing-event-update', 'new-event-first-save']) {
+    const gateway = new MemoryCloudEventGateway(['workspace-a'])
+    const firstClient = createCloudEventRepository(gateway)
+    assert.equal((await firstClient.saveEvent('workspace-a', snapshotA)).ok, true)
+    if (mode === 'existing-event-update') {
+      assert.equal((await firstClient.saveEvent('workspace-a', snapshotB)).ok, true)
+    }
+
+    const editedState = structuredClone(state)
+    const editedMember = editedState.members.find(member => member.id === sharedMemberId)
+    assert.ok(editedMember)
+    editedMember.realName = '別端末で更新された共有名'
+    const savedEventId = mode === 'existing-event-update' ? eventA.id : eventB.id
+    assert.equal((await firstClient.saveEvent(
+      'workspace-a',
+      createSnapshot(editedState, savedEventId),
+    )).ok, true)
+
+    // A new repository instance models reload/re-login or another authorized
+    // client. The conflict belongs to the Workspace rows, not local identity.
+    const reloadedClient = createCloudEventRepository(gateway)
+    const harness = createHydrationHarness(state)
+    const before = structuredClone(harness.domainState)
+    const completion = await harness.run(() => loadCloudWorkspaceEvents(
+      reloadedClient,
+      'workspace-a',
+      harness.domainState,
+    ))
+
+    assert.equal(completion.kind, 'error', mode)
+    assert.equal(
+      completion.kind === 'error' && completion.error.code,
+      'SHARED_MASTER_CONFLICT',
+      mode,
+    )
+    assert.deepEqual(harness.domainState, before, mode)
+    assert.deepEqual(harness.latestDomainState, before, mode)
+    assert.equal(harness.storageSetCalls, 0, mode)
+    assert.equal(harness.storageRemoveCalls, 0, mode)
+  }
+})
+
 test('異なるshared Band snapshotは取得順に関係なくhydrateを拒否する', () => {
   const state = createDemoData()
   const first = createSnapshot(state, state.events[0].id)

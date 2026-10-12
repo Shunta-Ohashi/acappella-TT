@@ -4,6 +4,7 @@ import { canDismissDeleteConfirmation } from '../ui/deleteConfirmation'
 interface DeleteConfirmationDialogProps {
   title: string
   description: string
+  warningMessage?: string
   confirmLabel: string
   cancelLabel: string
   onConfirm: () => void
@@ -16,6 +17,7 @@ interface DeleteConfirmationDialogProps {
 export function DeleteConfirmationDialog({
   title,
   description,
+  warningMessage,
   confirmLabel,
   cancelLabel,
   onConfirm,
@@ -28,6 +30,7 @@ export function DeleteConfirmationDialog({
   const id = useId()
   const titleId = `${id}-title`
   const descriptionId = `${id}-description`
+  const warningId = `${id}-warning`
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -44,7 +47,9 @@ export function DeleteConfirmationDialog({
       className="delete-confirmation-dialog"
       aria-modal="true"
       aria-labelledby={titleId}
-      aria-describedby={descriptionId}
+      aria-describedby={warningMessage
+        ? `${descriptionId} ${warningId}`
+        : descriptionId}
       aria-busy={isPending || undefined}
       onCancel={(event) => {
         event.preventDefault()
@@ -56,6 +61,11 @@ export function DeleteConfirmationDialog({
           <h2 id={titleId}>{title}</h2>
         </header>
         <p id={descriptionId}>{description}</p>
+        {warningMessage && (
+          <p id={warningId} className="form-error" role="alert">
+            {warningMessage}
+          </p>
+        )}
         {errorMessage && (
           <p className="form-error" role="alert">{errorMessage}</p>
         )}

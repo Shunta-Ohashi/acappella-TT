@@ -181,7 +181,7 @@ test('temporary Cloud lockはviewer readOnlyと区別しmodal delete dialogをin
     /onCancel=\{\(event\) => \{[\s\S]*event\.preventDefault\(\)[\s\S]*canDismissDeleteConfirmation\(isPending\)/)
   assert.equal(dialogSource.match(/disabled=\{isPending\}/g)?.length, 2)
   assert.match(basicInfoSource,
-    /pendingEventDeletion[\s\S]*<DeleteConfirmationDialog[\s\S]*isPending=\{isDeletingEvent\}/)
+    /pendingEventDeletion[\s\S]*<EventDeletionConfirmationDialog[\s\S]*isDeleting=\{isDeletingEvent\}/)
 })
 
 test('Cloud save/delete中だけAppShell navigationをlockする', async () => {

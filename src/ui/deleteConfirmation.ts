@@ -11,8 +11,13 @@ export type DeleteConfirmationTarget =
 export interface DeleteConfirmationCopy {
   title: string
   description: string
+  warningMessage?: string
   confirmLabel: string
   cancelLabel: string
+}
+
+export interface DeleteConfirmationOptions {
+  hasUnsavedDraft?: boolean
 }
 
 export const canDismissDeleteConfirmation = (
@@ -22,6 +27,7 @@ export const canDismissDeleteConfirmation = (
 export const getDeleteConfirmationCopy = (
   target: DeleteConfirmationTarget,
   targetLabel: string,
+  options: DeleteConfirmationOptions = {},
 ): DeleteConfirmationCopy => {
   const label = targetLabel.trim() || '名称未設定'
   const labels = {
@@ -34,6 +40,9 @@ export const getDeleteConfirmationCopy = (
       return {
         title: `「${label}」を削除しますか？`,
         description: 'このイベントと、開催日、Stage・Section、参加メンバー設定、出演バンド・固定配置、タイムテーブル、PA・当日運営担当、TT固定・出演順制約を完全に削除します。共通データのメンバーと固定バンドは削除されません。この操作は元に戻せません。',
+        warningMessage: options.hasUnsavedDraft
+          ? 'この画面でまだ保存していないイベント基本情報の変更も失われます。'
+          : undefined,
         ...labels,
         confirmLabel: 'イベントを削除',
       }
