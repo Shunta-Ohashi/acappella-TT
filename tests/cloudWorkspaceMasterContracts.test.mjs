@@ -1069,6 +1069,65 @@ test('Workspace Master EdgeのDeno import mapはentrypointと同じSupabase vers
   )
 })
 
+test('Cloud Event Save Edgeはclean checkoutでDeno npm依存を自動解決しfrozen lockfileを使う', async () => {
+  const [
+    saveSource,
+    workspaceSource,
+    saveConfigText,
+    workspaceConfigText,
+    saveLockText,
+    packageJsonText,
+    workflow,
+    readme,
+  ] = await Promise.all([
+    readFile(new URL(
+      '../supabase/functions/save-cloud-event/index.ts', import.meta.url,
+    ), 'utf8'),
+    readFile(new URL(
+      '../supabase/functions/workspace-masters/index.ts', import.meta.url,
+    ), 'utf8'),
+    readFile(new URL(
+      '../supabase/functions/save-cloud-event/deno.json', import.meta.url,
+    ), 'utf8'),
+    readFile(new URL(
+      '../supabase/functions/workspace-masters/deno.json', import.meta.url,
+    ), 'utf8'),
+    readFile(new URL(
+      '../supabase/functions/save-cloud-event/deno.lock', import.meta.url,
+    ), 'utf8'),
+    readFile(new URL('../package.json', import.meta.url), 'utf8'),
+    readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'),
+    readFile(new URL('../README.md', import.meta.url), 'utf8'),
+  ])
+  const saveConfig = JSON.parse(saveConfigText)
+  const workspaceConfig = JSON.parse(workspaceConfigText)
+  const saveLock = JSON.parse(saveLockText)
+  const packageJson = JSON.parse(packageJsonText)
+  const dependency = 'npm:@supabase/supabase-js@2.117.2'
+
+  assert.deepEqual(saveConfig, {
+    nodeModulesDir: 'auto',
+    imports: { '@supabase/supabase-js': dependency },
+  })
+  assert.equal(workspaceConfig.imports['@supabase/supabase-js'], dependency)
+  assert.match(saveSource, /from 'npm:@supabase\/supabase-js@2\.117\.2'/)
+  assert.match(workspaceSource, /from 'npm:@supabase\/supabase-js@2\.117\.2'/)
+  assert.equal(packageJson.dependencies['@supabase/supabase-js'], '^2.117.2')
+  assert.equal(saveLock.specifiers[dependency], '2.117.2')
+  assert.ok(saveLock.npm['@supabase/supabase-js@2.117.2']?.integrity)
+
+  for (const contents of [workflow, readme]) {
+    assert.match(
+      contents,
+      /deno check[\s\S]*--frozen-lockfile[\s\S]*--config supabase\/functions\/save-cloud-event\/deno\.json[\s\S]*supabase\/functions\/save-cloud-event\/index\.ts/,
+    )
+  }
+  assert.match(
+    workflow,
+    /--config supabase\/functions\/workspace-masters\/deno\.json/,
+  )
+})
+
 test('Workspace Master実HTTP smokeは実JWT・Edge route・限定fixture cleanupを要求する', async () => {
   const [runner, setup, cleanup, packageJson, runbook] = await Promise.all([
     readFile(new URL(
