@@ -350,6 +350,35 @@ workspace_master_mutation_function as (
     'public.mutate_workspace_master_validated(uuid,uuid,text,text,jsonb,bigint)'
   )
 ),
+workspace_master_backfill_table as (
+  select pg_class.oid, pg_class.relacl, pg_class.relowner,
+    pg_class.relrowsecurity
+  from pg_catalog.pg_class
+  join pg_catalog.pg_namespace on pg_namespace.oid = pg_class.relnamespace
+  where pg_namespace.nspname = 'public'
+    and pg_class.relname = 'cloud_workspace_master_backfills'
+    and pg_class.relkind = 'r'
+),
+workspace_master_backfill_inspect_function as (
+  select pg_proc.oid, pg_proc.proacl, pg_proc.proowner, pg_proc.prosecdef,
+    pg_proc.prosrc, pg_proc.proconfig, pg_proc.provolatile,
+    pg_proc.prorettype, pg_proc.pronargs, pg_language.lanname
+  from pg_catalog.pg_proc
+  join pg_catalog.pg_language on pg_language.oid = pg_proc.prolang
+  where pg_proc.oid = to_regprocedure(
+    'public.inspect_workspace_master_backfill_source(uuid)'
+  )
+),
+workspace_master_backfill_apply_function as (
+  select pg_proc.oid, pg_proc.proacl, pg_proc.proowner, pg_proc.prosecdef,
+    pg_proc.prosrc, pg_proc.proconfig, pg_proc.provolatile,
+    pg_proc.prorettype, pg_proc.pronargs, pg_language.lanname
+  from pg_catalog.pg_proc
+  join pg_catalog.pg_language on pg_language.oid = pg_proc.prolang
+  where pg_proc.oid = to_regprocedure(
+    'public.backfill_workspace_masters_validated(uuid,text,text,jsonb,boolean)'
+  )
+),
 constraint_definitions as (
   select
     pg_constraint.contype,
@@ -1894,6 +1923,175 @@ later_schema as (
         where function_acl.grantee = 0
           and function_acl.privilege_type = 'EXECUTE'
       ),
+    'workspaceMasterBackfillContract',
+      (select count(*) = 1 and bool_and(relrowsecurity)
+        from workspace_master_backfill_table)
+      and not exists (
+        select 1 from pg_catalog.pg_policy
+        join workspace_master_backfill_table
+          on workspace_master_backfill_table.oid = pg_policy.polrelid
+      )
+      and exists (
+        select 1 from pg_catalog.pg_constraint
+        where conrelid = to_regclass('public.cloud_workspace_master_backfills')
+          and contype = 'p'
+      )
+      and exists (
+        select 1 from pg_catalog.pg_constraint
+        where conrelid = to_regclass('public.cloud_workspace_master_backfills')
+          and contype = 'f'
+          and confrelid = to_regclass('public.workspaces')
+          and confdeltype = 'c'
+      )
+      and (select count(*) = 1 and bool_and(
+          prosecdef
+          and provolatile = 'v'
+          and prorettype = 'jsonb'::regtype
+          and pronargs = 1
+          and lanname = 'plpgsql'
+          and array_to_string(proconfig, ',') in ('search_path=""', 'search_path=')
+          and lower(prosrc) like '%cloud_workspace_master_states%for share%'
+          and lower(prosrc) like '%cloud_event_workspace_generations%for share%'
+          and lower(prosrc) like '%from public.cloud_events%'
+          and lower(prosrc) like '%extensions.digest%event_snapshot%'
+        ) from workspace_master_backfill_inspect_function)
+      and (select count(*) = 1 and bool_and(
+          prosecdef
+          and provolatile = 'v'
+          and prorettype = 'jsonb'::regtype
+          and pronargs = 5
+          and lanname = 'plpgsql'
+          and array_to_string(proconfig, ',') in ('search_path=""', 'search_path=')
+          and lower(prosrc) like '%master_status is distinct from ''legacy''%'
+          and lower(prosrc) like '%order by cloud_events.event_id collate "c"%for share%'
+          and lower(prosrc) like '%cloud_event_workspace_generations%for update%'
+          and lower(prosrc) like '%cloud_events.event_snapshot%'
+          and lower(prosrc) like '%insert into public.workspace_master_members%'
+          and lower(prosrc) like '%insert into public.workspace_master_bands%'
+          and lower(prosrc) like '%insert into public.cloud_event_member_references%'
+          and lower(prosrc) like '%insert into public.cloud_event_band_references%'
+          and lower(prosrc) like '%insert into public.cloud_workspace_master_backfills%'
+          and lower(prosrc) like '%snapshotfingerprint%'
+          and lower(prosrc) like '%if not p_apply%'
+          and lower(prosrc) not like '%update public.cloud_events%'
+          and lower(prosrc) not like '%update public.cloud_workspace_master_states%'
+        ) from workspace_master_backfill_apply_function)
+      and (select count(*) = 1 from authenticated_role)
+      and (select count(*) = 1 from anon_role)
+      and (select count(*) = 1 from service_role)
+      and not exists (
+        select 1
+        from workspace_master_backfill_table
+        cross join (
+          select authenticated_role.oid from authenticated_role
+          union all select anon_role.oid from anon_role
+          union all select service_role.oid from service_role
+        ) as direct_role
+        cross join (values
+          ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'),
+          ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')
+        ) as privileges(privilege_name)
+        where has_table_privilege(
+          direct_role.oid,
+          workspace_master_backfill_table.oid,
+          privileges.privilege_name
+        )
+      )
+      and not exists (
+        select 1
+        from workspace_master_backfill_table
+        join pg_catalog.pg_attribute
+          on pg_attribute.attrelid = workspace_master_backfill_table.oid
+        cross join (
+          select authenticated_role.oid from authenticated_role
+          union all select anon_role.oid from anon_role
+          union all select service_role.oid from service_role
+        ) as direct_role
+        cross join (values
+          ('SELECT'), ('INSERT'), ('UPDATE'), ('REFERENCES')
+        ) as privileges(privilege_name)
+        where pg_attribute.attnum > 0
+          and not pg_attribute.attisdropped
+          and has_column_privilege(
+            direct_role.oid,
+            workspace_master_backfill_table.oid,
+            pg_attribute.attnum,
+            privileges.privilege_name
+          )
+      )
+      and not exists (
+        select 1
+        from workspace_master_backfill_table
+        cross join lateral pg_catalog.aclexplode(coalesce(
+          workspace_master_backfill_table.relacl,
+          pg_catalog.acldefault(
+            'r', workspace_master_backfill_table.relowner
+          )
+        )) as table_acl
+        where table_acl.grantee = 0
+      )
+      and not exists (
+        select 1
+        from workspace_master_backfill_table
+        join pg_catalog.pg_attribute
+          on pg_attribute.attrelid = workspace_master_backfill_table.oid
+        cross join lateral pg_catalog.aclexplode(pg_attribute.attacl)
+          as column_acl
+        where pg_attribute.attnum > 0
+          and not pg_attribute.attisdropped
+          and pg_attribute.attacl is not null
+          and column_acl.grantee = 0
+      )
+      and not exists (
+        select 1
+        from (
+          select * from workspace_master_backfill_inspect_function
+          union all
+          select * from workspace_master_backfill_apply_function
+        ) as backfill_function
+        cross join lateral pg_catalog.aclexplode(coalesce(
+          backfill_function.proacl,
+          pg_catalog.acldefault('f', backfill_function.proowner)
+        )) as function_acl
+        where function_acl.grantee = 0
+          and function_acl.privilege_type = 'EXECUTE'
+      )
+      and not coalesce((select has_function_privilege(
+        authenticated_role.oid,
+        workspace_master_backfill_inspect_function.oid,
+        'EXECUTE'
+      ) from authenticated_role
+        cross join workspace_master_backfill_inspect_function), false)
+      and not coalesce((select has_function_privilege(
+        anon_role.oid,
+        workspace_master_backfill_inspect_function.oid,
+        'EXECUTE'
+      ) from anon_role
+        cross join workspace_master_backfill_inspect_function), false)
+      and coalesce((select has_function_privilege(
+        service_role.oid,
+        workspace_master_backfill_inspect_function.oid,
+        'EXECUTE'
+      ) from service_role
+        cross join workspace_master_backfill_inspect_function), false)
+      and not coalesce((select has_function_privilege(
+        authenticated_role.oid,
+        workspace_master_backfill_apply_function.oid,
+        'EXECUTE'
+      ) from authenticated_role
+        cross join workspace_master_backfill_apply_function), false)
+      and not coalesce((select has_function_privilege(
+        anon_role.oid,
+        workspace_master_backfill_apply_function.oid,
+        'EXECUTE'
+      ) from anon_role
+        cross join workspace_master_backfill_apply_function), false)
+      and coalesce((select has_function_privilege(
+        service_role.oid,
+        workspace_master_backfill_apply_function.oid,
+        'EXECUTE'
+      ) from service_role
+        cross join workspace_master_backfill_apply_function), false),
     'authorizedSaveFunction', exists (
       select 1 from authorized_save_function
       where lower(prosrc) like '%from public.workspace_members%'

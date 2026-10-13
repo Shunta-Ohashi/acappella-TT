@@ -16,6 +16,7 @@ const LATER_MIGRATIONS = {
   workspaceGeneration: '20261008170000',
   workspaceMasterFoundation: '20261012100000',
   workspaceMasterContracts: '20261012110000',
+  workspaceMasterBackfill: '20261013100000',
 }
 
 const LATER_MIGRATION_VERSIONS = Object.values(LATER_MIGRATIONS)
@@ -118,6 +119,7 @@ export const REQUIRED_LATER_SCHEMA_CHECKS = [
   'workspaceMasterPrivileges',
   'workspaceMasterContractFunctions',
   'workspaceMasterContractPrivileges',
+  'workspaceMasterBackfillContract',
 ]
 
 const isRecord = value =>
@@ -348,6 +350,12 @@ export const analyzeCloudEventMigrationInspection = inspection => {
         `${check}/history`,
       )
     }
+    compareExpected(
+      mismatches,
+      inspection.laterSchema.workspaceMasterBackfillContract,
+      laterApplied.workspaceMasterBackfill,
+      'workspaceMasterBackfillContract/history',
+    )
     compareExpected(
       mismatches,
       inspection.laterSchema.authorizedSaveFunction,

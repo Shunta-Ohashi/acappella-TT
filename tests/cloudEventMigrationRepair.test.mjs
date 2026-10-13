@@ -23,6 +23,7 @@ const LATER_VERSIONS = {
   workspaceGeneration: '20261008170000',
   workspaceMasterFoundation: '20261012100000',
   workspaceMasterContracts: '20261012110000',
+  workspaceMasterBackfill: '20261013100000',
 }
 
 const createInspection = ({
@@ -106,6 +107,8 @@ const createInspection = ({
         applied.has(LATER_VERSIONS.workspaceMasterContracts),
       workspaceMasterContractPrivileges:
         applied.has(LATER_VERSIONS.workspaceMasterContracts),
+      workspaceMasterBackfillContract:
+        applied.has(LATER_VERSIONS.workspaceMasterBackfill),
     },
     cloudData: {
       rowCount: cloudEventsExists ? 1 : 0,
@@ -304,6 +307,7 @@ test('Workspace Master API契約はfunctionまたはACL不一致をfail closed�
   for (const check of [
     'workspaceMasterContractFunctions',
     'workspaceMasterContractPrivileges',
+    'workspaceMasterBackfillContract',
   ]) {
     const inspection = createInspection({
       versions,
@@ -1193,6 +1197,10 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'workspace_master_authenticated_inherited_mutation_execute',
     'workspace_master_anon_read_execute',
     'workspace_master_public_read_execute',
+    'workspace_master_backfill_table_missing',
+    'workspace_master_backfill_authenticated_execute',
+    'workspace_master_backfill_authenticated_inherited_execute',
+    'workspace_master_backfill_authenticated_inherited_table_read',
   ]) {
     assert.match(catalogRegressionSql, new RegExp(`'${scenario}'`), scenario)
     assert.match(catalogRegressionRunner, new RegExp(`'${scenario}'`), scenario)
@@ -1201,7 +1209,7 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     catalogRegressionRunner.indexOf('const scenarios = ['),
     catalogRegressionRunner.indexOf('const parseArguments ='),
   )
-  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 86)
+  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 90)
   assert.match(catalogRegressionRunner,
     /JSON\.stringify\(\{ ok: true, scenarios: scenarios\.length \+ 1 \}\)/)
   for (const removedScenario of [
@@ -1277,7 +1285,7 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   assert.match(guide, /where version = '20261008130000'/i)
   assert.match(guide, /where version = '20261008160000'/i)
   assert.match(guide, /ports `54322`, `54422`,\s+`54522`, or `54622`/i)
-  assert.match(guide, /All ten repository migrations have one explicit `BEGIN` \/ `COMMIT` boundary/i)
+  assert.match(guide, /All eleven repository migrations have one explicit `BEGIN` \/ `COMMIT` boundary/i)
   assert.match(guide,
     /migration-history write is a separate runner responsibility[\s\S]*PostgreSQL catalog[\s\S]*supabase_migrations\.schema_migrations/i)
   const fullTransactionExercise = guide.slice(

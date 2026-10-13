@@ -22,6 +22,7 @@ Supabase Dashboardでprojectを作成します。frontendへ設定するのはPr
 8. `20261008170000_cloud_event_workspace_generation.sql`
 9. `20261012100000_cloud_workspace_master_foundation.sql`
 10. `20261012110000_cloud_workspace_master_contracts_v2.sql`
+11. `20261013100000_cloud_workspace_master_backfill.sql`
 
 8番目の`20261008170000_cloud_event_workspace_generation.sql`は、
 Workspaceごとの単調増加generationと変更triggerを追加し、
@@ -79,6 +80,55 @@ V1/V2 dispatcherを追加していますが、現行Cloud Event repositoryは引
 保存・hydrateします。V2はEvent所有collectionとexactなMember/Band参照IDだけを持ち、
 master本体を複製しません。reference backfillとWorkspace ready切替が完了する後続PRまで、
 V2 Event DB保存とApp hydrate切替は有効化しません。
+
+`...13100000`はSnapshot V1から正規化Masterへ移すためのbackend-only基盤です。
+自動backfillや一括移行は行わず、service-role限定のsource inspection RPCと
+preview/apply RPC、完了済みplanのfingerprint記録だけを追加します。applyは対象
+Workspaceの全Event ID・revision・Snapshot本体、source generation、統合済み
+Member/Band、順序付きBand relation、Event参照closureを同じtransactionで再検証
+します。Member/Band/relation/referenceのいずれかが失敗すれば全insertとgeneration
+更新がrollbackされます。Cloud EventのSnapshot V1・revisionは変更せず、成功後も
+`cloud_workspace_master_states.status`は`legacy`のままです。
+
+### Snapshot V1からWorkspace Masterへのbackfill
+
+最初は必ずdry-runを実行します。URLとservice-role keyはshell環境変数だけで渡し、
+repository、ログ、コマンド履歴へkeyを保存しません。出力は件数・ID・競合Eventだけで、
+Member/Band本体は表示しません。HTTPはHTTPS（loopbackだけHTTP）に限定されます。
+
+```powershell
+$env:ACAPPELLA_TT_BACKFILL_SUPABASE_URL = 'https://<project-ref>.supabase.co'
+$env:ACAPPELLA_TT_BACKFILL_SERVICE_ROLE_KEY = '<server-only-service-role-key>'
+npm run cloud:workspace-master-backfill -- `
+  --workspace-id '<workspace-uuid>'
+```
+
+`eligible: true`、DB側`status: preview`、source generation、件数、plan fingerprintを
+記録してから、対象WorkspaceへのV1保存を止めるmaintenance windowを開始します。
+競合がある場合は自動的に片方を採用せず、該当kind/ID/Eventを確認してV1 snapshotを
+正規のアプリ経路で整合させ、もう一度dry-runします。Snapshot V1に含まれない未参照
+Masterは復元不能であり、推測して作成しません。
+
+実書込みにはWorkspace IDと接続先originの二重確認が必要です。
+
+```powershell
+npm run cloud:workspace-master-backfill -- `
+  --workspace-id '<workspace-uuid>' `
+  --apply `
+  --confirm-workspace-id '<workspace-uuid>' `
+  --confirm-target 'https://<project-ref>.supabase.co'
+```
+
+preflight後にEventがINSERT / UPDATE / DELETEされた場合、Event row lock、全revision・
+Snapshot照合、Workspace generation CASのいずれかでapplyは`40001`を返し、書込みを
+残しません。最新sourceでdry-runからやり直してください。途中失敗も同じtransactionで
+rollbackされます。同一fingerprintを変更なしで再実行した場合だけ`already_applied`を
+返し、異なるplanや完了後にgenerationが変わったretryは拒否します。retryのために
+Master tableをDELETE/TRUNCATEしないでください。
+
+backfill完了後も旧V1 writerは正規化Masterを更新しないため、成功を`ready`化の根拠に
+してはいけません。ready切替は、旧client drain、最新generationでの再検証、V2保存・
+hydrate経路の配備、reference index完全性確認を原子的に扱う後続PRまで保留します。
 
 ファイル名は通常の文字列順でもこの依存順になりますが、Supabase CLI等での適用済み判定はmigration historyに基づきます。旧開発名`20261007120000_cloud_event_persistence.sql`を適用済みの可能性がある環境では、rename後のbase migrationを再適用しないでください。対象判定・catalog照合・承認済みrepair・中断復帰・完了確認は、専用の[Cloud Event migration履歴移行runbook](./cloud-event-migration-history-repair.md)に従って通常のmigration適用より前に実施します。外部環境へpackage install / build / App起動から自動repairは行いません。
 
@@ -178,7 +228,7 @@ supabase functions serve save-cloud-event
 
 `...150000`はRPC作成・直接REVOKE・`service_role`へのGRANT後に、save RPCが`SECURITY DEFINER`であり、`service_role`だけが実効EXECUTEを持ち、`PUBLIC` / `anon` / `authenticated`が実行できないことを検査します。`...160000`もfinal cutover前に同じbackend-only EXECUTE contractを再検査し、さらにtable/columnへのdirect GRANTをREVOKEした後、`anon`と`authenticated`に継承経由の実効INSERT/UPDATE権限が残っていないことを検査します。`...160000`の全REVOKEと両guardは1つの明示transactionに含まれ、いずれかのguardが失敗した場合はtable/column権限変更もrollbackされ、migration historyへversionは記録されません。残存権限があればoperatorがinherited EXECUTE/WRITE GRANT、role membership、custom role、function default privilegesを修正してから同じmigrationを再実行してください。migrationは共有role membershipを自動変更しません。正常適用を確認するまで`...170000`や本番公開へ進まないでください。
 
-全10 migrationは、Supabase CLIがstatementごとに実行する環境でも部分適用を残さないよう、各file全体を1組の明示的な`BEGIN` / `COMMIT`で囲んでいます。後続statementやprivilege guardが失敗した場合、そのfile内のDDL・DML・ACL変更はまとめてrollbackされます。これはPostgreSQL schema transactionの保証であり、CLIによるmigration historyの記録処理そのものと同一の保証ではありません。失敗時はcatalogと`supabase_migrations.schema_migrations`の両方を確認し、対象versionが未記録であることを確認してから原因を解消して再実行してください。fresh適用は、共有・production DBではなく新しい使い捨てのSupabase互換DBだけを指定して、全migration chainを`supabase db push --db-url $env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL`で確認してください。既にmigration historyへ対象versionが記録されたDBではファイル編集による再実行は起きないため、正常適用済み環境へ手動で再適用しません。
+全11 migrationは、Supabase CLIがstatementごとに実行する環境でも部分適用を残さないよう、各file全体を1組の明示的な`BEGIN` / `COMMIT`で囲んでいます。後続statementやprivilege guardが失敗した場合、そのfile内のDDL・DML・ACL変更はまとめてrollbackされます。これはPostgreSQL schema transactionの保証であり、CLIによるmigration historyの記録処理そのものと同一の保証ではありません。失敗時はcatalogと`supabase_migrations.schema_migrations`の両方を確認し、対象versionが未記録であることを確認してから原因を解消して再実行してください。fresh適用は、共有・production DBではなく新しい使い捨てのSupabase互換DBだけを指定して、全migration chainを`supabase db push --db-url $env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL`で確認してください。既にmigration historyへ対象versionが記録されたDBではファイル編集による再実行は起きないため、正常適用済み環境へ手動で再適用しません。
 
 ### Workspace Master mutation Function（段階2）
 
