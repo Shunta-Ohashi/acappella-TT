@@ -27,11 +27,22 @@ npm run dev
 ## 検証
 
 ```bash
-npm test
-npx tsc -b
-npm run lint
-npm run build
+pnpm install --frozen-lockfile
+pnpm test
+pnpm exec tsc -b
+pnpm lint
+pnpm build
+deno check --config supabase/functions/workspace-masters/deno.json supabase/functions/workspace-masters/index.ts
+deno check supabase/functions/save-cloud-event/index.ts
 ```
+
+`main`向けPull Requestの作成・更新時と`main`へのpush時には、GitHub
+ActionsでNode.jsのtest・typecheck・lint・build、およびDeno Edge
+Functionsのtypecheckを実行します。Draft Pull Requestも対象です。結果はPull
+RequestのChecksタブから確認できます。
+
+現段階のCIには実PostgreSQLを使用するintegration testとEdge Functionの実HTTP
+smoke testは含まれません。これらは専用の使い捨て検証環境で別途実行してください。
 
 ## Production preview
 
