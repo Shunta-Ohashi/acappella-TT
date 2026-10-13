@@ -1117,11 +1117,17 @@ test('Cloud Event Save Edgeはclean checkoutでDeno npm依存を自動解決しf
   assert.ok(saveLock.npm['@supabase/supabase-js@2.117.2']?.integrity)
 
   for (const contents of [workflow, readme]) {
-    assert.match(
-      contents,
-      /deno check[\s\S]*--frozen-lockfile[\s\S]*--config supabase\/functions\/save-cloud-event\/deno\.json[\s\S]*supabase\/functions\/save-cloud-event\/index\.ts/,
-    )
+    for (const functionName of ['workspace-masters', 'save-cloud-event']) {
+      assert.match(
+        contents,
+        new RegExp(
+          `deno check\\s+--frozen\\s+--config supabase/functions/${functionName}/deno\\.json\\s+supabase/functions/${functionName}/index\\.ts`,
+        ),
+      )
+    }
+    assert.doesNotMatch(contents, /deno check\s+--frozen-lockfile/)
   }
+  assert.match(workflow, /deno-version: 2\.9\.7/)
   assert.match(
     workflow,
     /--config supabase\/functions\/workspace-masters\/deno\.json/,

@@ -68,18 +68,18 @@ jobs:
       - name: Set up Deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: v2.x
+          deno-version: 2.9.7
 
       - name: Check Workspace Master Edge Function
         run: >-
           deno check
-          --frozen-lockfile
+          --frozen
           --config supabase/functions/workspace-masters/deno.json
           supabase/functions/workspace-masters/index.ts
 
       - name: Check Cloud Event Save Edge Function
         run: >-
           deno check
-          --frozen-lockfile
+          --frozen
           --config supabase/functions/save-cloud-event/deno.json
           supabase/functions/save-cloud-event/index.ts
