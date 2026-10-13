@@ -31,7 +31,9 @@ begin
     'cloud_anon_inherited_column_write',
     'cloud_authenticated_inherited_column_write',
     'workspace_master_authenticated_inherited_write',
-    'workspace_master_authenticated_inherited_mutation_execute'
+    'workspace_master_authenticated_inherited_mutation_execute',
+    'workspace_master_backfill_authenticated_inherited_execute',
+    'workspace_master_backfill_authenticated_inherited_table_read'
   ) then
     if exists (
       select 1 from pg_catalog.pg_roles
@@ -75,6 +77,16 @@ begin
       when scenario = 'workspace_master_authenticated_inherited_mutation_execute' then
         execute format(
           'grant execute on function public.mutate_workspace_master_validated(uuid,uuid,text,text,jsonb,bigint) to %I',
+          inherited_role_name
+        );
+      when scenario = 'workspace_master_backfill_authenticated_inherited_execute' then
+        execute format(
+          'grant execute on function public.backfill_workspace_masters_validated(uuid,text,text,jsonb,boolean) to %I',
+          inherited_role_name
+        );
+      when scenario = 'workspace_master_backfill_authenticated_inherited_table_read' then
+        execute format(
+          'grant select on table public.cloud_workspace_master_backfills to %I',
           inherited_role_name
         );
     end case;
@@ -371,6 +383,13 @@ begin
       grant execute on function public.load_workspace_masters_page_authorized(
         uuid, text, text, integer, text
       ) to public;
+    when 'workspace_master_backfill_table_missing' then
+      alter table public.cloud_workspace_master_backfills
+        rename to catalog_regression_workspace_master_backfills;
+    when 'workspace_master_backfill_authenticated_execute' then
+      grant execute on function public.backfill_workspace_masters_validated(
+        uuid, text, text, jsonb, boolean
+      ) to authenticated;
     when 'profiles_missing' then
       alter table public.profiles rename to catalog_regression_profiles;
     when 'profiles_column_missing' then

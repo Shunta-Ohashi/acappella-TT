@@ -22,6 +22,7 @@ They create rows in `auth.users` and require an administrator connection.
    - `20261008170000_cloud_event_workspace_generation.sql`
    - `20261012100000_cloud_workspace_master_foundation.sql`
    - `20261012110000_cloud_workspace_master_contracts_v2.sql`
+   - `20261013100000_cloud_workspace_master_backfill.sql`
 
    These names are ordered both by their migration version prefixes and by
    ordinary filename sorting; do not infer that every external migration tool
@@ -60,6 +61,11 @@ psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
 psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
   -v "test_db_url=$env:ACAPPELLA_TT_DBLINK_DATABASE_URL" `
   -f supabase/tests/cloud_workspace_master_contracts_concurrency.sql
+psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
+  -f supabase/tests/cloud_workspace_master_backfill.sql
+psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
+  -v "test_db_url=$env:ACAPPELLA_TT_DBLINK_DATABASE_URL" `
+  -f supabase/tests/cloud_workspace_master_backfill_concurrency.sql
 node scripts/cloudEventMigrationCatalogRegression.mjs `
   --db-url-env ACAPPELLA_TT_TEST_DATABASE_URL `
   --confirm-disposable

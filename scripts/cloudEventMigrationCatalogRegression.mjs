@@ -118,6 +118,14 @@ const scenarios = [
     !result.laterSchema.workspaceMasterContractPrivileges],
   ['workspace_master_public_read_execute', result =>
     !result.laterSchema.workspaceMasterContractPrivileges],
+  ['workspace_master_backfill_table_missing', result =>
+    !result.laterSchema.workspaceMasterBackfillContract],
+  ['workspace_master_backfill_authenticated_execute', result =>
+    !result.laterSchema.workspaceMasterBackfillContract],
+  ['workspace_master_backfill_authenticated_inherited_execute', result =>
+    !result.laterSchema.workspaceMasterBackfillContract],
+  ['workspace_master_backfill_authenticated_inherited_table_read', result =>
+    !result.laterSchema.workspaceMasterBackfillContract],
   ['profiles_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_type', result => !result.authWorkspaceChecks.profilesColumns],
@@ -233,7 +241,8 @@ const main = async () => {
       !baseline.laterSchema.workspaceMasterRowLevelSecurity ||
       !baseline.laterSchema.workspaceMasterPrivileges ||
       !baseline.laterSchema.workspaceMasterContractFunctions ||
-      !baseline.laterSchema.workspaceMasterContractPrivileges
+      !baseline.laterSchema.workspaceMasterContractPrivileges ||
+      !baseline.laterSchema.workspaceMasterBackfillContract
     ) {
       throw new Error('baseline: expected known safe catalog')
     }
