@@ -270,6 +270,10 @@ test('Section所属と実出演メンバー順、条件indicatorをrowへ引き�
   const { rows } = createRows()
 
   assert.equal(rows[0].scheduleItem.sectionId, 'section-1')
+  assert.deepEqual(rows[0].memberCells, [
+    { memberId: 'member-1', displayName: 'やまだ', resolved: true },
+    { memberId: 'member-2', displayName: '佐藤 花子', resolved: true },
+  ])
   assert.deepEqual(rows[0].memberNames, ['やまだ', '佐藤 花子'])
   assert.equal(rows[0].hasHardTimeCondition, true)
   assert.equal(rows[0].hasPreferredTimeCondition, true)
@@ -278,6 +282,26 @@ test('Section所属と実出演メンバー順、条件indicatorをrowへ引き�
     'Section固定',
     '開始 10:00',
     '先頭固定',
+  ])
+})
+
+test('同名Memberと参照切れMemberもIDとEventBand順を失わずmember cellへ保持する', () => {
+  const sameNameMembers = [
+    { id: 'same-name-a', realName: '同姓同名', active: true },
+    { id: 'same-name-b', realName: '同姓同名', active: true },
+  ]
+  const { rows } = createRows({
+    members: sameNameMembers,
+    eventBands: [{
+      ...eventBands[0],
+      memberIds: ['same-name-b', 'missing-member', 'same-name-a'],
+    }, eventBands[1]],
+  })
+
+  assert.deepEqual(rows[0].memberCells, [
+    { memberId: 'same-name-b', displayName: '同姓同名', resolved: true },
+    { memberId: 'missing-member', displayName: '不明なメンバー', resolved: false },
+    { memberId: 'same-name-a', displayName: '同姓同名', resolved: true },
   ])
 })
 
@@ -309,6 +333,7 @@ test('Main PAの単一row担当と複数row・Breakをまたぐ担当を表示�
   )
   assert.equal(rows[0].paCoverage.main[1].startsHere, true)
   assert.equal(rows[2].paCoverage.main[0].endsHere, true)
+  assert.equal(rows[0].paCoverage.main[0].memberId, 'member-1')
 })
 
 test('通常のPA区間はrowへ表示し、ScheduleItem間だけの有効区間はGrid外担当として保持する', () => {
@@ -522,6 +547,10 @@ test('一般業務の複数担当をDutyType列へ分類しhalf-openでcoverage�
   )
   assert.equal(rows[1].dutyCoverage['duty-tk'].length, 0)
   assert.equal(rows[2].dutyCoverage['duty-tk'].length, 1)
+  assert.deepEqual(
+    rows[0].dutyCoverage['duty-photo'].map((item) => item.memberId),
+    ['member-1', 'member-2'],
+  )
 })
 
 test('同一DutyType・同一rowの担当が3人でも全員をcoverageへ保持する', () => {

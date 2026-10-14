@@ -29,3 +29,28 @@ export const createTimetableGridColumns = (
       dutyTypeId: dutyType.id,
     })),
 ]
+
+export const createTimetableMemberMatrixColumns = (
+  dutyTypes: DutyType[],
+  memberColumnCount: number,
+): TimetableGridColumn[] => [
+  { id: 'time', label: '時間', width: 70 },
+  { id: 'performance', label: 'バンド名', width: 180 },
+  ...Array.from({ length: memberColumnCount }, (_, index) => ({
+    id: `member-${index + 1}`,
+    label: `メンバー${index + 1}`,
+    width: 90,
+  })),
+  { id: 'main-pa', label: 'Main PA', width: 84 },
+  { id: 'sub-pa', label: 'Sub PA', width: 84 },
+  ...[...dutyTypes]
+    .sort((first, second) =>
+      first.order - second.order || first.id.localeCompare(second.id),
+    )
+    .map((dutyType) => ({
+      id: `duty-${dutyType.id}`,
+      label: dutyType.name,
+      width: 84,
+      dutyTypeId: dutyType.id,
+    })),
+]
