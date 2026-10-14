@@ -7,6 +7,7 @@ import {
 import {
   createCloudEventSnapshot,
   createCloudEventSnapshotV2,
+  eventOwnedCollectionKeys,
   parseCloudEventSnapshot,
 } from '../src/cloud/cloudEventSnapshot.ts'
 import {
@@ -174,6 +175,36 @@ const createSource = (events, overrides = {}) => ({
 })
 
 const issueCodes = result => result.issues.map(issue => issue.code)
+
+const replaceMemberId = (state, previousId, nextId) => {
+  const member = state.members.find(candidate => candidate.id === previousId)
+  assert.ok(member)
+  member.id = nextId
+  state.bands.forEach(band => {
+    band.defaultMemberIds = band.defaultMemberIds.map(id => id === previousId ? nextId : id)
+  })
+  state.eventMembers.forEach(record => {
+    if (record.memberId === previousId) record.memberId = nextId
+  })
+  state.eventBands.forEach(record => {
+    record.memberIds = record.memberIds.map(id => id === previousId ? nextId : id)
+  })
+  state.paAssignments.forEach(record => {
+    if (record.memberId === previousId) record.memberId = nextId
+  })
+  state.dutyAssignments.forEach(record => {
+    if (record.memberId === previousId) record.memberId = nextId
+  })
+}
+
+const replaceBandId = (state, previousId, nextId) => {
+  const band = state.bands.find(candidate => candidate.id === previousId)
+  assert.ok(band)
+  band.id = nextId
+  state.eventBands.forEach(record => {
+    if (record.bandId === previousId) record.bandId = nextId
+  })
+}
 
 const replaceFirstEventOwnedId = (state, collection, nextId) => {
   const previousId = state[collection][0].id
@@ -364,18 +395,25 @@ test('異なるEvent間でScheduleItem IDが重複するWorkspaceを拒否する
 })
 
 test('全Event-owned collectionでEvent間ID重複を拒否しcollection間の同一文字列は許容する', async (t) => {
-  const collections = [
+  assert.deepEqual(eventOwnedCollectionKeys, [
+    'events',
+    'eventDays',
     'stages',
     'sections',
     'eventMembers',
     'eventMemberDays',
     'eventBands',
+    'scheduleItems',
     'paAssignments',
     'dutyTypes',
     'dutyAssignments',
     'timetableLocks',
     'timetableOrderConstraints',
-  ]
+  ])
+  const collections = eventOwnedCollectionKeys.filter(collection =>
+    collection !== 'events' &&
+    collection !== 'eventDays' &&
+    collection !== 'scheduleItems')
 
   for (const collection of collections) {
     await t.test(collection, async () => {
@@ -434,29 +472,112 @@ test('内容が同一のEvent-owned recordでも異なるEvent間の同一IDを�
 })
 
 test('同一Member/Band IDの内容または順序が異なるV1集合をfail closedにする', async () => {
+  const source = createSource([
+    createSourceEvent('event-a'),
+    createSourceEvent('event-b', createState({
+      eventId: 'event-b',
+      memberName: 'Alice Updated',
+      bandName: 'Alpha Updated',
+      defaultMemberIds: ['member-a', 'member-b'],
+    })),
+  ])
+  const before = structuredClone(source)
   const result = await createCloudV2CutoverPreflight({
-    source: createSource([
-      createSourceEvent('event-a'),
-      createSourceEvent('event-b', createState({
-        eventId: 'event-b',
-        memberName: 'Alice Updated',
-        bandName: 'Alpha Updated',
-        defaultMemberIds: ['member-a', 'member-b'],
-      })),
-    ]),
+    source,
   })
 
   assert.equal(result.structuralStatus, 'not-convertible')
   assert.equal(result.cutoverReadiness, 'blocked')
+  assert.equal(result.safeToCutover, false)
   assert.equal(result.summary.conflictCount, 2)
   assert.deepEqual(
     result.issues.filter(issue => issue.code === 'SHARED_MASTER_CONFLICT'),
     [
-      { code: 'SHARED_MASTER_CONFLICT', kind: 'band', masterId: 'band-a' },
-      { code: 'SHARED_MASTER_CONFLICT', kind: 'member', masterId: 'member-a' },
+      {
+        code: 'SHARED_MASTER_CONFLICT',
+        eventIds: ['event-a', 'event-b'],
+        kind: 'band',
+        masterId: 'band-a',
+      },
+      {
+        code: 'SHARED_MASTER_CONFLICT',
+        eventIds: ['event-a', 'event-b'],
+        kind: 'member',
+        masterId: 'member-a',
+      },
     ],
   )
+  assert.deepEqual(result.invalidEventIds, ['event-a', 'event-b'])
+  assert.deepEqual(source, before)
   assert.equal(JSON.stringify(result).includes('Alice Updated'), false)
+  assert.equal(JSON.stringify(result).includes('appState'), false)
+})
+
+test('同じ文字列IDのMember/Band競合をkind別に対応付ける', async () => {
+  const eventAState = createState({ eventId: 'event-a' })
+  const eventBState = createState({
+    eventId: 'event-b',
+    memberName: 'Alice Updated',
+    bandName: 'Alpha Updated',
+  })
+  for (const state of [eventAState, eventBState]) {
+    replaceMemberId(state, 'member-a', 'shared-master-id')
+    replaceBandId(state, 'band-a', 'shared-master-id')
+  }
+  const result = await createCloudV2CutoverPreflight({
+    source: createSource([
+      createSourceEvent('event-a', eventAState),
+      createSourceEvent('event-b', eventBState),
+    ]),
+  })
+
+  assert.deepEqual(
+    result.issues.filter(issue => issue.code === 'SHARED_MASTER_CONFLICT'),
+    [
+      {
+        code: 'SHARED_MASTER_CONFLICT',
+        eventIds: ['event-a', 'event-b'],
+        kind: 'band',
+        masterId: 'shared-master-id',
+      },
+      {
+        code: 'SHARED_MASTER_CONFLICT',
+        eventIds: ['event-a', 'event-b'],
+        kind: 'member',
+        masterId: 'shared-master-id',
+      },
+    ],
+  )
+})
+
+test('3 Eventの共有Master競合へ関係Eventだけを安定順で対応付ける', async () => {
+  const unrelatedState = createState({ eventId: 'event-d' })
+  replaceMemberId(unrelatedState, 'member-a', 'member-d-a')
+  replaceMemberId(unrelatedState, 'member-b', 'member-d-b')
+  replaceBandId(unrelatedState, 'band-a', 'band-d')
+  const result = await createCloudV2CutoverPreflight({
+    source: createSource([
+      createSourceEvent('event-c', createState({ eventId: 'event-c' })),
+      createSourceEvent('event-b', createState({
+        eventId: 'event-b',
+        memberName: 'Alice Updated',
+      })),
+      createSourceEvent('event-a'),
+      createSourceEvent('event-d', unrelatedState),
+    ]),
+  })
+
+  assert.deepEqual(
+    result.issues.filter(issue => issue.code === 'SHARED_MASTER_CONFLICT'),
+    [{
+      code: 'SHARED_MASTER_CONFLICT',
+      eventIds: ['event-a', 'event-b', 'event-c'],
+      kind: 'member',
+      masterId: 'member-a',
+    }],
+  )
+  assert.deepEqual(result.invalidEventIds, ['event-a', 'event-b', 'event-c'])
+  assert.equal(result.invalidEventIds.includes('event-d'), false)
 })
 
 test('欠落Master参照・不正Snapshot・Event所有関係の矛盾をEvent ID付きで拒否する', async () => {

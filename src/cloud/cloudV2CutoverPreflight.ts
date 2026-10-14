@@ -4,17 +4,20 @@ import { isRecord } from '../persistence/persistenceValidation.ts'
 import {
   arePersistedValuesEqual,
   createCloudEventSnapshotV2,
+  eventOwnedCollectionKeys,
   hasResolvedCloudEventSnapshotV2Masters,
   parseCloudEventSnapshot,
   parseCloudEventSnapshotEnvelope,
   type CloudEventSnapshotV1,
   type CloudEventSnapshotV2,
+  type EventOwnedCollectionKey,
 } from './cloudEventSnapshot.ts'
 import { isPostgresBigintGeneration } from './cloudGeneration.ts'
 import {
   createCloudWorkspaceMasterBackfillFingerprint,
   createCloudWorkspaceMasterBackfillPlan,
   parseCloudWorkspaceMasterBackfillSource,
+  type CloudWorkspaceMasterBackfillConflict,
   type CloudWorkspaceMasterBackfillIssue,
   type CloudWorkspaceMasterBackfillPlan,
   type CloudWorkspaceMasterBackfillSource,
@@ -23,24 +26,8 @@ import type {
   CloudWorkspaceMastersSnapshot,
 } from './cloudWorkspaceMasterRepository.ts'
 
-const eventOwnedCollectionKeys = [
-  'events',
-  'eventDays',
-  'stages',
-  'sections',
-  'eventMembers',
-  'eventMemberDays',
-  'eventBands',
-  'scheduleItems',
-  'paAssignments',
-  'dutyTypes',
-  'dutyAssignments',
-  'timetableLocks',
-  'timetableOrderConstraints',
-] as const
-
 export type CloudV2CutoverEventOwnedCollectionKey =
-  typeof eventOwnedCollectionKeys[number]
+  EventOwnedCollectionKey
 
 export type CloudV2CutoverStructuralStatus =
   | 'convertible'
@@ -312,6 +299,7 @@ const findDuplicateEventOwnedIds = (
 
 const mapBackfillIssue = (
   issue: CloudWorkspaceMasterBackfillIssue,
+  conflicts: readonly CloudWorkspaceMasterBackfillConflict[] = [],
 ): CloudV2CutoverPreflightIssue | undefined => {
   if (issue.code === 'WORKSPACE_NOT_LEGACY') return undefined
   if (issue.code === 'EXISTING_NORMALIZED_DATA') {
@@ -324,9 +312,14 @@ const mapBackfillIssue = (
     issue.code === 'INVALID_BAND' ||
     issue.code === 'SHARED_MASTER_CONFLICT'
   ) {
+    const conflict = issue.code === 'SHARED_MASTER_CONFLICT'
+      ? conflicts.find(candidate =>
+        candidate.kind === issue.kind && candidate.id === issue.masterId)
+      : undefined
     return {
       code: issue.code,
       ...(issue.eventId === undefined ? {} : { eventId: issue.eventId }),
+      ...(conflict === undefined ? {} : { eventIds: [...conflict.eventIds] }),
       ...(issue.kind === undefined ? {} : { kind: issue.kind }),
       ...(issue.masterId === undefined ? {} : { masterId: issue.masterId }),
     }
@@ -435,7 +428,7 @@ export const createCloudV2CutoverPreflight = async (
     createStructuralSource(parsedSource),
   )
   for (const issue of structuralPlan.report.issues) {
-    const mapped = mapBackfillIssue(issue)
+    const mapped = mapBackfillIssue(issue, structuralPlan.report.conflicts)
     if (mapped) addIssue(issues, mapped)
   }
 
