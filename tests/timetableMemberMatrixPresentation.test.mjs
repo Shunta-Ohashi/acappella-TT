@@ -138,6 +138,10 @@ test('Member一覧はコンパクト行とページ縦スクロールをCSS契�
   assert.doesNotMatch(css, /\.timetable-grid__row-actions-menu\s*\{[^}]*position:\s*absolute;/s)
   assert.match(css, /\.timetable-grid-details-popover\s*\{[^}]*position:\s*fixed;/s)
   assert.match(css, /\.timetable-grid-details-popover__body\s*\{[^}]*overflow-y:\s*auto;/s)
+  assert.match(css, /\.timetable-grid-details-tooltip\s*\{[^}]*max-width:\s*min\(280px, calc\(100vw - 16px\)\);/s)
+  assert.match(css, /\.timetable-grid-details-tooltip\s*\{[^}]*overflow:\s*hidden;/s)
+  assert.match(css, /\.timetable-grid-details-tooltip\s*\{[^}]*overflow-wrap:\s*anywhere;/s)
+  assert.match(css, /\.timetable-grid-details-tooltip\s*\{[^}]*white-space:\s*pre-wrap;/s)
 })
 
 test('Issue詳細はScheduleItemとseverityの明示対応だけを抽出する', () => {
@@ -253,6 +257,38 @@ test('バッジtooltipは件数と代表Issueを示し、overlayはviewport内�
   })
   assert.ok(zoomedViewport.left >= 108 && zoomedViewport.left <= 272)
   assert.ok(zoomedViewport.top >= 208 && zoomedViewport.top <= 312)
+
+  const smallViewport = getAnchoredOverlayPosition({
+    anchor: { top: 30, right: 60, bottom: 48, left: 20 },
+    overlayWidth: 280,
+    overlayHeight: 500,
+    viewportWidth: 320,
+    viewportHeight: 120,
+  })
+  assert.equal(smallViewport.maxHeight, 96)
+  assert.ok(smallViewport.top >= 8)
+  assert.ok(smallViewport.top + smallViewport.maxHeight <= 112)
+})
+
+test('長いIssue tooltipは概要文字列を保持し、詳細抽出では全文を保持する', () => {
+  const longJapaneseMessage = '出演メンバーの参加可能時間と出演枠が一致していないため、この配置を再確認してください。'.repeat(8)
+  const unbrokenMessage = 'VERY_LONG_UNBROKEN_ISSUE_MESSAGE_'.repeat(20)
+  const tooltip = getIssueBadgeTooltip('WARNING', [longJapaneseMessage, unbrokenMessage])
+  assert.equal(
+    tooltip,
+    `WARNING 2件: ${longJapaneseMessage}。クリックで全件を表示`,
+    '通常の短文と同じ生成規則のまま、長文を途中で改変しない',
+  )
+
+  const issues = [
+    { severity: 'WARNING', code: 'LONG_JA', message: longJapaneseMessage, scheduleItemIds: ['item-a'] },
+    { severity: 'WARNING', code: 'LONG_TOKEN', message: unbrokenMessage, scheduleItemIds: ['item-a'] },
+  ]
+  assert.deepEqual(
+    getScheduleItemIssuesBySeverity(issues, 'item-a', 'WARNING').map(issue => issue.message),
+    [longJapaneseMessage, unbrokenMessage],
+    'クリック後の詳細Popoverへ渡すIssue本文は省略しない',
+  )
 })
 
 test('overlay revisionは行削除・D&D・Undo/Redo・Stage・表示モード変更を識別する', () => {
@@ -306,6 +342,10 @@ test('ポップオーバーはPortal・Esc・外側click・Stage切替のclose�
     '詳細popoverとtooltipが共通のViewport監視を利用する',
   )
   assert.match(popoverSource, /if \(!anchor\.isConnected\) \{\s*onDismiss\(\)/s)
+  assert.match(
+    popoverSource.slice(popoverSource.indexOf('export function TimetableGridTooltip')),
+    /maxHeight:\s*position\.maxHeight/,
+  )
   assert.match(popoverSource, /document\.addEventListener\('pointerdown'/)
   assert.match(popoverSource, /event\.key !== 'Escape'/)
   assert.match(popoverSource, /window\.addEventListener\('scroll', updatePosition, true\)/)

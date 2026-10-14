@@ -341,6 +341,7 @@ export function TimetableGridTooltip({
       style={{
         top: position.top,
         left: position.left,
+        maxHeight: position.maxHeight,
         visibility: position.ready ? 'visible' : 'hidden',
       }}
     >
