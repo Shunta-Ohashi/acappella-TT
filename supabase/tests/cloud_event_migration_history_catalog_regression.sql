@@ -33,7 +33,8 @@ begin
     'workspace_master_authenticated_inherited_write',
     'workspace_master_authenticated_inherited_mutation_execute',
     'workspace_master_backfill_authenticated_inherited_execute',
-    'workspace_master_backfill_authenticated_inherited_table_read'
+    'workspace_master_backfill_authenticated_inherited_table_read',
+    'cloud_event_v2_save_authenticated_inherited_execute'
   ) then
     if exists (
       select 1 from pg_catalog.pg_roles
@@ -87,6 +88,11 @@ begin
       when scenario = 'workspace_master_backfill_authenticated_inherited_table_read' then
         execute format(
           'grant select on table public.cloud_workspace_master_backfills to %I',
+          inherited_role_name
+        );
+      when scenario = 'cloud_event_v2_save_authenticated_inherited_execute' then
+        execute format(
+          'grant execute on function public.save_cloud_event_v2_validated(uuid,uuid,jsonb,bigint,text) to %I',
           inherited_role_name
         );
     end case;
@@ -389,6 +395,17 @@ begin
     when 'workspace_master_backfill_authenticated_execute' then
       grant execute on function public.backfill_workspace_masters_validated(
         uuid, text, text, jsonb, boolean
+      ) to authenticated;
+    when 'cloud_event_v2_save_security_invoker' then
+      alter function public.save_cloud_event_v2_validated(
+        uuid, uuid, jsonb, bigint, text
+      ) security invoker;
+    when 'cloud_event_v2_ready_guard_missing' then
+      drop trigger cloud_events_guard_ready_workspace_from_v1_write
+        on public.cloud_events;
+    when 'cloud_event_v2_save_authenticated_execute' then
+      grant execute on function public.save_cloud_event_v2_validated(
+        uuid, uuid, jsonb, bigint, text
       ) to authenticated;
     when 'profiles_missing' then
       alter table public.profiles rename to catalog_regression_profiles;

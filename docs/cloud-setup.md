@@ -23,6 +23,7 @@ Supabase Dashboardでprojectを作成します。frontendへ設定するのはPr
 9. `20261012100000_cloud_workspace_master_foundation.sql`
 10. `20261012110000_cloud_workspace_master_contracts_v2.sql`
 11. `20261013100000_cloud_workspace_master_backfill.sql`
+12. `20261013110000_cloud_event_v2_persistence_foundation.sql`
 
 8番目の`20261008170000_cloud_event_workspace_generation.sql`は、
 Workspaceごとの単調増加generationと変更triggerを追加し、
@@ -130,6 +131,26 @@ backfill完了後も旧V1 writerは正規化Masterを更新しないため、成
 してはいけません。ready切替は、旧client drain、最新generationでの再検証、V2保存・
 hydrate経路の配備、reference index完全性確認を原子的に扱う後続PRまで保留します。
 
+`...13110000`はSnapshot V2をDBへ保存できるbackend基盤だけを追加します。既存のV1
+CHECKを残したままV2のexact envelope、Event identity、Master本体非包含を検査し、
+`service_role`だけが実行できる`save_cloud_event_v2_validated` RPCを追加します。V2保存は
+owner/editor、`ready`状態、Event revision CAS、Workspace generation CAS、同一Workspace
+Masterの完全な直接・推移参照closureを同じtransactionで再検証します。Event行、参照
+index、revision、generationの一部だけがcommitされることはありません。既存V1行をV2
+writerで上書きすることも禁止しています。
+
+このmigrationはWorkspaceを`ready`にせず、Appの保存・hydrateをV2へ切り替えません。
+現行V1 repositoryは引き続きV1だけを扱い、分離されたV2 repository/read modelもAppや
+scoped local cacheを書き換えません。V2 read modelはEvent page取得時のgenerationを
+Master readにも要求し、V1/V2混在、generation不一致、参照欠損をfail closedにします。
+したがってmigrationを先に適用してもlegacy WorkspaceのV1保存・取得・削除は維持されます。
+
+将来Workspaceをreadyへ切り替える前に、全V1 snapshotのbackfillとreference indexを
+再検証し、V2対応frontend/Functionを配備し、既に開かれているtabを含む旧clientをdrain
+してください。ready後はtable-level triggerがV1 INSERT/UPDATEを拒否します。ready化、
+V1行の正式なV2変換、App cutoverはこのPRの対象外で、旧clientが残る状態でreadyへ変更
+してはいけません。
+
 ファイル名は通常の文字列順でもこの依存順になりますが、Supabase CLI等での適用済み判定はmigration historyに基づきます。旧開発名`20261007120000_cloud_event_persistence.sql`を適用済みの可能性がある環境では、rename後のbase migrationを再適用しないでください。対象判定・catalog照合・承認済みrepair・中断復帰・完了確認は、専用の[Cloud Event migration履歴移行runbook](./cloud-event-migration-history-repair.md)に従って通常のmigration適用より前に実施します。外部環境へpackage install / build / App起動から自動repairは行いません。
 
 ### 既存環境のDelete RPC切替
@@ -228,7 +249,7 @@ supabase functions serve save-cloud-event
 
 `...150000`はRPC作成・直接REVOKE・`service_role`へのGRANT後に、save RPCが`SECURITY DEFINER`であり、`service_role`だけが実効EXECUTEを持ち、`PUBLIC` / `anon` / `authenticated`が実行できないことを検査します。`...160000`もfinal cutover前に同じbackend-only EXECUTE contractを再検査し、さらにtable/columnへのdirect GRANTをREVOKEした後、`anon`と`authenticated`に継承経由の実効INSERT/UPDATE権限が残っていないことを検査します。`...160000`の全REVOKEと両guardは1つの明示transactionに含まれ、いずれかのguardが失敗した場合はtable/column権限変更もrollbackされ、migration historyへversionは記録されません。残存権限があればoperatorがinherited EXECUTE/WRITE GRANT、role membership、custom role、function default privilegesを修正してから同じmigrationを再実行してください。migrationは共有role membershipを自動変更しません。正常適用を確認するまで`...170000`や本番公開へ進まないでください。
 
-全11 migrationは、Supabase CLIがstatementごとに実行する環境でも部分適用を残さないよう、各file全体を1組の明示的な`BEGIN` / `COMMIT`で囲んでいます。後続statementやprivilege guardが失敗した場合、そのfile内のDDL・DML・ACL変更はまとめてrollbackされます。これはPostgreSQL schema transactionの保証であり、CLIによるmigration historyの記録処理そのものと同一の保証ではありません。失敗時はcatalogと`supabase_migrations.schema_migrations`の両方を確認し、対象versionが未記録であることを確認してから原因を解消して再実行してください。fresh適用は、共有・production DBではなく新しい使い捨てのSupabase互換DBだけを指定して、全migration chainを`supabase db push --db-url $env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL`で確認してください。既にmigration historyへ対象versionが記録されたDBではファイル編集による再実行は起きないため、正常適用済み環境へ手動で再適用しません。
+全12 migrationは、Supabase CLIがstatementごとに実行する環境でも部分適用を残さないよう、各file全体を1組の明示的な`BEGIN` / `COMMIT`で囲んでいます。後続statementやprivilege guardが失敗した場合、そのfile内のDDL・DML・ACL変更はまとめてrollbackされます。これはPostgreSQL schema transactionの保証であり、CLIによるmigration historyの記録処理そのものと同一の保証ではありません。失敗時はcatalogと`supabase_migrations.schema_migrations`の両方を確認し、対象versionが未記録であることを確認してから原因を解消して再実行してください。fresh適用は、共有・production DBではなく新しい使い捨てのSupabase互換DBだけを指定して、全migration chainを`supabase db push --db-url $env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL`で確認してください。既にmigration historyへ対象versionが記録されたDBではファイル編集による再実行は起きないため、正常適用済み環境へ手動で再適用しません。
 
 ### Workspace Master mutation Function（段階2）
 
@@ -306,6 +327,125 @@ revision競合、PMA01、Band順序、正式read RPC、browser roleからのback
 拒否を検証します。途中失敗でもcleanupを試行しますが、cleanup failure時は表示された
 失敗を解消して同じrunnerを再実行し、専用fixture以外を手動削除しないでください。
 
+### Snapshot V2保存Function（backend基盤）
+
+`save-cloud-event-v2`は既存`save-cloud-event`とは別routeです。Bearer tokenを
+`auth.getUser(token)`で検証し、5 MiBの実stream byte上限とSnapshot V2 runtime
+validationを通過したrequestだけを、service-role限定RPCへ渡します。createは
+`expectedRevision: null`、updateは現在の正のrevisionを指定し、どちらも読込済みの
+`expectedGeneration`を必須とします。revision、generation、ready state、Master参照の
+競合は明示的なapplication errorとして返り、V1 writerへのfallbackは行いません。
+
+依存はFunction専用`deno.json` / `deno.lock`で固定します。
+
+```powershell
+deno check --frozen `
+  --config supabase/functions/save-cloud-event-v2/deno.json `
+  supabase/functions/save-cloud-event-v2/index.ts
+supabase functions serve save-cloud-event-v2
+```
+
+実HTTP smokeは、全12 migrationをfresh適用した新しいloopback専用環境だけで行います。
+既存検証・共有・production DBを再利用しません。別terminalから実Auth userでsign-inして
+得たJWTをAuthorization headerへ設定し、ready fixtureの正しいSnapshot V2をPOSTします。
+owner/editor成功、viewer/outsider/JWT不正拒否、legacy/conflict拒否、create/update CAS、
+stale generation、存在しないMaster、V1 row上書き拒否を確認してください。bodyは
+`workspaceId`、`snapshot`、`expectedRevision`、`expectedGeneration`の4 fieldです。Function
+logにboot/import errorがなく、失敗時にEvent/references/generationが不変であることを
+SQL fixtureでも確認します。key/JWTはshell環境変数だけで扱い、ログやrepositoryへ保存
+しません。現行Appはこのrouteを呼ばないため、このsmokeはbackend契約の検証です。
+
+#### Snapshot V2保存Functionの専用実HTTP smoke
+
+`cloudEventV2HttpSmoke.mjs`は、実Auth Admin APIでowner / editor / viewer /
+outsiderを作成し、各ユーザーをpassword sign-inして得た別々のJWTを使って、
+`save-cloud-event-v2`のHTTP routeからservice-role限定RPC、PostgreSQLまでを検証します。
+既存のV1 App保存・hydrateは呼び出しません。
+
+このrunnerは事故防止のため、API port `55721`とDB port `55722`の組み合わせだけを
+受理します。Supabase URL、Function URL、Database URLはすべてloopbackでなければならず、
+FunctionはSupabase APIと同じoriginの`/functions/v1/save-cloud-event-v2`でなければ
+なりません。`--confirm-disposable`がない実行、production/staging URL、54322〜55622を
+含む別port、不明なrouteは実行前に拒否します。
+
+Windows 11 + PowerShell + Docker Desktopでは、既存環境のcopyやvolumeを再利用せず、
+新しい専用directoryとSupabase project IDを用意します。専用directoryの
+`supabase/config.toml`で少なくとも`[api] port = 55721`、`[db] port = 55722`とし、
+Studio、Inbucket等も既存環境と重ならない未使用portへ変更してください。以下は必ず
+その新しいdirectoryでのみ実行します。
+
+```powershell
+cd C:\Users\shun0\acappella-TT-event-v2-http-smoke
+supabase start
+
+$env:ACAPPELLA_TT_EVENT_V2_SMOKE_DATABASE_URL = `
+  'postgresql://postgres:postgres@127.0.0.1:55722/postgres'
+
+# fresh環境へrepositoryの全12 migrationを適用する。既存DBには指定しない。
+supabase db push `
+  --db-url $env:ACAPPELLA_TT_EVENT_V2_SMOKE_DATABASE_URL
+```
+
+`supabase status -o env`でこの専用環境のAPI URL、anon key、service-role keyを確認します。
+出力をissue、ログ、repositoryへ貼らず、2つのPowerShell terminalの環境変数だけへ設定
+してください。1つ目のterminalではJWT verificationを無効化せずFunctionを起動します。
+
+```powershell
+$env:SUPABASE_URL = 'http://127.0.0.1:55721'
+$env:SUPABASE_ANON_KEY = '<55721専用環境のanon-key>'
+$env:SUPABASE_SERVICE_ROLE_KEY = '<55721専用環境のservice-role-key>'
+
+deno check --frozen `
+  --config supabase/functions/save-cloud-event-v2/deno.json `
+  supabase/functions/save-cloud-event-v2/index.ts
+
+supabase functions serve save-cloud-event-v2
+```
+
+`--no-verify-jwt`は使用しません。2つ目のterminalで同じ専用環境だけを設定し、runnerを
+起動します。Function URLを省略した場合はSupabase URLと同じoriginの正式routeを使います。
+
+```powershell
+cd C:\Users\shun0\acappella-TT-event-v2-http-smoke
+
+$env:ACAPPELLA_TT_EVENT_V2_SMOKE_SUPABASE_URL = 'http://127.0.0.1:55721'
+$env:ACAPPELLA_TT_EVENT_V2_SMOKE_ANON_KEY = '<55721専用環境のanon-key>'
+$env:ACAPPELLA_TT_EVENT_V2_SMOKE_SERVICE_ROLE_KEY = `
+  '<55721専用環境のservice-role-key>'
+$env:ACAPPELLA_TT_EVENT_V2_SMOKE_DATABASE_URL = `
+  'postgresql://postgres:postgres@127.0.0.1:55722/postgres'
+# 通常は省略する。明示する場合も同じ55721 originに限定される。
+$env:ACAPPELLA_TT_EVENT_V2_SMOKE_FUNCTION_URL = `
+  'http://127.0.0.1:55721/functions/v1/save-cloud-event-v2'
+
+npm run test:cloud-event-v2-http-smoke
+```
+
+`Cloud Event V2 HTTP smoke: PASS`は、owner create、editor update、revision/generationの
+単調増加、正式Page RPCでの読戻し、Member/Band reference index一致まで確認したことを
+示します。さらにviewer/outsider/JWTなし・不正JWT、legacy、stale revision/generation、
+malformed V2、存在しないMember/Band、V1上書き、browser JWTからのbackend-only RPC、
+5 MiB超bodyを拒否し、各拒否後にEvent/references/revision/generation/status/Masterが
+変わっていないことを確認します。
+
+setupは固定Workspace ID `76000000-0000-0000-0000-000000000001`〜`003`または専用emailが
+既に存在すれば、既存データを消さずに停止します。通常終了・失敗時は、この実行で作成した
+Auth user IDと固定Workspace IDだけをcleanupし、cleanup失敗も全体を失敗扱いにします。
+途中でprocess自体が停止してfixtureが残った場合は、接続先が55721/55722の専用環境である
+ことを再確認し、次の明示cleanupを1回実行してから通常runnerを再実行してください。
+
+```powershell
+node scripts/cloudEventV2HttpSmoke.mjs `
+  --confirm-disposable `
+  --cleanup-only
+```
+
+cleanup確認は、固定Workspace 3件が0件であることと、Admin API上で
+`cloud-event-v2-http-smoke-*@example.invalid`の4ユーザーが存在しないことだけを対象にします。
+広範囲DELETE、TRUNCATE、DB reset、Authユーザーの一括削除は行いません。cleanupが再度
+失敗した場合は自動的に成功扱いせず、Functionではなく`psql`接続と親Workspace cascadeを
+確認してください。
+
 ## 9. Security確認
 
 - `profiles`は本人のrowだけSELECT・INSERT・UPDATEできます。
@@ -317,12 +457,12 @@ revision競合、PMA01、Band順序、正式read RPC、browser roleからのback
 - Workspace masterの6 tableはbrowser/backend roleへ直接公開しません。ready
   Workspace向けread RPCだけをauthenticated memberへ、mutation RPCだけを
   `service_role`へ公開します。legacy/conflict Workspaceはfail closedです。
-- 内部保存RPCは`service_role`だけが実行でき、保存transaction内でもactorのowner/editor membershipを`FOR SHARE`で再確認します。
+- V1/V2の内部保存RPCは`service_role`だけが実行でき、保存transaction内でもactorのowner/editor membershipを`FOR SHARE`で再確認します。V2はさらにready state、revision/generation CAS、Master closureを検証します。
 - データ保護はPublishable keyの秘匿ではなくRLSで行います。
 
 ## 10. 現在の制限
 
-Cloudへ保存したEvent snapshotはWorkspace内で共有できますが、Realtime、Cloud Eventのrevision conflict / CAS、Presence、offline draft復元、Member/Bandの独立Cloud tableへのApp切替は後続実装です。正規化tableとAPI契約は存在しますが、既存Workspaceは未backfillの`legacy`状態で、通常mutationと正式readを拒否します。共有masterは引き続きEvent snapshotへ暫定的に複製し、snapshot間で矛盾した場合はsilent mergeせずWorkspace hydrateをfail closedします。
+Cloudへ保存したEvent snapshotはWorkspace内で共有できますが、Realtime、Presence、offline draft復元、Snapshot V2へのApp切替は後続実装です。V2 backendはrevision/generation CASを備えますが現行AppはまだV1経路です。正規化tableとAPI契約は存在しても既存Workspaceは未backfillの`legacy`状態で、通常mutationと正式readを拒否します。共有masterは現行V1 snapshotへ暫定的に複製し、snapshot間で矛盾した場合はsilent mergeせずWorkspace hydrateをfail closedします。
 
 このfail-closedは、古いMember/Bandで新しい値を黙って上書きすることと、不整合時にlocal cacheを正式データとして表示・保存することを防ぎます。一方、Event A/Bが同じ共有masterを含む状態でmasterを編集し、片方だけをCloud保存すると、不整合なsnapshot集合自体は作成され得ます。新しいEventを初めてCloud保存する場合も、既存Event側のcopyが古ければ同様です。競合はWorkspaceのCloud rowsに保存されるため、保存した本人だけでなく、別のAuthユーザー、F5、logout後の再loginでも次回hydrateが`SHARED_MASTER_CONFLICT`で停止します。参照中Member/BandのHard Deleteはdomain guardで拒否され、参照されないmasterの追加・削除はsnapshot closureへ含まれないため、この競合原因にはなりません。
 

@@ -4,6 +4,75 @@
 -- Every fixture and mutation is rolled back.
 begin;
 
+create or replace function pg_temp.workspace_master_contract_v2_snapshot(
+  p_event_id text,
+  p_event_name text
+)
+returns jsonb
+language sql
+immutable
+as $$
+  select jsonb_build_object(
+    'format', 'acappella-tt-cloud-event',
+    'version', 2,
+    'eventState', jsonb_build_object(
+      'version', 5,
+      'events', jsonb_build_array(jsonb_build_object(
+        'id', p_event_id,
+        'name', p_event_name,
+        'timeZone', 'Asia/Tokyo',
+        'validationPolicy', jsonb_build_object(
+          'minimumGapBands', 1,
+          'minimumRestMinutes', 10
+        ),
+        'performanceSlotMinutes', jsonb_build_array(5)
+      )),
+      'eventDays', jsonb_build_array(jsonb_build_object(
+        'id', 'master-contract-day',
+        'eventId', p_event_id,
+        'date', '2026-10-14',
+        'order', 0
+      )),
+      'stages', '[]'::jsonb,
+      'sections', '[]'::jsonb,
+      'eventMembers', jsonb_build_array(
+        jsonb_build_object(
+          'id', 'master-contract-member-a',
+          'eventId', p_event_id,
+          'memberId', 'member-a',
+          'paCapabilities', jsonb_build_object('main', false, 'sub', false)
+        ),
+        jsonb_build_object(
+          'id', 'master-contract-member-b',
+          'eventId', p_event_id,
+          'memberId', 'member-b',
+          'paCapabilities', jsonb_build_object('main', false, 'sub', false)
+        )
+      ),
+      'eventMemberDays', '[]'::jsonb,
+      'eventBands', jsonb_build_array(jsonb_build_object(
+        'id', 'master-contract-band',
+        'eventId', p_event_id,
+        'eventDayId', 'master-contract-day',
+        'bandId', 'band-a',
+        'name', 'Alpha at Event',
+        'memberIds', jsonb_build_array('member-a', 'member-b'),
+        'durationMinutes', 5
+      )),
+      'scheduleItems', '[]'::jsonb,
+      'paAssignments', '[]'::jsonb,
+      'dutyTypes', '[]'::jsonb,
+      'dutyAssignments', '[]'::jsonb,
+      'timetableLocks', '[]'::jsonb,
+      'timetableOrderConstraints', '[]'::jsonb
+    ),
+    'masterReferences', jsonb_build_object(
+      'memberIds', jsonb_build_array('member-a', 'member-b'),
+      'bandIds', jsonb_build_array('band-a')
+    )
+  );
+$$;
+
 insert into auth.users (
   id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data, created_at, updated_at
@@ -554,8 +623,17 @@ insert into public.cloud_events (
   '71000000-0000-0000-0000-000000000001',
   'master-contract-event',
   'Master Contract Event',
-  '{"format":"acappella-tt-cloud-event","version":1,"appState":{"version":5,"events":[{"id":"master-contract-event","name":"Master Contract Event"}]}}'::jsonb
+  pg_temp.workspace_master_contract_v2_snapshot(
+    'master-contract-event', 'Master Contract Event'
+  )
 );
+insert into public.cloud_event_member_references (
+  workspace_id, event_id, member_id
+) values
+  ('71000000-0000-0000-0000-000000000001',
+   'master-contract-event', 'member-a'),
+  ('71000000-0000-0000-0000-000000000001',
+   'master-contract-event', 'member-b');
 insert into public.cloud_event_band_references (
   workspace_id, event_id, band_id
 ) values (

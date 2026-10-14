@@ -1249,6 +1249,12 @@ test('実DB fixtureはCRUD/CAS/role/generationとasync concurrencyをrollbackま
   assert.match(integration, /exception when sqlstate '22023'/i)
   assert.match(integration, /exception when sqlstate 'PMA01'/i)
   assert.match(integration, /exception when foreign_key_violation/i)
+  assert.match(integration,
+    /workspace_master_contract_v2_snapshot[\s\S]*'version', 2[\s\S]*'eventState'[\s\S]*'masterReferences'[\s\S]*'memberIds', jsonb_build_array\('member-a', 'member-b'\)[\s\S]*'bandIds', jsonb_build_array\('band-a'\)/i)
+  assert.match(integration,
+    /workspace_master_contract_v2_snapshot\([\s\S]*'master-contract-event'[\s\S]*insert into public\.cloud_event_member_references[\s\S]*'member-a'[\s\S]*'member-b'[\s\S]*insert into public\.cloud_event_band_references[\s\S]*'band-a'/i)
+  assert.doesNotMatch(integration,
+    /'master-contract-event'[\s\S]{0,300}"version"\s*:\s*1/i)
   assert.match(integration, /load_workspace_masters_page_authorized[\s\S]*workspaceGeneration/i)
   assert.match(integration, /rollback;\s*$/i)
 
