@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   countIssuesBySeverity,
+  createScheduleIssueDetailPresentation,
   formatScheduleIssueMessage,
   getHighestSeverityByScheduleItem,
   getIssuesForStage,
@@ -71,6 +72,37 @@ test('Issue messageの内部IDを既存表示名へ置き換える', () => {
 
   assert.equal(message,
     'メンバー「Alice」 / バンド「Alpha」 / Stage「Main」 / Section「第1部」 / 仕事「撮影」')
+})
+
+test('IssuePanelと行popover用の対象・間隔表示を共通化する', () => {
+  const details = createScheduleIssueDetailPresentation({
+    severity: 'WARNING',
+    code: 'SHORT_REST',
+    message: 'メンバー member-a / EventBand band-a',
+    memberIds: ['member-a'],
+    eventBandIds: ['band-a'],
+    scheduleItemIds: ['item-a'],
+    sectionIds: ['section-a'],
+    restMinutes: 4,
+  }, {
+    members: [{ id: 'member-a', realName: 'Alice', active: true }],
+    eventBands: [{ id: 'band-a', eventId: 'event-a', eventDayId: 'day-a',
+      name: 'Alpha', memberIds: [], durationMinutes: 10 }],
+    stages: [{ id: 'stage-a', eventDayId: 'day-a', name: 'Main', order: 0 }],
+    sections: [{ id: 'section-a', stageId: 'stage-a', name: '第1部', order: 0 }],
+  }, [{
+    scheduleItemId: 'item-a', eventDayId: 'day-a', stageId: 'stage-a',
+    plannedStartMinute: 600, plannedEndMinute: 610,
+  }])
+
+  assert.equal(details.message, 'メンバー「Alice」 / バンド「Alpha」')
+  assert.deepEqual(details.targets, [
+    'メンバー: Alice',
+    'バンド: Alpha',
+    'Stage: Main',
+    'Section: 第1部',
+  ])
+  assert.deepEqual(details.metrics, ['休憩時間: 4分'])
 })
 
 test('置換済みの表示名に含まれる別entity IDを後続置換で壊さない', () => {

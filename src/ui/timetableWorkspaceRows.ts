@@ -7,6 +7,7 @@ import type {
   DutyType,
   DutyTypeId,
   Member,
+  MemberId,
   PaAssignment,
   PaAssignmentId,
   PaRole,
@@ -22,7 +23,7 @@ import {
 } from '../domain/paAssignments.ts'
 import type { CalculatedScheduleItem } from '../domain/timeline'
 import {
-  getEventBandMemberDisplayNames,
+  getEventBandMemberPresentations,
   getMemberDisplayName,
 } from './eventBandPresentation.ts'
 import {
@@ -32,6 +33,7 @@ import {
 
 export interface TimetableWorkspacePaCoverage {
   assignmentId: PaAssignmentId
+  memberId: MemberId
   memberName: string
   role: PaRole
   startsHere: boolean
@@ -41,6 +43,7 @@ export interface TimetableWorkspacePaCoverage {
 export interface TimetableWorkspaceDutyCoverage {
   assignmentId: DutyAssignmentId
   dutyTypeId: DutyTypeId
+  memberId: MemberId
   memberName: string
   startsHere: boolean
   endsHere: boolean
@@ -51,6 +54,11 @@ export interface TimetableWorkspaceRow {
   scheduleItem: ScheduleItem
   calculatedItem: CalculatedScheduleItem
   eventBand?: EventBand
+  memberCells: {
+    memberId: MemberId
+    displayName: string
+    resolved: boolean
+  }[]
   memberNames: string[]
   issueCounts: IssueSeverityCounts
   fixedPlacementLabels: string[]
@@ -163,13 +171,16 @@ export const createTimetableWorkspaceRows = ({
       issue.scheduleItemIds?.includes(scheduleItem.id),
     )
 
+    const memberCells = eventBand
+      ? getEventBandMemberPresentations(eventBand, members)
+      : []
+
     return [{
       scheduleItem,
       calculatedItem,
       ...(eventBand ? { eventBand } : {}),
-      memberNames: eventBand
-        ? getEventBandMemberDisplayNames(eventBand, members)
-        : [],
+      memberCells,
+      memberNames: memberCells.map(member => member.displayName),
       issueCounts: countIssuesBySeverity(rowIssues),
       fixedPlacementLabels: eventBand
         ? getFixedPlacementLabels(eventBand)
@@ -228,6 +239,7 @@ export const createTimetableWorkspaceRows = ({
     coveredRowIndexes.forEach((rowIndex, coveredIndex) => {
       rows[rowIndex].paCoverage[assignment.role].push({
         assignmentId: assignment.id,
+        memberId: assignment.memberId,
         memberName,
         role: assignment.role,
         startsHere: coveredIndex === 0,
@@ -303,6 +315,7 @@ export const createTimetableWorkspaceRows = ({
       rows[rowIndex].dutyCoverage[dutyType.id].push({
         assignmentId: assignment.id,
         dutyTypeId: dutyType.id,
+        memberId: assignment.memberId,
         memberName,
         startsHere: coveredIndex === 0,
         endsHere: coveredIndex === coveredRowIndexes.length - 1,

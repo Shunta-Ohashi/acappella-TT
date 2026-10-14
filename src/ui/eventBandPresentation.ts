@@ -1,20 +1,42 @@
-import type { EventBand, EventDay, EventDayId, Member } from '../domain/models'
+import type {
+  EventBand,
+  EventDay,
+  EventDayId,
+  Member,
+  MemberId,
+} from '../domain/models'
+
+export interface EventBandMemberPresentation {
+  memberId: MemberId
+  displayName: string
+  resolved: boolean
+}
 
 export const getMemberDisplayName = (
   member: Pick<Member, 'acaName' | 'realName'>,
 ): string => member.acaName?.trim() || member.realName
 
-export const getEventBandMemberDisplayNames = (
+export const getEventBandMemberPresentations = (
   eventBand: Pick<EventBand, 'memberIds'>,
   members: Member[],
-): string[] => {
+): EventBandMemberPresentation[] => {
   const memberById = new Map(members.map((member) => [member.id, member]))
 
   return eventBand.memberIds.map((memberId) => {
     const member = memberById.get(memberId)
-    return member ? getMemberDisplayName(member) : '不明なメンバー'
+    return {
+      memberId,
+      displayName: member ? getMemberDisplayName(member) : '不明なメンバー',
+      resolved: member !== undefined,
+    }
   })
 }
+
+export const getEventBandMemberDisplayNames = (
+  eventBand: Pick<EventBand, 'memberIds'>,
+  members: Member[],
+): string[] => getEventBandMemberPresentations(eventBand, members)
+  .map(member => member.displayName)
 
 export const getEventBandItemsWithInvalidEventDay = <T extends {
   eventDayId: EventDayId

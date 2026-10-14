@@ -243,13 +243,32 @@ import {
   countIssuesBySeverity,
   getIssuesForStage,
 } from './ui/issuePresentation'
-import { getEventBandMemberDisplayNames } from './ui/eventBandPresentation'
+import {
+  getEventBandMemberDisplayNames,
+  getMemberDisplayName,
+} from './ui/eventBandPresentation'
 import {
   parseTimetableDroppableId,
   resolveScheduleLane,
   TIMETABLE_POOL_DROPPABLE_ID,
 } from './ui/timetableDnd'
 import { createTimetableWorkspaceRows } from './ui/timetableWorkspaceRows'
+import {
+  resolveTimetableMemberHighlight,
+  toggleTimetableMemberHighlight,
+  type TimetableMemberHighlight,
+  type TimetableViewMode,
+} from './ui/timetableMemberMatrixPresentation'
+import {
+  createTimetableMemberColorCandidates,
+  createTimetableMemberColorStorageKey,
+  filterTimetableMemberColorAssignments,
+  loadTimetableMemberColorAssignments,
+  removeTimetableMemberColorAssignment,
+  saveTimetableMemberColorAssignments,
+  setTimetableMemberColorAssignment,
+  type TimetableMemberColorAssignment,
+} from './ui/timetableMemberColorSettings'
 import {
   clearTimetableLockFeedback,
   getTimetableLockFeedbackMessage,
@@ -443,6 +462,25 @@ function App() {
   const currentPersistenceScopeRef = useRef(requestedPersistenceStorageKey)
   const currentCloudWorkspaceVisitRef = useRef(requestedCloudWorkspaceVisitId)
   const [breakDuration, setBreakDuration] = useState<number>(10)
+  const [timetableViewMode, setTimetableViewMode] = useState<TimetableViewMode>(
+    'standard',
+  )
+  const [timetableMemberHighlight, setTimetableMemberHighlight] = useState<
+    TimetableMemberHighlight | null
+  >(null)
+  const [timetableMemberColors, setTimetableMemberColors] = useState<{
+    storageKey: string
+    assignments: TimetableMemberColorAssignment[]
+    warning?: string
+  }>(() => {
+    const storageKey = initialEventId
+      ? createTimetableMemberColorStorageKey(
+          requestedPersistenceStorageKey,
+          initialEventId,
+        )
+      : ''
+    return { storageKey, ...loadTimetableMemberColorAssignments(storageKey) }
+  })
 
   useLayoutEffect(() => {
     currentPersistenceScopeRef.current = requestedPersistenceStorageKey
@@ -2818,6 +2856,131 @@ function App() {
         offGridDutyAssignments: [],
       }
 
+  const timetableMemberIds = useMemo(
+    () => new Set(members.map(member => member.id)),
+    [members],
+  )
+  const requestedTimetableMemberColorStorageKey = selectedEvent
+    ? createTimetableMemberColorStorageKey(
+        requestedPersistenceStorageKey,
+        selectedEvent.id,
+      )
+    : ''
+  const timetableMemberColorContextMatches =
+    timetableMemberColors.storageKey === requestedTimetableMemberColorStorageKey
+  if (!timetableMemberColorContextMatches) {
+    setTimetableMemberColors({
+      storageKey: requestedTimetableMemberColorStorageKey,
+      ...loadTimetableMemberColorAssignments(
+        requestedTimetableMemberColorStorageKey,
+      ),
+    })
+  }
+  const timetableMemberColorAssignments = filterTimetableMemberColorAssignments(
+    timetableMemberColorContextMatches
+      ? timetableMemberColors.assignments
+      : [],
+    timetableMemberIds,
+  )
+  const timetableMemberColorCandidates = selectedEvent
+    ? createTimetableMemberColorCandidates({
+        members,
+        eventBands: selectedEventBands,
+        eventId: selectedEvent.id,
+        ...(timetableSelection.eventDayId
+          ? { selectedEventDayId: timetableSelection.eventDayId }
+          : {}),
+      })
+    : []
+  const updateTimetableMemberColors = (
+    update: (
+      assignments: readonly TimetableMemberColorAssignment[],
+    ) => TimetableMemberColorAssignment[],
+  ) => {
+    if (!selectedEvent || !requestedTimetableMemberColorStorageKey) return
+    const assignments = update(timetableMemberColorAssignments)
+    const saved = saveTimetableMemberColorAssignments(
+      requestedTimetableMemberColorStorageKey,
+      assignments,
+    )
+    setTimetableMemberColors({
+      storageKey: requestedTimetableMemberColorStorageKey,
+      assignments,
+      ...(saved ? {} : {
+        warning: 'メンバー色設定を保存できませんでした。このタブでは設定を表示し続けます。',
+      }),
+    })
+  }
+  const handleAddTimetableMemberColor = (memberId: MemberId) => {
+    if (
+      !timetableMemberIds.has(memberId) ||
+      !timetableMemberColorCandidates.some(
+        candidate => candidate.memberId === memberId,
+      )
+    ) return
+    updateTimetableMemberColors(assignments =>
+      setTimetableMemberColorAssignment(assignments, memberId),
+    )
+  }
+  const handleChangeTimetableMemberColor = (
+    memberId: MemberId,
+    colorId: string,
+  ) => {
+    if (!timetableMemberIds.has(memberId)) return
+    updateTimetableMemberColors(assignments =>
+      setTimetableMemberColorAssignment(assignments, memberId, colorId),
+    )
+  }
+  const handleRemoveTimetableMemberColor = (memberId: MemberId) => {
+    updateTimetableMemberColors(assignments =>
+      removeTimetableMemberColorAssignment(assignments, memberId),
+    )
+  }
+  const handleClearTimetableMemberColors = () => {
+    updateTimetableMemberColors(() => [])
+  }
+  const timetableMemberHighlightContext = {
+    persistenceScopeKey: requestedPersistenceStorageKey,
+    persistenceVisitId: requestedCloudWorkspaceVisitId,
+    eventId: selectedEvent?.id,
+    eventDayId: timetableSelection.eventDayId,
+  }
+  const highlightedTimetableMemberId = resolveTimetableMemberHighlight(
+    timetableMemberHighlight,
+    timetableMemberHighlightContext,
+    timetableMemberIds,
+  )
+  const highlightedTimetableMemberName = highlightedTimetableMemberId
+    ? members.find(member => member.id === highlightedTimetableMemberId)
+    : undefined
+  if (timetableMemberHighlight && highlightedTimetableMemberId === null) {
+    setTimetableMemberHighlight(null)
+  }
+
+  const handleTimetableMemberHighlightChange = (memberId: MemberId | null) => {
+    if (memberId === null) {
+      setTimetableMemberHighlight(null)
+      return
+    }
+    const eventDayId = timetableSelection.eventDayId
+    if (
+      !selectedEvent ||
+      !eventDayId ||
+      !timetableMemberIds.has(memberId)
+    ) return
+
+    setTimetableMemberHighlight(current => toggleTimetableMemberHighlight(
+      current,
+      {
+        persistenceScopeKey: requestedPersistenceStorageKey,
+        persistenceVisitId: requestedCloudWorkspaceVisitId,
+        eventId: selectedEvent.id,
+        eventDayId,
+      },
+      memberId,
+    ))
+  }
+
   const getGridAssignmentContext = () => selectedEvent ? {
     event: selectedEvent,
     eventDays: selectedEventDays,
@@ -3581,6 +3744,8 @@ function App() {
                 onSelectStage={handleSelectTimetableStage}
                 poolCount={poolEventBands.length}
                 issueCounts={currentStageIssueCounts}
+                viewMode={timetableViewMode}
+                onViewModeChange={setTimetableViewMode}
                 canUndo={canEditWorkspace && canUndoTimetable}
                 canRedo={canEditWorkspace && canRedoTimetable}
                 onUndo={() => {
@@ -3776,6 +3941,10 @@ function App() {
                     stage={currentStage}
                     sections={currentStageUsesSections ? currentStageSections : []}
                     rows={timetableWorkspaceRows.rows}
+                    issues={currentStageIssues}
+                    issueStages={timetableStages}
+                    issueSections={timetableSections}
+                    issueCalculatedItems={calculatedItems}
                     unresolvedPaAssignments={timetableWorkspaceRows.unresolvedPaAssignments}
                     offGridPaAssignments={timetableWorkspaceRows.offGridPaAssignments}
                     dutyTypes={selectedEventDutyTypes}
@@ -3819,6 +3988,26 @@ function App() {
                     onAssignSelection={handleOpenGridAssignment}
                     onAutoAssignSelection={handleOpenDutyAutoAssignment}
                     onDeleteSelectionAssignments={handleOpenGridAssignmentDeletion}
+                    viewMode={timetableViewMode}
+                    highlightedMemberId={highlightedTimetableMemberId}
+                    highlightedMemberName={highlightedTimetableMemberName
+                      ? getMemberDisplayName(highlightedTimetableMemberName)
+                      : undefined}
+                    onHighlightedMemberChange={handleTimetableMemberHighlightChange}
+                    members={members}
+                    memberColorCandidates={timetableMemberColorCandidates}
+                    memberColorAssignments={timetableMemberColorAssignments}
+                    memberColorEventDayLabel={timetableEventDay?.label?.trim() ||
+                      timetableEventDay?.date}
+                    memberColorPersistenceWarning={
+                      timetableMemberColorContextMatches
+                        ? timetableMemberColors.warning
+                        : undefined
+                    }
+                    onAddMemberColor={handleAddTimetableMemberColor}
+                    onChangeMemberColor={handleChangeTimetableMemberColor}
+                    onRemoveMemberColor={handleRemoveTimetableMemberColor}
+                    onClearMemberColors={handleClearTimetableMemberColors}
                     readOnly={!canEditWorkspace}
                   />
                 ) : null}

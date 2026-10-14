@@ -9,7 +9,7 @@ import type {
 import type { CalculatedScheduleItem } from '../domain/timeline'
 import {
   countIssuesBySeverity,
-  formatScheduleIssueMessage,
+  createScheduleIssueDetailPresentation,
   ISSUE_SEVERITIES,
 } from '../ui/issuePresentation'
 
@@ -23,8 +23,6 @@ interface IssuePanelProps {
   calculatedItems: CalculatedScheduleItem[]
 }
 
-const uniqueNames = (names: string[]) => [...new Set(names)]
-
 export function IssuePanel({
   issues,
   members,
@@ -35,25 +33,7 @@ export function IssuePanel({
   calculatedItems,
 }: IssuePanelProps) {
   const counts = countIssuesBySeverity(issues)
-  const memberNameById = new Map(
-    members.map((member) => [member.id, member.realName]),
-  )
-  const eventBandNameById = new Map(
-    eventBands.map((eventBand) => [
-      eventBand.id,
-      eventBand.name,
-    ]),
-  )
-  const dutyTypeNameById = new Map(
-    dutyTypes.map((dutyType) => [dutyType.id, dutyType.name]),
-  )
-  const stageNameById = new Map(stages.map((stage) => [stage.id, stage.name]))
-  const sectionNameById = new Map(
-    sections.map((section) => [section.id, section.name]),
-  )
-  const calculatedItemById = new Map(
-    calculatedItems.map((item) => [item.scheduleItemId, item]),
-  )
+  const issueContext = { members, eventBands, dutyTypes, stages, sections }
 
   return (
     <section className="issue-panel" aria-labelledby="issue-panel-title">
@@ -79,69 +59,11 @@ export function IssuePanel({
       ) : (
         <ul className="issue-list">
           {issues.map((issue, index) => {
-            const memberNames = uniqueNames(
-              (issue.memberIds ?? []).map(
-                (memberId) =>
-                  memberNameById.get(memberId) ?? '不明なメンバー',
-              ),
+            const details = createScheduleIssueDetailPresentation(
+              issue,
+              issueContext,
+              calculatedItems,
             )
-            const bandNames = uniqueNames(
-              (issue.eventBandIds ?? []).map(
-                (eventBandId) =>
-                  eventBandNameById.get(eventBandId) ?? '不明なバンド',
-              ),
-            )
-            const stageNames = uniqueNames(
-              [
-                ...(issue.stageIds ?? []).map(
-                  stageId => stageNameById.get(stageId) ?? '不明なStage',
-                ),
-                ...(issue.scheduleItemIds ?? []).map((scheduleItemId) => {
-                  const stageId = calculatedItemById.get(scheduleItemId)?.stageId
-                  return stageId
-                    ? stageNameById.get(stageId) ?? '不明なStage'
-                    : '不明なStage'
-                }),
-              ],
-            )
-            const sectionNames = uniqueNames(
-              (issue.sectionIds ?? []).map(
-                sectionId => sectionNameById.get(sectionId) ?? '不明なSection',
-              ),
-            )
-            const dutyTypeNames = uniqueNames(
-              (issue.dutyTypeIds ?? []).map(
-                dutyTypeId => dutyTypeNameById.get(dutyTypeId) ?? '不明な仕事',
-              ),
-            )
-            const targets = [
-              memberNames.length > 0
-                ? `メンバー: ${memberNames.join('、')}`
-                : undefined,
-              bandNames.length > 0
-                ? `バンド: ${bandNames.join('、')}`
-                : undefined,
-              stageNames.length > 0
-                ? `Stage: ${stageNames.join('、')}`
-                : undefined,
-              sectionNames.length > 0
-                ? `Section: ${sectionNames.join('、')}`
-                : undefined,
-              dutyTypeNames.length > 0
-                ? `仕事: ${dutyTypeNames.join('、')}`
-                : undefined,
-            ].filter((target): target is string => target !== undefined)
-            const metrics = [
-              issue.gapBands !== undefined
-                ? `バンド間隔: ${issue.gapBands}`
-                : undefined,
-              issue.restMinutes !== undefined
-                ? `休憩時間: ${issue.restMinutes}分`
-                : undefined,
-              issue.overrunMinutes !== undefined
-                ? `超過時間: ${issue.overrunMinutes}分`
-                : undefined,
-            ].filter((metric): metric is string => metric !== undefined)
 
             return (
               <li
@@ -165,23 +87,17 @@ export function IssuePanel({
                     {issue.severity}
                   </span>
                   <span className="issue-list__message">
-                    {formatScheduleIssueMessage(issue, {
-                      members,
-                      eventBands,
-                      dutyTypes,
-                      stages,
-                      sections,
-                    })}
+                    {details.message}
                   </span>
                 </div>
-                {targets.length > 0 && (
+                {details.targets.length > 0 && (
                   <div className="issue-list__details">
-                    対象: {targets.join(' / ')}
+                    対象: {details.targets.join(' / ')}
                   </div>
                 )}
-                {metrics.length > 0 && (
+                {details.metrics.length > 0 && (
                   <div className="issue-list__details">
-                    {metrics.join(' / ')}
+                    {details.metrics.join(' / ')}
                   </div>
                 )}
               </li>

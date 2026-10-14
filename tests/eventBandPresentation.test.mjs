@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   getEventBandItemsWithInvalidEventDay,
   getEventBandMemberDisplayNames,
+  getEventBandMemberPresentations,
   getMemberDisplayName,
 } from '../src/ui/eventBandPresentation.ts'
 
@@ -40,6 +41,25 @@ test('固定BandのdefaultMemberIdsを使わず、missing Memberも安全に表�
   assert.deepEqual(
     getEventBandMemberDisplayNames(eventBand, members),
     ['こてつ', '不明なメンバー'],
+  )
+})
+
+test('実出演Memberのstable identity・順序・参照解決状態を表示モデルへ保持する', () => {
+  const sameNameMembers = [
+    { id: 'same-name-a', realName: '同姓同名', active: true },
+    { id: 'same-name-b', realName: '同姓同名', active: true },
+  ]
+  const eventBand = {
+    memberIds: ['same-name-b', 'missing-member', 'same-name-a'],
+  }
+
+  assert.deepEqual(
+    getEventBandMemberPresentations(eventBand, sameNameMembers),
+    [
+      { memberId: 'same-name-b', displayName: '同姓同名', resolved: true },
+      { memberId: 'missing-member', displayName: '不明なメンバー', resolved: false },
+      { memberId: 'same-name-a', displayName: '同姓同名', resolved: true },
+    ],
   )
 })
 

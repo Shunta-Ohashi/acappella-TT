@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import type { EventDay, EventDayId, Stage, StageId } from '../domain/models'
 import type { IssueSeverityCounts } from '../ui/issuePresentation'
+import type { TimetableViewMode } from '../ui/timetableMemberMatrixPresentation'
 
 type OperationsPanel = 'issues' | 'order' | 'pa' | 'operations'
 
@@ -13,6 +14,8 @@ interface TimetableOperationsWorkspaceProps {
   onSelectStage: (stageId: StageId) => void
   poolCount: number
   issueCounts: IssueSeverityCounts
+  viewMode: TimetableViewMode
+  onViewModeChange: (viewMode: TimetableViewMode) => void
   settings: ReactNode
   canUndo: boolean
   canRedo: boolean
@@ -54,6 +57,8 @@ export function TimetableOperationsWorkspace({
   onSelectStage,
   poolCount,
   issueCounts,
+  viewMode,
+  onViewModeChange,
   settings,
   canUndo,
   canRedo,
@@ -131,6 +136,29 @@ export function TimetableOperationsWorkspace({
               </div>
             </div>
           )}
+          <div className="timetable-scope__group">
+            <p>表示</p>
+            <div
+              className="timetable-view-mode"
+              role="group"
+              aria-label="タイムテーブル表示モード"
+            >
+              <button
+                type="button"
+                aria-pressed={viewMode === 'standard'}
+                onClick={() => onViewModeChange('standard')}
+              >
+                通常表示
+              </button>
+              <button
+                type="button"
+                aria-pressed={viewMode === 'member-matrix'}
+                onClick={() => onViewModeChange('member-matrix')}
+              >
+                メンバー一覧
+              </button>
+            </div>
+          </div>
           <div className="timetable-workspace-toolbar__settings">{settings}</div>
         </div>
 

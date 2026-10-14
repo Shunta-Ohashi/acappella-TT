@@ -3,15 +3,19 @@ import {
   Fragment,
   useEffect,
   useRef,
+  useState,
   type CSSProperties,
   type FormEvent,
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
 } from 'react'
+import type { IssueSeverity, ScheduleIssue } from '../domain/issues'
 import type {
   DutyType,
   EventBand,
+  Member,
+  MemberId,
   PaRole,
   ScheduleItem,
   ScheduleItemId,
@@ -33,7 +37,10 @@ import {
   getUniqueLockIdsForViolation,
   TIMETABLE_LOCK_UNLOCK_VISIBLE_TEXT,
 } from '../ui/timetableLockPresentation'
-import { formatMinuteAsLocalTime } from '../domain/timeline'
+import {
+  formatMinuteAsLocalTime,
+  type CalculatedScheduleItem,
+} from '../domain/timeline'
 import type {
   OffGridPaAssignment,
   OffGridDutyAssignment,
@@ -43,7 +50,23 @@ import type {
   UnresolvedPaAssignment,
   UnresolvedDutyAssignment,
 } from '../ui/timetableWorkspaceRows'
-import { createTimetableGridColumns, type TimetableGridColumn } from '../ui/timetableGridColumns'
+import {
+  createTimetableGridColumns,
+  createTimetableMemberMatrixColumns,
+  type TimetableGridColumn,
+} from '../ui/timetableGridColumns'
+import {
+  countTimetableMemberAppearances,
+  getTimetableMemberColumnCount,
+  type TimetableViewMode,
+} from '../ui/timetableMemberMatrixPresentation'
+import {
+  createTimetableMemberColorMap,
+  type TimetableMemberColor,
+  type TimetableMemberColorAssignment,
+  type TimetableMemberColorCandidate,
+} from '../ui/timetableMemberColorSettings'
+import { TimetableMemberColorSettings } from './TimetableMemberColorSettings'
 import { getInterSectionBreakPresentation } from '../ui/interSectionBreakPresentation'
 import {
   getInterSectionDroppableId,
@@ -65,11 +88,27 @@ import {
   type TimetableOrderConstraintBlockMemberPresentation,
   type TimetableOrderConstraintBlockPresentation,
 } from '../ui/timetableOrderConstraintLinkPresentation'
+import {
+  createScheduleIssueDetailPresentation,
+} from '../ui/issuePresentation'
+import {
+  formatTimetableTimeCondition,
+  getIssueBadgeTooltip,
+  getScheduleItemIssuesBySeverity,
+} from '../ui/timetableGridDetailsPresentation'
+import {
+  TimetableGridDetailsPopover,
+  TimetableGridTooltip,
+} from './TimetableGridDetailsPopover'
 
 interface TimetableGridProps {
   stage: Stage
   sections: Section[]
   rows: TimetableWorkspaceRow[]
+  issues: ScheduleIssue[]
+  issueStages: Stage[]
+  issueSections: Section[]
+  issueCalculatedItems: CalculatedScheduleItem[]
   unresolvedPaAssignments: UnresolvedPaAssignment[]
   offGridPaAssignments: OffGridPaAssignment[]
   dutyTypes: DutyType[]
@@ -101,8 +140,63 @@ interface TimetableGridProps {
   onAssignSelection: () => void
   onAutoAssignSelection: () => void
   onDeleteSelectionAssignments: () => void
+  viewMode: TimetableViewMode
+  highlightedMemberId: MemberId | null
+  highlightedMemberName?: string
+  onHighlightedMemberChange: (memberId: MemberId | null) => void
+  members: readonly Member[]
+  memberColorCandidates: readonly TimetableMemberColorCandidate[]
+  memberColorAssignments: readonly TimetableMemberColorAssignment[]
+  memberColorEventDayLabel?: string
+  memberColorPersistenceWarning?: string
+  onAddMemberColor: (memberId: MemberId) => void
+  onChangeMemberColor: (memberId: MemberId, colorId: string) => void
+  onRemoveMemberColor: (memberId: MemberId) => void
+  onClearMemberColors: () => void
   readOnly?: boolean
 }
+
+type TimetableGridRowDetailKind =
+  | 'issue-error'
+  | 'issue-warning'
+  | 'issue-info'
+  | 'available-time'
+  | 'preferred-time'
+
+interface TimetableGridActiveDetails {
+  rowId: ScheduleItemId
+  kind: TimetableGridRowDetailKind
+  anchor: HTMLElement
+  epoch: number
+}
+
+interface TimetableGridActiveTooltip {
+  key: string
+  anchor: HTMLElement
+  text: string
+  epoch?: number
+}
+
+const severityByDetailKind: Partial<
+  Record<TimetableGridRowDetailKind, IssueSeverity>
+> = {
+  'issue-error': 'ERROR',
+  'issue-warning': 'WARNING',
+  'issue-info': 'INFO',
+}
+
+const getRowDetailKey = (
+  rowId: ScheduleItemId,
+  kind: TimetableGridRowDetailKind,
+): string => `${rowId}:${kind}`
+
+const getMemberColorStyle = (
+  color: TimetableMemberColor | undefined,
+): CSSProperties | undefined => color ? {
+  '--timetable-member-color-background': color.background,
+  '--timetable-member-color-border': color.border,
+  '--timetable-member-color-text': color.text,
+} as CSSProperties : undefined
 
 export function TimetableLockRepairPanel({
   violations,
@@ -151,13 +245,79 @@ export function TimetableLockRepairPanel({
   )
 }
 
-const issueLabels = (row: TimetableWorkspaceRow): string[] => [
-  row.issueCounts.ERROR > 0 ? `ERROR ${row.issueCounts.ERROR}` : undefined,
-  row.issueCounts.WARNING > 0
-    ? `WARNING ${row.issueCounts.WARNING}`
-    : undefined,
-  row.issueCounts.INFO > 0 ? `INFO ${row.issueCounts.INFO}` : undefined,
-].filter((label): label is string => label !== undefined)
+interface TimetableGridIssueBadge {
+  severity: IssueSeverity
+  count: number
+  label: string
+  detailKind: TimetableGridRowDetailKind
+}
+
+const issueBadges = (row: TimetableWorkspaceRow): TimetableGridIssueBadge[] =>
+  (['ERROR', 'WARNING', 'INFO'] as const).flatMap((severity) => {
+    const count = row.issueCounts[severity]
+    if (count === 0) return []
+    return [{
+      severity,
+      count,
+      label: `${severity} ${count}`,
+      detailKind: `issue-${severity.toLowerCase()}` as TimetableGridRowDetailKind,
+    }]
+  })
+
+interface TimetableGridDetailTriggerProps {
+  detailKey: string
+  compactLabel: string
+  accessibleLabel: string
+  tooltip: string
+  className: string
+  tooltipId: string
+  activeTooltipKey?: string
+  onOpen: (anchor: HTMLElement) => void
+  onShowTooltip: (tooltip: TimetableGridActiveTooltip) => void
+  onHideTooltip: (detailKey: string) => void
+}
+
+const TimetableGridDetailTrigger = ({
+  detailKey,
+  compactLabel,
+  accessibleLabel,
+  tooltip,
+  className,
+  tooltipId,
+  activeTooltipKey,
+  onOpen,
+  onShowTooltip,
+  onHideTooltip,
+}: TimetableGridDetailTriggerProps) => {
+  const showTooltip = (anchor: HTMLElement) => onShowTooltip({
+    key: detailKey,
+    anchor,
+    text: tooltip,
+  })
+
+  return (
+    <button
+      type="button"
+      className={className}
+      aria-label={accessibleLabel}
+      aria-haspopup="dialog"
+      aria-describedby={activeTooltipKey === detailKey ? tooltipId : undefined}
+      onPointerDown={event => event.stopPropagation()}
+      onMouseEnter={event => showTooltip(event.currentTarget)}
+      onMouseLeave={() => onHideTooltip(detailKey)}
+      onFocus={event => showTooltip(event.currentTarget)}
+      onBlur={() => onHideTooltip(detailKey)}
+      onClick={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        onHideTooltip(detailKey)
+        onOpen(event.currentTarget)
+      }}
+    >
+      {compactLabel}
+    </button>
+  )
+}
 
 interface AssignmentCellInteractionProps {
   row: TimetableWorkspaceRow
@@ -212,29 +372,47 @@ const PaTimelineCell = ({
   role,
   coverage,
   interaction,
+  highlightedMemberId,
+  memberColorByMemberId,
 }: {
   role: PaRole
   coverage: TimetableWorkspacePaCoverage[]
   interaction: AssignmentCellInteractionProps
+  highlightedMemberId: MemberId | null
+  memberColorByMemberId: ReadonlyMap<MemberId, TimetableMemberColor>
 }) => (
   <div {...getAssignmentCellProps('timetable-grid__pa-cell', interaction)}>
     {coverage.length === 0 ? (
       <span className="timetable-grid__pa-empty" aria-label={`${role} PA担当なし`}>
         —
       </span>
-    ) : coverage.map((item) => (
-      <div
-        key={item.assignmentId}
-        className={[
-          'timetable-grid__pa-coverage',
-          item.startsHere ? 'timetable-grid__pa-coverage--start' : '',
-          item.endsHere ? 'timetable-grid__pa-coverage--end' : '',
-        ].filter(Boolean).join(' ')}
-        title={`${role === 'main' ? 'Main' : 'Sub'} PA: ${item.memberName}`}
-      >
-        <strong>{item.memberName}</strong>
-      </div>
-    ))}
+    ) : coverage.map((item) => {
+      const memberColor = memberColorByMemberId.get(item.memberId)
+      return (
+        <div
+          key={item.assignmentId}
+          className={[
+            'timetable-grid__pa-coverage',
+            item.startsHere ? 'timetable-grid__pa-coverage--start' : '',
+            item.endsHere ? 'timetable-grid__pa-coverage--end' : '',
+            memberColor ? 'timetable-grid__coverage--member-colored' : '',
+            item.memberId === highlightedMemberId
+              ? 'timetable-grid__coverage--member-highlight'
+              : '',
+          ].filter(Boolean).join(' ')}
+          style={getMemberColorStyle(memberColor)}
+          title={`${role === 'main' ? 'Main' : 'Sub'} PA: ${item.memberName}`}
+        >
+          <strong>{item.memberName}</strong>
+          {memberColor && (
+            <span className="visually-hidden">設定色あり</span>
+          )}
+          {item.memberId === highlightedMemberId && (
+            <span className="visually-hidden">選択中のメンバー担当</span>
+          )}
+        </div>
+      )
+    })}
   </div>
 )
 
@@ -242,10 +420,14 @@ const DutyTimelineCell = ({
   dutyType,
   coverage,
   interaction,
+  highlightedMemberId,
+  memberColorByMemberId,
 }: {
   dutyType: DutyType
   coverage: TimetableWorkspaceDutyCoverage[]
   interaction: AssignmentCellInteractionProps
+  highlightedMemberId: MemberId | null
+  memberColorByMemberId: ReadonlyMap<MemberId, TimetableMemberColor>
 }) => (
   <div {...getAssignmentCellProps('timetable-grid__duty-cell', interaction)}>
     {coverage.length === 0 ? (
@@ -258,6 +440,7 @@ const DutyTimelineCell = ({
     ) : coverage.map((item) => {
       const hasError = item.issueCounts.ERROR > 0
       const hasWarning = item.issueCounts.WARNING > 0
+      const memberColor = memberColorByMemberId.get(item.memberId)
       return (
         <div
           key={item.assignmentId}
@@ -266,10 +449,21 @@ const DutyTimelineCell = ({
             item.startsHere ? 'timetable-grid__duty-coverage--start' : '',
             item.endsHere ? 'timetable-grid__duty-coverage--end' : '',
             hasError ? 'timetable-grid__duty-coverage--error' : '',
+            memberColor ? 'timetable-grid__coverage--member-colored' : '',
+            item.memberId === highlightedMemberId
+              ? 'timetable-grid__coverage--member-highlight'
+              : '',
           ].filter(Boolean).join(' ')}
+          style={getMemberColorStyle(memberColor)}
           title={`${dutyType.name}: ${item.memberName}`}
         >
           <strong>{item.memberName}</strong>
+          {memberColor && (
+            <span className="visually-hidden">設定色あり</span>
+          )}
+          {item.memberId === highlightedMemberId && (
+            <span className="visually-hidden">選択中のメンバー担当</span>
+          )}
           {(hasError || hasWarning) && (
             <small>{hasError ? 'ERROR' : 'WARNING'}</small>
           )}
@@ -290,6 +484,19 @@ const TimetableRow = ({
   onOrderConstraintBlockHighlightChange,
   onSetTimetableLock,
   onUnlockTimetableLock,
+  viewMode,
+  memberColumnCount,
+  highlightedMemberId,
+  memberColorByMemberId,
+  onHighlightedMemberChange,
+  rowIssues,
+  activeTooltipKey,
+  tooltipId,
+  onOpenDetails,
+  onShowTooltip,
+  onHideTooltip,
+  onCloseDetails,
+  getIssueMessage,
   readOnly,
 }: {
   row: TimetableWorkspaceRow
@@ -305,13 +512,106 @@ const TimetableRow = ({
     mode: TimetableLockMode,
   ) => void
   onUnlockTimetableLock: (lockId: TimetableLockId) => void
+  viewMode: TimetableViewMode
+  memberColumnCount: number
+  highlightedMemberId: MemberId | null
+  memberColorByMemberId: ReadonlyMap<MemberId, TimetableMemberColor>
+  onHighlightedMemberChange: (memberId: MemberId | null) => void
+  rowIssues: ScheduleIssue[]
+  activeTooltipKey?: string
+  tooltipId: string
+  onOpenDetails: (
+    rowId: ScheduleItemId,
+    kind: TimetableGridRowDetailKind,
+    anchor: HTMLElement,
+  ) => void
+  onShowTooltip: (tooltip: TimetableGridActiveTooltip) => void
+  onHideTooltip: (detailKey: string) => void
+  onCloseDetails: () => void
+  getIssueMessage: (issue: ScheduleIssue) => string
   readOnly: boolean
 }) => {
-  const labels = issueLabels(row)
+  const badges = issueBadges(row)
   const isBreak = row.scheduleItem.kind === 'break'
+  const isMemberMatrix = viewMode === 'member-matrix'
+  const containsHighlightedMember = isMemberMatrix &&
+    highlightedMemberId !== null &&
+    row.memberCells.some(member => member.memberId === highlightedMemberId)
   const itemLabel = row.scheduleItem.kind === 'break'
     ? row.scheduleItem.title
     : row.eventBand?.name ?? '不明なバンド'
+  const issueMessagesBySeverity = new Map<IssueSeverity, string[]>(
+    (['ERROR', 'WARNING', 'INFO'] as const).map(severity => [
+      severity,
+      rowIssues
+        .filter(issue => issue.severity === severity)
+        .map(getIssueMessage),
+    ]),
+  )
+  const renderRemoveButton = () => (
+    <button
+      type="button"
+      className="timetable-grid__remove"
+      aria-label={isBreak
+        ? `${itemLabel}を削除`
+        : `${itemLabel}を未配置バンドへ戻す`}
+      disabled={readOnly || timetableLock !== undefined}
+      title={timetableLock ? '先にTT固定を解除してください。' : undefined}
+      onClick={() => onRemoveScheduleItem(row.scheduleItem.id)}
+    >
+      {isBreak ? '削除' : 'プールへ戻す'}
+    </button>
+  )
+  const renderMetaControls = () => row.scheduleItem.kind === 'break' ? (
+    <span className="timetable-grid__meta">
+      {itemLabel}・{row.scheduleItem.durationMinutes}分
+    </span>
+  ) : (
+    <div className="timetable-grid__meta-line">
+      <span>{row.eventBand?.durationMinutes ?? 0}分枠</span>
+      <span>{row.eventBand?.bandId ? '固定バンド' : '企画バンド'}</span>
+      {row.hasHardTimeCondition && <span>必須時間あり</span>}
+      {row.hasPreferredTimeCondition && <span>希望あり</span>}
+      {row.fixedPlacementLabels.map((label) => (
+        <span className="timetable-grid__fixed" key={label}>
+          📌 必須条件：{label}
+        </span>
+      ))}
+      {timetableLock && (
+        <span className="timetable-grid__lock-badge">
+          🔒 TT固定：{getTimetableLockLabel(timetableLock)}
+        </span>
+      )}
+      <label className="timetable-grid__lock-control">
+        <span aria-hidden="true">{timetableLock ? '🔒' : '🔓'}</span>
+        <span className="visually-hidden">TT固定</span>
+        <select
+          disabled={readOnly}
+          aria-label={getTimetableLockControlAccessibleName(itemLabel)}
+          value={timetableLock
+            ? timetableLock.position.kind === 'index'
+              ? 'current'
+              : timetableLock.position.kind
+            : ''}
+          onChange={(event) => {
+            const mode = event.target.value
+            if (!mode && timetableLock) {
+              onUnlockTimetableLock(timetableLock.id)
+            } else if (mode === 'current' || mode === 'first' || mode === 'last') {
+              onSetTimetableLock(row.scheduleItem.id, mode)
+            }
+          }}
+        >
+          <option value="">
+            {timetableLock ? 'TT固定を解除' : '固定なし'}
+          </option>
+          <option value="current">現在の並び順を固定</option>
+          <option value="first">トッパーにして固定</option>
+          <option value="last">トリにして固定</option>
+        </select>
+      </label>
+    </div>
+  )
 
   return (
     <Draggable
@@ -319,12 +619,17 @@ const TimetableRow = ({
       index={index}
       isDragDisabled={readOnly || timetableLock !== undefined}
     >
-      {(provided) => (
+      {(provided, snapshot) => (
         <div
           ref={provided.innerRef}
           {...provided.draggableProps}
           className={[
             'timetable-grid__row',
+            isMemberMatrix ? 'timetable-grid__row--member-matrix' : '',
+            snapshot.isDragging ? 'timetable-grid__row--dragging' : '',
+            containsHighlightedMember
+              ? 'timetable-grid__row--member-highlight'
+              : '',
             isBreak ? 'timetable-grid__row--break' : '',
             row.issueCounts.ERROR > 0 ? 'timetable-grid__row--error' : '',
             row.issueCounts.ERROR === 0 && row.issueCounts.WARNING > 0
@@ -337,7 +642,10 @@ const TimetableRow = ({
           role="row"
           style={provided.draggableProps.style}
         >
-          <div className="timetable-grid__time" role="rowheader">
+          <div
+            className="timetable-grid__time"
+            role="rowheader"
+          >
             <strong>
               {formatMinuteAsLocalTime(row.calculatedItem.plannedStartMinute)}
             </strong>
@@ -346,7 +654,13 @@ const TimetableRow = ({
             </span>
           </div>
 
-          <div className="timetable-grid__item" role="cell">
+          <div
+            className={[
+              'timetable-grid__item',
+              isMemberMatrix ? 'timetable-grid__item--matrix' : '',
+            ].filter(Boolean).join(' ')}
+            role="cell"
+          >
             <div className="timetable-grid__item-heading">
               <span
                 {...provided.dragHandleProps}
@@ -357,11 +671,64 @@ const TimetableRow = ({
               >
                 {timetableLock ? '🔒' : '⠿'}
               </span>
-              <strong>{isBreak ? '休憩' : itemLabel}</strong>
+              <strong title={itemLabel}>{isBreak ? '休憩' : itemLabel}</strong>
+              {isMemberMatrix && !isBreak && row.eventBand && (
+                <span
+                  className="timetable-grid__compact-condition-indicators"
+                  aria-label="配置条件"
+                >
+                  {row.fixedPlacementLabels.length > 0 && (
+                    <span title={`必須条件: ${row.fixedPlacementLabels.join('、')}`}>📌</span>
+                  )}
+                  {row.eventBand.availableTimeRange && (
+                    <TimetableGridDetailTrigger
+                      detailKey={getRowDetailKey(row.scheduleItem.id, 'available-time')}
+                      compactLabel="必"
+                      accessibleLabel={`${itemLabel}の必須時間条件を表示`}
+                      tooltip={formatTimetableTimeCondition(
+                        row.eventBand.availableTimeRange,
+                        'available',
+                      ).summary}
+                      className="timetable-grid__condition-trigger timetable-grid__condition-trigger--hard"
+                      tooltipId={tooltipId}
+                      activeTooltipKey={activeTooltipKey}
+                      onOpen={anchor => onOpenDetails(
+                        row.scheduleItem.id,
+                        'available-time',
+                        anchor,
+                      )}
+                      onShowTooltip={onShowTooltip}
+                      onHideTooltip={onHideTooltip}
+                    />
+                  )}
+                  {row.eventBand.preferredTimeRange && (
+                    <TimetableGridDetailTrigger
+                      detailKey={getRowDetailKey(row.scheduleItem.id, 'preferred-time')}
+                      compactLabel="希"
+                      accessibleLabel={`${itemLabel}の希望時間条件を表示`}
+                      tooltip={formatTimetableTimeCondition(
+                        row.eventBand.preferredTimeRange,
+                        'preferred',
+                      ).summary}
+                      className="timetable-grid__condition-trigger timetable-grid__condition-trigger--preferred"
+                      tooltipId={tooltipId}
+                      activeTooltipKey={activeTooltipKey}
+                      onOpen={anchor => onOpenDetails(
+                        row.scheduleItem.id,
+                        'preferred-time',
+                        anchor,
+                      )}
+                      onShowTooltip={onShowTooltip}
+                      onHideTooltip={onHideTooltip}
+                    />
+                  )}
+                </span>
+              )}
               {orderConstraintMember && (
                 <span
                   className="timetable-order-block-badge"
                   title={orderConstraintMember.title}
+                  aria-label={orderConstraintMember.title}
                   tabIndex={0}
                   onMouseEnter={() => onOrderConstraintBlockHighlightChange(
                     orderConstraintMember.blockKey,
@@ -372,35 +739,68 @@ const TimetableRow = ({
                   )}
                   onBlur={() => onOrderConstraintBlockHighlightChange(null)}
                 >
-                  🔗 {orderConstraintMember.badgeLabel}
+                  {isMemberMatrix ? '🔗' : `🔗 ${orderConstraintMember.badgeLabel}`}
                 </span>
               )}
-              {labels.map((label) => (
+              {badges.map((badge) => isMemberMatrix ? (
+                <TimetableGridDetailTrigger
+                  key={badge.severity}
+                  detailKey={getRowDetailKey(row.scheduleItem.id, badge.detailKind)}
+                  compactLabel={`${badge.severity[0]}${badge.count}`}
+                  accessibleLabel={`${itemLabel}の${badge.severity}を${badge.count}件表示`}
+                  tooltip={getIssueBadgeTooltip(
+                    badge.severity,
+                    issueMessagesBySeverity.get(badge.severity) ?? [],
+                  )}
+                  className={`timetable-grid__issue timetable-grid__issue--${badge.severity.toLowerCase()}`}
+                  tooltipId={tooltipId}
+                  activeTooltipKey={activeTooltipKey}
+                  onOpen={anchor => onOpenDetails(
+                    row.scheduleItem.id,
+                    badge.detailKind,
+                    anchor,
+                  )}
+                  onShowTooltip={onShowTooltip}
+                  onHideTooltip={onHideTooltip}
+                />
+              ) : (
                 <span
-                  key={label}
-                  className={`timetable-grid__issue timetable-grid__issue--${label.split(' ')[0].toLowerCase()}`}
+                  key={badge.severity}
+                  className={`timetable-grid__issue timetable-grid__issue--${badge.severity.toLowerCase()}`}
+                  aria-label={badge.label}
+                  title={badge.label}
                 >
-                  {label}
+                  {badge.label}
                 </span>
               ))}
-              <button
-                type="button"
-                className="timetable-grid__remove"
-                aria-label={isBreak
-                  ? `${itemLabel}を削除`
-                  : `${itemLabel}を未配置バンドへ戻す`}
-                disabled={readOnly || timetableLock !== undefined}
-                title={timetableLock ? '先にTT固定を解除してください。' : undefined}
-                onClick={() => onRemoveScheduleItem(row.scheduleItem.id)}
-              >
-                {isBreak ? '削除' : '戻す'}
-              </button>
+              {!isMemberMatrix && renderRemoveButton()}
+              {isMemberMatrix && (
+                <details
+                  className="timetable-grid__row-actions"
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Escape') return
+                    event.preventDefault()
+                    event.currentTarget.open = false
+                    event.currentTarget.querySelector('summary')?.focus()
+                  }}
+                >
+                  <summary
+                    aria-label={`${itemLabel}の詳細操作`}
+                    title="詳細操作"
+                    onClick={onCloseDetails}
+                  >
+                    ⋯
+                  </summary>
+                  <div className="timetable-grid__row-actions-menu">
+                    {renderMetaControls()}
+                    {renderRemoveButton()}
+                  </div>
+                </details>
+              )}
             </div>
 
-            {row.scheduleItem.kind === 'break' ? (
-              <span className="timetable-grid__meta">
-                {itemLabel}・{row.scheduleItem.durationMinutes}分
-              </span>
+            {!isMemberMatrix && (row.scheduleItem.kind === 'break' ? (
+              renderMetaControls()
             ) : (
               <>
                 <span className="timetable-grid__members">
@@ -408,53 +808,59 @@ const TimetableRow = ({
                     ? row.memberNames.join(' / ')
                     : 'メンバー未登録'}
                 </span>
-                <div className="timetable-grid__meta-line">
-                  <span>{row.eventBand?.durationMinutes ?? 0}分枠</span>
-                  <span>{row.eventBand?.bandId ? '固定バンド' : '企画バンド'}</span>
-                  {row.hasHardTimeCondition && <span>必須時間あり</span>}
-                  {row.hasPreferredTimeCondition && <span>希望あり</span>}
-                  {row.fixedPlacementLabels.map((label) => (
-                    <span className="timetable-grid__fixed" key={label}>
-                      📌 必須条件：{label}
-                    </span>
-                  ))}
-                  {timetableLock && (
-                    <span className="timetable-grid__lock-badge">
-                      🔒 TT固定：{getTimetableLockLabel(timetableLock)}
-                    </span>
-                  )}
-                  <label className="timetable-grid__lock-control">
-                    <span aria-hidden="true">{timetableLock ? '🔒' : '🔓'}</span>
-                    <span className="visually-hidden">TT固定</span>
-                    <select
-                      disabled={readOnly}
-                      aria-label={getTimetableLockControlAccessibleName(itemLabel)}
-                      value={timetableLock
-                        ? timetableLock.position.kind === 'index'
-                          ? 'current'
-                          : timetableLock.position.kind
-                        : ''}
-                      onChange={(event) => {
-                        const mode = event.target.value
-                        if (!mode && timetableLock) {
-                          onUnlockTimetableLock(timetableLock.id)
-                        } else if (mode === 'current' || mode === 'first' || mode === 'last') {
-                          onSetTimetableLock(row.scheduleItem.id, mode)
-                        }
-                      }}
-                    >
-                      <option value="">
-                        {timetableLock ? 'TT固定を解除' : '固定なし'}
-                      </option>
-                      <option value="current">現在の並び順を固定</option>
-                      <option value="first">トッパーにして固定</option>
-                      <option value="last">トリにして固定</option>
-                    </select>
-                  </label>
-                </div>
+                {renderMetaControls()}
               </>
-            )}
+            ))}
           </div>
+
+          {isMemberMatrix && Array.from(
+            { length: memberColumnCount },
+            (_, memberIndex) => {
+              const member = row.memberCells[memberIndex]
+              if (!member) {
+                return (
+                  <span
+                    key={`empty-member-${memberIndex}`}
+                    className="timetable-grid__member-cell timetable-grid__member-empty"
+                    role="cell"
+                    aria-label={`メンバー${memberIndex + 1} 未登録`}
+                  />
+                )
+              }
+              const isHighlighted = member.memberId === highlightedMemberId
+              const memberColor = memberColorByMemberId.get(member.memberId)
+              return (
+                <div
+                  key={`${member.memberId}:${memberIndex}`}
+                  className="timetable-grid__member-cell"
+                  role="cell"
+                >
+                  <button
+                    type="button"
+                    className={[
+                      'timetable-grid__member-button',
+                      memberColor ? 'timetable-grid__member-button--colored' : '',
+                      isHighlighted ? 'timetable-grid__member-button--active' : '',
+                      member.resolved ? '' : 'timetable-grid__member-button--unresolved',
+                    ].filter(Boolean).join(' ')}
+                    style={getMemberColorStyle(memberColor)}
+                    aria-pressed={isHighlighted}
+                    aria-label={member.resolved
+                      ? `${member.displayName}の出演箇所を強調${isHighlighted ? '（選択中）' : ''}`
+                      : `${member.displayName}（参照切れ）`}
+                    title={member.displayName}
+                    disabled={!member.resolved}
+                    onClick={() => onHighlightedMemberChange(member.memberId)}
+                  >
+                    {member.displayName}
+                    {memberColor && (
+                      <span className="visually-hidden">設定色あり</span>
+                    )}
+                  </button>
+                </div>
+              )
+            },
+          )}
 
           {assignmentCells}
         </div>
@@ -473,6 +879,15 @@ const InterSectionBreakRow = ({
   onRemoveScheduleItem,
   timetableLock,
   assignmentCells,
+  viewMode,
+  memberColumnCount,
+  rowIssues = [],
+  activeTooltipKey,
+  tooltipId,
+  onOpenDetails,
+  onShowTooltip,
+  onHideTooltip,
+  getIssueMessage,
   readOnly,
 }: {
   row?: TimetableWorkspaceRow
@@ -484,25 +899,47 @@ const InterSectionBreakRow = ({
   onRemoveScheduleItem: (scheduleItemId: ScheduleItemId) => void
   timetableLock?: TimetableLock
   assignmentCells?: ReactNode
+  viewMode: TimetableViewMode
+  memberColumnCount: number
+  rowIssues?: ScheduleIssue[]
+  activeTooltipKey?: string
+  tooltipId: string
+  onOpenDetails: (
+    rowId: ScheduleItemId,
+    kind: TimetableGridRowDetailKind,
+    anchor: HTMLElement,
+  ) => void
+  onShowTooltip: (tooltip: TimetableGridActiveTooltip) => void
+  onHideTooltip: (detailKey: string) => void
+  getIssueMessage: (issue: ScheduleIssue) => string
   readOnly: boolean
 }) => {
+  const isMemberMatrix = viewMode === 'member-matrix'
   const item = row?.scheduleItem.kind === 'break' ? row.scheduleItem : undefined
   const presentation = getInterSectionBreakPresentation(previousSection, nextSection, columns, item)
-  const labels = row ? issueLabels(row) : []
-  const renderRow = (provided?: DraggableProvided) => (
+  const badges = row ? issueBadges(row) : []
+  const renderRow = (
+    provided?: DraggableProvided,
+    isDragging = false,
+  ) => (
     <div
       ref={provided?.innerRef}
       {...provided?.draggableProps}
       role="row"
       className={[
         'timetable-grid__row', 'timetable-grid__row--break', 'timetable-grid__inter-section-row',
+        isMemberMatrix ? 'timetable-grid__row--member-matrix' : '',
+        isDragging ? 'timetable-grid__row--dragging' : '',
         row && row.issueCounts.ERROR > 0 ? 'timetable-grid__row--error' : '',
         row && row.issueCounts.ERROR === 0 && row.issueCounts.WARNING > 0
           ? 'timetable-grid__row--warning' : '',
       ].filter(Boolean).join(' ')}
       style={provided?.draggableProps.style}
     >
-      <div className="timetable-grid__time" role="rowheader">
+      <div
+        className="timetable-grid__time"
+        role="rowheader"
+      >
         {row ? <>
           <strong>{formatMinuteAsLocalTime(row.calculatedItem.plannedStartMinute)}</strong>
           <span>〜{formatMinuteAsLocalTime(row.calculatedItem.plannedEndMinute)}</span>
@@ -510,7 +947,11 @@ const InterSectionBreakRow = ({
       </div>
       <div
         className={row
-          ? 'timetable-grid__item timetable-grid__inter-section-item'
+          ? [
+              'timetable-grid__item',
+              'timetable-grid__inter-section-item',
+              isMemberMatrix ? 'timetable-grid__item--matrix' : '',
+            ].filter(Boolean).join(' ')
           : 'timetable-grid__inter-section-cell'}
         role="cell"
         {...(!row ? { 'aria-colspan': presentation.contentColumnSpan } : {})}
@@ -528,10 +969,37 @@ const InterSectionBreakRow = ({
             <span>{presentation.sectionLabel}</span>
             {presentation.title && <span className="timetable-grid__inter-section-title">{presentation.title}</span>}
             <span>{presentation.durationLabel}</span>
-            {labels.map(label => <span
-              key={label}
-              className={`timetable-grid__issue timetable-grid__issue--${label.split(' ')[0].toLowerCase()}`}
-            >{label}</span>)}
+            {badges.map(badge => row && isMemberMatrix ? (
+              <TimetableGridDetailTrigger
+                key={badge.severity}
+                detailKey={getRowDetailKey(row.scheduleItem.id, badge.detailKind)}
+                compactLabel={`${badge.severity[0]}${badge.count}`}
+                accessibleLabel={`${presentation.title}の${badge.severity}を${badge.count}件表示`}
+                tooltip={getIssueBadgeTooltip(
+                  badge.severity,
+                  rowIssues
+                    .filter(issue => issue.severity === badge.severity)
+                    .map(getIssueMessage),
+                )}
+                className={`timetable-grid__issue timetable-grid__issue--${badge.severity.toLowerCase()}`}
+                tooltipId={tooltipId}
+                activeTooltipKey={activeTooltipKey}
+                onOpen={anchor => onOpenDetails(
+                  row.scheduleItem.id,
+                  badge.detailKind,
+                  anchor,
+                )}
+                onShowTooltip={onShowTooltip}
+                onHideTooltip={onHideTooltip}
+              />
+            ) : (
+              <span
+                key={badge.severity}
+                className={`timetable-grid__issue timetable-grid__issue--${badge.severity.toLowerCase()}`}
+              >
+                {badge.label}
+              </span>
+            ))}
             {item && <button
               type="button"
               className="timetable-grid__remove"
@@ -544,12 +1012,23 @@ const InterSectionBreakRow = ({
           {addBreakForm && <div className="timetable-grid__inter-section-actions">{addBreakForm}</div>}
         </div>
       </div>
+      {row && isMemberMatrix && Array.from(
+        { length: memberColumnCount },
+        (_, memberIndex) => (
+          <span
+            key={`inter-section-empty-member-${memberIndex}`}
+            className="timetable-grid__member-cell timetable-grid__member-empty"
+            role="cell"
+            aria-label={`メンバー${memberIndex + 1} 対象外`}
+          />
+        ),
+      )}
       {row && assignmentCells}
     </div>
   )
   return item ? (
     <Draggable draggableId={item.id} index={index} isDragDisabled={readOnly || timetableLock !== undefined}>
-      {renderRow}
+      {(provided, snapshot) => renderRow(provided, snapshot.isDragging)}
     </Draggable>
   ) : renderRow()
 }
@@ -558,6 +1037,10 @@ export function TimetableGrid({
   stage,
   sections,
   rows,
+  issues,
+  issueStages,
+  issueSections,
+  issueCalculatedItems,
   unresolvedPaAssignments,
   offGridPaAssignments,
   dutyTypes,
@@ -586,9 +1069,56 @@ export function TimetableGrid({
   onAssignSelection,
   onAutoAssignSelection,
   onDeleteSelectionAssignments,
+  viewMode,
+  highlightedMemberId,
+  highlightedMemberName,
+  onHighlightedMemberChange,
+  members,
+  memberColorCandidates,
+  memberColorAssignments,
+  memberColorEventDayLabel,
+  memberColorPersistenceWarning,
+  onAddMemberColor,
+  onChangeMemberColor,
+  onRemoveMemberColor,
+  onClearMemberColors,
   readOnly = false,
 }: TimetableGridProps) {
-  const timetableGridColumns = createTimetableGridColumns(dutyTypes)
+  const tooltipId = 'timetable-grid-row-detail-tooltip'
+  const [activeDetails, setActiveDetails] = useState<
+    TimetableGridActiveDetails | null
+  >(null)
+  const [activeTooltip, setActiveTooltip] = useState<
+    TimetableGridActiveTooltip | null
+  >(null)
+  const memberColumnCount = getTimetableMemberColumnCount(rows)
+  const currentEventDayId = rows[0]?.calculatedItem.eventDayId
+  const detailsDataRevision = JSON.stringify({
+    eventDayId: currentEventDayId,
+    stageId: stage.id,
+    viewMode,
+    issues: issues.map(issue => JSON.stringify(issue)).sort(),
+    timeConditions: rows.flatMap(row => row.eventBand ? [{
+      id: row.scheduleItem.id,
+      available: row.eventBand.availableTimeRange,
+      preferred: row.eventBand.preferredTimeRange,
+    }] : []).sort((left, right) => left.id.localeCompare(right.id)),
+  })
+  const [detailsRevisionState, setDetailsRevisionState] = useState({
+    value: detailsDataRevision,
+    epoch: 0,
+  })
+  let currentDetailsEpoch = detailsRevisionState.epoch
+  if (detailsRevisionState.value !== detailsDataRevision) {
+    currentDetailsEpoch += 1
+    setDetailsRevisionState({
+      value: detailsDataRevision,
+      epoch: currentDetailsEpoch,
+    })
+  }
+  const timetableGridColumns = viewMode === 'member-matrix'
+    ? createTimetableMemberMatrixColumns(dutyTypes, memberColumnCount)
+    : createTimetableGridColumns(dutyTypes)
   const gridTemplateColumns = timetableGridColumns
     .map((column) => `${column.width}px`)
     .join(' ')
@@ -613,6 +1143,53 @@ export function TimetableGrid({
   const hasInvalidSelection = selection !== null &&
     resolvedSelection === undefined
   const pointerSelectionRef = useRef<TimetableGridRangeSelection | null>(null)
+  const highlightedAppearanceCount = highlightedMemberId
+    ? countTimetableMemberAppearances(rows, highlightedMemberId)
+    : 0
+  const memberColorByMemberId = createTimetableMemberColorMap(
+    viewMode === 'member-matrix' ? memberColorAssignments : [],
+  )
+  const issueContext = {
+    members,
+    eventBands,
+    dutyTypes,
+    stages: issueStages,
+    sections: issueSections,
+  }
+  const activeDetailsRow = activeDetails
+    ? rows.find(row => row.scheduleItem.id === activeDetails.rowId)
+    : undefined
+  const activeDetailsSeverity = activeDetails
+    ? severityByDetailKind[activeDetails.kind]
+    : undefined
+  const activeDetailsIssues = activeDetailsRow && activeDetailsSeverity
+    ? getScheduleItemIssuesBySeverity(
+        issues,
+        activeDetailsRow.scheduleItem.id,
+        activeDetailsSeverity,
+      )
+    : []
+  const activeTimeCondition = activeDetailsRow?.eventBand && activeDetails
+    ? activeDetails.kind === 'available-time' &&
+      activeDetailsRow.eventBand.availableTimeRange
+      ? formatTimetableTimeCondition(
+          activeDetailsRow.eventBand.availableTimeRange,
+          'available',
+        )
+      : activeDetails.kind === 'preferred-time' &&
+        activeDetailsRow.eventBand.preferredTimeRange
+        ? formatTimetableTimeCondition(
+            activeDetailsRow.eventBand.preferredTimeRange,
+            'preferred',
+          )
+        : undefined
+    : undefined
+  const activeDetailsValid = activeDetails !== null &&
+    activeDetails.epoch === currentDetailsEpoch && (
+    activeDetailsSeverity
+      ? activeDetailsIssues.length > 0
+      : activeTimeCondition !== undefined
+  )
 
   useEffect(() => {
     const finishPointerSelection = () => {
@@ -629,6 +1206,66 @@ export function TimetableGrid({
   useEffect(() => {
     if (hasInvalidSelection) onSelectionChange(null)
   }, [hasInvalidSelection, onSelectionChange])
+
+  const handleGridKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (
+      viewMode !== 'member-matrix' ||
+      highlightedMemberId === null ||
+      event.key !== 'Escape' ||
+      event.defaultPrevented ||
+      event.nativeEvent.isComposing ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey
+    ) return
+
+    const target = event.target
+    if (target instanceof HTMLElement && (
+      target.isContentEditable ||
+      ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName) ||
+      target.closest('[role="dialog"]') !== null
+    )) return
+
+    event.preventDefault()
+    onHighlightedMemberChange(null)
+  }
+
+  const handleOpenDetails = (
+    rowId: ScheduleItemId,
+    kind: TimetableGridRowDetailKind,
+    anchor: HTMLElement,
+  ) => {
+    anchor.closest('.timetable-grid-wrap')
+      ?.querySelectorAll<HTMLDetailsElement>('.timetable-grid__row-actions[open]')
+      .forEach(details => details.removeAttribute('open'))
+    setActiveTooltip(null)
+    setActiveDetails({ rowId, kind, anchor, epoch: currentDetailsEpoch })
+  }
+
+  const handleCloseDetails = (restoreFocus = false) => {
+    const anchor = activeDetails?.anchor
+    setActiveDetails(null)
+    if (restoreFocus) anchor?.focus()
+  }
+
+  const handleHideTooltip = (detailKey: string) => {
+    setActiveTooltip(current => current?.key === detailKey ? null : current)
+  }
+
+  const handleShowTooltip = (tooltip: TimetableGridActiveTooltip) => {
+    setActiveTooltip({ ...tooltip, epoch: currentDetailsEpoch })
+  }
+
+  const getRowIssues = (row: TimetableWorkspaceRow): ScheduleIssue[] =>
+    issues.filter(issue =>
+      issue.scheduleItemIds?.includes(row.scheduleItem.id) === true,
+    )
+  const getIssueMessage = (issue: ScheduleIssue): string =>
+    createScheduleIssueDetailPresentation(
+      issue,
+      issueContext,
+      issueCalculatedItems,
+    ).message
 
   const updateSelection = (
     row: TimetableWorkspaceRow,
@@ -725,6 +1362,10 @@ export function TimetableGrid({
       <PaTimelineCell
         role="main"
         coverage={row.paCoverage.main}
+        memberColorByMemberId={memberColorByMemberId}
+        highlightedMemberId={viewMode === 'member-matrix'
+          ? highlightedMemberId
+          : null}
         interaction={interactionFor(
           { kind: 'pa', role: 'main' },
           row.paCoverage.main.map((coverage) => coverage.memberName).join('、'),
@@ -733,6 +1374,10 @@ export function TimetableGrid({
       <PaTimelineCell
         role="sub"
         coverage={row.paCoverage.sub}
+        memberColorByMemberId={memberColorByMemberId}
+        highlightedMemberId={viewMode === 'member-matrix'
+          ? highlightedMemberId
+          : null}
         interaction={interactionFor(
           { kind: 'pa', role: 'sub' },
           row.paCoverage.sub.map((coverage) => coverage.memberName).join('、'),
@@ -743,6 +1388,10 @@ export function TimetableGrid({
           key={dutyType.id}
           dutyType={dutyType}
           coverage={row.dutyCoverage[dutyType.id] ?? []}
+          memberColorByMemberId={memberColorByMemberId}
+          highlightedMemberId={viewMode === 'member-matrix'
+            ? highlightedMemberId
+            : null}
           interaction={interactionFor({
             kind: 'duty',
             dutyTypeId: dutyType.id,
@@ -836,6 +1485,15 @@ export function TimetableGrid({
               onRemoveScheduleItem={onRemoveScheduleItem}
               timetableLock={timetableLockByScheduleItemId.get(row.scheduleItem.id)}
               assignmentCells={renderAssignmentCells(row)}
+              viewMode={viewMode}
+              memberColumnCount={memberColumnCount}
+              rowIssues={getRowIssues(row)}
+              activeTooltipKey={activeTooltip?.key}
+              tooltipId={tooltipId}
+              onOpenDetails={handleOpenDetails}
+              onShowTooltip={handleShowTooltip}
+              onHideTooltip={handleHideTooltip}
+              getIssueMessage={getIssueMessage}
               readOnly={readOnly}
             />
           ) : (
@@ -856,6 +1514,19 @@ export function TimetableGrid({
               onOrderConstraintBlockHighlightChange={onOrderConstraintBlockHighlightChange}
               onSetTimetableLock={onSetTimetableLock}
               onUnlockTimetableLock={onUnlockTimetableLock}
+              viewMode={viewMode}
+              memberColumnCount={memberColumnCount}
+              highlightedMemberId={highlightedMemberId}
+              memberColorByMemberId={memberColorByMemberId}
+              onHighlightedMemberChange={onHighlightedMemberChange}
+              rowIssues={getRowIssues(row)}
+              activeTooltipKey={activeTooltip?.key}
+              tooltipId={tooltipId}
+              onOpenDetails={handleOpenDetails}
+              onShowTooltip={handleShowTooltip}
+              onHideTooltip={handleHideTooltip}
+              onCloseDetails={() => handleCloseDetails(false)}
+              getIssueMessage={getIssueMessage}
               readOnly={readOnly}
             />
           ))}
@@ -866,6 +1537,14 @@ export function TimetableGrid({
               columns={timetableGridColumns}
               addBreakForm={renderInterSectionBreakForm(interSection.previousSection, interSection.nextSection)}
               onRemoveScheduleItem={onRemoveScheduleItem}
+              viewMode={viewMode}
+              memberColumnCount={memberColumnCount}
+              activeTooltipKey={activeTooltip?.key}
+              tooltipId={tooltipId}
+              onOpenDetails={handleOpenDetails}
+              onShowTooltip={handleShowTooltip}
+              onHideTooltip={handleHideTooltip}
+              getIssueMessage={getIssueMessage}
               readOnly={readOnly}
             />
           ) : (
@@ -881,9 +1560,15 @@ export function TimetableGrid({
 
   return (
     <section
-      className="timetable-grid-wrap"
+      className={[
+        'timetable-grid-wrap',
+        viewMode === 'member-matrix'
+          ? 'timetable-grid-wrap--member-matrix'
+          : '',
+      ].filter(Boolean).join(' ')}
       aria-labelledby="timetable-grid-title"
       style={gridStyle}
+      onKeyDown={handleGridKeyDown}
     >
       <header className="timetable-grid-titlebar">
         <div>
@@ -999,6 +1684,40 @@ export function TimetableGrid({
         </p>
       )}
 
+      {viewMode === 'member-matrix' && (
+        <TimetableMemberColorSettings
+          members={members}
+          candidates={memberColorCandidates}
+          assignments={memberColorAssignments}
+          selectedEventDayLabel={memberColorEventDayLabel}
+          persistenceWarning={memberColorPersistenceWarning}
+          onAdd={onAddMemberColor}
+          onColorChange={onChangeMemberColor}
+          onRemove={onRemoveMemberColor}
+          onClear={onClearMemberColors}
+        />
+      )}
+
+      {viewMode === 'member-matrix' && highlightedMemberId && (
+        <div
+          className="timetable-grid__member-highlight-summary"
+          aria-live="polite"
+          role="status"
+        >
+          <span>
+            <strong>強調中:</strong>{' '}
+            {highlightedMemberName ?? '不明なメンバー'} / 出演
+            {highlightedAppearanceCount}箇所
+          </span>
+          <button
+            type="button"
+            onClick={() => onHighlightedMemberChange(null)}
+          >
+            選択解除
+          </button>
+        </div>
+      )}
+
       {resolvedSelection && (
         <div
           className="timetable-grid__selection-summary"
@@ -1050,71 +1769,161 @@ export function TimetableGrid({
         </div>
       )}
 
-      <div className="timetable-grid" role="table" aria-colcount={timetableGridColumns.length} aria-label={`${stage.name}のタイムテーブル`}>
-        <div className="timetable-grid__header" role="row">
-          {timetableGridColumns.map((column) => (
-            <span key={column.id} role="columnheader" title={column.label}>
-              {column.label}
-            </span>
-          ))}
-        </div>
+      <div className="timetable-grid-scroll">
+        <div
+          className={[
+            'timetable-grid',
+            viewMode === 'member-matrix'
+              ? 'timetable-grid--member-matrix'
+              : '',
+          ].filter(Boolean).join(' ')}
+          role="table"
+          aria-colcount={timetableGridColumns.length}
+          aria-label={viewMode === 'member-matrix'
+            ? `${stage.name}のメンバー一覧タイムテーブル`
+            : `${stage.name}のタイムテーブル`}
+        >
+          <div className="timetable-grid__header" role="row">
+            {timetableGridColumns.map((column) => (
+              <span
+                key={column.id}
+                className={[
+                  'timetable-grid__header-cell',
+                  column.id.startsWith('member-')
+                    ? 'timetable-grid__header-cell--member'
+                    : '',
+                ].filter(Boolean).join(' ')}
+                role="columnheader"
+                title={column.label}
+              >
+                {column.label}
+              </span>
+            ))}
+          </div>
 
-        {orderedSections.length > 0 ? orderedSections.map((section, index) => {
-          const sectionRows = rows.filter((row) =>
-            row.scheduleItem.sectionId === section.id,
-          )
-          const nextSection = orderedSections[index + 1]
-          const interSectionRows = rows.filter((row) =>
-            row.scheduleItem.kind === 'break' &&
-            row.scheduleItem.afterSectionId === section.id,
-          )
-          return (
-            <Fragment key={section.id}>
-              <section className="timetable-grid__section">
-                <header className="timetable-grid__section-heading">
-                  <div>
-                    <strong>{section.name}</strong>
-                    {(section.plannedStartTime || section.plannedEndTime) && (
-                      <span>
-                        {section.plannedStartTime
-                          ? `開始 ${section.plannedStartTime}`
-                          : '前Sectionから継続'}
-                        {section.plannedEndTime
-                          ? ` / 終了 ${section.plannedEndTime}`
-                          : ''}
-                      </span>
-                    )}
-                  </div>
-                  {renderBreakForm(section.name, section.id)}
-                </header>
-                {renderLane(
-                  sectionRows,
-                  getSectionDroppableId(section.id),
-                  'このSectionにはまだ項目がありません。',
-                )}
-              </section>
-              {nextSection && (
-                <section className="timetable-grid__inter-section-breaks">
+          {orderedSections.length > 0 ? orderedSections.map((section, index) => {
+            const sectionRows = rows.filter((row) =>
+              row.scheduleItem.sectionId === section.id,
+            )
+            const nextSection = orderedSections[index + 1]
+            const interSectionRows = rows.filter((row) =>
+              row.scheduleItem.kind === 'break' &&
+              row.scheduleItem.afterSectionId === section.id,
+            )
+            return (
+              <Fragment key={section.id}>
+                <section className="timetable-grid__section">
+                  <header className="timetable-grid__section-heading">
+                    <div>
+                      <strong>{section.name}</strong>
+                      {(section.plannedStartTime || section.plannedEndTime) && (
+                        <span>
+                          {section.plannedStartTime
+                            ? `開始 ${section.plannedStartTime}`
+                            : '前Sectionから継続'}
+                          {section.plannedEndTime
+                            ? ` / 終了 ${section.plannedEndTime}`
+                            : ''}
+                        </span>
+                      )}
+                    </div>
+                    {renderBreakForm(section.name, section.id)}
+                  </header>
                   {renderLane(
-                    interSectionRows,
-                    getInterSectionDroppableId(section.id),
-                    '部間休憩はありません。',
-                    { previousSection: section, nextSection },
+                    sectionRows,
+                    getSectionDroppableId(section.id),
+                    'このSectionにはまだ項目がありません。',
                   )}
                 </section>
-              )}
-            </Fragment>
-          )
-        }) : renderLane(
-          rows.filter((row) =>
-            row.scheduleItem.sectionId === undefined &&
-            (row.scheduleItem.kind !== 'break' ||
-              row.scheduleItem.afterSectionId === undefined),
-          ),
-          getStageDroppableId(stage.id),
-          'タイムテーブルに項目を配置してください。',
-        )}
+                {nextSection && (
+                  <section className="timetable-grid__inter-section-breaks">
+                    {renderLane(
+                      interSectionRows,
+                      getInterSectionDroppableId(section.id),
+                      '部間休憩はありません。',
+                      { previousSection: section, nextSection },
+                    )}
+                  </section>
+                )}
+              </Fragment>
+            )
+          }) : renderLane(
+            rows.filter((row) =>
+              row.scheduleItem.sectionId === undefined &&
+              (row.scheduleItem.kind !== 'break' ||
+                row.scheduleItem.afterSectionId === undefined),
+            ),
+            getStageDroppableId(stage.id),
+            'タイムテーブルに項目を配置してください。',
+          )}
+        </div>
       </div>
+
+      {activeTooltip &&
+        activeTooltip.epoch === currentDetailsEpoch &&
+        !activeDetailsValid && (
+        <TimetableGridTooltip
+          id={tooltipId}
+          anchor={activeTooltip.anchor}
+          text={activeTooltip.text}
+        />
+      )}
+
+      {activeDetails && activeDetailsValid && activeDetailsRow && (
+        <TimetableGridDetailsPopover
+          anchor={activeDetails.anchor}
+          title={activeDetailsSeverity
+            ? `${activeDetailsSeverity}の問題（${activeDetailsIssues.length}件）`
+            : activeTimeCondition?.title ?? '詳細'}
+          onClose={handleCloseDetails}
+        >
+          <p className="timetable-grid-details-popover__row-label">
+            対象行:{' '}
+            <strong>
+              {activeDetailsRow.scheduleItem.kind === 'break'
+                ? activeDetailsRow.scheduleItem.title
+                : activeDetailsRow.eventBand?.name ?? '不明なバンド'}
+            </strong>
+          </p>
+          {activeDetailsSeverity ? (
+            <ul className="timetable-grid-details-popover__issue-list">
+              {activeDetailsIssues.map((issue, index) => {
+                const details = createScheduleIssueDetailPresentation(
+                  issue,
+                  issueContext,
+                  issueCalculatedItems,
+                )
+                return (
+                  <li
+                    key={[
+                      issue.code,
+                      issue.memberIds?.join('-'),
+                      issue.eventBandIds?.join('-'),
+                      issue.scheduleItemIds?.join('-'),
+                      index,
+                    ].join('|')}
+                  >
+                    <div className="timetable-grid-details-popover__issue-heading">
+                      <code>{issue.code}</code>
+                      <strong>{details.message}</strong>
+                    </div>
+                    {details.targets.length > 0 && (
+                      <p>対象: {details.targets.join(' / ')}</p>
+                    )}
+                    {details.metrics.length > 0 && (
+                      <p>{details.metrics.join(' / ')}</p>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          ) : activeTimeCondition ? (
+            <p className="timetable-grid-details-popover__time-condition">
+              {activeTimeCondition.summary}
+            </p>
+          ) : null}
+        </TimetableGridDetailsPopover>
+      )}
     </section>
   )
 }
