@@ -6,6 +6,7 @@ import {
   parseCloudEventSnapshotV2,
   type CloudEventSnapshotV2,
 } from './cloudEventSnapshot.ts'
+import { isPostgresBigintGeneration } from './cloudGeneration.ts'
 
 export const CLOUD_EVENT_V2_WORKSPACE_PAGE_SIZE = 100
 
@@ -97,9 +98,6 @@ const normalizeWorkspaceId = (value: string): string | undefined =>
 
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0
-
-const isGeneration = (value: unknown): value is string =>
-  typeof value === 'string' && /^(0|[1-9][0-9]*)$/u.test(value)
 
 const isTimestamp = (value: unknown): value is string =>
   isNonEmptyString(value) && Number.isFinite(Date.parse(value))
@@ -219,7 +217,7 @@ const parseAuthorizedWorkspacePage = (
     !isRecord(value) ||
     value.status !== 'ok' ||
     value.workspace_id !== workspaceId ||
-    !isGeneration(value.workspace_generation) ||
+    !isPostgresBigintGeneration(value.workspace_generation) ||
     !Array.isArray(value.rows) ||
     value.rows.length > pageSize ||
     !Object.hasOwn(value, 'next_cursor') ||
@@ -249,7 +247,7 @@ const parseSavedValue = (
     !isRecord(value) ||
     value.status !== 'ok' ||
     value.workspaceId !== workspaceId ||
-    !isGeneration(value.workspaceGeneration) ||
+    !isPostgresBigintGeneration(value.workspaceGeneration) ||
     !isRecord(value.record)
   ) return undefined
   const record = parseCloudEventV2Record(value.record, workspaceId)
@@ -278,7 +276,8 @@ export const createCloudEventV2Repository = (
     async loadWorkspaceEventsAtGeneration(workspaceId, initialGeneration) {
       const normalizedWorkspaceId = normalizeWorkspaceId(workspaceId)
       if (!normalizedWorkspaceId ||
-        (initialGeneration !== undefined && !isGeneration(initialGeneration))) {
+        (initialGeneration !== undefined &&
+          !isPostgresBigintGeneration(initialGeneration))) {
         return errorResult('INVALID_ARGUMENT', 'Workspace IDまたはgenerationが正しくありません。')
       }
 
@@ -354,7 +353,7 @@ export const createCloudEventV2Repository = (
         !normalizedWorkspaceId ||
         !validatedSnapshot ||
         (expectedRevision !== null && !isPositiveSafeInteger(expectedRevision)) ||
-        !isGeneration(expectedGeneration)
+        !isPostgresBigintGeneration(expectedGeneration)
       ) return errorResult('INVALID_ARGUMENT', 'V2保存引数が正しくありません。')
 
       try {

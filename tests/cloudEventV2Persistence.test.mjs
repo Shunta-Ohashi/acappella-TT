@@ -13,6 +13,10 @@ import {
 import {
   createCloudEventV2Repository,
 } from '../src/cloud/cloudEventV2Repository.ts'
+import {
+  isPostgresBigintGeneration,
+  POSTGRES_BIGINT_MAX_GENERATION,
+} from '../src/cloud/cloudGeneration.ts'
 import { loadCloudWorkspaceV2AtOneGeneration } from '../src/cloud/cloudWorkspaceReadModel.ts'
 
 const workspaceId = '70000000-0000-0000-0000-000000000001'
@@ -107,6 +111,168 @@ const jsonRequest = (body, headers = {}) => new Request('https://example.invalid
     ...headers,
   },
   body: JSON.stringify(body),
+})
+
+const invalidGenerations = [
+  '9223372036854775808',
+  '999999999999999999999999999999',
+  '-1',
+  '01',
+  '1.0',
+  '1e3',
+  '',
+  1,
+  null,
+]
+
+test('Cloud generationはcanonicalなPostgreSQL bigint範囲だけを許可する', () => {
+  for (const generation of ['0', '1', POSTGRES_BIGINT_MAX_GENERATION]) {
+    assert.equal(isPostgresBigintGeneration(generation), true, generation)
+  }
+  for (const generation of invalidGenerations) {
+    assert.equal(
+      isPostgresBigintGeneration(generation),
+      false,
+      String(generation),
+    )
+  }
+})
+
+test('V2 repositoryは範囲外generationをRPC前に拒否する', async () => {
+  const snapshot = createV2()
+  let pageCalls = 0
+  let saveCalls = 0
+  const repository = createCloudEventV2Repository({
+    async loadAuthorizedWorkspacePage(_workspaceId, _cursor, _limit, generation) {
+      pageCalls += 1
+      return { data: page([], generation ?? '4'), error: null }
+    },
+    async saveValidatedSnapshot() {
+      saveCalls += 1
+      return { data: successValue(snapshot), error: null }
+    },
+  })
+
+  for (const generation of invalidGenerations) {
+    const loaded = await repository.loadWorkspaceEventsAtGeneration(
+      workspaceId,
+      generation,
+    )
+    assert.equal(loaded.ok, false, String(generation))
+    assert.equal(loaded.error.code, 'INVALID_ARGUMENT', String(generation))
+
+    const saved = await repository.saveEvent(
+      workspaceId,
+      snapshot,
+      null,
+      generation,
+    )
+    assert.equal(saved.ok, false, String(generation))
+    assert.equal(saved.error.code, 'INVALID_ARGUMENT', String(generation))
+  }
+  assert.equal(pageCalls, 0)
+  assert.equal(saveCalls, 0)
+
+  const atMaximum = await repository.loadWorkspaceEventsAtGeneration(
+    workspaceId,
+    POSTGRES_BIGINT_MAX_GENERATION,
+  )
+  assert.equal(atMaximum.ok, true)
+  assert.equal(atMaximum.value.generation, POSTGRES_BIGINT_MAX_GENERATION)
+  assert.equal(pageCalls, 1)
+})
+
+test('V2 repositoryは範囲外generationをDB応答として受理しない', async () => {
+  const snapshot = createV2()
+  const invalidPage = createCloudEventV2Repository({
+    async loadAuthorizedWorkspacePage() {
+      return { data: page([], '9223372036854775808'), error: null }
+    },
+    async saveValidatedSnapshot() {
+      throw new Error('not used')
+    },
+  })
+  const loaded = await invalidPage.loadWorkspaceEventsAtGeneration(workspaceId)
+  assert.equal(loaded.ok, false)
+  assert.equal(loaded.error.code, 'INVALID_RESPONSE')
+
+  const invalidSave = createCloudEventV2Repository({
+    async loadAuthorizedWorkspacePage() {
+      throw new Error('not used')
+    },
+    async saveValidatedSnapshot() {
+      return {
+        data: successValue(snapshot, 1, '9223372036854775808'),
+        error: null,
+      }
+    },
+  })
+  const saved = await invalidSave.saveEvent(
+    workspaceId,
+    snapshot,
+    null,
+    '9223372036854775807',
+  )
+  assert.equal(saved.ok, false)
+  assert.equal(saved.error.code, 'INVALID_RESPONSE')
+})
+
+test('V2 Edgeは範囲外expectedGenerationを400でRPC前に拒否する', async () => {
+  const snapshot = createV2()
+  let mutationCalls = 0
+  const dependencies = {
+    async authenticate() {
+      return { id: 'actor' }
+    },
+    async saveValidatedSnapshot() {
+      mutationCalls += 1
+      return { data: null, error: { code: 'PVE04' } }
+    },
+  }
+
+  for (const generation of invalidGenerations) {
+    const response = await handleCloudEventV2SaveRequest(jsonRequest({
+      workspaceId,
+      snapshot,
+      expectedRevision: null,
+      expectedGeneration: generation,
+    }), dependencies)
+    assert.equal(response.status, 400, String(generation))
+    assert.equal((await response.json()).error.code, 'INVALID_REQUEST')
+  }
+  assert.equal(mutationCalls, 0)
+
+  const maximumResponse = await handleCloudEventV2SaveRequest(jsonRequest({
+    workspaceId,
+    snapshot,
+    expectedRevision: null,
+    expectedGeneration: POSTGRES_BIGINT_MAX_GENERATION,
+  }), dependencies)
+  assert.equal(maximumResponse.status, 409)
+  assert.equal((await maximumResponse.json()).error.code, 'WORKSPACE_SNAPSHOT_CHANGED')
+  assert.equal(mutationCalls, 1)
+})
+
+test('V2 Edgeは範囲外generationをDB正常応答として受理しない', async () => {
+  const snapshot = createV2()
+  const response = await handleCloudEventV2SaveRequest(jsonRequest({
+    workspaceId,
+    snapshot,
+    expectedRevision: null,
+    expectedGeneration: '9',
+  }), {
+    async authenticate() {
+      return { id: 'actor' }
+    },
+    async saveValidatedSnapshot() {
+      return {
+        data: successValue(snapshot, 1, '9223372036854775808'),
+        error: null,
+      }
+    },
+  })
+  assert.equal(response.status, 502)
+  assert.equal((await response.json()).error.code, 'INVALID_RESPONSE')
 })
 
 test('V2 repositoryは同一generationのV2だけを読み、V1/V2混在をfail closedにする', async () => {

@@ -4,6 +4,7 @@ import {
   parseCloudEventSnapshotV2,
   type CloudEventSnapshotV2,
 } from './cloudEventSnapshot.ts'
+import { isPostgresBigintGeneration } from './cloudGeneration.ts'
 
 export const CLOUD_EVENT_V2_SAVE_MAX_REQUEST_BYTES = 5 * 1024 * 1024
 
@@ -122,9 +123,6 @@ const normalizeWorkspaceId = (value: unknown): string | undefined =>
     ? value.toLowerCase()
     : undefined
 
-const isGeneration = (value: unknown): value is string =>
-  typeof value === 'string' && /^(0|[1-9][0-9]*)$/u.test(value)
-
 const isTimestamp = (value: unknown): value is string =>
   typeof value === 'string' &&
   value.trim().length > 0 &&
@@ -156,7 +154,7 @@ const isValidSavedValue = (
     !isRecord(value) ||
     value.status !== 'ok' ||
     value.workspaceId !== workspaceId ||
-    !isGeneration(value.workspaceGeneration) ||
+    !isPostgresBigintGeneration(value.workspaceGeneration) ||
     !isRecord(value.record) ||
     Object.hasOwn(value, 'error')
   ) return false
@@ -278,7 +276,7 @@ export const handleCloudEventV2SaveRequest = async (
   const workspaceId = normalizeWorkspaceId(body.workspaceId)
   const snapshot = parseCloudEventSnapshotV2(body.snapshot)
   if (!workspaceId || !isExpectedRevision(body.expectedRevision) ||
-    !isGeneration(body.expectedGeneration)) {
+    !isPostgresBigintGeneration(body.expectedGeneration)) {
     return errorResponse(400, 'INVALID_REQUEST', 'Workspace、revision、generationが正しくありません。')
   }
   if (!snapshot) {
