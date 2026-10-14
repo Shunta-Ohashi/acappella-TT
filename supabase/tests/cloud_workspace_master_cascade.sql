@@ -5,7 +5,7 @@
 -- complete every child cascade without weakening direct Master references.
 begin;
 
-create or replace function pg_temp.workspace_master_cascade_snapshot(
+create or replace function pg_temp.workspace_master_cascade_v2_snapshot(
   event_id text,
   event_name text
 )
@@ -15,8 +15,8 @@ immutable
 as $$
   select jsonb_build_object(
     'format', 'acappella-tt-cloud-event',
-    'version', 1,
-    'appState', jsonb_build_object(
+    'version', 2,
+    'eventState', jsonb_build_object(
       'version', 5,
       'events', jsonb_build_array(jsonb_build_object(
         'id', event_id,
@@ -28,20 +28,48 @@ as $$
         ),
         'performanceSlotMinutes', jsonb_build_array(5)
       )),
-      'members', '[]'::jsonb,
-      'bands', '[]'::jsonb,
-      'eventDays', '[]'::jsonb,
+      'eventDays', jsonb_build_array(jsonb_build_object(
+        'id', 'day-e',
+        'eventId', event_id,
+        'date', '2026-10-14',
+        'order', 0
+      )),
       'stages', '[]'::jsonb,
       'sections', '[]'::jsonb,
-      'eventMembers', '[]'::jsonb,
+      'eventMembers', jsonb_build_array(
+        jsonb_build_object(
+          'id', 'event-member-e',
+          'eventId', event_id,
+          'memberId', 'member-e',
+          'paCapabilities', jsonb_build_object('main', false, 'sub', false)
+        ),
+        jsonb_build_object(
+          'id', 'event-member-e-event',
+          'eventId', event_id,
+          'memberId', 'member-e-event',
+          'paCapabilities', jsonb_build_object('main', false, 'sub', false)
+        )
+      ),
       'eventMemberDays', '[]'::jsonb,
-      'eventBands', '[]'::jsonb,
+      'eventBands', jsonb_build_array(jsonb_build_object(
+        'id', 'event-band-e',
+        'eventId', event_id,
+        'eventDayId', 'day-e',
+        'bandId', 'band-e',
+        'name', 'Band E at Event',
+        'memberIds', jsonb_build_array('member-e'),
+        'durationMinutes', 5
+      )),
       'scheduleItems', '[]'::jsonb,
       'paAssignments', '[]'::jsonb,
       'dutyTypes', '[]'::jsonb,
       'dutyAssignments', '[]'::jsonb,
       'timetableLocks', '[]'::jsonb,
       'timetableOrderConstraints', '[]'::jsonb
+    ),
+    'masterReferences', jsonb_build_object(
+      'memberIds', jsonb_build_array('member-e', 'member-e-event'),
+      'bandIds', jsonb_build_array('band-e')
     )
   )
 $$;
@@ -137,7 +165,7 @@ insert into public.cloud_events (
   '72000000-0000-0000-0000-000000000005',
   'event-e',
   'Event E',
-  pg_temp.workspace_master_cascade_snapshot('event-e', 'Event E')
+  pg_temp.workspace_master_cascade_v2_snapshot('event-e', 'Event E')
 );
 insert into public.cloud_event_member_references values
   ('72000000-0000-0000-0000-000000000005', 'event-e', 'member-e'),
@@ -145,6 +173,30 @@ insert into public.cloud_event_member_references values
 insert into public.cloud_event_band_references values (
   '72000000-0000-0000-0000-000000000005', 'event-e', 'band-e'
 );
+
+do $$
+declare
+  stored_snapshot jsonb;
+begin
+  select event_snapshot into strict stored_snapshot
+  from public.cloud_events
+  where workspace_id = '72000000-0000-0000-0000-000000000005'
+    and event_id = 'event-e';
+
+  if stored_snapshot ->> 'version' <> '2'
+    or stored_snapshot #> '{masterReferences,memberIds}'
+      <> '["member-e","member-e-event"]'::jsonb
+    or stored_snapshot #> '{masterReferences,bandIds}' <> '["band-e"]'::jsonb
+    or (select count(*) from public.cloud_event_member_references
+        where workspace_id = '72000000-0000-0000-0000-000000000005'
+          and event_id = 'event-e') <> 2
+    or (select count(*) from public.cloud_event_band_references
+        where workspace_id = '72000000-0000-0000-0000-000000000005'
+          and event_id = 'event-e') <> 1 then
+    raise exception 'Ready Workspace Event V2 snapshot/reference fixture is inconsistent';
+  end if;
+end;
+$$;
 
 -- RESTRICT must remain a real reference guard outside the parent cascade.
 do $$

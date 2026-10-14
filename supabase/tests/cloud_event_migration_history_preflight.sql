@@ -314,6 +314,40 @@ authorized_save_function as (
   where pg_proc.oid =
     to_regprocedure('public.save_cloud_event_validated(uuid,uuid,jsonb)')
 ),
+cloud_event_v2_save_function as (
+  select
+    pg_proc.oid,
+    pg_proc.proacl,
+    pg_proc.proowner,
+    pg_proc.prosecdef,
+    pg_proc.prosrc,
+    pg_proc.proconfig,
+    pg_proc.provolatile,
+    pg_proc.prorettype,
+    pg_proc.pronargs,
+    pg_language.lanname
+  from pg_catalog.pg_proc
+  join pg_catalog.pg_language on pg_language.oid = pg_proc.prolang
+  where pg_proc.oid = to_regprocedure(
+    'public.save_cloud_event_v2_validated(uuid,uuid,jsonb,bigint,text)'
+  )
+),
+cloud_event_v2_shape_function as (
+  select pg_proc.oid, pg_proc.proacl, pg_proc.proowner, pg_proc.provolatile,
+    pg_proc.prosrc, pg_proc.proconfig, pg_proc.prorettype, pg_proc.pronargs
+  from pg_catalog.pg_proc
+  where pg_proc.oid = to_regprocedure(
+    'public.is_cloud_event_v2_snapshot_shape(jsonb,text,text)'
+  )
+),
+cloud_event_v1_ready_guard_function as (
+  select pg_proc.oid, pg_proc.proacl, pg_proc.proowner, pg_proc.prosecdef,
+    pg_proc.prosrc, pg_proc.proconfig
+  from pg_catalog.pg_proc
+  where pg_proc.oid = to_regprocedure(
+    'public.guard_ready_workspace_from_v1_event_write()'
+  )
+),
 workspace_master_read_function as (
   select
     pg_proc.oid,
@@ -2092,6 +2126,106 @@ later_schema as (
         'EXECUTE'
       ) from service_role
         cross join workspace_master_backfill_apply_function), false),
+    'cloudEventV2PersistenceContract',
+      (select count(*) = 1 and bool_and(
+          cloud_event_v2_save_function.prosecdef
+          and cloud_event_v2_save_function.provolatile = 'v'
+          and cloud_event_v2_save_function.prorettype = 'jsonb'::regtype
+          and cloud_event_v2_save_function.pronargs = 5
+          and cloud_event_v2_save_function.lanname = 'plpgsql'
+          and array_to_string(cloud_event_v2_save_function.proconfig, ',')
+            in ('search_path=""', 'search_path=')
+          and lower(cloud_event_v2_save_function.prosrc)
+            like '%from public.workspace_members%for share%'
+          and lower(cloud_event_v2_save_function.prosrc)
+            like '%master_status is distinct from ''ready''%'
+          and lower(cloud_event_v2_save_function.prosrc)
+            like '%p_expected_revision%'
+          and lower(cloud_event_v2_save_function.prosrc)
+            like '%p_expected_generation%'
+          and lower(cloud_event_v2_save_function.prosrc)
+            like '%from public.workspace_master_members%for share%'
+          and lower(cloud_event_v2_save_function.prosrc)
+            like '%from public.workspace_master_bands%for share%'
+          and lower(cloud_event_v2_save_function.prosrc)
+            like '%cloud_event_member_references%'
+          and lower(cloud_event_v2_save_function.prosrc)
+            like '%cloud_event_band_references%'
+          and lower(cloud_event_v2_save_function.prosrc)
+            like '%errcode = ''pve01''%'
+          and lower(cloud_event_v2_save_function.prosrc)
+            like '%errcode = ''pve02''%'
+          and lower(cloud_event_v2_save_function.prosrc)
+            like '%errcode = ''pve04''%'
+        ) from cloud_event_v2_save_function)
+      and (select count(*) = 1 and bool_and(
+          cloud_event_v2_shape_function.provolatile = 'i'
+          and cloud_event_v2_shape_function.prorettype = 'boolean'::regtype
+          and cloud_event_v2_shape_function.pronargs = 3
+          and array_to_string(cloud_event_v2_shape_function.proconfig, ',')
+            in ('search_path=""', 'search_path=')
+          and lower(cloud_event_v2_shape_function.prosrc)
+            like '%eventstate%masterreferences%'
+          and lower(cloud_event_v2_shape_function.prosrc)
+            like '%event_state ? ''members''%'
+          and lower(cloud_event_v2_shape_function.prosrc)
+            like '%event_state ? ''bands''%'
+        ) from cloud_event_v2_shape_function)
+      and exists (
+        select 1 from constraint_definitions
+        where conname = 'cloud_events_snapshot_shape_check'
+          and definition like '%appstate,events,0%'
+          and definition like '%is_cloud_event_v2_snapshot_shape%'
+      )
+      and (select count(*) = 1 and bool_and(
+          cloud_event_v1_ready_guard_function.prosecdef
+          and array_to_string(cloud_event_v1_ready_guard_function.proconfig, ',')
+            in ('search_path=""', 'search_path=')
+          and lower(cloud_event_v1_ready_guard_function.prosrc)
+            like '%master_status is not distinct from ''ready''%'
+          and lower(cloud_event_v1_ready_guard_function.prosrc)
+            like '%errcode = ''55000''%'
+        ) from cloud_event_v1_ready_guard_function)
+      and exists (
+        select 1 from pg_catalog.pg_trigger
+        join cloud_table on cloud_table.oid = pg_trigger.tgrelid
+        where pg_trigger.tgname =
+            'cloud_events_guard_ready_workspace_from_v1_write'
+          and pg_trigger.tgfoid = to_regprocedure(
+            'public.guard_ready_workspace_from_v1_event_write()'
+          )
+          and not pg_trigger.tgisinternal
+          and pg_trigger.tgenabled = 'O'
+          and pg_trigger.tgtype = 23
+      )
+      and (select count(*) = 1 from authenticated_role)
+      and (select count(*) = 1 from anon_role)
+      and (select count(*) = 1 from service_role)
+      and coalesce((select has_function_privilege(
+        service_role.oid,
+        cloud_event_v2_save_function.oid,
+        'EXECUTE'
+      ) from service_role cross join cloud_event_v2_save_function), false)
+      and not coalesce((select has_function_privilege(
+        authenticated_role.oid,
+        cloud_event_v2_save_function.oid,
+        'EXECUTE'
+      ) from authenticated_role cross join cloud_event_v2_save_function), false)
+      and not coalesce((select has_function_privilege(
+        anon_role.oid,
+        cloud_event_v2_save_function.oid,
+        'EXECUTE'
+      ) from anon_role cross join cloud_event_v2_save_function), false)
+      and not exists (
+        select 1
+        from cloud_event_v2_save_function
+        cross join lateral pg_catalog.aclexplode(coalesce(
+          cloud_event_v2_save_function.proacl,
+          pg_catalog.acldefault('f', cloud_event_v2_save_function.proowner)
+        )) as function_acl
+        where function_acl.grantee = 0
+          and function_acl.privilege_type = 'EXECUTE'
+      ),
     'authorizedSaveFunction', exists (
       select 1 from authorized_save_function
       where lower(prosrc) like '%from public.workspace_members%'

@@ -83,3 +83,10 @@ jobs:
           --frozen
           --config supabase/functions/save-cloud-event/deno.json
           supabase/functions/save-cloud-event/index.ts
+
+      - name: Check Cloud Event V2 Save Edge Function
+        run: >-
+          deno check
+          --frozen
+          --config supabase/functions/save-cloud-event-v2/deno.json
+          supabase/functions/save-cloud-event-v2/index.ts

@@ -34,6 +34,7 @@ pnpm lint
 pnpm build
 deno check --frozen --config supabase/functions/workspace-masters/deno.json supabase/functions/workspace-masters/index.ts
 deno check --frozen --config supabase/functions/save-cloud-event/deno.json supabase/functions/save-cloud-event/index.ts
+deno check --frozen --config supabase/functions/save-cloud-event-v2/deno.json supabase/functions/save-cloud-event-v2/index.ts
 ```
 
 `main`向けPull Requestの作成・更新時と`main`へのpush時には、GitHub

@@ -23,6 +23,7 @@ They create rows in `auth.users` and require an administrator connection.
    - `20261012100000_cloud_workspace_master_foundation.sql`
    - `20261012110000_cloud_workspace_master_contracts_v2.sql`
    - `20261013100000_cloud_workspace_master_backfill.sql`
+   - `20261013110000_cloud_event_v2_persistence_foundation.sql`
 
    These names are ordered both by their migration version prefixes and by
    ordinary filename sorting; do not infer that every external migration tool
@@ -66,6 +67,11 @@ psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
 psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
   -v "test_db_url=$env:ACAPPELLA_TT_DBLINK_DATABASE_URL" `
   -f supabase/tests/cloud_workspace_master_backfill_concurrency.sql
+psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
+  -f supabase/tests/cloud_event_v2_persistence.sql
+psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
+  -v "test_db_url=$env:ACAPPELLA_TT_DBLINK_DATABASE_URL" `
+  -f supabase/tests/cloud_event_v2_persistence_concurrency.sql
 node scripts/cloudEventMigrationCatalogRegression.mjs `
   --db-url-env ACAPPELLA_TT_TEST_DATABASE_URL `
   --confirm-disposable
@@ -88,6 +94,28 @@ loopback Supabase/API/Function/Database URL, `psql`, and a new disposable
 database. Its setup and cleanup SQL target only Workspace IDs reserved by the
 fixture; Auth cleanup targets only the fixture's exact email addresses. It does
 not disable JWT verification and must never receive production keys or tokens.
+
+Snapshot V2 save has its own real-HTTP smoke runner. It is hard-bound to a new
+loopback Supabase API on `55721` and PostgreSQL on `55722`; it rejects every
+other port and requires `--confirm-disposable`. Follow the two-terminal setup in
+[`docs/cloud-setup.md`](../../docs/cloud-setup.md#snapshot-v2保存functionの専用実http-smoke),
+serve `save-cloud-event-v2` with JWT verification enabled, then run:
+
+```powershell
+npm run test:cloud-event-v2-http-smoke
+```
+
+The runner creates exact-email Auth users, applies only the dedicated
+`76000000-...-001` through `003` fixture Workspaces, and checks the HTTP result
+against the authorized page RPC plus read-only PostgreSQL invariants. A failed
+or interrupted run can be cleaned only after rechecking the disposable target:
+
+```powershell
+node scripts/cloudEventV2HttpSmoke.mjs --confirm-disposable --cleanup-only
+```
+
+Neither command resets a database, disables JWT verification, or deletes users
+outside the four exact smoke-test email addresses.
 
 `test_db_url` is opened by the PostgreSQL server through `dblink`, so it may
 need a different host from the outer `psql` URL. In particular, with local
@@ -151,6 +179,16 @@ cascading without weakening the production ACL/RLS contract.
 The concurrency tests use a bounded polling loop only to observe the second
 connection waiting on a PostgreSQL lock; ordering is established by the RPC call
 and asynchronous membership mutation, not by assuming a fixed sleep duration.
+
+The Snapshot V2 contract fixture verifies backend-only EXECUTE, ready gating,
+owner/editor authorization, viewer/outsider denial, create/update revision CAS,
+Workspace generation CAS, exact direct/transitive Master closure, V1-row
+overwrite denial, ready-Workspace V1 writer denial, atomic reference-index
+replacement, and reference cleanup on Event deletion. Its outer transaction
+rolls back every fixture. The V2 concurrency fixture commits across dblink
+connections to prove same-Event stale revision rejection and serialization
+between a referenced-Member update and Event V2 save. It uses only its reserved
+Workspace/Auth IDs and cleans those IDs at startup and successful completion.
 
 Expected result: all `psql` commands exit with status 0. A skipped command is
 not a passing database test.

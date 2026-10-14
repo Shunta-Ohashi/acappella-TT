@@ -4042,7 +4042,7 @@ test('migration実ファイルはAuth→Cloud Event→RPC/権限変更の依存�
   ))).filter(name => name.endsWith('.sql')).sort()
   const versions = migrations.map(name => name.split('_', 1)[0])
 
-  assert.equal(migrations.length, 11)
+  assert.equal(migrations.length, 12)
   assert.equal(new Set(versions).size, versions.length)
   assert.ok(migrations.indexOf('20261007_auth_workspace.sql') <
     migrations.indexOf('20261008110000_cloud_event_persistence.sql'))
@@ -4060,6 +4060,8 @@ test('migration実ファイルはAuth→Cloud Event→RPC/権限変更の依存�
     migrations.indexOf('20261012110000_cloud_workspace_master_contracts_v2.sql'))
   assert.ok(migrations.indexOf('20261012110000_cloud_workspace_master_contracts_v2.sql') <
     migrations.indexOf('20261013100000_cloud_workspace_master_backfill.sql'))
+  assert.ok(migrations.indexOf('20261013100000_cloud_workspace_master_backfill.sql') <
+    migrations.indexOf('20261013110000_cloud_event_v2_persistence_foundation.sql'))
   assert.equal(migrations.includes('20261007120000_cloud_event_persistence.sql'), false)
 
   for (const migration of migrations) {
@@ -4645,6 +4647,14 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   ]) {
     assert.match(masterFoundationCascadeSql, new RegExp(expectedCase), expectedCase)
   }
+  assert.match(masterFoundationCascadeSql,
+    /workspace_master_cascade_v2_snapshot[\s\S]*'version', 2[\s\S]*'eventState'[\s\S]*'masterReferences'[\s\S]*'memberIds', jsonb_build_array\('member-e', 'member-e-event'\)[\s\S]*'bandIds', jsonb_build_array\('band-e'\)/i)
+  assert.match(masterFoundationCascadeSql,
+    /workspace_master_cascade_v2_snapshot\('event-e', 'Event E'\)[\s\S]*insert into public\.cloud_event_member_references[\s\S]*'member-e'[\s\S]*'member-e-event'[\s\S]*insert into public\.cloud_event_band_references[\s\S]*'band-e'/i)
+  assert.match(masterFoundationCascadeSql,
+    /Ready Workspace Event V2 snapshot\/reference fixture is inconsistent/i)
+  assert.doesNotMatch(masterFoundationCascadeSql,
+    /workspace_master_cascade_(?:v2_)?snapshot[\s\S]{0,300}'version', 1/i)
   assert.match(masterFoundationCascadeSql,
     /Band-referenced Workspace Member deletion was accepted[\s\S]*foreign_key_violation/i)
   assert.match(masterFoundationCascadeSql,
