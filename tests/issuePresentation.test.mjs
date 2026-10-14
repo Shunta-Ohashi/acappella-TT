@@ -105,6 +105,106 @@ test('IssuePanelと行popover用の対象・間隔表示を共通化する', () 
   assert.deepEqual(details.metrics, ['休憩時間: 4分'])
 })
 
+const sectionContext = {
+  members: [],
+  eventBands: [],
+  stages: [
+    { id: 'stage-main', eventDayId: 'day-a', name: 'Main', order: 0 },
+    { id: 'stage-sub', eventDayId: 'day-a', name: 'Sub', order: 1 },
+  ],
+  sections: [
+    { id: 'section-main-a', stageId: 'stage-main', name: '第1部', order: 0 },
+    { id: 'section-main-b', stageId: 'stage-main', name: '第2部', order: 1 },
+    { id: 'section-sub-a', stageId: 'stage-sub', name: '第1部', order: 0 },
+  ],
+}
+
+const getSectionTarget = (issue, calculatedItems = []) =>
+  createScheduleIssueDetailPresentation(
+    issue,
+    sectionContext,
+    calculatedItems,
+  ).targets.find(target => target.startsWith('Section:'))
+
+test('Issue詳細は明示SectionとScheduleItem所属Sectionを重複なく統合する', () => {
+  const issue = {
+    severity: 'WARNING',
+    code: 'PREFERENCE_NOT_MET',
+    message: '希望時間外です。',
+    sectionIds: ['section-main-a', 'section-main-a'],
+    scheduleItemIds: ['item-a', 'item-b'],
+  }
+  const calculatedItems = [
+    { scheduleItemId: 'item-a', eventDayId: 'day-a', stageId: 'stage-main',
+      sectionId: 'section-main-a', plannedStartMinute: 600, plannedEndMinute: 610 },
+    { scheduleItemId: 'item-b', eventDayId: 'day-a', stageId: 'stage-main',
+      sectionId: 'section-main-b', plannedStartMinute: 610, plannedEndMinute: 620 },
+  ]
+
+  assert.equal(
+    getSectionTarget(issue, calculatedItems),
+    'Section: Main / 第1部（Section ID: section-main-a）、第2部',
+  )
+  assert.equal(
+    getSectionTarget({ ...issue, sectionIds: undefined }, calculatedItems),
+    'Section: Main / 第1部（Section ID: section-main-a）、第2部',
+    'sectionIdsなしでもScheduleItemの所属から解決する',
+  )
+  assert.equal(
+    getSectionTarget({ ...issue, scheduleItemIds: undefined }),
+    'Section: Main / 第1部（Section ID: section-main-a）',
+    '明示sectionIdsだけのIssueも維持する',
+  )
+})
+
+test('部間休憩・Section未設定・不明参照を推測せず表現する', () => {
+  const calculatedItems = [
+    { scheduleItemId: 'break-a', eventDayId: 'day-a', stageId: 'stage-main',
+      afterSectionId: 'section-main-a', plannedStartMinute: 620, plannedEndMinute: 625 },
+    { scheduleItemId: 'stage-break', eventDayId: 'day-a', stageId: 'stage-main',
+      plannedStartMinute: 625, plannedEndMinute: 630 },
+  ]
+
+  assert.equal(getSectionTarget({
+    severity: 'INFO', code: 'BREAK', message: '部間休憩',
+    scheduleItemIds: ['break-a'],
+  }, calculatedItems), 'Section: Main / 第1部（Section ID: section-main-a）の後')
+  assert.equal(getSectionTarget({
+    severity: 'INFO', code: 'BREAK', message: '明示参照付き部間休憩',
+    sectionIds: ['section-main-a'], scheduleItemIds: ['break-a'],
+  }, calculatedItems),
+  'Section: Main / 第1部（Section ID: section-main-a）（Section内・直後）')
+  assert.equal(getSectionTarget({
+    severity: 'INFO', code: 'BREAK', message: 'Stage休憩',
+    scheduleItemIds: ['stage-break'],
+  }, calculatedItems), undefined)
+  assert.equal(getSectionTarget({
+    severity: 'INFO', code: 'UNKNOWN', message: '不明Item',
+    scheduleItemIds: ['missing-item'],
+  }, calculatedItems), undefined)
+  assert.equal(getSectionTarget({
+    severity: 'INFO', code: 'UNKNOWN', message: '不明Section',
+    sectionIds: ['missing-section'],
+  }), 'Section: 不明なSection（Section ID: missing-section）')
+})
+
+test('Stageが異なる同名SectionをID付きで別対象として表示する', () => {
+  const target = getSectionTarget({
+    severity: 'WARNING', code: 'CROSS_STAGE', message: '複数Stage',
+    scheduleItemIds: ['item-main', 'item-sub'],
+  }, [
+    { scheduleItemId: 'item-main', eventDayId: 'day-a', stageId: 'stage-main',
+      sectionId: 'section-main-a', plannedStartMinute: 600, plannedEndMinute: 610 },
+    { scheduleItemId: 'item-sub', eventDayId: 'day-a', stageId: 'stage-sub',
+      sectionId: 'section-sub-a', plannedStartMinute: 600, plannedEndMinute: 610 },
+  ])
+
+  assert.equal(
+    target,
+    'Section: Main / 第1部（Section ID: section-main-a）、Sub / 第1部（Section ID: section-sub-a）',
+  )
+})
+
 test('置換済みの表示名に含まれる別entity IDを後続置換で壊さない', () => {
   const message = formatScheduleIssueMessage({
     severity: 'ERROR',

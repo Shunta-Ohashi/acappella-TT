@@ -129,8 +129,8 @@ export const createScheduleIssueDetailPresentation = (
   const stageNameById = new Map(
     context.stages.map(stage => [stage.id, stage.name]),
   )
-  const sectionNameById = new Map(
-    context.sections.map(section => [section.id, section.name]),
+  const sectionById = new Map(
+    context.sections.map(section => [section.id, section]),
   )
   const calculatedItemById = new Map(
     calculatedItems.map(item => [item.scheduleItemId, item]),
@@ -156,11 +156,50 @@ export const createScheduleIssueDetailPresentation = (
         : '不明なStage'
     }),
   ])
-  const sectionNames = uniqueNames(
-    (issue.sectionIds ?? []).map(
-      sectionId => sectionNameById.get(sectionId) ?? '不明なSection',
-    ),
-  )
+  const sectionRelationsById = new Map<
+    string,
+    Set<'within' | 'after'>
+  >()
+  const addSectionReference = (
+    sectionId: string,
+    relation: 'within' | 'after',
+  ) => {
+    const relations = sectionRelationsById.get(sectionId) ?? new Set()
+    relations.add(relation)
+    sectionRelationsById.set(sectionId, relations)
+  }
+  for (const sectionId of issue.sectionIds ?? []) {
+    addSectionReference(sectionId, 'within')
+  }
+  for (const scheduleItemId of issue.scheduleItemIds ?? []) {
+    const calculatedItem = calculatedItemById.get(scheduleItemId)
+    if (calculatedItem?.sectionId) {
+      addSectionReference(calculatedItem.sectionId, 'within')
+    }
+    if (calculatedItem?.afterSectionId) {
+      addSectionReference(calculatedItem.afterSectionId, 'after')
+    }
+  }
+  const sectionNameCounts = new Map<string, number>()
+  context.sections.forEach((section) => {
+    sectionNameCounts.set(
+      section.name,
+      (sectionNameCounts.get(section.name) ?? 0) + 1,
+    )
+  })
+  const sectionNames = [...sectionRelationsById].map(([sectionId, relations]) => {
+    const section = sectionById.get(sectionId)
+    if (!section) return `不明なSection（Section ID: ${sectionId}）`
+    const hasDuplicateName = (sectionNameCounts.get(section.name) ?? 0) > 1
+    const stageName = stageNameById.get(section.stageId) ?? '不明なStage'
+    const label = hasDuplicateName
+      ? `${stageName} / ${section.name}（Section ID: ${section.id}）`
+      : section.name
+    if (relations.has('within') && relations.has('after')) {
+      return `${label}（Section内・直後）`
+    }
+    return relations.has('after') ? `${label}の後` : label
+  })
   const dutyTypeNames = uniqueNames(
     (issue.dutyTypeIds ?? []).map(
       dutyTypeId => dutyTypeNameById.get(dutyTypeId) ?? '不明な仕事',

@@ -5,6 +5,27 @@ export const TIMETABLE_MEMBER_MATRIX_MINIMUM_MEMBER_COLUMNS = 7
 
 export type TimetableViewMode = 'standard' | 'member-matrix'
 
+export interface TimetableMemberCellAccessibleLabelInput {
+  displayName: string
+  memberId: MemberId
+  resolved: boolean
+  selected: boolean
+  colorLabel?: string
+}
+
+export const getTimetableMemberCellAccessibleLabel = ({
+  displayName,
+  memberId,
+  resolved,
+  selected,
+  colorLabel,
+}: TimetableMemberCellAccessibleLabelInput): string => {
+  const colorDescription = colorLabel ? `、設定色: ${colorLabel}` : ''
+  return resolved
+    ? `${displayName}（Member ID: ${memberId}${colorDescription}）の出演箇所を強調${selected ? '（選択中）' : ''}`
+    : `${displayName}（Member ID: ${memberId}、参照切れ${colorDescription}）`
+}
+
 export interface TimetableMemberHighlight {
   persistenceScopeKey: string
   persistenceVisitId: string

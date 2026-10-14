@@ -7,6 +7,7 @@ import { createServer } from 'vite'
 
 import {
   countTimetableMemberAppearances,
+  getTimetableMemberCellAccessibleLabel,
   getTimetableMemberColumnCount,
   resolveTimetableMemberHighlight,
   TIMETABLE_MEMBER_MATRIX_MINIMUM_MEMBER_COLUMNS,
@@ -119,7 +120,9 @@ test('Member一覧はコンパクト行とページ縦スクロールをCSS契�
   assert.match(css, /\.timetable-grid__row--member-matrix\s*\{[^}]*min-height:\s*32px;/s)
   assert.match(css, /\.timetable-grid__member-button\s*\{[^}]*white-space:\s*nowrap;/s)
   assert.match(css, /\.timetable-grid__member-button\s*\{[^}]*text-overflow:\s*ellipsis;/s)
-  assert.match(css, /\.timetable-grid__row-actions-menu\s*\{/)
+  assert.match(css, /\.timetable-grid__row-actions-menu\s*\{[^}]*position:\s*fixed;/s)
+  assert.match(css, /\.timetable-grid__row-actions-menu\s*\{[^}]*overflow-y:\s*auto;/s)
+  assert.doesNotMatch(css, /\.timetable-grid__row-actions-menu\s*\{[^}]*position:\s*absolute;/s)
   assert.match(css, /\.timetable-grid-details-popover\s*\{[^}]*position:\s*fixed;/s)
   assert.match(css, /\.timetable-grid-details-popover__body\s*\{[^}]*overflow-y:\s*auto;/s)
 })
@@ -203,6 +206,28 @@ test('バッジtooltipは件数と代表Issueを示し、overlayはviewport内�
   })
   assert.equal(bottomEdge.placement, 'above')
   assert.ok(bottomEdge.top >= 8)
+
+  const rightAlignedMenu = getAnchoredOverlayPosition({
+    anchor: { top: 10, right: 790, bottom: 32, left: 767 },
+    overlayWidth: 230,
+    overlayHeight: 260,
+    viewportWidth: 800,
+    viewportHeight: 600,
+    horizontalAlignment: 'end',
+  })
+  assert.equal(rightAlignedMenu.left, 560)
+  assert.equal(rightAlignedMenu.placement, 'below', '先頭行では下へ表示する')
+
+  const afterHorizontalScroll = getAnchoredOverlayPosition({
+    anchor: { top: 560, right: 42, bottom: 582, left: 19 },
+    overlayWidth: 230,
+    overlayHeight: 260,
+    viewportWidth: 800,
+    viewportHeight: 600,
+    horizontalAlignment: 'end',
+  })
+  assert.equal(afterHorizontalScroll.left, 8, '横スクロール後も左端からはみ出さない')
+  assert.equal(afterHorizontalScroll.placement, 'above', '最終行では上へ表示する')
 })
 
 test('ポップオーバーはPortal・Esc・外側click・Stage切替のclose契約を持つ', () => {
@@ -214,12 +239,42 @@ test('ポップオーバーはPortal・Esc・外側click・Stage切替のclose�
     new URL('../src/components/TimetableGrid.tsx', import.meta.url),
     'utf8',
   )
+  const rowActionsPortalSource = popoverSource.slice(
+    popoverSource.indexOf('export function TimetableGridRowActionsMenu'),
+    popoverSource.indexOf('interface TimetableGridTooltipProps'),
+  )
   assert.match(popoverSource, /createPortal\(/)
+  assert.match(popoverSource, /TimetableGridRowActionsMenu/)
+  assert.match(rowActionsPortalSource, /createPortal\(/)
+  assert.match(rowActionsPortalSource, /horizontalAlignment:\s*'end'/)
+  assert.match(rowActionsPortalSource, /window\.visualViewport\?\.addEventListener\('resize'/)
+  assert.match(rowActionsPortalSource, /!anchor\.isConnected/)
   assert.match(popoverSource, /document\.addEventListener\('pointerdown'/)
   assert.match(popoverSource, /event\.key !== 'Escape'/)
   assert.match(popoverSource, /window\.addEventListener\('scroll', updatePosition, true\)/)
   assert.match(gridSource, /detailsDataRevision/)
   assert.match(gridSource, /activeDetails\.epoch === currentDetailsEpoch/)
+  assert.match(gridSource, /aria-expanded=\{rowActionsAnchor !== undefined\}/)
+  assert.match(gridSource, /onPointerDown=\{event => event\.stopPropagation\(\)\}/)
+  assert.doesNotMatch(
+    gridSource,
+    /<details\s+className="timetable-grid__row-actions"/,
+  )
+})
+
+test('Memberセルの読み上げは同名でもID・参照状態・設定色・選択状態を区別する', () => {
+  assert.equal(getTimetableMemberCellAccessibleLabel({
+    displayName: '同姓同名', memberId: 'member-a', resolved: true,
+    selected: true, colorLabel: 'ローズ',
+  }), '同姓同名（Member ID: member-a、設定色: ローズ）の出演箇所を強調（選択中）')
+  assert.equal(getTimetableMemberCellAccessibleLabel({
+    displayName: '同姓同名', memberId: 'member-b', resolved: true,
+    selected: false,
+  }), '同姓同名（Member ID: member-b）の出演箇所を強調')
+  assert.equal(getTimetableMemberCellAccessibleLabel({
+    displayName: '同姓同名', memberId: 'member-c', resolved: false,
+    selected: false, colorLabel: 'ブルー',
+  }), '同姓同名（Member ID: member-c、参照切れ、設定色: ブルー）')
 })
 
 test('同じ表示名でもMember IDを厳密比較して出演回数を数える', () => {
@@ -523,8 +578,14 @@ test('実GridのMember一覧markupはreadOnlyでもID選択とPA・Duty補助強
 
     assert.match(markup, /Mainのメンバー一覧タイムテーブル/)
     assert.match(markup, /aria-colcount="12"/)
-    assert.match(markup, /同姓同名の出演箇所を強調（選択中）/)
-    assert.match(markup, /同姓同名の出演箇所を強調"/)
+    assert.match(
+      markup,
+      /同姓同名（Member ID: member-a、設定色: ローズ）の出演箇所を強調（選択中）/,
+    )
+    assert.match(
+      markup,
+      /同姓同名（Member ID: member-b、設定色: ブルー）の出演箇所を強調"/,
+    )
     assert.equal(
       (markup.match(/timetable-grid__member-button--active/g) ?? []).length,
       1,
@@ -562,13 +623,20 @@ test('実GridのMember一覧markupはreadOnlyでもID選択とPA・Duty補助強
     assert.match(markup, /aria-label="ブルー（選択中）"/)
     assert.match(markup, /aria-label="Alphaの詳細操作"/)
     assert.match(markup, /class="timetable-grid__row-actions"/)
+    assert.match(markup, /aria-haspopup="dialog" aria-expanded="false"/)
     assert.match(
       markup,
       /class="timetable-grid-scroll"><div class="timetable-grid timetable-grid--member-matrix"/,
     )
     assert.doesNotMatch(markup, /timetable-grid__time--sticky/)
     assert.doesNotMatch(markup, /timetable-grid__header-cell--(?:time|band)/)
-    assert.match(markup, /プールへ戻す/)
+    const gridSource = readFileSync(
+      new URL('../src/components/TimetableGrid.tsx', import.meta.url),
+      'utf8',
+    )
+    assert.match(gridSource, /<TimetableGridRowActionsMenu/)
+    assert.match(gridSource, /\{renderMetaControls\(\)\}/)
+    assert.match(gridSource, /\{renderRemoveButton\(\)\}/)
     assert.match(markup, /出演1箇所/)
     assert.match(markup, /aria-label="AlphaのERRORを1件表示"/)
     assert.match(markup, /aria-label="AlphaのWARNINGを1件表示"/)
@@ -584,10 +652,9 @@ test('実GridのMember一覧markupはreadOnlyでもID選択とPA・Duty補助強
     assert.ok(issueTrigger)
     assert.match(issueTrigger, /aria-haspopup="dialog"/)
     assert.doesNotMatch(issueTrigger, /disabled/)
-    assert.match(markup, /必須時間あり/)
-    assert.match(markup, /希望あり/)
-    assert.match(markup, /必須条件：Stage固定/)
-    assert.match(markup, /aria-label="同姓同名の出演箇所を強調（選択中）"/)
+    assert.match(gridSource, /必須時間あり/)
+    assert.match(gridSource, /希望あり/)
+    assert.match(gridSource, /📌 必須条件：/)
     assert.equal(
       (markup.match(/timetable-grid__member-empty/g) ?? []).length,
       12,

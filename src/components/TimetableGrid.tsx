@@ -58,6 +58,7 @@ import {
 import {
   countTimetableMemberAppearances,
   getTimetableMemberColumnCount,
+  getTimetableMemberCellAccessibleLabel,
   type TimetableViewMode,
 } from '../ui/timetableMemberMatrixPresentation'
 import {
@@ -98,6 +99,7 @@ import {
 } from '../ui/timetableGridDetailsPresentation'
 import {
   TimetableGridDetailsPopover,
+  TimetableGridRowActionsMenu,
   TimetableGridTooltip,
 } from './TimetableGridDetailsPopover'
 
@@ -175,6 +177,12 @@ interface TimetableGridActiveTooltip {
   anchor: HTMLElement
   text: string
   epoch?: number
+}
+
+interface TimetableGridActiveRowActions {
+  rowId: ScheduleItemId
+  anchor: HTMLElement
+  epoch: number
 }
 
 const severityByDetailKind: Partial<
@@ -495,7 +503,9 @@ const TimetableRow = ({
   onOpenDetails,
   onShowTooltip,
   onHideTooltip,
-  onCloseDetails,
+  rowActionsAnchor,
+  onToggleRowActions,
+  onCloseRowActions,
   getIssueMessage,
   readOnly,
 }: {
@@ -527,7 +537,9 @@ const TimetableRow = ({
   ) => void
   onShowTooltip: (tooltip: TimetableGridActiveTooltip) => void
   onHideTooltip: (detailKey: string) => void
-  onCloseDetails: () => void
+  rowActionsAnchor?: HTMLElement
+  onToggleRowActions: (rowId: ScheduleItemId, anchor: HTMLElement) => void
+  onCloseRowActions: (restoreFocus: boolean) => void
   getIssueMessage: (issue: ScheduleIssue) => string
   readOnly: boolean
 }) => {
@@ -775,27 +787,35 @@ const TimetableRow = ({
               ))}
               {!isMemberMatrix && renderRemoveButton()}
               {isMemberMatrix && (
-                <details
+                <div
                   className="timetable-grid__row-actions"
-                  onKeyDown={(event) => {
-                    if (event.key !== 'Escape') return
-                    event.preventDefault()
-                    event.currentTarget.open = false
-                    event.currentTarget.querySelector('summary')?.focus()
-                  }}
                 >
-                  <summary
+                  <button
+                    type="button"
                     aria-label={`${itemLabel}の詳細操作`}
+                    aria-haspopup="dialog"
+                    aria-expanded={rowActionsAnchor !== undefined}
                     title="詳細操作"
-                    onClick={onCloseDetails}
+                    onPointerDown={event => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      onToggleRowActions(row.scheduleItem.id, event.currentTarget)
+                    }}
                   >
                     ⋯
-                  </summary>
-                  <div className="timetable-grid__row-actions-menu">
-                    {renderMetaControls()}
-                    {renderRemoveButton()}
-                  </div>
-                </details>
+                  </button>
+                  {rowActionsAnchor && (
+                    <TimetableGridRowActionsMenu
+                      anchor={rowActionsAnchor}
+                      accessibleLabel={`${itemLabel}の詳細操作`}
+                      onClose={onCloseRowActions}
+                    >
+                      {renderMetaControls()}
+                      {renderRemoveButton()}
+                    </TimetableGridRowActionsMenu>
+                  )}
+                </div>
               )}
             </div>
 
@@ -845,9 +865,13 @@ const TimetableRow = ({
                     ].filter(Boolean).join(' ')}
                     style={getMemberColorStyle(memberColor)}
                     aria-pressed={isHighlighted}
-                    aria-label={member.resolved
-                      ? `${member.displayName}の出演箇所を強調${isHighlighted ? '（選択中）' : ''}`
-                      : `${member.displayName}（参照切れ）`}
+                    aria-label={getTimetableMemberCellAccessibleLabel({
+                      displayName: member.displayName,
+                      memberId: member.memberId,
+                      resolved: member.resolved,
+                      selected: isHighlighted,
+                      ...(memberColor ? { colorLabel: memberColor.label } : {}),
+                    })}
                     title={member.displayName}
                     disabled={!member.resolved}
                     onClick={() => onHighlightedMemberChange(member.memberId)}
@@ -1091,6 +1115,9 @@ export function TimetableGrid({
   const [activeTooltip, setActiveTooltip] = useState<
     TimetableGridActiveTooltip | null
   >(null)
+  const [activeRowActions, setActiveRowActions] = useState<
+    TimetableGridActiveRowActions | null
+  >(null)
   const memberColumnCount = getTimetableMemberColumnCount(rows)
   const currentEventDayId = rows[0]?.calculatedItem.eventDayId
   const detailsDataRevision = JSON.stringify({
@@ -1235,9 +1262,7 @@ export function TimetableGrid({
     kind: TimetableGridRowDetailKind,
     anchor: HTMLElement,
   ) => {
-    anchor.closest('.timetable-grid-wrap')
-      ?.querySelectorAll<HTMLDetailsElement>('.timetable-grid__row-actions[open]')
-      .forEach(details => details.removeAttribute('open'))
+    setActiveRowActions(null)
     setActiveTooltip(null)
     setActiveDetails({ rowId, kind, anchor, epoch: currentDetailsEpoch })
   }
@@ -1254,6 +1279,25 @@ export function TimetableGrid({
 
   const handleShowTooltip = (tooltip: TimetableGridActiveTooltip) => {
     setActiveTooltip({ ...tooltip, epoch: currentDetailsEpoch })
+  }
+
+  const handleToggleRowActions = (
+    rowId: ScheduleItemId,
+    anchor: HTMLElement,
+  ) => {
+    setActiveDetails(null)
+    setActiveTooltip(null)
+    setActiveRowActions(current =>
+      current?.rowId === rowId && current.epoch === currentDetailsEpoch
+        ? null
+        : { rowId, anchor, epoch: currentDetailsEpoch },
+    )
+  }
+
+  const handleCloseRowActions = (restoreFocus = false) => {
+    const anchor = activeRowActions?.anchor
+    setActiveRowActions(null)
+    if (restoreFocus) anchor?.focus()
   }
 
   const getRowIssues = (row: TimetableWorkspaceRow): ScheduleIssue[] =>
@@ -1525,7 +1569,12 @@ export function TimetableGrid({
               onOpenDetails={handleOpenDetails}
               onShowTooltip={handleShowTooltip}
               onHideTooltip={handleHideTooltip}
-              onCloseDetails={() => handleCloseDetails(false)}
+              rowActionsAnchor={activeRowActions?.rowId === row.scheduleItem.id &&
+                activeRowActions.epoch === currentDetailsEpoch
+                ? activeRowActions.anchor
+                : undefined}
+              onToggleRowActions={handleToggleRowActions}
+              onCloseRowActions={handleCloseRowActions}
               getIssueMessage={getIssueMessage}
               readOnly={readOnly}
             />

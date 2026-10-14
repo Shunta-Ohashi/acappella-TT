@@ -138,6 +138,119 @@ export function TimetableGridDetailsPopover({
   )
 }
 
+interface TimetableGridRowActionsMenuProps {
+  anchor: HTMLElement
+  accessibleLabel: string
+  children: ReactNode
+  onClose: (restoreFocus: boolean) => void
+}
+
+export function TimetableGridRowActionsMenu({
+  anchor,
+  accessibleLabel,
+  children,
+  onClose,
+}: TimetableGridRowActionsMenuProps) {
+  const menuRef = useRef<HTMLDivElement>(null)
+  const [position, setPosition] = useState(initialPosition)
+
+  useLayoutEffect(() => {
+    const updatePosition = () => {
+      const menu = menuRef.current
+      if (!menu || !anchor.isConnected) {
+        onClose(false)
+        return
+      }
+      const anchorRect = anchor.getBoundingClientRect()
+      if (isOutsideViewport(anchorRect)) {
+        onClose(false)
+        return
+      }
+      const menuRect = menu.getBoundingClientRect()
+      const next = getAnchoredOverlayPosition({
+        anchor: anchorRect,
+        overlayWidth: menuRect.width,
+        overlayHeight: menuRect.height,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        horizontalAlignment: 'end',
+        gap: 3,
+      })
+      setPosition({ ...next, ready: true })
+    }
+
+    updatePosition()
+    const resizeObserver = typeof ResizeObserver === 'undefined'
+      ? undefined
+      : new ResizeObserver(updatePosition)
+    if (menuRef.current) resizeObserver?.observe(menuRef.current)
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+    window.visualViewport?.addEventListener('resize', updatePosition)
+    window.visualViewport?.addEventListener('scroll', updatePosition)
+    return () => {
+      resizeObserver?.disconnect()
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+      window.visualViewport?.removeEventListener('resize', updatePosition)
+      window.visualViewport?.removeEventListener('scroll', updatePosition)
+    }
+  }, [anchor, children, onClose])
+
+  useEffect(() => {
+    const menu = menuRef.current
+    const firstControl = menu?.querySelector<HTMLElement>(
+      'button:not(:disabled), select:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])',
+    )
+    const focusTarget = firstControl ?? menu
+    focusTarget?.focus()
+  }, [])
+
+  useEffect(() => {
+    const handlePointerDown = (event: globalThis.PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (menuRef.current?.contains(target) || anchor.contains(target)) return
+      onClose(false)
+    }
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      onClose(true)
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown, true)
+    document.addEventListener('keydown', handleKeyDown, true)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true)
+      document.removeEventListener('keydown', handleKeyDown, true)
+    }
+  }, [anchor, onClose])
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className="timetable-grid__row-actions-menu"
+      role="dialog"
+      aria-modal="false"
+      aria-label={accessibleLabel}
+      tabIndex={-1}
+      style={{
+        top: position.top,
+        left: position.left,
+        maxHeight: position.maxHeight,
+        visibility: position.ready ? 'visible' : 'hidden',
+      }}
+      onPointerDown={event => event.stopPropagation()}
+      onClick={event => event.stopPropagation()}
+    >
+      {children}
+    </div>,
+    document.body,
+  )
+}
+
 interface TimetableGridTooltipProps {
   id: string
   anchor: HTMLElement

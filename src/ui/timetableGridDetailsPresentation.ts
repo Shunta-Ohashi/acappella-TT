@@ -21,6 +21,7 @@ export interface AnchoredOverlayPositionInput {
   viewportHeight: number
   margin?: number
   gap?: number
+  horizontalAlignment?: 'start' | 'end'
 }
 
 export interface AnchoredOverlayPosition {
@@ -75,6 +76,7 @@ export const getAnchoredOverlayPosition = ({
   viewportHeight,
   margin = 8,
   gap = 6,
+  horizontalAlignment = 'start',
 }: AnchoredOverlayPositionInput): AnchoredOverlayPosition => {
   const availableBelow = viewportHeight - anchor.bottom - margin - gap
   const availableAbove = anchor.top - margin - gap
@@ -95,7 +97,9 @@ export const getAnchoredOverlayPosition = ({
     ? anchor.bottom + gap
     : anchor.top - gap - visibleHeight
   const left = clamp(
-    anchor.left,
+    horizontalAlignment === 'end'
+      ? anchor.right - overlayWidth
+      : anchor.left,
     margin,
     viewportWidth - overlayWidth - margin,
   )
