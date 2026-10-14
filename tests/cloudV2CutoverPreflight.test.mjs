@@ -7,6 +7,7 @@ import {
 import {
   createCloudEventSnapshot,
   createCloudEventSnapshotV2,
+  parseCloudEventSnapshot,
 } from '../src/cloud/cloudEventSnapshot.ts'
 import {
   createCloudWorkspaceMasterBackfillFingerprint,
@@ -174,6 +175,95 @@ const createSource = (events, overrides = {}) => ({
 
 const issueCodes = result => result.issues.map(issue => issue.code)
 
+const replaceFirstEventOwnedId = (state, collection, nextId) => {
+  const previousId = state[collection][0].id
+  state[collection][0].id = nextId
+
+  if (collection === 'eventDays') {
+    state.stages.forEach(stage => { if (stage.eventDayId === previousId) stage.eventDayId = nextId })
+    state.eventMemberDays.forEach(record => {
+      if (record.eventDayId === previousId) record.eventDayId = nextId
+    })
+    state.eventBands.forEach(record => {
+      if (record.eventDayId === previousId) record.eventDayId = nextId
+    })
+    state.paAssignments.forEach(record => {
+      if (record.eventDayId === previousId) record.eventDayId = nextId
+    })
+    state.dutyAssignments.forEach(record => {
+      if (record.eventDayId === previousId) record.eventDayId = nextId
+    })
+    state.timetableOrderConstraints.forEach(record => {
+      if (record.eventDayId === previousId) record.eventDayId = nextId
+    })
+  } else if (collection === 'stages') {
+    state.sections.forEach(section => { if (section.stageId === previousId) section.stageId = nextId })
+    state.eventBands.forEach(record => {
+      if (record.fixedPlacement?.stageId === previousId) record.fixedPlacement.stageId = nextId
+    })
+    state.scheduleItems.forEach(record => {
+      if (record.stageId === previousId) record.stageId = nextId
+    })
+    state.paAssignments.forEach(record => {
+      if (record.stageId === previousId) record.stageId = nextId
+    })
+    state.dutyAssignments.forEach(record => {
+      if (record.stageId === previousId) record.stageId = nextId
+    })
+    state.timetableLocks.forEach(record => {
+      if (record.stageId === previousId) record.stageId = nextId
+    })
+    state.timetableOrderConstraints.forEach(record => {
+      if (record.stageId === previousId) record.stageId = nextId
+    })
+  } else if (collection === 'sections') {
+    state.eventBands.forEach(record => {
+      if (record.fixedPlacement?.sectionId === previousId) record.fixedPlacement.sectionId = nextId
+    })
+    state.scheduleItems.forEach(record => {
+      if (record.sectionId === previousId) record.sectionId = nextId
+    })
+    state.timetableLocks.forEach(record => {
+      if (record.sectionId === previousId) record.sectionId = nextId
+    })
+    state.timetableOrderConstraints.forEach(record => {
+      if (record.sectionId === previousId) record.sectionId = nextId
+    })
+  } else if (collection === 'eventMembers') {
+    state.eventMemberDays.forEach(record => {
+      if (record.eventMemberId === previousId) record.eventMemberId = nextId
+    })
+  } else if (collection === 'eventBands') {
+    state.scheduleItems.forEach(record => {
+      if (record.kind === 'performance' && record.eventBandId === previousId) {
+        record.eventBandId = nextId
+      }
+    })
+    state.timetableOrderConstraints.forEach(record => {
+      record.eventBandIds = record.eventBandIds.map(id => id === previousId ? nextId : id)
+    })
+  } else if (collection === 'scheduleItems') {
+    state.timetableLocks.forEach(record => {
+      if (record.scheduleItemId === previousId) record.scheduleItemId = nextId
+    })
+  } else if (collection === 'dutyTypes') {
+    state.dutyAssignments.forEach(record => {
+      if (record.dutyTypeId === previousId) record.dutyTypeId = nextId
+    })
+  }
+}
+
+const createSourceWithEventOwnedCollision = (collection) => {
+  const eventAState = createState({ eventId: 'event-a' })
+  const eventBState = createState({ eventId: 'event-b' })
+  replaceFirstEventOwnedId(eventBState, collection, eventAState[collection][0].id)
+  const eventA = createSourceEvent('event-a', eventAState)
+  const eventB = createSourceEvent('event-b', eventBState)
+  assert.ok(parseCloudEventSnapshot(eventA.snapshot), 'Event A単体は正しいV1 Snapshot')
+  assert.ok(parseCloudEventSnapshot(eventB.snapshot), 'Event B単体は正しいV1 Snapshot')
+  return createSource([eventA, eventB])
+}
+
 test('正常な単一V1 Eventを情報欠落なくV2へ構造変換できるがcutover成功とは扱わない', async () => {
   const source = createSource([createSourceEvent('event-a')])
   const before = structuredClone(source)
@@ -229,6 +319,118 @@ test('複数Eventの同一Masterを統合しBand member順序と全Event-owned c
       bandIds: ['band-a'],
     })
   }
+})
+
+test('異なるEvent間でEventDay IDが重複するWorkspaceを機械判定可能なIssueで拒否する', async () => {
+  const source = createSourceWithEventOwnedCollision('eventDays')
+  const before = structuredClone(source)
+  const result = await createCloudV2CutoverPreflight({ source })
+
+  assert.equal(result.structuralStatus, 'not-convertible')
+  assert.equal(result.cutoverReadiness, 'blocked')
+  assert.equal(result.safeToCutover, false)
+  assert.equal(result.summary.convertedEventCount, 0)
+  assert.deepEqual(result.convertedEvents, [])
+  assert.deepEqual(result.invalidEventIds, ['event-a', 'event-b'])
+  assert.deepEqual(
+    result.issues.filter(issue => issue.code === 'DUPLICATE_EVENT_OWNED_ID'),
+    [{
+      code: 'DUPLICATE_EVENT_OWNED_ID',
+      collection: 'eventDays',
+      recordId: 'day-event-a',
+      eventIds: ['event-a', 'event-b'],
+    }],
+  )
+  assert.deepEqual(source, before, '重複検証は入力を変更しない')
+  assert.equal(JSON.stringify(result).includes('Alice'), false)
+  assert.equal(JSON.stringify(result).includes('appState'), false)
+})
+
+test('異なるEvent間でScheduleItem IDが重複するWorkspaceを拒否する', async () => {
+  const result = await createCloudV2CutoverPreflight({
+    source: createSourceWithEventOwnedCollision('scheduleItems'),
+  })
+
+  assert.equal(result.structuralStatus, 'not-convertible')
+  assert.deepEqual(
+    result.issues.filter(issue => issue.code === 'DUPLICATE_EVENT_OWNED_ID'),
+    [{
+      code: 'DUPLICATE_EVENT_OWNED_ID',
+      collection: 'scheduleItems',
+      recordId: 'item-event-a',
+      eventIds: ['event-a', 'event-b'],
+    }],
+  )
+})
+
+test('全Event-owned collectionでEvent間ID重複を拒否しcollection間の同一文字列は許容する', async (t) => {
+  const collections = [
+    'stages',
+    'sections',
+    'eventMembers',
+    'eventMemberDays',
+    'eventBands',
+    'paAssignments',
+    'dutyTypes',
+    'dutyAssignments',
+    'timetableLocks',
+    'timetableOrderConstraints',
+  ]
+
+  for (const collection of collections) {
+    await t.test(collection, async () => {
+      const result = await createCloudV2CutoverPreflight({
+        source: createSourceWithEventOwnedCollision(collection),
+      })
+      assert.equal(result.structuralStatus, 'not-convertible')
+      assert.ok(result.issues.some(issue =>
+        issue.code === 'DUPLICATE_EVENT_OWNED_ID' &&
+        issue.collection === collection &&
+        issue.eventIds?.join(',') === 'event-a,event-b'))
+    })
+  }
+
+  await t.test('異なるcollection間', async () => {
+    const eventAState = createState({ eventId: 'event-a' })
+    const eventBState = createState({ eventId: 'event-b' })
+    replaceFirstEventOwnedId(eventBState, 'stages', eventAState.eventDays[0].id)
+    const result = await createCloudV2CutoverPreflight({
+      source: createSource([
+        createSourceEvent('event-a', eventAState),
+        createSourceEvent('event-b', eventBState),
+      ]),
+    })
+    assert.equal(result.structuralStatus, 'convertible')
+    assert.equal(issueCodes(result).includes('DUPLICATE_EVENT_OWNED_ID'), false)
+  })
+})
+
+test('内容が同一のEvent-owned recordでも異なるEvent間の同一IDを拒否する', async () => {
+  const eventAState = createState({ eventId: 'event-a' })
+  const eventBState = createState({ eventId: 'event-b' })
+  for (const collection of ['stages', 'sections', 'eventBands']) {
+    replaceFirstEventOwnedId(eventBState, collection, eventAState[collection][0].id)
+  }
+  replaceFirstEventOwnedId(
+    eventBState,
+    'scheduleItems',
+    eventAState.scheduleItems[0].id,
+  )
+  eventBState.scheduleItems[0] = structuredClone(eventAState.scheduleItems[0])
+  const source = createSource([
+    createSourceEvent('event-a', eventAState),
+    createSourceEvent('event-b', eventBState),
+  ])
+  assert.deepEqual(
+    source.events[0].snapshot.appState.scheduleItems[0],
+    source.events[1].snapshot.appState.scheduleItems[0],
+  )
+
+  const result = await createCloudV2CutoverPreflight({ source })
+  assert.equal(result.structuralStatus, 'not-convertible')
+  assert.ok(result.issues.some(issue =>
+    issue.code === 'DUPLICATE_EVENT_OWNED_ID' &&
+    issue.collection === 'scheduleItems'))
 })
 
 test('同一Member/Band IDの内容または順序が異なるV1集合をfail closedにする', async () => {

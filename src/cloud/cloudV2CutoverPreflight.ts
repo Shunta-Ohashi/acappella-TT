@@ -23,6 +23,25 @@ import type {
   CloudWorkspaceMastersSnapshot,
 } from './cloudWorkspaceMasterRepository.ts'
 
+const eventOwnedCollectionKeys = [
+  'events',
+  'eventDays',
+  'stages',
+  'sections',
+  'eventMembers',
+  'eventMemberDays',
+  'eventBands',
+  'scheduleItems',
+  'paAssignments',
+  'dutyTypes',
+  'dutyAssignments',
+  'timetableLocks',
+  'timetableOrderConstraints',
+] as const
+
+export type CloudV2CutoverEventOwnedCollectionKey =
+  typeof eventOwnedCollectionKeys[number]
+
 export type CloudV2CutoverStructuralStatus =
   | 'convertible'
   | 'not-convertible'
@@ -34,6 +53,7 @@ export type CloudV2CutoverPreflightIssueCode =
   | 'INVALID_SOURCE'
   | 'INVALID_SNAPSHOT'
   | 'DUPLICATE_EVENT_ID'
+  | 'DUPLICATE_EVENT_OWNED_ID'
   | 'MIXED_SNAPSHOT_VERSIONS'
   | 'SNAPSHOT_V2_PRESENT'
   | 'INVALID_MEMBER'
@@ -52,6 +72,9 @@ export type CloudV2CutoverPreflightIssueCode =
 export interface CloudV2CutoverPreflightIssue {
   code: CloudV2CutoverPreflightIssueCode
   eventId?: string
+  eventIds?: string[]
+  collection?: CloudV2CutoverEventOwnedCollectionKey
+  recordId?: string
   kind?: 'member' | 'band'
   masterId?: string
 }
@@ -108,22 +131,6 @@ export interface CloudV2CutoverPreflightInput {
   masters?: CloudWorkspaceMastersSnapshot
 }
 
-const eventOwnedCollectionKeys = [
-  'events',
-  'eventDays',
-  'stages',
-  'sections',
-  'eventMembers',
-  'eventMemberDays',
-  'eventBands',
-  'scheduleItems',
-  'paAssignments',
-  'dutyTypes',
-  'dutyAssignments',
-  'timetableLocks',
-  'timetableOrderConstraints',
-] as const
-
 const baseUnverifiedRequirements: CloudV2CutoverUnverifiedRequirement[] = [
   'REFERENCE_INDEX_CONTENTS_NOT_OBSERVED',
   'BACKUP_NOT_VERIFIED',
@@ -155,11 +162,19 @@ const addIssue = (
   if (!issues.some(candidate =>
     candidate.code === issue.code &&
     candidate.eventId === issue.eventId &&
+    candidate.collection === issue.collection &&
+    candidate.recordId === issue.recordId &&
     candidate.kind === issue.kind &&
-    candidate.masterId === issue.masterId)) {
+    candidate.masterId === issue.masterId &&
+    arePersistedValuesEqual(candidate.eventIds, issue.eventIds))) {
     issues.push(issue)
   }
 }
+
+const getIssueEventIds = (issue: CloudV2CutoverPreflightIssue): string[] => [
+  ...(issue.eventId === undefined ? [] : [issue.eventId]),
+  ...(issue.eventIds ?? []),
+]
 
 const getRawEventId = (value: unknown): string | undefined =>
   isRecord(value) && typeof value.eventId === 'string' && value.eventId.trim().length > 0
@@ -234,6 +249,46 @@ const createStructuralSource = (
     completedBackfill: null,
   },
 })
+
+const findDuplicateEventOwnedIds = (
+  source: CloudWorkspaceMasterBackfillSource,
+): CloudV2CutoverPreflightIssue[] => {
+  const ownersByCollection = new Map<
+    CloudV2CutoverEventOwnedCollectionKey,
+    Map<string, Set<string>>
+  >(eventOwnedCollectionKeys.map(key => [key, new Map()]))
+
+  for (const sourceEvent of source.events) {
+    const snapshot = parseCloudEventSnapshot(sourceEvent.snapshot)
+    if (!snapshot) continue
+
+    for (const collection of eventOwnedCollectionKeys) {
+      const ownersById = ownersByCollection.get(collection)
+      if (!ownersById) continue
+      for (const record of snapshot.appState[collection]) {
+        const owners = ownersById.get(record.id) ?? new Set<string>()
+        owners.add(sourceEvent.eventId)
+        ownersById.set(record.id, owners)
+      }
+    }
+  }
+
+  const issues: CloudV2CutoverPreflightIssue[] = []
+  for (const collection of eventOwnedCollectionKeys) {
+    const ownersById = ownersByCollection.get(collection)
+    if (!ownersById) continue
+    for (const [recordId, eventIds] of ownersById) {
+      if (eventIds.size < 2) continue
+      issues.push({
+        code: 'DUPLICATE_EVENT_OWNED_ID',
+        collection,
+        recordId,
+        eventIds: [...eventIds].sort(),
+      })
+    }
+  }
+  return issues
+}
 
 const mapBackfillIssue = (
   issue: CloudWorkspaceMasterBackfillIssue,
@@ -346,8 +401,7 @@ export const createCloudV2CutoverPreflight = async (
       safeToCutover: false,
       summary: { ...emptySummary(), eventCount: diagnosed.eventCount },
       convertedEvents: [],
-      invalidEventIds: diagnosed.issues.flatMap(issue =>
-        issue.eventId === undefined ? [] : [issue.eventId]),
+      invalidEventIds: [...new Set(diagnosed.issues.flatMap(getIssueEventIds))].sort(),
       issues: diagnosed.issues,
       unverifiedRequirements: [...baseUnverifiedRequirements],
     }
@@ -365,6 +419,9 @@ export const createCloudV2CutoverPreflight = async (
     if (mapped) addIssue(issues, mapped)
   }
 
+  const duplicateEventOwnedIdIssues = findDuplicateEventOwnedIds(parsedSource)
+  for (const issue of duplicateEventOwnedIdIssues) addIssue(issues, issue)
+
   const summary: CloudV2CutoverPreflightSummary = {
     eventCount: structuralPlan.report.eventCount,
     convertedEventCount: 0,
@@ -377,7 +434,7 @@ export const createCloudV2CutoverPreflight = async (
   }
   const convertedEvents: CloudV2CutoverConvertedEventSummary[] = []
 
-  if (structuralPlan.ok) {
+  if (structuralPlan.ok && duplicateEventOwnedIdIssues.length === 0) {
     for (const sourceEvent of parsedSource.events) {
       const parsedSnapshot = parseCloudEventSnapshot(sourceEvent.snapshot)
       if (!parsedSnapshot) {
@@ -450,6 +507,7 @@ export const createCloudV2CutoverPreflight = async (
     'INVALID_SOURCE',
     'INVALID_SNAPSHOT',
     'DUPLICATE_EVENT_ID',
+    'DUPLICATE_EVENT_OWNED_ID',
     'MIXED_SNAPSHOT_VERSIONS',
     'SNAPSHOT_V2_PRESENT',
     'INVALID_MEMBER',
@@ -477,8 +535,7 @@ export const createCloudV2CutoverPreflight = async (
     safeToCutover: false,
     summary,
     convertedEvents,
-    invalidEventIds: [...new Set(issues.flatMap(issue =>
-      issue.eventId === undefined ? [] : [issue.eventId]))].sort(),
+    invalidEventIds: [...new Set(issues.flatMap(getIssueEventIds))].sort(),
     issues,
     unverifiedRequirements,
   }
