@@ -93,6 +93,7 @@ import {
   createScheduleIssueDetailPresentation,
 } from '../ui/issuePresentation'
 import {
+  createTimetableGridOverlayRevision,
   formatTimetableTimeCondition,
   getIssueBadgeTooltip,
   getScheduleItemIssuesBySeverity,
@@ -1120,16 +1121,22 @@ export function TimetableGrid({
   >(null)
   const memberColumnCount = getTimetableMemberColumnCount(rows)
   const currentEventDayId = rows[0]?.calculatedItem.eventDayId
-  const detailsDataRevision = JSON.stringify({
+  const detailsDataRevision = createTimetableGridOverlayRevision({
     eventDayId: currentEventDayId,
     stageId: stage.id,
     viewMode,
-    issues: issues.map(issue => JSON.stringify(issue)).sort(),
-    timeConditions: rows.flatMap(row => row.eventBand ? [{
+    issues,
+    rows: rows.map(row => ({
       id: row.scheduleItem.id,
-      available: row.eventBand.availableTimeRange,
-      preferred: row.eventBand.preferredTimeRange,
-    }] : []).sort((left, right) => left.id.localeCompare(right.id)),
+      plannedStartMinute: row.calculatedItem.plannedStartMinute,
+      plannedEndMinute: row.calculatedItem.plannedEndMinute,
+      ...(row.eventBand?.availableTimeRange
+        ? { availableTimeRange: row.eventBand.availableTimeRange }
+        : {}),
+      ...(row.eventBand?.preferredTimeRange
+        ? { preferredTimeRange: row.eventBand.preferredTimeRange }
+        : {}),
+    })),
   })
   const [detailsRevisionState, setDetailsRevisionState] = useState({
     value: detailsDataRevision,
@@ -1142,6 +1149,9 @@ export function TimetableGrid({
       value: detailsDataRevision,
       epoch: currentDetailsEpoch,
     })
+    if (activeDetails !== null) setActiveDetails(null)
+    if (activeTooltip !== null) setActiveTooltip(null)
+    if (activeRowActions !== null) setActiveRowActions(null)
   }
   const timetableGridColumns = viewMode === 'member-matrix'
     ? createTimetableMemberMatrixColumns(dutyTypes, memberColumnCount)
@@ -1915,6 +1925,7 @@ export function TimetableGrid({
           id={tooltipId}
           anchor={activeTooltip.anchor}
           text={activeTooltip.text}
+          onDismiss={() => handleHideTooltip(activeTooltip.key)}
         />
       )}
 

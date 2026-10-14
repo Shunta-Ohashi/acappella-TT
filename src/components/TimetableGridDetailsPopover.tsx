@@ -30,11 +30,68 @@ const initialPosition: OverlayPosition = {
   ready: false,
 }
 
-const isOutsideViewport = (rect: DOMRect): boolean =>
-  rect.bottom < 0 ||
-  rect.right < 0 ||
-  rect.top > window.innerHeight ||
-  rect.left > window.innerWidth
+interface CurrentViewportBounds {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+const getCurrentViewportBounds = (): CurrentViewportBounds => {
+  const visualViewport = window.visualViewport
+  return visualViewport
+    ? {
+        left: visualViewport.offsetLeft,
+        top: visualViewport.offsetTop,
+        width: visualViewport.width,
+        height: visualViewport.height,
+      }
+    : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight }
+}
+
+const isOutsideViewport = (
+  rect: DOMRect,
+  viewport: CurrentViewportBounds,
+): boolean =>
+  rect.bottom < viewport.top ||
+  rect.right < viewport.left ||
+  rect.top > viewport.top + viewport.height ||
+  rect.left > viewport.left + viewport.width
+
+const getCurrentOverlayPosition = (
+  anchorRect: DOMRect,
+  overlayRect: DOMRect,
+  options: { gap?: number; horizontalAlignment?: 'start' | 'end' } = {},
+) => {
+  const viewport = getCurrentViewportBounds()
+  return {
+    viewport,
+    position: getAnchoredOverlayPosition({
+      anchor: anchorRect,
+      overlayWidth: overlayRect.width,
+      overlayHeight: overlayRect.height,
+      viewportLeft: viewport.left,
+      viewportTop: viewport.top,
+      viewportWidth: viewport.width,
+      viewportHeight: viewport.height,
+      ...options,
+    }),
+  }
+}
+
+const observeViewportChanges = (updatePosition: () => void): (() => void) => {
+  const visualViewport = window.visualViewport
+  window.addEventListener('resize', updatePosition)
+  window.addEventListener('scroll', updatePosition, true)
+  visualViewport?.addEventListener('resize', updatePosition)
+  visualViewport?.addEventListener('scroll', updatePosition)
+  return () => {
+    window.removeEventListener('resize', updatePosition)
+    window.removeEventListener('scroll', updatePosition, true)
+    visualViewport?.removeEventListener('resize', updatePosition)
+    visualViewport?.removeEventListener('scroll', updatePosition)
+  }
+}
 
 export function TimetableGridDetailsPopover({
   anchor,
@@ -55,28 +112,20 @@ export function TimetableGridDetailsPopover({
         return
       }
       const anchorRect = anchor.getBoundingClientRect()
-      if (isOutsideViewport(anchorRect)) {
+      const overlayRect = popover.getBoundingClientRect()
+      const { viewport, position: next } = getCurrentOverlayPosition(
+        anchorRect,
+        overlayRect,
+      )
+      if (isOutsideViewport(anchorRect, viewport)) {
         onClose(false)
         return
       }
-      const overlayRect = popover.getBoundingClientRect()
-      const next = getAnchoredOverlayPosition({
-        anchor: anchorRect,
-        overlayWidth: overlayRect.width,
-        overlayHeight: overlayRect.height,
-        viewportWidth: window.innerWidth,
-        viewportHeight: window.innerHeight,
-      })
       setPosition({ ...next, ready: true })
     }
 
     updatePosition()
-    window.addEventListener('resize', updatePosition)
-    window.addEventListener('scroll', updatePosition, true)
-    return () => {
-      window.removeEventListener('resize', updatePosition)
-      window.removeEventListener('scroll', updatePosition, true)
-    }
+    return observeViewportChanges(updatePosition)
   }, [anchor, children, onClose])
 
   useEffect(() => {
@@ -162,20 +211,16 @@ export function TimetableGridRowActionsMenu({
         return
       }
       const anchorRect = anchor.getBoundingClientRect()
-      if (isOutsideViewport(anchorRect)) {
+      const menuRect = menu.getBoundingClientRect()
+      const { viewport, position: next } = getCurrentOverlayPosition(
+        anchorRect,
+        menuRect,
+        { horizontalAlignment: 'end', gap: 3 },
+      )
+      if (isOutsideViewport(anchorRect, viewport)) {
         onClose(false)
         return
       }
-      const menuRect = menu.getBoundingClientRect()
-      const next = getAnchoredOverlayPosition({
-        anchor: anchorRect,
-        overlayWidth: menuRect.width,
-        overlayHeight: menuRect.height,
-        viewportWidth: window.innerWidth,
-        viewportHeight: window.innerHeight,
-        horizontalAlignment: 'end',
-        gap: 3,
-      })
       setPosition({ ...next, ready: true })
     }
 
@@ -184,16 +229,10 @@ export function TimetableGridRowActionsMenu({
       ? undefined
       : new ResizeObserver(updatePosition)
     if (menuRef.current) resizeObserver?.observe(menuRef.current)
-    window.addEventListener('resize', updatePosition)
-    window.addEventListener('scroll', updatePosition, true)
-    window.visualViewport?.addEventListener('resize', updatePosition)
-    window.visualViewport?.addEventListener('scroll', updatePosition)
+    const stopObservingViewport = observeViewportChanges(updatePosition)
     return () => {
       resizeObserver?.disconnect()
-      window.removeEventListener('resize', updatePosition)
-      window.removeEventListener('scroll', updatePosition, true)
-      window.visualViewport?.removeEventListener('resize', updatePosition)
-      window.visualViewport?.removeEventListener('scroll', updatePosition)
+      stopObservingViewport()
     }
   }, [anchor, children, onClose])
 
@@ -255,12 +294,14 @@ interface TimetableGridTooltipProps {
   id: string
   anchor: HTMLElement
   text: string
+  onDismiss: () => void
 }
 
 export function TimetableGridTooltip({
   id,
   anchor,
   text,
+  onDismiss,
 }: TimetableGridTooltipProps) {
   const tooltipRef = useRef<HTMLDivElement>(null)
   const [position, setPosition] = useState(initialPosition)
@@ -268,34 +309,28 @@ export function TimetableGridTooltip({
   useLayoutEffect(() => {
     const updatePosition = () => {
       const tooltip = tooltipRef.current
-      if (!tooltip || !anchor.isConnected) return
-      const anchorRect = anchor.getBoundingClientRect()
-      if (isOutsideViewport(anchorRect)) {
-        setPosition(current => current.ready
-          ? { ...current, ready: false }
-          : current)
+      if (!tooltip) return
+      if (!anchor.isConnected) {
+        onDismiss()
         return
       }
+      const anchorRect = anchor.getBoundingClientRect()
       const rect = tooltip.getBoundingClientRect()
-      const next = getAnchoredOverlayPosition({
-        anchor: anchorRect,
-        overlayWidth: rect.width,
-        overlayHeight: rect.height,
-        viewportWidth: window.innerWidth,
-        viewportHeight: window.innerHeight,
-        gap: 4,
-      })
+      const { viewport, position: next } = getCurrentOverlayPosition(
+        anchorRect,
+        rect,
+        { gap: 4 },
+      )
+      if (isOutsideViewport(anchorRect, viewport)) {
+        onDismiss()
+        return
+      }
       setPosition({ ...next, ready: true })
     }
 
     updatePosition()
-    window.addEventListener('resize', updatePosition)
-    window.addEventListener('scroll', updatePosition, true)
-    return () => {
-      window.removeEventListener('resize', updatePosition)
-      window.removeEventListener('scroll', updatePosition, true)
-    }
-  }, [anchor, text])
+    return observeViewportChanges(updatePosition)
+  }, [anchor, onDismiss, text])
 
   return createPortal(
     <div

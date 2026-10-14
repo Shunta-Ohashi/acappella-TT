@@ -5349,7 +5349,8 @@
 
 .timetable-member-colors {
   box-sizing: border-box;
-  width: min(720px, 100%);
+  width: min(720px, calc(100% - 20px));
+  min-width: 0;
   margin: 8px 10px;
   color: #293548;
   background: #fbfcfe;
@@ -5386,6 +5387,7 @@
 
 .timetable-member-colors__body {
   display: grid;
+  min-width: 0;
   gap: 12px;
   padding: 10px;
 }
@@ -5433,6 +5435,8 @@
 .timetable-member-colors button,
 .timetable-member-colors select,
 .timetable-member-colors input {
+  box-sizing: border-box;
+  max-width: 100%;
   min-height: 30px;
   font: inherit;
 }
@@ -5465,6 +5469,7 @@
 .timetable-member-colors__assigned-list,
 .timetable-member-colors__candidate-list {
   display: grid;
+  min-width: 0;
   gap: 5px;
   margin: 0;
   padding: 0;
@@ -5481,6 +5486,7 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
+  min-width: 0;
   gap: 7px;
   padding: 6px 7px;
   background: #fff;
@@ -5521,6 +5527,8 @@
 
 .timetable-member-color-picker {
   position: relative;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .timetable-member-color-picker > summary {
@@ -5574,8 +5582,10 @@
   right: 0;
   z-index: 30;
   display: grid;
-  grid-template-columns: repeat(6, 28px);
+  grid-template-columns: repeat(6, minmax(0, 28px));
   gap: 5px;
+  width: min(209px, calc(100vw - 32px));
+  box-sizing: border-box;
   padding: 8px;
   background: #fff;
   border: 1px solid #bfc9d5;
@@ -5586,7 +5596,8 @@
 .timetable-member-colors .timetable-member-color-picker__swatch {
   display: grid;
   place-items: center;
-  width: 28px;
+  width: 100%;
+  min-width: 0;
   min-height: 28px;
   padding: 0;
   color: var(--member-color-text);
@@ -5622,6 +5633,7 @@
 
 .timetable-member-colors__sort {
   display: flex;
+  flex-wrap: wrap;
   gap: 3px;
 }
 
@@ -6647,6 +6659,11 @@ button.timetable-grid__issue {
 
   .timetable-member-color-picker > summary {
     min-width: 92px;
+  }
+
+  .timetable-member-color-picker__palette {
+    grid-template-columns: repeat(4, minmax(0, 28px));
+    width: min(143px, calc(100vw - 24px));
   }
 }
 

@@ -19,6 +19,8 @@ export interface AnchoredOverlayPositionInput {
   overlayHeight: number
   viewportWidth: number
   viewportHeight: number
+  viewportLeft?: number
+  viewportTop?: number
   margin?: number
   gap?: number
   horizontalAlignment?: 'start' | 'end'
@@ -30,6 +32,34 @@ export interface AnchoredOverlayPosition {
   maxHeight: number
   placement: 'above' | 'below'
 }
+
+export interface TimetableGridOverlayRevisionRow {
+  id: string
+  plannedStartMinute: number
+  plannedEndMinute: number
+  availableTimeRange?: TimeRange
+  preferredTimeRange?: TimeRange
+}
+
+export const createTimetableGridOverlayRevision = ({
+  eventDayId,
+  stageId,
+  viewMode,
+  issues,
+  rows,
+}: {
+  eventDayId: string | undefined
+  stageId: string
+  viewMode: string
+  issues: ReadonlyArray<ScheduleIssue>
+  rows: ReadonlyArray<TimetableGridOverlayRevisionRow>
+}): string => JSON.stringify({
+  eventDayId,
+  stageId,
+  viewMode,
+  issues: issues.map(issue => JSON.stringify(issue)).sort(),
+  rows,
+})
 
 export const getScheduleItemIssuesBySeverity = (
   issues: ReadonlyArray<ScheduleIssue>,
@@ -74,12 +104,16 @@ export const getAnchoredOverlayPosition = ({
   overlayHeight,
   viewportWidth,
   viewportHeight,
+  viewportLeft = 0,
+  viewportTop = 0,
   margin = 8,
   gap = 6,
   horizontalAlignment = 'start',
 }: AnchoredOverlayPositionInput): AnchoredOverlayPosition => {
-  const availableBelow = viewportHeight - anchor.bottom - margin - gap
-  const availableAbove = anchor.top - margin - gap
+  const viewportRight = viewportLeft + viewportWidth
+  const viewportBottom = viewportTop + viewportHeight
+  const availableBelow = viewportBottom - anchor.bottom - margin - gap
+  const availableAbove = anchor.top - viewportTop - margin - gap
   const placement = availableBelow >= Math.min(overlayHeight, 180) ||
     availableBelow >= availableAbove
     ? 'below'
@@ -100,12 +134,16 @@ export const getAnchoredOverlayPosition = ({
     horizontalAlignment === 'end'
       ? anchor.right - overlayWidth
       : anchor.left,
-    margin,
-    viewportWidth - overlayWidth - margin,
+    viewportLeft + margin,
+    viewportRight - overlayWidth - margin,
   )
 
   return {
-    top: clamp(top, margin, viewportHeight - visibleHeight - margin),
+    top: clamp(
+      top,
+      viewportTop + margin,
+      viewportBottom - visibleHeight - margin,
+    ),
     left,
     maxHeight,
     placement,

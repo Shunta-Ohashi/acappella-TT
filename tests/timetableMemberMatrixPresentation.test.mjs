@@ -18,6 +18,7 @@ import {
   createTimetableMemberMatrixColumns,
 } from '../src/ui/timetableGridColumns.ts'
 import {
+  createTimetableGridOverlayRevision,
   formatTimetableTimeCondition,
   getAnchoredOverlayPosition,
   getIssueBadgeTooltip,
@@ -120,6 +121,18 @@ test('Member一覧はコンパクト行とページ縦スクロールをCSS契�
   assert.match(css, /\.timetable-grid__row--member-matrix\s*\{[^}]*min-height:\s*32px;/s)
   assert.match(css, /\.timetable-grid__member-button\s*\{[^}]*white-space:\s*nowrap;/s)
   assert.match(css, /\.timetable-grid__member-button\s*\{[^}]*text-overflow:\s*ellipsis;/s)
+  assert.match(
+    css,
+    /\.timetable-member-colors\s*\{[^}]*width:\s*min\(720px, calc\(100% - 20px\)\);/s,
+  )
+  assert.match(
+    css,
+    /\.timetable-member-colors (?:button,\s*)?[^}]*max-width:\s*100%;/s,
+  )
+  assert.match(
+    css,
+    /\.timetable-member-color-picker__palette\s*\{[^}]*width:\s*min\(209px, calc\(100vw - 32px\)\);/s,
+  )
   assert.match(css, /\.timetable-grid__row-actions-menu\s*\{[^}]*position:\s*fixed;/s)
   assert.match(css, /\.timetable-grid__row-actions-menu\s*\{[^}]*overflow-y:\s*auto;/s)
   assert.doesNotMatch(css, /\.timetable-grid__row-actions-menu\s*\{[^}]*position:\s*absolute;/s)
@@ -228,6 +241,40 @@ test('バッジtooltipは件数と代表Issueを示し、overlayはviewport内�
   })
   assert.equal(afterHorizontalScroll.left, 8, '横スクロール後も左端からはみ出さない')
   assert.equal(afterHorizontalScroll.placement, 'above', '最終行では上へ表示する')
+
+  const zoomedViewport = getAnchoredOverlayPosition({
+    anchor: { top: 460, right: 405, bottom: 482, left: 382 },
+    overlayWidth: 120,
+    overlayHeight: 180,
+    viewportLeft: 100,
+    viewportTop: 200,
+    viewportWidth: 300,
+    viewportHeight: 300,
+  })
+  assert.ok(zoomedViewport.left >= 108 && zoomedViewport.left <= 272)
+  assert.ok(zoomedViewport.top >= 208 && zoomedViewport.top <= 312)
+})
+
+test('overlay revisionは行削除・D&D・Undo/Redo・Stage・表示モード変更を識別する', () => {
+  const issue = { severity: 'WARNING', code: 'TEST', message: 'Issue', scheduleItemIds: ['a'] }
+  const rowA = { id: 'a', plannedStartMinute: 600, plannedEndMinute: 610 }
+  const rowB = { id: 'b', plannedStartMinute: 610, plannedEndMinute: 620 }
+  const revision = (overrides = {}) => createTimetableGridOverlayRevision({
+    eventDayId: 'day-a',
+    stageId: 'stage-a',
+    viewMode: 'member-matrix',
+    issues: [issue],
+    rows: [rowA, rowB],
+    ...overrides,
+  })
+  const baseline = revision()
+
+  assert.notEqual(revision({ rows: [rowB, rowA] }), baseline, 'D&Dのrow順変更')
+  assert.notEqual(revision({ rows: [rowA] }), baseline, '行削除')
+  assert.equal(revision({ rows: [rowA, rowB] }), baseline, 'Undo相当の復元')
+  assert.notEqual(revision({ stageId: 'stage-b' }), baseline, 'Stage切替')
+  assert.notEqual(revision({ viewMode: 'standard' }), baseline, '表示モード切替')
+  assert.notEqual(revision({ issues: [] }), baseline, 'Issue消滅')
 })
 
 test('ポップオーバーはPortal・Esc・外側click・Stage切替のclose契約を持つ', () => {
@@ -247,13 +294,25 @@ test('ポップオーバーはPortal・Esc・外側click・Stage切替のclose�
   assert.match(popoverSource, /TimetableGridRowActionsMenu/)
   assert.match(rowActionsPortalSource, /createPortal\(/)
   assert.match(rowActionsPortalSource, /horizontalAlignment:\s*'end'/)
-  assert.match(rowActionsPortalSource, /window\.visualViewport\?\.addEventListener\('resize'/)
   assert.match(rowActionsPortalSource, /!anchor\.isConnected/)
+  assert.match(popoverSource, /const visualViewport = window\.visualViewport/)
+  assert.match(popoverSource, /visualViewport\?\.addEventListener\('resize'/)
+  assert.match(popoverSource, /visualViewport\?\.addEventListener\('scroll'/)
+  assert.match(popoverSource, /visualViewport\?\.removeEventListener\('resize'/)
+  assert.match(popoverSource, /visualViewport\?\.removeEventListener\('scroll'/)
+  assert.equal(
+    (popoverSource.match(/return observeViewportChanges\(updatePosition\)/g) ?? []).length,
+    2,
+    '詳細popoverとtooltipが共通のViewport監視を利用する',
+  )
+  assert.match(popoverSource, /if \(!anchor\.isConnected\) \{\s*onDismiss\(\)/s)
   assert.match(popoverSource, /document\.addEventListener\('pointerdown'/)
   assert.match(popoverSource, /event\.key !== 'Escape'/)
   assert.match(popoverSource, /window\.addEventListener\('scroll', updatePosition, true\)/)
   assert.match(gridSource, /detailsDataRevision/)
   assert.match(gridSource, /activeDetails\.epoch === currentDetailsEpoch/)
+  assert.match(gridSource, /if \(activeTooltip !== null\) setActiveTooltip\(null\)/)
+  assert.match(gridSource, /onDismiss=\{\(\) => handleHideTooltip\(activeTooltip\.key\)\}/)
   assert.match(gridSource, /aria-expanded=\{rowActionsAnchor !== undefined\}/)
   assert.match(gridSource, /onPointerDown=\{event => event\.stopPropagation\(\)\}/)
   assert.doesNotMatch(
