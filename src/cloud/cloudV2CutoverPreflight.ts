@@ -250,6 +250,26 @@ const createStructuralSource = (
   },
 })
 
+const createBackfillEvidenceSource = (
+  source: CloudWorkspaceMasterBackfillSource,
+): unknown => ({
+  status: 'ok',
+  workspaceId: source.workspaceId,
+  workspaceStatus: 'legacy',
+  workspaceGeneration: source.workspaceGeneration,
+  events: source.events,
+  existing: source.existing,
+})
+
+const hasValidCompletedBackfillGenerationOrder = (
+  completedBackfill: NonNullable<
+    CloudWorkspaceMasterBackfillSource['existing']['completedBackfill']
+  >,
+): boolean =>
+  isPostgresBigintGeneration(completedBackfill.sourceGeneration) &&
+  isPostgresBigintGeneration(completedBackfill.resultGeneration) &&
+  BigInt(completedBackfill.sourceGeneration) <= BigInt(completedBackfill.resultGeneration)
+
 const findDuplicateEventOwnedIds = (
   source: CloudWorkspaceMasterBackfillSource,
 ): CloudV2CutoverPreflightIssue[] => {
@@ -477,17 +497,30 @@ export const createCloudV2CutoverPreflight = async (
   }
   summary.convertedEventCount = convertedEvents.length
 
-  const actualPlan = createCloudWorkspaceMasterBackfillPlan(input.source)
-  for (const issue of actualPlan.report.issues) {
+  const completedBackfill = parsedSource.existing.completedBackfill
+  if (
+    completedBackfill !== null &&
+    !hasValidCompletedBackfillGenerationOrder(completedBackfill)
+  ) {
+    addIssue(issues, { code: 'BACKFILL_STATE_INCONSISTENT' })
+  }
+
+  // Workspace status is a separate cutover blocker. Evidence validation uses
+  // an otherwise identical source with only the planner's legacy precondition
+  // normalized, so ready/conflict cannot hide count, fingerprint or Master
+  // mismatches in an already completed backfill.
+  const evidencePlan = createCloudWorkspaceMasterBackfillPlan(
+    createBackfillEvidenceSource(parsedSource),
+  )
+  for (const issue of evidencePlan.report.issues) {
     const mapped = mapBackfillIssue(issue)
     if (mapped?.code === 'BACKFILL_STATE_INCONSISTENT') addIssue(issues, mapped)
   }
 
-  const completedBackfill = parsedSource.existing.completedBackfill
   if (completedBackfill === null) {
     addUnique(unverifiedRequirements, 'BACKFILL_NOT_COMPLETED')
-  } else if (actualPlan.ok) {
-    const fingerprint = await createCloudWorkspaceMasterBackfillFingerprint(actualPlan.plan)
+  } else if (evidencePlan.ok) {
+    const fingerprint = await createCloudWorkspaceMasterBackfillFingerprint(evidencePlan.plan)
     if (fingerprint !== completedBackfill.planFingerprint) {
       addIssue(issues, { code: 'BACKFILL_FINGERPRINT_MISMATCH' })
     }
@@ -496,8 +529,8 @@ export const createCloudV2CutoverPreflight = async (
     } else if (
       input.masters.workspaceId !== parsedSource.workspaceId ||
       input.masters.generation !== parsedSource.workspaceGeneration ||
-      !haveSameIdsAndValues(actualPlan.plan.members, input.masters.members) ||
-      !haveSameIdsAndValues(actualPlan.plan.bands, input.masters.bands)
+      !haveSameIdsAndValues(evidencePlan.plan.members, input.masters.members) ||
+      !haveSameIdsAndValues(evidencePlan.plan.bands, input.masters.bands)
     ) {
       addIssue(issues, { code: 'NORMALIZED_MASTER_MISMATCH' })
     }

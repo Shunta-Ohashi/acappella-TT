@@ -542,14 +542,20 @@ test('generation不一致、conflict/ready状態、部分backfillをcutover bloc
   assert.ok(issueCodes(partial).includes('BACKFILL_STATE_INCONSISTENT'))
 })
 
-const createCompletedSourceAndMasters = async () => {
-  const raw = createSource([createSourceEvent('event-a')])
+const createCompletedSourceAndMasters = async ({
+  workspaceStatus = 'legacy',
+  sourceGeneration = '7',
+  resultGeneration = '8',
+} = {}) => {
+  const raw = createSource([createSourceEvent('event-a')], {
+    workspaceGeneration: sourceGeneration,
+  })
   const planned = createCloudWorkspaceMasterBackfillPlan(raw)
   assert.equal(planned.ok, true)
   if (!planned.ok) throw new Error('fixture plan failed')
   const fingerprint = await createCloudWorkspaceMasterBackfillFingerprint(planned.plan)
-  const resultGeneration = '8'
   const source = createSource(raw.events, {
+    workspaceStatus,
     workspaceGeneration: resultGeneration,
     existing: {
       members: planned.report.memberCount,
@@ -560,7 +566,7 @@ const createCompletedSourceAndMasters = async () => {
       completedBackfills: 1,
       completedBackfill: {
         planFingerprint: fingerprint,
-        sourceGeneration: planned.plan.sourceGeneration,
+        sourceGeneration,
         resultGeneration,
         eventCount: planned.report.eventCount,
         memberCount: planned.report.memberCount,
@@ -614,6 +620,150 @@ test('完了backfillのfingerprint・件数・任意Master readを照合する',
   })
   assert.ok(issueCodes(mismatch).includes('NORMALIZED_MASTER_MISMATCH'))
   assert.equal(mismatch.cutoverReadiness, 'blocked')
+})
+
+test('conflict/readyでも正常なcompleted backfill証拠を検証しstatusだけを独立blockerにする', async () => {
+  for (const [workspaceStatus, statusCode] of [
+    ['conflict', 'WORKSPACE_CONFLICT'],
+    ['ready', 'WORKSPACE_ALREADY_READY'],
+  ]) {
+    const { source, masters } = await createCompletedSourceAndMasters({ workspaceStatus })
+    const before = structuredClone(source)
+    const result = await createCloudV2CutoverPreflight({ source, masters })
+
+    assert.equal(result.structuralStatus, 'convertible')
+    assert.equal(result.cutoverReadiness, 'blocked')
+    assert.equal(result.safeToCutover, false)
+    assert.ok(issueCodes(result).includes(statusCode))
+    assert.equal(issueCodes(result).includes('BACKFILL_FINGERPRINT_MISMATCH'), false)
+    assert.equal(issueCodes(result).includes('NORMALIZED_MASTER_MISMATCH'), false)
+    assert.equal(issueCodes(result).includes('BACKFILL_STATE_INCONSISTENT'), false)
+    assert.deepEqual(source, before, '証拠検証のために元Workspace statusを変更しない')
+  }
+})
+
+test('conflict/readyでもfingerprint不一致と正規化Master不一致をstatus問題と併記する', async () => {
+  for (const [workspaceStatus, statusCode] of [
+    ['conflict', 'WORKSPACE_CONFLICT'],
+    ['ready', 'WORKSPACE_ALREADY_READY'],
+  ]) {
+    const fingerprintFixture = await createCompletedSourceAndMasters({ workspaceStatus })
+    fingerprintFixture.source.existing.completedBackfill.planFingerprint = 'f'.repeat(64)
+    const fingerprint = await createCloudV2CutoverPreflight({
+      source: fingerprintFixture.source,
+      masters: fingerprintFixture.masters,
+    })
+    assert.ok(issueCodes(fingerprint).includes(statusCode))
+    assert.ok(issueCodes(fingerprint).includes('BACKFILL_FINGERPRINT_MISMATCH'))
+    assert.equal(fingerprint.structuralStatus, 'convertible')
+
+    const masterFixture = await createCompletedSourceAndMasters({ workspaceStatus })
+    masterFixture.masters.bands[0].value.defaultMemberIds.reverse()
+    const master = await createCloudV2CutoverPreflight({
+      source: masterFixture.source,
+      masters: masterFixture.masters,
+    })
+    assert.ok(issueCodes(master).includes(statusCode))
+    assert.ok(issueCodes(master).includes('NORMALIZED_MASTER_MISMATCH'))
+    assert.equal(master.structuralStatus, 'convertible')
+  }
+})
+
+test('completed backfillのgeneration逆転をlegacy/conflict/readyで独立検出する', async () => {
+  for (const [workspaceStatus, statusCode] of [
+    ['legacy', undefined],
+    ['conflict', 'WORKSPACE_CONFLICT'],
+    ['ready', 'WORKSPACE_ALREADY_READY'],
+  ]) {
+    const { source, masters } = await createCompletedSourceAndMasters({
+      workspaceStatus,
+      sourceGeneration: '9',
+      resultGeneration: '8',
+    })
+    const result = await createCloudV2CutoverPreflight({ source, masters })
+
+    assert.ok(issueCodes(result).includes('BACKFILL_STATE_INCONSISTENT'))
+    if (statusCode) assert.ok(issueCodes(result).includes(statusCode))
+    assert.equal(result.structuralStatus, 'convertible')
+    assert.equal(result.cutoverReadiness, 'blocked')
+    assert.equal(result.safeToCutover, false)
+  }
+})
+
+test('completed backfillのgeneration同値・増加・bigint上限付近を精度損失なく比較する', async () => {
+  for (const [sourceGeneration, resultGeneration] of [
+    ['8', '8'],
+    ['7', '8'],
+    ['9223372036854775806', '9223372036854775807'],
+  ]) {
+    const { source, masters } = await createCompletedSourceAndMasters({
+      sourceGeneration,
+      resultGeneration,
+    })
+    const result = await createCloudV2CutoverPreflight({ source, masters })
+    assert.equal(issueCodes(result).includes('BACKFILL_STATE_INCONSISTENT'), false)
+    assert.equal(result.structuralStatus, 'convertible')
+  }
+
+  const reversed = await createCompletedSourceAndMasters({
+    sourceGeneration: '9223372036854775807',
+    resultGeneration: '9223372036854775806',
+  })
+  const result = await createCloudV2CutoverPreflight(reversed)
+  assert.ok(issueCodes(result).includes('BACKFILL_STATE_INCONSISTENT'))
+
+  const outOfRange = await createCompletedSourceAndMasters({
+    sourceGeneration: '9223372036854775808',
+    resultGeneration: '9223372036854775807',
+  })
+  const outOfRangeResult = await createCloudV2CutoverPreflight(outOfRange)
+  assert.ok(issueCodes(outOfRangeResult).includes('BACKFILL_STATE_INCONSISTENT'))
+})
+
+test('別のplannerエラーでもgeneration逆転を隠さず、statusと件数不一致も同時検出する', async () => {
+  const conflictFixture = await createCompletedSourceAndMasters({
+    sourceGeneration: '9',
+    resultGeneration: '8',
+  })
+  conflictFixture.source.events.push(createSourceEvent(
+    'event-b',
+    createState({ eventId: 'event-b', memberName: 'Alice Updated' }),
+  ))
+  const conflictedPlan = createCloudWorkspaceMasterBackfillPlan(createSource(
+    conflictFixture.source.events,
+  ))
+  assert.equal(conflictedPlan.ok, false)
+  const report = conflictedPlan.report
+  Object.assign(conflictFixture.source.existing, {
+    members: report.memberCount,
+    bands: report.bandCount,
+    bandMembers: report.bandMemberRelationCount,
+    eventMemberReferences: report.eventMemberReferenceCount,
+    eventBandReferences: report.eventBandReferenceCount,
+  })
+  Object.assign(conflictFixture.source.existing.completedBackfill, {
+    eventCount: report.eventCount,
+    memberCount: report.memberCount,
+    bandCount: report.bandCount,
+    bandMemberRelationCount: report.bandMemberRelationCount,
+    eventMemberReferenceCount: report.eventMemberReferenceCount,
+    eventBandReferenceCount: report.eventBandReferenceCount,
+  })
+  const conflicted = await createCloudV2CutoverPreflight({
+    source: conflictFixture.source,
+  })
+  assert.ok(issueCodes(conflicted).includes('SHARED_MASTER_CONFLICT'))
+  assert.ok(issueCodes(conflicted).includes('BACKFILL_STATE_INCONSISTENT'))
+
+  const countFixture = await createCompletedSourceAndMasters({ workspaceStatus: 'conflict' })
+  countFixture.source.existing.members += 1
+  const countMismatch = await createCloudV2CutoverPreflight({
+    source: countFixture.source,
+    masters: countFixture.masters,
+  })
+  assert.ok(issueCodes(countMismatch).includes('WORKSPACE_CONFLICT'))
+  assert.ok(issueCodes(countMismatch).includes('BACKFILL_STATE_INCONSISTENT'))
+  assert.equal(countMismatch.structuralStatus, 'convertible')
 })
 
 test('完了記録のfingerprint改変を検出しSnapshot本文や個人名をreportへ出さない', async () => {
