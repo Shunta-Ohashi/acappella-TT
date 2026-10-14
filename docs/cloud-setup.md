@@ -131,6 +131,12 @@ backfill完了後も旧V1 writerは正規化Masterを更新しないため、成
 してはいけません。ready切替は、旧client drain、最新generationでの再検証、V2保存・
 hydrate経路の配備、reference index完全性確認を原子的に扱う後続PRまで保留します。
 
+正式cutover前のread-only検証項目、結果の限界、将来必要なatomic RPCと運用順序は
+[`cloud-v2-cutover-preflight.md`](./cloud-v2-cutover-preflight.md)を参照してください。
+現在のPreflightは構造変換可能性を確認するだけで、`safeToCutover`は常に`false`です。
+DBやWorkspace statusを変更せず、未検証の旧client drain・backup・最終transactionを
+成功済みとして扱いません。
+
 `...13110000`はSnapshot V2をDBへ保存できるbackend基盤だけを追加します。既存のV1
 CHECKを残したままV2のexact envelope、Event identity、Master本体非包含を検査し、
 `service_role`だけが実行できる`save_cloud_event_v2_validated` RPCを追加します。V2保存は

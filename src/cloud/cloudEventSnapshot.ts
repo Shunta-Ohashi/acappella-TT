@@ -71,7 +71,7 @@ export type CloudWorkspaceSnapshotResult =
       reason: 'INVALID_SNAPSHOT' | 'SHARED_MASTER_CONFLICT'
     }
 
-const eventOwnedCollectionKeys = [
+export const eventOwnedCollectionKeys = [
   'events',
   'eventDays',
   'stages',
@@ -87,7 +87,7 @@ const eventOwnedCollectionKeys = [
   'timetableOrderConstraints',
 ] as const
 
-type EventOwnedCollectionKey = typeof eventOwnedCollectionKeys[number]
+export type EventOwnedCollectionKey = typeof eventOwnedCollectionKeys[number]
 
 const cloudEventSnapshotV2Keys = [
   'format',
