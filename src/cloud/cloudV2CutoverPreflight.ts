@@ -519,20 +519,26 @@ export const createCloudV2CutoverPreflight = async (
 
   if (completedBackfill === null) {
     addUnique(unverifiedRequirements, 'BACKFILL_NOT_COMPLETED')
-  } else if (evidencePlan.ok) {
-    const fingerprint = await createCloudWorkspaceMasterBackfillFingerprint(evidencePlan.plan)
-    if (fingerprint !== completedBackfill.planFingerprint) {
-      addIssue(issues, { code: 'BACKFILL_FINGERPRINT_MISMATCH' })
-    }
+  } else {
     if (input.masters === undefined) {
       addUnique(unverifiedRequirements, 'NORMALIZED_MASTER_CONTENTS_NOT_OBSERVED')
-    } else if (
-      input.masters.workspaceId !== parsedSource.workspaceId ||
-      input.masters.generation !== parsedSource.workspaceGeneration ||
-      !haveSameIdsAndValues(evidencePlan.plan.members, input.masters.members) ||
-      !haveSameIdsAndValues(evidencePlan.plan.bands, input.masters.bands)
-    ) {
-      addIssue(issues, { code: 'NORMALIZED_MASTER_MISMATCH' })
+    }
+    if (evidencePlan.ok) {
+      const fingerprint = await createCloudWorkspaceMasterBackfillFingerprint(evidencePlan.plan)
+      if (fingerprint !== completedBackfill.planFingerprint) {
+        addIssue(issues, { code: 'BACKFILL_FINGERPRINT_MISMATCH' })
+      }
+      if (
+        input.masters !== undefined &&
+        (
+          input.masters.workspaceId !== parsedSource.workspaceId ||
+          input.masters.generation !== parsedSource.workspaceGeneration ||
+          !haveSameIdsAndValues(evidencePlan.plan.members, input.masters.members) ||
+          !haveSameIdsAndValues(evidencePlan.plan.bands, input.masters.bands)
+        )
+      ) {
+        addIssue(issues, { code: 'NORMALIZED_MASTER_MISMATCH' })
+      }
     }
   }
 
