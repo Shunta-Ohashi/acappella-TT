@@ -61,14 +61,36 @@ begin
     or result ->> 'workspaceId' is distinct from target_workspace_id::text
     or result ->> 'workspaceStatus' is distinct from 'legacy'
     or (result ->> 'workspaceGeneration')::bigint is distinct from generation_before
-    or jsonb_array_length(result -> 'events') <> 0
-    or jsonb_array_length(result -> 'masters' -> 'members') <> 0
-    or jsonb_array_length(result -> 'masters' -> 'bands') <> 0
-    or jsonb_array_length(result -> 'relations' -> 'bandMembers') <> 0
-    or jsonb_array_length(result -> 'relations' -> 'eventMemberReferences') <> 0
-    or jsonb_array_length(result -> 'relations' -> 'eventBandReferences') <> 0
-    or (result -> 'counts' ->> 'events')::bigint <> 0
-    or (result -> 'counts' ->> 'members')::bigint <> 0 then
+    or jsonb_typeof(result -> 'events') is distinct from 'array'
+    or jsonb_array_length(result -> 'events') is distinct from 0
+    or jsonb_typeof(result -> 'masters' -> 'members') is distinct from 'array'
+    or jsonb_array_length(result -> 'masters' -> 'members') is distinct from 0
+    or jsonb_typeof(result -> 'masters' -> 'bands') is distinct from 'array'
+    or jsonb_array_length(result -> 'masters' -> 'bands') is distinct from 0
+    or jsonb_typeof(result -> 'relations' -> 'bandMembers') is distinct from 'array'
+    or jsonb_array_length(result -> 'relations' -> 'bandMembers') is distinct from 0
+    or jsonb_typeof(result -> 'relations' -> 'eventMemberReferences')
+      is distinct from 'array'
+    or jsonb_array_length(result -> 'relations' -> 'eventMemberReferences')
+      is distinct from 0
+    or jsonb_typeof(result -> 'relations' -> 'eventBandReferences')
+      is distinct from 'array'
+    or jsonb_array_length(result -> 'relations' -> 'eventBandReferences')
+      is distinct from 0
+    or jsonb_typeof(result -> 'counts' -> 'events') is distinct from 'number'
+    or result -> 'counts' ->> 'events' is distinct from '0'
+    or jsonb_typeof(result -> 'counts' -> 'members') is distinct from 'number'
+    or result -> 'counts' ->> 'members' is distinct from '0'
+    or jsonb_typeof(result -> 'counts' -> 'bands') is distinct from 'number'
+    or result -> 'counts' ->> 'bands' is distinct from '0'
+    or jsonb_typeof(result -> 'counts' -> 'bandMembers') is distinct from 'number'
+    or result -> 'counts' ->> 'bandMembers' is distinct from '0'
+    or jsonb_typeof(result -> 'counts' -> 'eventMemberReferences')
+      is distinct from 'number'
+    or result -> 'counts' ->> 'eventMemberReferences' is distinct from '0'
+    or jsonb_typeof(result -> 'counts' -> 'eventBandReferences')
+      is distinct from 'number'
+    or result -> 'counts' ->> 'eventBandReferences' is distinct from '0' then
     raise exception 'Empty/isolation inspection response is invalid';
   end if;
 

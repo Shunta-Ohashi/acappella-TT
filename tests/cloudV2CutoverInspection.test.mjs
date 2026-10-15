@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import {
   createCloudV2CutoverInspectionReport,
@@ -11,9 +14,76 @@ import {
   createCloudWorkspaceMasterBackfillFingerprint,
   createCloudWorkspaceMasterBackfillPlan,
 } from '../src/cloud/cloudWorkspaceMasterBackfill.ts'
+import {
+  sanitizePsqlDiagnostic,
+} from '../scripts/cloudV2CutoverInspectionCleanupConcurrency.mjs'
 
 const workspaceId = '78000000-0000-4000-8000-000000000001'
 const timestamp = '2026-10-14T00:00:00.000Z'
+const inspectionRunnerPath = fileURLToPath(new URL(
+  '../scripts/cloudV2CutoverInspection.mjs',
+  import.meta.url,
+))
+
+const runInspectionCli = (args, environment) => new Promise((resolve, reject) => {
+  const child = spawn(process.execPath, [
+    '--experimental-strip-types',
+    inspectionRunnerPath,
+    ...args,
+  ], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
+    env: {
+      ...process.env,
+      ACAPPELLA_TT_CUTOVER_INSPECTION_SUPABASE_URL: '',
+      ACAPPELLA_TT_CUTOVER_INSPECTION_SERVICE_ROLE_KEY: 'test-service-role-key',
+      ...environment,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let stdout = ''
+  let stderr = ''
+  child.stdout.setEncoding('utf8')
+  child.stderr.setEncoding('utf8')
+  child.stdout.on('data', chunk => { stdout += chunk })
+  child.stderr.on('data', chunk => { stderr += chunk })
+  const timeout = setTimeout(() => {
+    child.kill()
+    reject(new Error('Cutover inspection CLI test timed out.'))
+  }, 10_000)
+  child.once('error', error => {
+    clearTimeout(timeout)
+    reject(error)
+  })
+  child.once('close', code => {
+    clearTimeout(timeout)
+    resolve({ code, stdout, stderr })
+  })
+})
+
+const withInspectionServer = async (response, run) => {
+  let requestBody = ''
+  const server = createServer((request, result) => {
+    request.setEncoding('utf8')
+    request.on('data', chunk => { requestBody += chunk })
+    request.on('end', () => {
+      result.writeHead(200, { 'content-type': 'application/json' })
+      result.end(JSON.stringify(response))
+    })
+  })
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  try {
+    const address = server.address()
+    assert.ok(address && typeof address !== 'string')
+    return await run(`http://127.0.0.1:${address.port}`, () => requestBody)
+  } finally {
+    await new Promise((resolve, reject) => {
+      server.close(error => error ? reject(error) : resolve())
+    })
+  }
+}
 
 const createState = (eventId = 'event-a', suffix = 'a') => ({
   members: [{ id: `member-${suffix}`, realName: 'Alice Private', active: true }],
@@ -309,8 +379,144 @@ test('operator runner is read-only, redacts raw evidence, and rejects unknown op
   assert.doesNotMatch(runner, /report\.inspection/)
 })
 
+test('operator runner rejects malformed target URLs without exposing environment values', async () => {
+  const secret = 'url-password-must-not-leak'
+  const malformedUrl = `http://operator:${secret}@[`
+  const malformed = await runInspectionCli([
+    '--workspace-id', workspaceId,
+  ], {
+    ACAPPELLA_TT_CUTOVER_INSPECTION_SUPABASE_URL: malformedUrl,
+  })
+  assert.equal(malformed.code, 1)
+  assert.match(malformed.stderr, /SUPABASE_URL must be a valid URL/iu)
+  assert.doesNotMatch(malformed.stderr, new RegExp(secret, 'u'))
+  assert.doesNotMatch(malformed.stderr, /operator:/u)
+
+  const userInfo = await runInspectionCli([
+    '--workspace-id', workspaceId,
+  ], {
+    ACAPPELLA_TT_CUTOVER_INSPECTION_SUPABASE_URL:
+      `http://operator:${secret}@127.0.0.1:1`,
+  })
+  assert.equal(userInfo.code, 1)
+  assert.match(userInfo.stderr, /must not contain user information/iu)
+  assert.doesNotMatch(userInfo.stderr, new RegExp(secret, 'u'))
+
+  const empty = await runInspectionCli([
+    '--workspace-id', workspaceId,
+  ], {
+    ACAPPELLA_TT_CUTOVER_INSPECTION_SUPABASE_URL: '',
+  })
+  assert.equal(empty.code, 1)
+  assert.match(empty.stderr, /SUPABASE_URL.*SERVICE_ROLE_KEY.*required/isu)
+  assert.doesNotMatch(empty.stderr, /test-service-role-key/u)
+
+  const wrongScheme = await runInspectionCli([
+    '--workspace-id', workspaceId,
+  ], {
+    ACAPPELLA_TT_CUTOVER_INSPECTION_SUPABASE_URL: 'ftp://inspection.invalid',
+  })
+  assert.equal(wrongScheme.code, 1)
+  assert.match(wrongScheme.stderr, /must use HTTPS/iu)
+})
+
+test('operator runner accepts one leading separator and normalizes Workspace UUIDs', async () => {
+  const raw = await createRawInspection()
+  const result = await withInspectionServer(raw, async (url, getRequestBody) => {
+    const executed = await runInspectionCli([
+      '--', '--workspace-id', workspaceId.toUpperCase(),
+    ], {
+      ACAPPELLA_TT_CUTOVER_INSPECTION_SUPABASE_URL: url,
+    })
+    return { ...executed, requestBody: getRequestBody() }
+  })
+  assert.equal(result.code, 0, result.stderr)
+  assert.equal(JSON.parse(result.requestBody).p_workspace_id, workspaceId)
+  assert.match(result.stdout, new RegExp(`"workspaceId": "${workspaceId}"`, 'u'))
+
+  for (const args of [
+    ['--workspace-id', workspaceId, '--workspace-id', workspaceId],
+    ['--workspace-id', workspaceId, '--', '--confirm-target', 'https://example.invalid'],
+    ['--workspace-id'],
+    ['--workspace-id', '   '],
+    ['--workspace-id', workspaceId, '--confirm-workspace-id', '   '],
+    ['--workspace-id', workspaceId, '--confirm-target', '   '],
+    ['--workspace-id', 'not-a-uuid'],
+  ]) {
+    const rejected = await runInspectionCli(args, {})
+    assert.equal(rejected.code, 1)
+  }
+
+  const differentConfirmation = await runInspectionCli([
+    '--workspace-id', workspaceId.toUpperCase(),
+    '--confirm-workspace-id', '78000000-0000-4000-8000-000000000002',
+    '--confirm-target', 'https://inspection.invalid',
+  ], {
+    ACAPPELLA_TT_CUTOVER_INSPECTION_SUPABASE_URL: 'https://inspection.invalid',
+  })
+  assert.equal(differentConfirmation.code, 1)
+  assert.match(differentConfirmation.stderr, /Remote inspection requires/iu)
+})
+
+test('operator runner returns exit code 2 for blocked readiness without issues', async () => {
+  const raw = await createRawInspection({ events: [], backfilled: false })
+  const result = await withInspectionServer(raw, url => runInspectionCli([
+    '--workspace-id', workspaceId,
+  ], {
+    ACAPPELLA_TT_CUTOVER_INSPECTION_SUPABASE_URL: url,
+  }))
+  assert.equal(result.code, 2, result.stderr)
+  assert.match(result.stdout, /"cutoverReadiness": "blocked"/u)
+  assert.match(result.stdout, /"issues": \[\]/u)
+  assert.match(result.stdout, /"safeToCutover": false/u)
+})
+
+test('operator runner exit codes distinguish consistent evidence from blocked evidence', async () => {
+  const runRaw = raw => withInspectionServer(raw, url => runInspectionCli([
+    '--workspace-id', workspaceId,
+  ], {
+    ACAPPELLA_TT_CUTOVER_INSPECTION_SUPABASE_URL: url,
+  }))
+
+  const emptyBackfilled = await runRaw(await createRawInspection({ events: [] }))
+  assert.equal(emptyBackfilled.code, 0, emptyBackfilled.stderr)
+
+  const multipleEvents = [
+    createSourceEvent('event-a', 'a'),
+    createSourceEvent('event-b', 'b'),
+  ]
+  const consistentMultiple = await runRaw(await createRawInspection({
+    events: multipleEvents,
+  }))
+  assert.equal(consistentMultiple.code, 0, consistentMultiple.stderr)
+
+  const mismatchedReferences = await createRawInspection({ events: multipleEvents })
+  mismatchedReferences.relations.eventMemberReferences[0].memberId = 'member-b'
+  const referenceMismatch = await runRaw(mismatchedReferences)
+  assert.equal(referenceMismatch.code, 2, referenceMismatch.stderr)
+  assert.match(referenceMismatch.stdout, /"status": "inconsistent"/u)
+
+  const conflictingMasterEvidence = await createRawInspection({ events: multipleEvents })
+  const conflictingState = conflictingMasterEvidence.events[1].snapshot.appState
+  conflictingState.members[0].id = 'member-a'
+  conflictingState.members[0].realName = 'Conflicting private value'
+  conflictingState.bands[0].defaultMemberIds = ['member-a']
+  conflictingState.eventMembers[0].memberId = 'member-a'
+  conflictingState.eventBands[0].memberIds = ['member-a']
+  const structuralFailure = await runRaw(conflictingMasterEvidence)
+  assert.equal(structuralFailure.code, 2, structuralFailure.stderr)
+  assert.match(structuralFailure.stdout, /"structuralStatus": "not-convertible"/u)
+})
+
 test('disposable SQL fixtures verify isolation, ACL, generation locking, and async drain', async () => {
-  const [contractSql, concurrencySql, cleanupSql] = await Promise.all([
+  const [
+    contractSql,
+    concurrencySql,
+    cleanupSql,
+    cleanupConcurrencySql,
+    cleanupConcurrencyRunner,
+    packageJson,
+  ] = await Promise.all([
     readFile(new URL('../supabase/tests/cloud_v2_cutover_inspection.sql', import.meta.url), 'utf8'),
     readFile(new URL(
       '../supabase/tests/cloud_v2_cutover_inspection_concurrency.sql', import.meta.url,
@@ -318,12 +524,42 @@ test('disposable SQL fixtures verify isolation, ACL, generation locking, and asy
     readFile(new URL(
       '../supabase/tests/cloud_v2_cutover_inspection_concurrency_cleanup.sql', import.meta.url,
     ), 'utf8'),
+    readFile(new URL(
+      '../supabase/tests/cloud_v2_cutover_inspection_cleanup_concurrency.sql', import.meta.url,
+    ), 'utf8'),
+    readFile(new URL(
+      '../scripts/cloudV2CutoverInspectionCleanupConcurrency.mjs', import.meta.url,
+    ), 'utf8'),
+    readFile(new URL('../package.json', import.meta.url), 'utf8'),
   ])
   assert.match(contractSql, /has_function_privilege\('service_role'/i)
   assert.match(contractSql, /has_function_privilege\('authenticated'/i)
   assert.match(contractSql, /has_function_privilege\('anon'/i)
   assert.match(contractSql, /other_workspace_id/i)
   assert.match(contractSql, /generation_after is distinct from generation_before/i)
+  for (const arrayPath of [
+    "result -> 'events'",
+    "result -> 'masters' -> 'members'",
+    "result -> 'masters' -> 'bands'",
+    "result -> 'relations' -> 'bandMembers'",
+    "result -> 'relations' -> 'eventMemberReferences'",
+    "result -> 'relations' -> 'eventBandReferences'",
+  ]) {
+    assert.ok(contractSql.includes(`jsonb_typeof(${arrayPath})`))
+    assert.ok(contractSql.includes(`jsonb_array_length(${arrayPath})`))
+  }
+  for (const countField of [
+    'events', 'members', 'bands', 'bandMembers',
+    'eventMemberReferences', 'eventBandReferences',
+  ]) {
+    assert.ok(contractSql.includes(
+      `jsonb_typeof(result -> 'counts' -> '${countField}')`,
+    ))
+    assert.ok(contractSql.includes(
+      `result -> 'counts' ->> '${countField}' is distinct from '0'`,
+    ))
+  }
+  assert.doesNotMatch(contractSql, /jsonb_array_length\([^\n]+\) <> 0/iu)
   assert.match(contractSql, /rollback;\s*$/i)
 
   assert.match(concurrencySql, /lock table public\.cloud_workspace_master_backfills/i)
@@ -335,6 +571,19 @@ test('disposable SQL fixtures verify isolation, ACL, generation locking, and asy
   assert.doesNotMatch(concurrencySql, /deadlock_timeout/iu)
   assert.match(concurrencySql, /perform pg_catalog\.pg_stat_clear_snapshot\(\)/iu)
   assert.match(concurrencySql, /inspection generation FOR SHARE/i)
+  assert.match(
+    concurrencySql,
+    /jsonb_typeof\(inspected -> 'workspaceGeneration'\) is distinct from 'string'/iu,
+  )
+  assert.match(
+    concurrencySql,
+    /inspected ->> 'workspaceGeneration' is distinct from '1'/iu,
+  )
+  assert.match(concurrencySql, /current_generation is distinct from 2/iu)
+  assert.doesNotMatch(
+    concurrencySql,
+    /workspaceGeneration'\)::bigint (?:>= current_generation|is distinct from 1)/iu,
+  )
   assert.match(concurrencySql, /where id = '79500000-0000-4000-8000-000000000001'/i)
   assert.doesNotMatch(concurrencySql, /truncate|delete\s+from\s+auth\.users/iu)
 
@@ -377,6 +626,34 @@ test('disposable SQL fixtures verify isolation, ACL, generation locking, and asy
   assert.match(cleanupSql, /fixture_event_count = 0[\s\S]*fixture_generation is distinct from 0/iu)
   assert.doesNotMatch(cleanupSql, /generation between 0 and 2/iu)
   assert.match(cleanupSql, /refusing automatic cleanup/iu)
+  assert.match(
+    cleanupSql,
+    /begin;[\s\S]*set transaction isolation level read committed;/iu,
+  )
+  const lockPhase = cleanupSql.slice(
+    cleanupSql.indexOf('-- Freeze every writable edge'),
+    cleanupSql.indexOf('select count(*)'),
+  )
+  assert.equal((lockPhase.match(/for update nowait/giu) ?? []).length, 20)
+  assert.equal((lockPhase.match(/from public\.workspace_members/giu) ?? []).length, 2)
+  assert.equal((lockPhase.match(/from public\.cloud_events/giu) ?? []).length, 2)
+  assert.equal((lockPhase.match(/from public\.workspace_master_members/giu) ?? []).length, 2)
+  assert.equal((lockPhase.match(/from public\.workspace_master_bands/giu) ?? []).length, 2)
+  assert.equal((lockPhase.match(/from public\.workspace_master_band_members/giu) ?? []).length, 2)
+  assert.equal((lockPhase.match(/from public\.cloud_event_member_references/giu) ?? []).length, 2)
+  assert.equal((lockPhase.match(/from public\.cloud_event_band_references/giu) ?? []).length, 2)
+  assert.equal((lockPhase.match(/from public\.cloud_workspace_master_backfills/giu) ?? []).length, 2)
+  assert.equal((lockPhase.match(/from public\.workspaces/giu) ?? []).length, 1)
+  assert.equal(
+    (lockPhase.match(/from public\.cloud_event_workspace_generations/giu) ?? []).length,
+    1,
+  )
+  assert.match(lockPhase, /when lock_not_available[\s\S]*errcode = '55000'/iu)
+  assert.doesNotMatch(lockPhase, /lock table/iu)
+  const cleanupGateIndex = lockPhase.indexOf(
+    'pg_catalog.pg_advisory_xact_lock(cleanup_test_gate_key::bigint)',
+  )
+  assert.ok(cleanupGateIndex > lockPhase.indexOf('cloud_event_workspace_generations'))
   const cleanupGuard = cleanupSql.slice(
     cleanupSql.indexOf('select count(*)'),
     cleanupSql.indexOf('delete from public.workspaces'),
@@ -419,6 +696,60 @@ test('disposable SQL fixtures verify isolation, ACL, generation locking, and asy
     assert.match(postDeleteChecks, new RegExp(`public\\.${cleanedTable}`, 'u'))
   }
   assert.doesNotMatch(cleanupSql, /truncate|delete\s+from\s+auth\.users/iu)
+
+  assert.match(cleanupConcurrencySql, /Setup only/iu)
+  assert.match(cleanupConcurrencySql, /confirm_cleanup_concurrency_fixture/iu)
+  assert.match(cleanupConcurrencySql, /fixture already exists; inspect it/iu)
+  const setupBeforeInsert = cleanupConcurrencySql.slice(
+    0,
+    cleanupConcurrencySql.indexOf('insert into auth.users'),
+  )
+  assert.doesNotMatch(setupBeforeInsert, /delete\s+from/iu)
+  assert.doesNotMatch(cleanupConcurrencySql, /dblink_|pg_advisory_xact_lock/iu)
+
+  assert.match(cleanupConcurrencyRunner, /cleanupSqlPath/iu)
+  assert.match(cleanupConcurrencyRunner, /runCleanup\(databaseUrl/iu)
+  assert.equal(
+    (cleanupConcurrencyRunner.match(/assertCleanupRejected\(await runCleanup/gu) ?? []).length,
+    2,
+  )
+  assert.match(cleanupConcurrencyRunner, /Actual cleanup did not report SQLSTATE 55000/iu)
+  assert.match(cleanupConcurrencyRunner, /cloud-v2-cleanup-event-first/iu)
+  assert.match(cleanupConcurrencyRunner, /cloud-v2-cleanup-membership-first/iu)
+  assert.match(cleanupConcurrencyRunner, /cloud-v2-cleanup-actual-gated/iu)
+  assert.equal(
+    (cleanupConcurrencyRunner.match(/event_snapshot = jsonb_set/gu) ?? []).length,
+    2,
+  )
+  assert.match(
+    cleanupConcurrencyRunner,
+    /set event_name = 'Uncommitted Event writer',[\s\S]*to_jsonb\('Uncommitted Event writer'::text\)/u,
+  )
+  assert.match(
+    cleanupConcurrencyRunner,
+    /set event_name = 'Unexpected concurrent write',[\s\S]*to_jsonb\('Unexpected concurrent write'::text\)/u,
+  )
+  assert.match(cleanupConcurrencyRunner, /stderrBuffer[\s\S]*sanitizePsqlDiagnostic/iu)
+  assert.match(cleanupConcurrencyRunner, /waitForLock[\s\S]*expectedWaitEvent/iu)
+  assert.match(cleanupConcurrencyRunner, /eventWriterResult[\s\S]*membershipWriterResult/iu)
+  assert.match(cleanupConcurrencyRunner, /assertFixtureUnchanged/iu)
+  assert.match(cleanupConcurrencyRunner, /assertFinalStateIsEmpty/iu)
+  assert.match(cleanupConcurrencyRunner, /loopback databases only/iu)
+  assert.match(packageJson, /test:cloud-v2-cutover-cleanup-concurrency/iu)
+})
+
+test('cleanup concurrency psql diagnostics preserve causes without exposing credentials', () => {
+  const databaseUrl = 'postgresql://fixture-user:p%40ss-secret@127.0.0.1:55822/postgres'
+  const diagnostic = sanitizePsqlDiagnostic(
+    `ERROR: cloud_events_snapshot_shape_check failed\n` +
+      `connection=${databaseUrl}\npassword=p@ss-secret`,
+    databaseUrl,
+  )
+
+  assert.match(diagnostic, /cloud_events_snapshot_shape_check failed/u)
+  assert.match(diagnostic, /\[REDACTED/u)
+  assert.doesNotMatch(diagnostic, /p%40ss-secret|p@ss-secret|fixture-user/iu)
+  assert.doesNotMatch(diagnostic, /postgres(?:ql)?:\/\//iu)
 })
 
 test('inspection runbook distinguishes rollback, committed concurrency cleanup, and measured limits', async () => {
@@ -438,8 +769,11 @@ test('inspection runbook distinguishes rollback, committed concurrency cleanup, 
   assert.match(runbook, /通常fixture[\s\S]*ROLLBACK/iu)
   assert.match(runbook, /並行fixture[\s\S]*正常終了時だけ専用Workspaceを削除/iu)
   assert.match(runbook, /Event作成前（generation 0）[\s\S]*Snapshot JSONB全体/iu)
+  assert.match(runbook, /test:cloud-v2-cutover-cleanup-concurrency/iu)
+  assert.match(runbook, /親Workspaceをlockした後に同じ子行を再走査/iu)
   assert.match(runbook, /writerがgeneration更新lockを先に取得/iu)
   assert.match(runbook, /大規模Workspace/iu)
   assert.match(sqlGuide, /concurrency_cleanup\.sql/iu)
+  assert.match(sqlGuide, /test:cloud-v2-cutover-cleanup-concurrency/iu)
   assert.match(sqlGuide, /full Snapshot JSONB/iu)
 })

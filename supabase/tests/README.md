@@ -78,6 +78,9 @@ psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
 psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
   -v "test_db_url=$env:ACAPPELLA_TT_DBLINK_DATABASE_URL" `
   -f supabase/tests/cloud_v2_cutover_inspection_concurrency.sql
+pnpm test:cloud-v2-cutover-cleanup-concurrency -- `
+  --db-url-env ACAPPELLA_TT_TEST_DATABASE_URL `
+  --confirm-disposable
 node scripts/cloudEventMigrationCatalogRegression.mjs `
   --db-url-env ACAPPELLA_TT_TEST_DATABASE_URL `
   --confirm-disposable
@@ -155,6 +158,18 @@ state. It compares the full Snapshot JSONB and its matching Event revision and
 Workspace generation, and refuses unexpected membership, Master/reference, or
 backfill data with SQLSTATE `55000`. Use only a disposable database because an
 interrupted concurrency run can leave fixtures behind.
+
+The cleanup concurrency runner launches the actual strict cleanup SQL in
+separate `psql` processes. It proves that Event-writer-first and
+membership-writer-first races reject cleanup with SQLSTATE `55000` without
+deleting committed data. It then pauses actual cleanup after all row locks,
+observes both writers waiting through bounded `pg_stat_activity` polling, lets
+cleanup commit, and verifies the writers cannot recreate deleted data. It
+removes only Workspace `79500000-0000-4000-8000-000000000001` plus Auth user
+`00000000-0000-4000-8000-000000000075` and requires all related tables to be
+empty. Run it only after the regular inspection concurrency fixture has removed
+the shared Workspace ID. Existing fixed Workspace/Auth IDs make setup stop;
+they are never auto-deleted at startup. Inspect them before manual recovery.
 
 After that explicit review, clean only the interrupted inspection fixture with:
 

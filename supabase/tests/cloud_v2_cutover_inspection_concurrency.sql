@@ -200,7 +200,9 @@ begin
       is distinct from 'Before inspection race'
     or inspected -> 'events' -> 0 -> 'snapshot' -> 'appState' -> 'events' -> 0 ->> 'name'
       is distinct from 'Before inspection race'
-    or (inspected ->> 'workspaceGeneration')::bigint >= current_generation
+    or jsonb_typeof(inspected -> 'workspaceGeneration') is distinct from 'string'
+    or inspected ->> 'workspaceGeneration' is distinct from '1'
+    or current_generation is distinct from 2
     or (select event_name from public.cloud_events
       where workspace_id = '79500000-0000-4000-8000-000000000001'
         and event_id = 'event-a') is distinct from 'After inspection race' then

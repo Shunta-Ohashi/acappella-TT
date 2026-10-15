@@ -6,6 +6,19 @@
 -- itself does not create.
 begin;
 
+-- Phase 2 must observe rows committed while Phase 1 was acquiring locks.
+-- Do not inherit a caller's REPEATABLE READ snapshot for this recovery tool.
+set transaction isolation level read committed;
+
+-- Test-only synchronization hook. Normal cleanup leaves this empty. The
+-- dedicated process-level concurrency runner passes an advisory-lock key so
+-- it can prove that this exact script has acquired every row lock before
+-- starting competing writers.
+set local acappella_tt.cleanup_test_gate_key = '';
+\if :{?cleanup_test_gate_key}
+set local acappella_tt.cleanup_test_gate_key = :'cleanup_test_gate_key';
+\endif
+
 do $$
 declare
   fixture_workspace_id constant uuid :=
@@ -21,6 +34,11 @@ declare
   fixture_event_revision bigint;
   fixture_generation bigint;
   fixture_master_status text;
+  fixture_workspace_locked boolean := false;
+  cleanup_test_gate_key text := nullif(
+    current_setting('acappella_tt.cleanup_test_gate_key', true),
+    ''
+  );
 begin
   expected_before_snapshot := jsonb_build_object(
     'format', 'acappella-tt-cloud-event',
@@ -58,10 +76,164 @@ begin
     '"After inspection race"'::jsonb
   );
 
-  if not exists (
-    select 1 from public.workspaces
-    where id = fixture_workspace_id
-  ) then
+  -- Freeze every writable edge of this one fixture before inspecting it.
+  -- NOWAIT is deliberate: if a supported writer already owns an earlier lock,
+  -- cleanup fails closed instead of waiting while holding a different lock and
+  -- risking a deadlock. If cleanup wins, these row locks remain held through
+  -- the parent DELETE and COMMIT, so an existing row cannot change after it is
+  -- validated.
+  --
+  -- Phase 1 takes membership, state, Event, and Master locks in the same
+  -- leading order used by the mutation/backfill RPCs. Lock the parent
+  -- Workspace only after those existing child rows: its FOR UPDATE lock
+  -- conflicts with the KEY SHARE lock required by a new FK child (Event,
+  -- membership, Master, state, generation, or backfill).
+  --
+  -- A child INSERT may commit between the Phase 1 scan and acquisition of the
+  -- parent lock. Phase 2 therefore repeats every child scan after the parent is
+  -- frozen. That second pass locks such a phantom before validation; without
+  -- it, a newly committed Event could still be updated after it was observed.
+  -- New relation/reference rows are also frozen explicitly, in addition to
+  -- being blocked by the locked Event/Master rows that their composite FKs
+  -- reference. Generation is last, matching writers after their data rows.
+  begin
+    perform 1
+    from public.workspace_members
+    where workspace_members.workspace_id = fixture_workspace_id
+    order by workspace_members.user_id
+    for update nowait;
+
+    perform 1
+    from public.cloud_workspace_master_states
+    where cloud_workspace_master_states.workspace_id = fixture_workspace_id
+    for update nowait;
+
+    perform 1
+    from public.cloud_events
+    where cloud_events.workspace_id = fixture_workspace_id
+    order by cloud_events.event_id collate "C"
+    for update nowait;
+
+    perform 1
+    from public.workspace_master_members
+    where workspace_master_members.workspace_id = fixture_workspace_id
+    order by workspace_master_members.member_id collate "C"
+    for update nowait;
+
+    perform 1
+    from public.workspace_master_bands
+    where workspace_master_bands.workspace_id = fixture_workspace_id
+    order by workspace_master_bands.band_id collate "C"
+    for update nowait;
+
+    perform 1
+    from public.workspace_master_band_members
+    where workspace_master_band_members.workspace_id = fixture_workspace_id
+    order by workspace_master_band_members.band_id collate "C",
+      workspace_master_band_members.position,
+      workspace_master_band_members.member_id collate "C"
+    for update nowait;
+
+    perform 1
+    from public.cloud_event_member_references
+    where cloud_event_member_references.workspace_id = fixture_workspace_id
+    order by cloud_event_member_references.event_id collate "C",
+      cloud_event_member_references.member_id collate "C"
+    for update nowait;
+
+    perform 1
+    from public.cloud_event_band_references
+    where cloud_event_band_references.workspace_id = fixture_workspace_id
+    order by cloud_event_band_references.event_id collate "C",
+      cloud_event_band_references.band_id collate "C"
+    for update nowait;
+
+    perform 1
+    from public.cloud_workspace_master_backfills
+    where cloud_workspace_master_backfills.workspace_id = fixture_workspace_id
+    for update nowait;
+
+    perform 1
+    from public.workspaces
+    where workspaces.id = fixture_workspace_id
+    for update nowait;
+    fixture_workspace_locked := found;
+
+    -- Phase 2: close the Phase 1-to-parent-lock insertion window. Keep the
+    -- ordering identical to Phase 1 so multiple cleanup attempts cannot invert
+    -- their row-lock order.
+    perform 1
+    from public.workspace_members
+    where workspace_members.workspace_id = fixture_workspace_id
+    order by workspace_members.user_id
+    for update nowait;
+
+    perform 1
+    from public.cloud_workspace_master_states
+    where cloud_workspace_master_states.workspace_id = fixture_workspace_id
+    for update nowait;
+
+    perform 1
+    from public.cloud_events
+    where cloud_events.workspace_id = fixture_workspace_id
+    order by cloud_events.event_id collate "C"
+    for update nowait;
+
+    perform 1
+    from public.workspace_master_members
+    where workspace_master_members.workspace_id = fixture_workspace_id
+    order by workspace_master_members.member_id collate "C"
+    for update nowait;
+
+    perform 1
+    from public.workspace_master_bands
+    where workspace_master_bands.workspace_id = fixture_workspace_id
+    order by workspace_master_bands.band_id collate "C"
+    for update nowait;
+
+    perform 1
+    from public.workspace_master_band_members
+    where workspace_master_band_members.workspace_id = fixture_workspace_id
+    order by workspace_master_band_members.band_id collate "C",
+      workspace_master_band_members.position,
+      workspace_master_band_members.member_id collate "C"
+    for update nowait;
+
+    perform 1
+    from public.cloud_event_member_references
+    where cloud_event_member_references.workspace_id = fixture_workspace_id
+    order by cloud_event_member_references.event_id collate "C",
+      cloud_event_member_references.member_id collate "C"
+    for update nowait;
+
+    perform 1
+    from public.cloud_event_band_references
+    where cloud_event_band_references.workspace_id = fixture_workspace_id
+    order by cloud_event_band_references.event_id collate "C",
+      cloud_event_band_references.band_id collate "C"
+    for update nowait;
+
+    perform 1
+    from public.cloud_workspace_master_backfills
+    where cloud_workspace_master_backfills.workspace_id = fixture_workspace_id
+    for update nowait;
+
+    perform 1
+    from public.cloud_event_workspace_generations
+    where cloud_event_workspace_generations.workspace_id = fixture_workspace_id
+    for update nowait;
+
+    if cleanup_test_gate_key is not null then
+      perform pg_catalog.pg_advisory_xact_lock(cleanup_test_gate_key::bigint);
+    end if;
+  exception
+    when lock_not_available then
+      raise exception using
+        errcode = '55000',
+        message = 'Dedicated Workspace is being modified; refusing automatic cleanup';
+  end;
+
+  if not fixture_workspace_locked then
     raise exception using
       errcode = '55000',
       message = 'Dedicated cutover inspection concurrency fixture does not exist';

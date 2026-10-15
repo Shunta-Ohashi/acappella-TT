@@ -151,6 +151,10 @@ psql "$env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL" `
   -v "test_db_url=$env:ACAPPELLA_TT_DISPOSABLE_DBLINK_DATABASE_URL" `
   -f .\supabase\tests\cloud_v2_cutover_inspection_concurrency.sql
 
+pnpm test:cloud-v2-cutover-cleanup-concurrency -- `
+  --db-url-env ACAPPELLA_TT_DISPOSABLE_DATABASE_URL `
+  --confirm-disposable
+
 node .\scripts\cloudEventMigrationCatalogRegression.mjs `
   --db-url-env ACAPPELLA_TT_DISPOSABLE_DATABASE_URL `
   --confirm-disposable
@@ -169,6 +173,15 @@ Workspace ID `79500000-0000-4000-8000-000000000001`、名称、Event IDを確認
 Before Snapshot（revision 1 / generation 1）、既知のAfter Snapshot（revision 2 / generation 2）
 だけです。Workspace名、legacy status、Event行、Snapshot JSONB全体、Master/reference/backfill/
 membershipの不在を照合し、専用fixture以外の内容があればSQLSTATE `55000`で削除を拒否します。
+検証前にはmembership、Master state、Event、Master/relation/reference、backfillを行lockし、
+親Workspaceをlockした後に同じ子行を再走査し、最後にgenerationをlockします。競合writerが
+先行していれば`NOWAIT`を55000へ変換して拒否し、cleanupが先行すれば既存Event更新と新しい
+FK子行の追加をDELETE完了まで待機させます。専用Node runnerは別`psql` processでこの厳密
+cleanup SQL自体を起動します。Event writer先行・membership writer先行では実cleanupの55000と
+既存データ不変を確認し、cleanup先行ではtest-only advisory gateで全行lock取得後にwriterを
+開始して、`pg_stat_activity`の実Lock待機、cleanup commit後の安全な拒否、関連11テーブルと
+専用Auth userの残存0件を確認します。固定Workspace/Auth IDが開始時に存在すれば自動削除せず
+停止するため、内容を検査して下記の明示cleanupを使用してください。
 
 ```powershell
 psql "$env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL" `

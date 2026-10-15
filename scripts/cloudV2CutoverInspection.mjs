@@ -7,32 +7,52 @@ import {
 const allowedArguments = new Set([
   '--workspace-id', '--confirm-target', '--confirm-workspace-id',
 ])
-for (let index = 2; index < process.argv.length; index += 1) {
-  const argument = process.argv[index]
+const rawArguments = process.argv.slice(2)
+const argumentsToParse = rawArguments[0] === '--'
+  ? rawArguments.slice(1)
+  : rawArguments
+const parsedArguments = new Map()
+for (let index = 0; index < argumentsToParse.length; index += 1) {
+  const argument = argumentsToParse[index]
   if (!allowedArguments.has(argument)) {
     throw new Error(`Unknown argument: ${argument}`)
   }
-  if (index + 1 >= process.argv.length || process.argv[index + 1].startsWith('--')) {
+  if (parsedArguments.has(argument)) {
+    throw new Error(`Duplicate argument: ${argument}`)
+  }
+  if (
+    index + 1 >= argumentsToParse.length ||
+    argumentsToParse[index + 1].startsWith('--') ||
+    argumentsToParse[index + 1].trim() === ''
+  ) {
     throw new Error(`${argument} requires a value.`)
   }
+  parsedArguments.set(argument, argumentsToParse[index + 1])
   index += 1
 }
 
-const getArgument = name => {
-  const index = process.argv.indexOf(name)
-  return index >= 0 ? process.argv[index + 1] : undefined
+const getArgument = name => parsedArguments.get(name)
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+const normalizeUuidArgument = (name, required = false) => {
+  const value = getArgument(name)?.trim()
+  if (!value) {
+    if (required) throw new Error(`${name} must be an explicit UUID.`)
+    return undefined
+  }
+  if (!uuidPattern.test(value)) {
+    throw new Error(`${name} must be an explicit UUID.`)
+  }
+  return value.toLowerCase()
 }
 
-const workspaceId = getArgument('--workspace-id')?.trim()
-const confirmedWorkspaceId = getArgument('--confirm-workspace-id')?.trim()
+const workspaceId = normalizeUuidArgument('--workspace-id', true)
+const confirmedWorkspaceId = normalizeUuidArgument('--confirm-workspace-id')
 const confirmedTarget = getArgument('--confirm-target')?.trim()
 const supabaseUrl = process.env.ACAPPELLA_TT_CUTOVER_INSPECTION_SUPABASE_URL?.trim()
 const serviceRoleKey =
   process.env.ACAPPELLA_TT_CUTOVER_INSPECTION_SERVICE_ROLE_KEY?.trim()
 
-if (!workspaceId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(workspaceId)) {
-  throw new Error('--workspace-id must be an explicit UUID.')
-}
 if (!supabaseUrl || !serviceRoleKey) {
   throw new Error(
     'ACAPPELLA_TT_CUTOVER_INSPECTION_SUPABASE_URL and ' +
@@ -40,7 +60,17 @@ if (!supabaseUrl || !serviceRoleKey) {
   )
 }
 
-const parsedUrl = new URL(supabaseUrl)
+let parsedUrl
+try {
+  parsedUrl = new URL(supabaseUrl)
+} catch {
+  throw new Error(
+    'ACAPPELLA_TT_CUTOVER_INSPECTION_SUPABASE_URL must be a valid URL.',
+  )
+}
+if (parsedUrl.username || parsedUrl.password) {
+  throw new Error('Inspection target URL must not contain user information.')
+}
 const isLoopback = ['localhost', '127.0.0.1', '[::1]', '::1']
   .includes(parsedUrl.hostname.toLowerCase())
 if (parsedUrl.protocol !== 'https:' && !(parsedUrl.protocol === 'http:' && isLoopback)) {
@@ -94,6 +124,7 @@ process.stdout.write(
 if (
   report.preflight.structuralStatus !== 'convertible' ||
   report.referenceEvidence.status !== 'consistent' ||
+  report.preflight.cutoverReadiness === 'blocked' ||
   report.preflight.issues.length > 0
 ) {
   process.exitCode = 2
