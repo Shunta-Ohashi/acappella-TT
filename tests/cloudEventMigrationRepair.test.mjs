@@ -25,6 +25,7 @@ const LATER_VERSIONS = {
   workspaceMasterContracts: '20261012110000',
   workspaceMasterBackfill: '20261013100000',
   cloudEventV2Persistence: '20261013110000',
+  cloudV2CutoverInspection: '20261014100000',
 }
 
 const createInspection = ({
@@ -112,6 +113,8 @@ const createInspection = ({
         applied.has(LATER_VERSIONS.workspaceMasterBackfill),
       cloudEventV2PersistenceContract:
         applied.has(LATER_VERSIONS.cloudEventV2Persistence),
+      cloudV2CutoverInspectionContract:
+        applied.has(LATER_VERSIONS.cloudV2CutoverInspection),
     },
     cloudData: {
       rowCount: cloudEventsExists ? 1 : 0,
@@ -335,8 +338,9 @@ test('Cloud Event V2保存契約はmigration historyとcatalogの不一致をfai
   assert.equal(missingResult.kind, 'unknown')
   assert.match(missingResult.mismatches.join('\n'), /cloudEventV2PersistenceContract/i)
 
-  const beforeV2 = versions.filter(
-    version => version !== LATER_VERSIONS.cloudEventV2Persistence,
+  const beforeV2 = versions.slice(
+    0,
+    versions.indexOf(LATER_VERSIONS.cloudEventV2Persistence),
   )
   assert.equal(analyzeCloudEventMigrationInspection(createInspection({
     versions: beforeV2,
@@ -348,6 +352,26 @@ test('Cloud Event V2保存契約はmigration historyとcatalogの不一致をfai
     analyzeCloudEventMigrationInspection(prematureContract).kind,
     'unknown',
   )
+})
+
+test('Cloud V2 cutover inspection契約はmigration historyとcatalogの不一致をfail closedする', () => {
+  const versions = createKnownVersions(NEW_CLOUD_EVENT_MIGRATION_VERSION)
+  const missingContract = createInspection({ versions })
+  missingContract.laterSchema.cloudV2CutoverInspectionContract = false
+  const missingResult = analyzeCloudEventMigrationInspection(missingContract)
+  assert.equal(missingResult.kind, 'unknown')
+  assert.match(missingResult.mismatches.join('\n'), /cloudV2CutoverInspectionContract/i)
+
+  const beforeInspection = versions.filter(
+    version => version !== LATER_VERSIONS.cloudV2CutoverInspection,
+  )
+  assert.equal(analyzeCloudEventMigrationInspection(createInspection({
+    versions: beforeInspection,
+  })).kind, 'new-only')
+
+  const prematureContract = createInspection({ versions: beforeInspection })
+  prematureContract.laterSchema.cloudV2CutoverInspectionContract = true
+  assert.equal(analyzeCloudEventMigrationInspection(prematureContract).kind, 'unknown')
 })
 
 test('Cloud Eventのbrowser/PUBLIC実効table・column権限とcatalog不明を個別に拒否する', () => {
@@ -1231,6 +1255,9 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'cloud_event_v2_ready_guard_missing',
     'cloud_event_v2_save_authenticated_execute',
     'cloud_event_v2_save_authenticated_inherited_execute',
+    'cloud_v2_cutover_inspection_missing',
+    'cloud_v2_cutover_inspection_authenticated_execute',
+    'cloud_v2_cutover_inspection_authenticated_inherited_execute',
   ]) {
     assert.match(catalogRegressionSql, new RegExp(`'${scenario}'`), scenario)
     assert.match(catalogRegressionRunner, new RegExp(`'${scenario}'`), scenario)
@@ -1239,7 +1266,7 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     catalogRegressionRunner.indexOf('const scenarios = ['),
     catalogRegressionRunner.indexOf('const parseArguments ='),
   )
-  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 94)
+  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 97)
   assert.match(catalogRegressionRunner,
     /JSON\.stringify\(\{ ok: true, scenarios: scenarios\.length \+ 1 \}\)/)
   for (const removedScenario of [
@@ -1294,6 +1321,7 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'workspaceMasterGenerationTriggers',
     'workspaceMasterRowLevelSecurity',
     'workspaceMasterPrivileges',
+    'cloudV2CutoverInspectionContract',
   ]) {
     assert.match(
       baselineGuard,
@@ -1315,7 +1343,7 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   assert.match(guide, /where version = '20261008130000'/i)
   assert.match(guide, /where version = '20261008160000'/i)
   assert.match(guide, /ports `54322`, `54422`,\s+`54522`, or `54622`/i)
-  assert.match(guide, /All twelve repository migrations have one explicit `BEGIN` \/ `COMMIT` boundary/i)
+  assert.match(guide, /All thirteen repository migrations have one explicit `BEGIN` \/ `COMMIT` boundary/i)
   assert.match(guide,
     /migration-history write is a separate runner responsibility[\s\S]*PostgreSQL catalog[\s\S]*supabase_migrations\.schema_migrations/i)
   const fullTransactionExercise = guide.slice(

@@ -134,6 +134,12 @@ const scenarios = [
     !result.laterSchema.cloudEventV2PersistenceContract],
   ['cloud_event_v2_save_authenticated_inherited_execute', result =>
     !result.laterSchema.cloudEventV2PersistenceContract],
+  ['cloud_v2_cutover_inspection_missing', result =>
+    !result.laterSchema.cloudV2CutoverInspectionContract],
+  ['cloud_v2_cutover_inspection_authenticated_execute', result =>
+    !result.laterSchema.cloudV2CutoverInspectionContract],
+  ['cloud_v2_cutover_inspection_authenticated_inherited_execute', result =>
+    !result.laterSchema.cloudV2CutoverInspectionContract],
   ['profiles_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_type', result => !result.authWorkspaceChecks.profilesColumns],
@@ -251,7 +257,8 @@ const main = async () => {
       !baseline.laterSchema.workspaceMasterContractFunctions ||
       !baseline.laterSchema.workspaceMasterContractPrivileges ||
       !baseline.laterSchema.workspaceMasterBackfillContract ||
-      !baseline.laterSchema.cloudEventV2PersistenceContract
+      !baseline.laterSchema.cloudEventV2PersistenceContract ||
+      !baseline.laterSchema.cloudV2CutoverInspectionContract
     ) {
       throw new Error('baseline: expected known safe catalog')
     }

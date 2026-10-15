@@ -55,6 +55,8 @@ export type CloudV2CutoverPreflightIssueCode =
   | 'BACKFILL_STATE_INCONSISTENT'
   | 'BACKFILL_FINGERPRINT_MISMATCH'
   | 'NORMALIZED_MASTER_MISMATCH'
+  | 'REFERENCE_INDEX_NOT_BACKFILLED'
+  | 'REFERENCE_INDEX_MISMATCH'
 
 export interface CloudV2CutoverPreflightIssue {
   code: CloudV2CutoverPreflightIssueCode

@@ -1,15 +1,17 @@
 # Cloud Snapshot V2 cutover preflight
 
 この文書は、Snapshot V1をWorkspace共通Master＋Snapshot V2へ正式移行する前の
-**read-only検証基盤**と、将来の運用手順を定義します。現時点ではcutoverを実行する
-runner、ready切替RPC、Event一括変換RPCはありません。Preflightの成功や
+**read-only検証基盤**と、将来の運用手順を定義します。現時点ではread-only inspection
+runnerはありますが、cutoverを実行するrunner、ready切替RPC、Event一括変換RPCは
+ありません。Preflightの成功や
 `structuralStatus: "convertible"`を、本番cutoverの実行許可として扱ってはいけません。
 
 ## 現在の実装境界
 
 `createCloudV2CutoverPreflight()`は、既存のbackend-only
-`inspect_workspace_master_backfill_source()`のraw responseを入力にします。必要に応じて、
-既存Master repositoryが同じgenerationで読んだ`CloudWorkspaceMastersSnapshot`も渡せます。
+`inspect_workspace_master_backfill_source()`のraw responseを入力にします。加えて、
+`inspect_cloud_v2_cutover_state()`と`createCloudV2CutoverInspectionReport()`は、同じ
+generation lock下で取得した完全なMaster/relation証拠をPreflightへ接続します。
 関数はPure/read-onlyで、DB、Workspace status、Cloud Event、Master、reference index、
 localStorageを変更しません。結果にもSnapshot本文、Member/Band名、JWT、keyを含めません。
 
@@ -50,15 +52,66 @@ read-only結果を`ready`へ昇格させる経路はありません。
 | Event→Master closure | V1 sourceについて検証可能 | V2 serializerとresolverで完全性を検査 |
 | V1→V2の情報欠落 | read-onlyで検証可能 | 全Event-owned collectionとMasterを再構成して元V1と比較 |
 | V1/V2混在 | read-onlyで検出可能 | source parser失敗をversion別に診断し、混在を拒否 |
-| backfill完了記録 | 一部検証可能 | 件数・generation・fingerprintは検証可能。reference行の全内容は取得不能 |
-| 正規化Master本体 | 追加readがあれば検証可能 | 同generationのMaster repository結果を任意入力として比較 |
+| backfill完了記録 | read-onlyで検証可能 | 件数・generation・fingerprintと実relation行を同一RPCで照合 |
+| 正規化Master本体 | read-onlyで検証可能 | 同一generationのMember/Band本体、revision、順序付きrelationを比較 |
 | 旧client/V1 writerの停止とdrain | 人間による運用確認が必要 | DB readだけでは開いているtabや配備済みclientを証明できない |
 | バックアップ・maintenance window | 人間による運用確認が必要 | 実施記録・restore rehearsalが必要 |
 | Cutoverの原子性・競合検知 | 最終DB transactionが必要 | status/generation/Event revision/fingerprintをlock下で再検証する契約が未実装 |
 | rollback・復旧 | 運用手順とDB契約が必要 | cutover前backupと、全変更を一括rollbackできるtransactionが必要 |
 
 `unverifiedRequirements`に残る項目を、警告を無視して成功へ変換してはいけません。
-特にsource RPCのreference件数は、reference行の正確な組合せを証明しません。
+旧source RPCのreference件数だけでは組合せを証明しません。新inspection RPCの厳密な
+parserを通った場合だけ`REFERENCE_INDEX_CONTENTS_NOT_OBSERVED`を解除します。
+
+## Read-only operator runner
+
+runnerはinspection RPCを1回だけ呼び、raw SnapshotやMember/Band名・notesを出力せず、
+件数、status、generation、Issue、reference照合結果、未検証条件だけを表示します。
+書込modeや`--apply`は存在しません。
+
+```powershell
+$env:ACAPPELLA_TT_CUTOVER_INSPECTION_SUPABASE_URL = 'http://127.0.0.1:<new-api-port>'
+$env:ACAPPELLA_TT_CUTOVER_INSPECTION_SERVICE_ROLE_KEY = '<disposable-service-role-key>'
+pnpm cloud:v2-cutover-inspect -- --workspace-id '<workspace-uuid>'
+```
+
+loopback以外はHTTPSに限り、URLとWorkspaceの二重確認が必要です。
+
+```powershell
+pnpm cloud:v2-cutover-inspect -- `
+  --workspace-id '<workspace-uuid>' `
+  --confirm-workspace-id '<workspace-uuid>' `
+  --confirm-target 'https://<project-ref>.supabase.co'
+```
+
+終了code 0は、提供された構造とreference証拠が一致したことだけを表します。
+`safeToCutover`は常にfalseで、backup、maintenance window、V1 writer drain、atomic cutover
+transactionは引き続き未検証です。接続先とservice-role keyは環境変数だけで渡し、
+runner出力やrepositoryへ保存しません。
+
+使い捨てDBでは全13 migrationをfresh適用後、次を実行します。既存検証DBや共有DBを
+再利用しません。
+
+```powershell
+psql "$env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL" `
+  -v ON_ERROR_STOP=1 `
+  -f .\supabase\tests\cloud_v2_cutover_inspection.sql
+
+psql "$env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL" `
+  -v ON_ERROR_STOP=1 `
+  -v "test_db_url=$env:ACAPPELLA_TT_DISPOSABLE_DBLINK_DATABASE_URL" `
+  -f .\supabase\tests\cloud_v2_cutover_inspection_concurrency.sql
+
+node .\scripts\cloudEventMigrationCatalogRegression.mjs `
+  --db-url-env ACAPPELLA_TT_DISPOSABLE_DATABASE_URL `
+  --confirm-disposable
+```
+
+SQL fixtureは専用UUIDだけをtransaction内で作成し、最後にROLLBACKします。並行更新時の
+lock待機は、同じ使い捨て環境でgeneration行の共有lockとEvent/Master writerの更新lockを
+別sessionから観測します。`ACAPPELLA_TT_DISPOSABLE_DBLINK_DATABASE_URL`には、DB内から
+同じ使い捨てPostgreSQLへ到達できるURLを指定してください。静的/Nodeテストだけを実DB
+成功として扱いません。
 
 ## 将来の正式cutover手順
 
@@ -97,9 +150,6 @@ V1 writerが残ったままreadyへ切り替えてはいけません。既存bac
 
 現行read契約だけでは正式cutoverを安全に完了できません。少なくとも次が必要です。
 
-- backend-onlyのcutover inspection/read契約: status、generation、全Event
-  ID/revision/fingerprint/version、backfill record、Master本体、Band member relation、
-  Event-Master reference行を1つの整合したreadとして返す
 - backend-onlyのatomic cutover RPC: 上記証拠をlock下で再検証し、全V1→V2変換、
   reference更新、ready切替を同一transactionで実行する
 - expected generation、Event revision/fingerprint集合、plan fingerprintを必須CAS入力にする
