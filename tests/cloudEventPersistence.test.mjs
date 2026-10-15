@@ -4595,7 +4595,10 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   assert.match(instructions, /psql/i)
   assert.match(instructions, /cloud_event_authorized_page_concurrency\.sql/i)
   assert.match(instructions, /ACAPPELLA_TT_DBLINK_DATABASE_URL/)
-  assert.match(instructions, /host\.docker\.internal:54322/)
+  assert.match(instructions, /127\.0\.0\.1:55822/)
+  assert.match(instructions, /docker inspect/i)
+  assert.match(instructions, /require_auth=scram-sha-256,md5/i)
+  assert.doesNotMatch(instructions, /172\.21\.0\.2/)
   assert.match(masterFoundationSql, /^\\set ON_ERROR_STOP on/m)
   assert.match(masterFoundationSql, /^begin;[\s\S]*rollback;$/m)
   assert.match(masterFoundationSql,

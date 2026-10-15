@@ -124,17 +124,49 @@ Neither command resets a database, disables JWT verification, or deletes users
 outside the four exact smoke-test email addresses.
 
 `test_db_url` is opened by the PostgreSQL server through `dblink`, so it may
-need a different host from the outer `psql` URL. In particular, with local
-Supabase on Windows and Docker Desktop, keep the outer URL on
-`127.0.0.1:54322` and set the dblink URL to the container-reachable host, for
-example `postgresql://postgres:postgres@host.docker.internal:54322/postgres`.
-Other environments may continue to use the same URL for both variables.
+need a different host from the outer `psql` URL. For the verified Windows +
+Docker Desktop inspection environment, the outer URL used `127.0.0.1:55822`.
+The dblink URL used the IPv4 address of that same dedicated DB container and
+its internal port 5432:
 
-The core, Workspace-master foundation, and Master contract scripts are wrapped in transactions
-and roll back all fixtures. The concurrency scripts, including the Workspace
-Master status/delete test, must commit between two database connections to prove lock
-ordering, so they clean up their fixed-ID fixtures when successful. Use a disposable
-database because an interrupted run can leave those fixtures behind.
+```text
+postgresql://postgres:<password>@<container-ip>:5432/postgres?connect_timeout=5&require_auth=scram-sha-256,md5
+```
+
+Resolve the container at execution time with `docker ps` filtered by the
+dedicated published DB port, verify its name/port mapping, then obtain its
+current IPv4 with `docker inspect`. Do not copy a previous run's `172.*`
+address. A loopback/container route that does not actually authenticate can
+make non-superuser `dblink_connect` fail with `password or GSSAPI delegated
+credentials required`; do not work around that with `dblink_connect_u` or
+additional role privileges. Do not print or persist the password-bearing URL.
+The complete PowerShell checks are in
+[`docs/cloud-v2-cutover-preflight.md`](../../docs/cloud-v2-cutover-preflight.md).
+
+The core, Workspace-master foundation, Master contract, and regular cutover
+inspection scripts are wrapped in transactions and roll back their fixtures.
+Concurrency scripts must commit between database connections to prove lock
+ordering, so they clean up fixed-ID fixtures only when successful. The cutover
+inspection concurrency fixture refuses to delete a pre-existing fixture at
+startup and verifies cascading cleanup at normal completion. If interrupted,
+inspect its exact Workspace/name/Event first and run the dedicated cleanup SQL;
+that cleanup accepts only the exact event-not-created, Before, or After fixture
+state. It compares the full Snapshot JSONB and its matching Event revision and
+Workspace generation, and refuses unexpected membership, Master/reference, or
+backfill data with SQLSTATE `55000`. Use only a disposable database because an
+interrupted concurrency run can leave fixtures behind.
+
+After that explicit review, clean only the interrupted inspection fixture with:
+
+```powershell
+psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
+  -v ON_ERROR_STOP=1 `
+  -f supabase/tests/cloud_v2_cutover_inspection_concurrency_cleanup.sql
+```
+
+Do not run the cleanup after a successful concurrency test: success already
+removed and checked the fixture, and the cleanup intentionally fails when the
+dedicated Workspace is absent.
 
 The catalog regression command requires the complete migration chain and runs
 the repository's real migration-history preflight once for the safe baseline

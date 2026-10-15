@@ -310,10 +310,13 @@ test('operator runner is read-only, redacts raw evidence, and rejects unknown op
 })
 
 test('disposable SQL fixtures verify isolation, ACL, generation locking, and async drain', async () => {
-  const [contractSql, concurrencySql] = await Promise.all([
+  const [contractSql, concurrencySql, cleanupSql] = await Promise.all([
     readFile(new URL('../supabase/tests/cloud_v2_cutover_inspection.sql', import.meta.url), 'utf8'),
     readFile(new URL(
       '../supabase/tests/cloud_v2_cutover_inspection_concurrency.sql', import.meta.url,
+    ), 'utf8'),
+    readFile(new URL(
+      '../supabase/tests/cloud_v2_cutover_inspection_concurrency_cleanup.sql', import.meta.url,
     ), 'utf8'),
   ])
   assert.match(contractSql, /has_function_privilege\('service_role'/i)
@@ -327,7 +330,116 @@ test('disposable SQL fixtures verify isolation, ACL, generation locking, and asy
   assert.match(concurrencySql, /wait_event_type = 'Lock'/i)
   assert.equal((concurrencySql.match(/dblink_send_query/gu) ?? []).length, 2)
   assert.equal((concurrencySql.match(/dblink_get_result/gu) ?? []).length, 4)
+  assert.equal((concurrencySql.match(/statement_timeout/gu) ?? []).length, 2)
+  assert.equal((concurrencySql.match(/lock_timeout/gu) ?? []).length, 2)
+  assert.doesNotMatch(concurrencySql, /deadlock_timeout/iu)
+  assert.match(concurrencySql, /perform pg_catalog\.pg_stat_clear_snapshot\(\)/iu)
   assert.match(concurrencySql, /inspection generation FOR SHARE/i)
   assert.match(concurrencySql, /where id = '79500000-0000-4000-8000-000000000001'/i)
   assert.doesNotMatch(concurrencySql, /truncate|delete\s+from\s+auth\.users/iu)
+
+  const fixtureSetup = concurrencySql.slice(
+    0,
+    concurrencySql.indexOf('insert into public.workspaces'),
+  )
+  assert.doesNotMatch(fixtureSetup, /delete\s+from\s+public\.workspaces/iu)
+  assert.match(fixtureSetup, /Dedicated cutover inspection concurrency fixture already exists/iu)
+  assert.match(concurrencySql, /fixture cleanup was incomplete/iu)
+
+  assert.match(cleanupSql, /begin;[\s\S]*commit;/iu)
+  assert.match(cleanupSql, /name is distinct from fixture_workspace_name/iu)
+  assert.match(cleanupSql, /expected_before_snapshot := jsonb_build_object/iu)
+  assert.match(cleanupSql, /expected_after_snapshot := jsonb_set/iu)
+  for (const collection of [
+    'members',
+    'bands',
+    'eventDays',
+    'stages',
+    'sections',
+    'eventMembers',
+    'eventMemberDays',
+    'eventBands',
+    'scheduleItems',
+    'paAssignments',
+    'dutyTypes',
+    'dutyAssignments',
+    'timetableLocks',
+    'timetableOrderConstraints',
+  ]) {
+    assert.ok(cleanupSql.includes(`'${collection}', '[]'::jsonb`))
+  }
+  assert.match(cleanupSql, /fixture_event_count not in \(0, 1\)/iu)
+  assert.match(cleanupSql, /fixture_master_status is distinct from 'legacy'/iu)
+  assert.match(cleanupSql, /fixture_event_snapshot is not distinct from expected_before_snapshot/iu)
+  assert.match(cleanupSql, /fixture_event_snapshot is not distinct from expected_after_snapshot/iu)
+  assert.match(cleanupSql, /fixture_event_revision is not distinct from 1[\s\S]*fixture_generation is not distinct from 1/iu)
+  assert.match(cleanupSql, /fixture_event_revision is not distinct from 2[\s\S]*fixture_generation is not distinct from 2/iu)
+  assert.match(cleanupSql, /fixture_event_count = 0[\s\S]*fixture_generation is distinct from 0/iu)
+  assert.doesNotMatch(cleanupSql, /generation between 0 and 2/iu)
+  assert.match(cleanupSql, /refusing automatic cleanup/iu)
+  const cleanupGuard = cleanupSql.slice(
+    cleanupSql.indexOf('select count(*)'),
+    cleanupSql.indexOf('delete from public.workspaces'),
+  )
+  for (const guardedTable of [
+    'workspace_members',
+    'workspace_master_members',
+    'workspace_master_bands',
+    'workspace_master_band_members',
+    'cloud_event_member_references',
+    'cloud_event_band_references',
+    'cloud_workspace_master_backfills',
+  ]) {
+    assert.match(cleanupGuard, new RegExp(`public\\.${guardedTable}`, 'u'))
+  }
+  assert.equal(
+    (cleanupSql.match(/errcode = '55000'/giu) ?? []).length,
+    (cleanupSql.match(/raise exception/giu) ?? []).length,
+  )
+  const cleanupDeleteIndex = cleanupSql.indexOf('delete from public.workspaces')
+  assert.ok(cleanupDeleteIndex > cleanupSql.indexOf('expected_after_snapshot'))
+  assert.doesNotMatch(
+    cleanupSql.slice(0, cleanupDeleteIndex),
+    /\b(insert into|update public\.|delete from|truncate)\b/iu,
+  )
+  const postDeleteChecks = cleanupSql.slice(cleanupDeleteIndex)
+  for (const cleanedTable of [
+    'workspaces',
+    'workspace_members',
+    'cloud_events',
+    'workspace_master_members',
+    'workspace_master_bands',
+    'workspace_master_band_members',
+    'cloud_event_member_references',
+    'cloud_event_band_references',
+    'cloud_workspace_master_backfills',
+    'cloud_workspace_master_states',
+    'cloud_event_workspace_generations',
+  ]) {
+    assert.match(postDeleteChecks, new RegExp(`public\\.${cleanedTable}`, 'u'))
+  }
+  assert.doesNotMatch(cleanupSql, /truncate|delete\s+from\s+auth\.users/iu)
+})
+
+test('inspection runbook distinguishes rollback, committed concurrency cleanup, and measured limits', async () => {
+  const [runbook, setupGuide, sqlGuide] = await Promise.all([
+    readFile(new URL('../docs/cloud-v2-cutover-preflight.md', import.meta.url), 'utf8'),
+    readFile(new URL('../docs/cloud-setup.md', import.meta.url), 'utf8'),
+    readFile(new URL('../supabase/tests/README.md', import.meta.url), 'utf8'),
+  ])
+  for (const document of [runbook, setupGuide, sqlGuide]) {
+    assert.match(document, /55822/iu)
+    assert.match(document, /require_auth=scram-sha-256,md5/iu)
+    assert.match(document, /dblink_connect_u/iu)
+  }
+  assert.match(runbook, /終了code 2/iu)
+  assert.match(runbook, /終了code 0/iu)
+  assert.match(runbook, /全98/iu)
+  assert.match(runbook, /通常fixture[\s\S]*ROLLBACK/iu)
+  assert.match(runbook, /並行fixture[\s\S]*正常終了時だけ専用Workspaceを削除/iu)
+  assert.match(runbook, /Event作成前（generation 0）[\s\S]*Snapshot JSONB全体/iu)
+  assert.match(runbook, /writerがgeneration更新lockを先に取得/iu)
+  assert.match(runbook, /大規模Workspace/iu)
+  assert.match(sqlGuide, /concurrency_cleanup\.sql/iu)
+  assert.match(sqlGuide, /full Snapshot JSONB/iu)
 })

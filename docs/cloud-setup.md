@@ -117,6 +117,19 @@ history/catalog preflightを実行し、適用後にはservice-roleだけがRPC�
 catalog regressionで再確認してください。詳しい意味と使い捨てDBの手順は
 [Cloud Snapshot V2 cutover preflight](./cloud-v2-cutover-preflight.md)を参照してください。
 
+2026-10-15に新規使い捨て環境（Supabase CLI 2.120.0、PostgreSQL 17.11）で全13
+migration、通常/inspection先行concurrency SQL、Catalog regression 98実行、未backfill
+終了code 2、backfill済み終了code 0を確認しました。どちらもDB不変と
+`safeToCutover: false`を確認しています。writer先行、Master更新競合、大規模応答、
+production、writer drain、backup/restore、atomic cutoverは未検証です。
+
+Windows hostの`psql` URLとDB内から開くdblink URLは同一とは限りません。検証済み手順では
+host側を`127.0.0.1:55822`、dblink側をDockerから都度取得した同じ専用DBコンテナのIPv4と
+container port 5432へ向け、`connect_timeout=5&require_auth=scram-sha-256,md5`でpassword
+認証を必須にしました。IPを固定せず、container名・公開port・IPを照合してください。
+`dblink_connect_u`やroleへの追加権限は使いません。具体的なコマンド、通常fixtureとcommit型
+concurrency fixtureのcleanup差異、異常終了後の明示cleanupは上記runbookを参照してください。
+
 ### Snapshot V1からWorkspace Masterへのbackfill
 
 最初は必ずdry-runを実行します。URLとservice-role keyはshell環境変数だけで渡し、

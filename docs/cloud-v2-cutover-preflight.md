@@ -89,10 +89,59 @@ pnpm cloud:v2-cutover-inspect -- `
 transactionは引き続き未検証です。接続先とservice-role keyは環境変数だけで渡し、
 runner出力やrepositoryへ保存しません。
 
+### 2026-10-15の使い捨て環境での実測
+
+Supabase CLI 2.120.0、PostgreSQL 17.11、API `127.0.0.1:55821`、host側DB
+`127.0.0.1:55822`の新規専用環境へ全13 migrationをfresh適用して、通常fixture、
+inspection先行の並行fixture、Catalog regression全98実行を確認しました。API→RPC→Parser→
+Preflight→runnerも次の2ケースで確認済みです。
+
+- 未backfill: `structuralStatus: convertible`、referenceは`not-backfilled`、readinessは
+  `blocked`、`REFERENCE_INDEX_NOT_BACKFILLED`と`BACKFILL_NOT_COMPLETED`、終了code 2
+- backfill済み: Event 2、Member 2、Band 1、Band–Member 2、Event–Member 4、
+  Event–Band 2、source generation 2、result generation 7でreferenceは`consistent`、
+  readinessは`indeterminate`、Issueなし、終了code 0
+
+両方でinspection前後のデータ不変、Snapshot V1、Workspace `legacy`、
+`safeToCutover: false`、fixture削除後の残存0件を確認しました。終了code 0はこのread-only
+証拠が一致したという意味だけで、正式cutover可能、writer drain済み、backup済みを意味しません。
+
 使い捨てDBでは全13 migrationをfresh適用後、次を実行します。既存検証DBや共有DBを
 再利用しません。
 
 ```powershell
+# host側psqlは専用環境の公開portへ接続する。
+$env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL = `
+  'postgresql://postgres:<password>@127.0.0.1:55822/postgres'
+
+# dblinkはDB server自身から同じ専用DBコンテナへ接続する。IPを固定値にしない。
+$inspectionDbPort = 55822
+$dbContainers = @(
+  docker ps --filter "publish=$inspectionDbPort" --format "{{.Names}}"
+)
+if ($dbContainers.Count -ne 1) {
+  throw "Expected one disposable DB container on port $inspectionDbPort."
+}
+$dbContainer = $dbContainers[0]
+$expectedDbContainer = Read-Host 'Exact disposable Supabase DB container name'
+if ($dbContainer -ne $expectedDbContainer) {
+  throw 'The published-port container is not the explicitly confirmed disposable DB.'
+}
+$publishedPort = docker port $dbContainer 5432/tcp
+if ($publishedPort -notmatch ":$inspectionDbPort$") {
+  throw "The selected container is not the disposable DB on port $inspectionDbPort."
+}
+$dbContainerIp = docker inspect `
+  --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' `
+  $dbContainer
+if ([string]::IsNullOrWhiteSpace($dbContainerIp)) {
+  throw 'Could not resolve the disposable DB container IPv4 address.'
+}
+$dbPassword = Read-Host 'Disposable DB password' -MaskInput
+$encodedDbPassword = [uri]::EscapeDataString($dbPassword)
+$env:ACAPPELLA_TT_DISPOSABLE_DBLINK_DATABASE_URL =
+  "postgresql://postgres:${encodedDbPassword}@${dbContainerIp}:5432/postgres?connect_timeout=5&require_auth=scram-sha-256,md5"
+
 psql "$env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL" `
   -v ON_ERROR_STOP=1 `
   -f .\supabase\tests\cloud_v2_cutover_inspection.sql
@@ -107,11 +156,40 @@ node .\scripts\cloudEventMigrationCatalogRegression.mjs `
   --confirm-disposable
 ```
 
-SQL fixtureは専用UUIDだけをtransaction内で作成し、最後にROLLBACKします。並行更新時の
-lock待機は、同じ使い捨て環境でgeneration行の共有lockとEvent/Master writerの更新lockを
-別sessionから観測します。`ACAPPELLA_TT_DISPOSABLE_DBLINK_DATABASE_URL`には、DB内から
-同じ使い捨てPostgreSQLへ到達できるURLを指定してください。静的/Nodeテストだけを実DB
-成功として扱いません。
+通常fixtureは専用UUIDを1つのtransaction内で作成し、最後にROLLBACKします。並行fixtureは
+独立dblink sessionのcommitが必要であり、正常終了時だけ専用Workspaceを削除して残存0件を
+検査します。開始時に同じIDがあれば自動削除せずfail closedで停止します。固定sleepではなく
+`pg_stat_clear_snapshot()`後の`pg_stat_activity.wait_event_type = 'Lock'`をbounded pollingし、
+待機未検出時は失敗します。`deadlock_timeout`変更、`dblink_connect_u`、roleへの追加権限は
+使用しません。
+
+並行fixtureが途中失敗した場合は専用Workspaceが残り得ます。対象がこの使い捨てDBであること、
+Workspace ID `79500000-0000-4000-8000-000000000001`、名称、Event IDを確認してから、次の
+明示cleanupを実行してください。cleanupが許容するのは、Event作成前（generation 0）、既知の
+Before Snapshot（revision 1 / generation 1）、既知のAfter Snapshot（revision 2 / generation 2）
+だけです。Workspace名、legacy status、Event行、Snapshot JSONB全体、Master/reference/backfill/
+membershipの不在を照合し、専用fixture以外の内容があればSQLSTATE `55000`で削除を拒否します。
+
+```powershell
+psql "$env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL" `
+  -v ON_ERROR_STOP=1 `
+  -f .\supabase\tests\cloud_v2_cutover_inspection_concurrency_cleanup.sql
+```
+
+接続URLやpassword、service-role keyを標準出力や保存ログへ出さないでください。静的/Node
+テストだけを実DB成功として扱いません。
+
+### 今回未検証の事項
+
+- writerがgeneration更新lockを先に取得した状態からのinspection
+- 正規化Master更新とinspectionの実競合
+- 大規模Workspaceでの単一JSON応答サイズとDB/runnerメモリ負荷
+- production DBでの実行
+- 開いているtabを含む旧V1 writerの完全停止
+- backup取得とrestore rehearsal
+- atomic cutover RPCと実際のV1→V2切替
+
+これらを上記の実測成功から推測して検証済みとして扱いません。
 
 ## 将来の正式cutover手順
 

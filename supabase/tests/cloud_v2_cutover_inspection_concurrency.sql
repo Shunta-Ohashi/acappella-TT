@@ -6,12 +6,24 @@
   \quit 2
 \endif
 
--- This fixture commits remote transactions. Cleanup is restricted to one
--- dedicated Workspace ID so an interrupted disposable run is repeatable.
+-- This fixture commits remote transactions. It refuses to overwrite a prior
+-- interrupted run: inspect and explicitly clean the dedicated fixture before
+-- retrying instead of silently deleting evidence from the failed run.
 create extension if not exists dblink with schema extensions;
 
-delete from public.workspaces
-where id = '79500000-0000-4000-8000-000000000001'::uuid;
+do $$
+begin
+  if exists (
+    select 1 from public.workspaces
+    where id = '79500000-0000-4000-8000-000000000001'::uuid
+  ) then
+    raise exception using
+      errcode = '55000',
+      message = 'Dedicated cutover inspection concurrency fixture already exists',
+      hint = 'Inspect the dedicated Workspace and run the documented explicit cleanup before retrying.';
+  end if;
+end;
+$$;
 
 insert into public.workspaces (id, name) values
   ('79500000-0000-4000-8000-000000000001', 'Cutover inspection concurrency');
@@ -202,3 +214,44 @@ select extensions.dblink_disconnect('cutover_inspection_writer');
 
 delete from public.workspaces
 where id = '79500000-0000-4000-8000-000000000001'::uuid;
+
+do $$
+begin
+  if exists (
+      select 1 from public.workspaces
+      where id = '79500000-0000-4000-8000-000000000001'::uuid
+    ) or exists (
+      select 1 from public.workspace_members
+      where workspace_id = '79500000-0000-4000-8000-000000000001'::uuid
+    ) or exists (
+      select 1 from public.cloud_events
+      where workspace_id = '79500000-0000-4000-8000-000000000001'::uuid
+    ) or exists (
+      select 1 from public.workspace_master_members
+      where workspace_id = '79500000-0000-4000-8000-000000000001'::uuid
+    ) or exists (
+      select 1 from public.workspace_master_bands
+      where workspace_id = '79500000-0000-4000-8000-000000000001'::uuid
+    ) or exists (
+      select 1 from public.workspace_master_band_members
+      where workspace_id = '79500000-0000-4000-8000-000000000001'::uuid
+    ) or exists (
+      select 1 from public.cloud_event_member_references
+      where workspace_id = '79500000-0000-4000-8000-000000000001'::uuid
+    ) or exists (
+      select 1 from public.cloud_event_band_references
+      where workspace_id = '79500000-0000-4000-8000-000000000001'::uuid
+    ) or exists (
+      select 1 from public.cloud_workspace_master_backfills
+      where workspace_id = '79500000-0000-4000-8000-000000000001'::uuid
+    ) or exists (
+      select 1 from public.cloud_workspace_master_states
+      where workspace_id = '79500000-0000-4000-8000-000000000001'::uuid
+    ) or exists (
+      select 1 from public.cloud_event_workspace_generations
+      where workspace_id = '79500000-0000-4000-8000-000000000001'::uuid
+    ) then
+    raise exception 'Dedicated cutover inspection concurrency fixture cleanup was incomplete';
+  end if;
+end;
+$$;
