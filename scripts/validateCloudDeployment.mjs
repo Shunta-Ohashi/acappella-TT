@@ -2,9 +2,21 @@ import { pathToFileURL } from 'node:url'
 
 const normalize = value => typeof value === 'string' ? value.trim() : ''
 
-const isLoopbackHostname = hostname =>
-  hostname === 'localhost' || hostname.endsWith('.localhost') ||
-  hostname === '[::1]' || /^127(?:\.\d{1,3}){3}$/u.test(hostname)
+const isLoopbackHostname = (hostname) => {
+  const normalizedHostname = hostname.toLowerCase().replace(/\.+$/u, '')
+  if (
+    normalizedHostname === 'localhost' ||
+    normalizedHostname.endsWith('.localhost') ||
+    /^127(?:\.\d{1,3}){3}$/u.test(normalizedHostname)
+  ) return true
+
+  const ipv6Address = normalizedHostname.startsWith('[') &&
+      normalizedHostname.endsWith(']')
+    ? normalizedHostname.slice(1, -1)
+    : normalizedHostname
+  return ipv6Address === '::1' ||
+    /^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/u.test(ipv6Address)
+}
 
 const isServiceRoleKey = (value) => {
   if (value.startsWith('sb_secret_')) return true
@@ -23,7 +35,10 @@ export const validateCloudDeploymentEnvironment = (environment, { forceCloud = f
   const isVercelBuild = forceCloud || normalize(environment.VERCEL) === '1'
   const cloudRequired = normalize(environment.VITE_CLOUD_REQUIRED)
 
-  if (!isVercelBuild && !cloudRequired) return { cloudRequired: false }
+  if (!['', 'true', 'false'].includes(cloudRequired)) {
+    throw new Error('VITE_CLOUD_REQUIRED must be true or false.')
+  }
+  if (!isVercelBuild && cloudRequired !== 'true') return { cloudRequired: false }
   if (cloudRequired !== 'true') {
     throw new Error('Cloud deployment requires VITE_CLOUD_REQUIRED=true.')
   }

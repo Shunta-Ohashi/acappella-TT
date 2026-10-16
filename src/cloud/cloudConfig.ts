@@ -16,12 +16,21 @@ export interface CloudConfigInput {
 const normalizeEnvValue = (value: unknown): string =>
   typeof value === 'string' ? value.trim() : ''
 
-const LOOPBACK_HTTP_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]'])
+const isLoopbackHostname = (hostname: string): boolean => {
+  const normalizedHostname = hostname.toLowerCase().replace(/\.+$/u, '')
+  if (
+    normalizedHostname === 'localhost' ||
+    normalizedHostname.endsWith('.localhost') ||
+    /^127(?:\.\d{1,3}){3}$/u.test(normalizedHostname)
+  ) return true
 
-const isLoopbackHostname = (hostname: string): boolean =>
-  LOOPBACK_HTTP_HOSTNAMES.has(hostname) ||
-  hostname.endsWith('.localhost') ||
-  /^127(?:\.\d{1,3}){3}$/u.test(hostname)
+  const ipv6Address = normalizedHostname.startsWith('[') &&
+      normalizedHostname.endsWith(']')
+    ? normalizedHostname.slice(1, -1)
+    : normalizedHostname
+  return ipv6Address === '::1' ||
+    /^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/u.test(ipv6Address)
+}
 
 const isServiceRoleKey = (value: string): boolean => {
   if (value.startsWith('sb_secret_')) return true
