@@ -9,6 +9,9 @@ import {
   createCloudV2CutoverInspectionReport,
   parseCloudV2CutoverInspection,
 } from '../src/cloud/cloudV2CutoverInspection.ts'
+import {
+  createCloudV2AtomicCutoverPlan,
+} from '../src/cloud/cloudV2AtomicCutover.ts'
 import { createCloudEventSnapshot } from '../src/cloud/cloudEventSnapshot.ts'
 import {
   createCloudWorkspaceMasterBackfillFingerprint,
@@ -352,6 +355,107 @@ test('cutover inspection accepts complete evidence and keeps cutover disabled', 
   assert.equal(report.preflight.unverifiedRequirements.includes(
     'REFERENCE_INDEX_CONTENTS_NOT_OBSERVED'), false)
   assert.deepEqual(raw, before)
+})
+
+test('atomic cutover helper builds one complete V2 plan without changing inspection safety', async () => {
+  const raw = await createRawInspection({
+    events: [
+      await createSourceEvent('event-a', 'a'),
+      await createSourceEvent('event-b', 'a'),
+    ],
+  })
+  const before = clone(raw)
+  const result = await createCloudV2AtomicCutoverPlan(raw, workspaceId)
+  assert.equal(result.ok, true, JSON.stringify(result))
+  if (!result.ok) throw new Error(result.reason)
+
+  assert.equal(result.plan.version, 1)
+  assert.equal(result.plan.workspaceId, workspaceId)
+  assert.equal(result.plan.expectedGeneration, '7')
+  assert.equal(
+    result.plan.expectedBackfillPlanFingerprint,
+    raw.existing.completedBackfill.planFingerprint,
+  )
+  assert.deepEqual(result.plan.events.map(event => event.eventId), ['event-a', 'event-b'])
+  for (const plannedEvent of result.plan.events) {
+    const source = raw.events.find(event => event.eventId === plannedEvent.eventId)
+    assert.ok(source)
+    assert.equal(plannedEvent.expectedRevision, source.revision)
+    assert.equal(
+      plannedEvent.expectedSnapshotFingerprint,
+      source.snapshotFingerprint,
+    )
+    const expectedEventState = clone(source.snapshot.appState)
+    delete expectedEventState.members
+    delete expectedEventState.bands
+    assert.deepEqual(plannedEvent.snapshotV2.eventState, expectedEventState)
+    assert.equal('members' in plannedEvent.snapshotV2.eventState, false)
+    assert.equal('bands' in plannedEvent.snapshotV2.eventState, false)
+    assert.deepEqual(plannedEvent.snapshotV2.masterReferences, {
+      memberIds: ['member-a'],
+      bandIds: ['band-a'],
+    })
+  }
+  assert.deepEqual(result.summary, {
+    eventCount: 2,
+    memberCount: 1,
+    bandCount: 1,
+    eventMemberReferenceCount: 2,
+    eventBandReferenceCount: 2,
+  })
+  assert.deepEqual(raw, before)
+
+  const report = await createCloudV2CutoverInspectionReport(raw, workspaceId)
+  assert.ok(report)
+  assert.equal(report.preflight.safeToCutover, false)
+  assert.equal(report.preflight.cutoverReadiness, 'indeterminate')
+})
+
+test('atomic cutover helper rejects incomplete, non-legacy, or inconsistent evidence', async () => {
+  const empty = await createCloudV2AtomicCutoverPlan(
+    await createRawInspection({ events: [] }),
+    workspaceId,
+  )
+  assert.equal(empty.ok, true)
+  if (empty.ok) assert.deepEqual(empty.plan.events, [])
+
+  const unbackfilled = await createCloudV2AtomicCutoverPlan(
+    await createRawInspection({ backfilled: false }),
+    workspaceId,
+  )
+  assert.deepEqual(unbackfilled, { ok: false, reason: 'BACKFILL_NOT_COMPLETED' })
+
+  const ready = await createCloudV2AtomicCutoverPlan(
+    await createRawInspection({ workspaceStatus: 'ready' }),
+    workspaceId,
+  )
+  assert.deepEqual(ready, { ok: false, reason: 'WORKSPACE_NOT_LEGACY' })
+
+  const conflict = await createCloudV2AtomicCutoverPlan(
+    await createRawInspection({ workspaceStatus: 'conflict' }),
+    workspaceId,
+  )
+  assert.deepEqual(conflict, { ok: false, reason: 'WORKSPACE_NOT_LEGACY' })
+
+  const partialReference = await createRawInspection()
+  partialReference.relations.eventMemberReferences = []
+  partialReference.existing.eventMemberReferences = 0
+  partialReference.counts.eventMemberReferences = 0
+  const inconsistent = await createCloudV2AtomicCutoverPlan(
+    partialReference,
+    workspaceId,
+  )
+  assert.deepEqual(inconsistent, {
+    ok: false,
+    reason: 'EVIDENCE_NOT_CONSISTENT',
+  })
+
+  const changedSnapshot = await createRawInspection()
+  changedSnapshot.events[0].snapshot.appState.sections[0].name = 'stale body'
+  assert.deepEqual(
+    await createCloudV2AtomicCutoverPlan(changedSnapshot, workspaceId),
+    { ok: false, reason: 'INVALID_INSPECTION' },
+  )
 })
 
 test('cutover inspection distinguishes an unbackfilled Workspace', async () => {

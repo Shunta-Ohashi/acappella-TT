@@ -12,10 +12,12 @@
 - envなしのlocal開発は従来どおりlocal-only modeを利用できる
 - VercelではCloud設定が欠けたbuildを失敗させ、local-only公開を防ぐ
 
-repositoryには13 migrationがあります。`20261014100000_cloud_v2_cutover_inspection.sql`
-までを順番に適用します。別ブランチのAtomic Cutover migrationは取り込みません。
-9〜13番目は将来のV2基盤を追加しますが、既存Workspaceを`ready`へ変更せず、現行Appの
-V1保存・hydrateを切り替えません。
+2026年10月16日時点のrepositoryには14 migrationがあります。新しい空のSupabaseテスト
+Projectには、`20261015100000_cloud_v2_atomic_cutover.sql`までをversion順に適用します。
+9〜14番目は将来のV2基盤を追加しますが、migration適用だけではWorkspace Masterの
+backfill、Atomic Cutover、`ready`切替を実行せず、現行AppのV1保存・hydrateも切り替え
+ません。今回の公開手順ではbackfillや`cutover_cloud_v2_validated()`を実行せず、Appの
+V2 hydrate/saveも有効化しません。
 
 ## 2. 事前準備
 
@@ -65,19 +67,24 @@ supabase login
 supabase link --project-ref '<PROJECT_REF>'
 supabase migration list --linked
 supabase db push --linked --dry-run
-# dry-runがrepositoryの13 migrationだけを提示することを目視確認する
+# dry-runがrepositoryの全14 migrationをversion順に提示することを目視確認する
 supabase db push --linked
 supabase migration list --linked
 ```
 
-適用後はremote側に13 versionが順番どおり存在し、未適用・未知versionがないことを確認
+適用後はremote側に14 versionが順番どおり存在し、未適用・未知versionがないことを確認
 します。migrationが失敗した場合は公開へ進まず、schema catalogと
 `supabase_migrations.schema_migrations`を確認します。既存migrationを手動再実行したり、
 履歴だけを成功扱いにしたりしません。履歴不一致の調査方法は
 [migration history repair runbook](./cloud-event-migration-history-repair.md)を使用します。
 
+14番目はbackend-onlyのAtomic Cutover基盤を追加するだけです。適用してもbackfill、
+Snapshot V1行のV2変換、Workspaceの`ready`切替は自動実行されません。この公開手順では
+backfill RPCや`cutover_cloud_v2_validated()`を呼び出さず、現行Snapshot V1アプリを
+そのまま配備します。
+
 Catalog regressionは一時的なcatalog変更をtransaction内で行うため、共有オンラインProject
-では実行しません。必要なら同じ13 migrationを適用した別の使い捨てDBで実行します。
+では実行しません。必要なら同じ14 migrationを適用した別の使い捨てDBで実行します。
 
 ## 4. V1 Edge Function
 
@@ -188,5 +195,5 @@ path-based routerはなく、通常画面も共有画面も同じ静的`index.ht
 
 この構成は静的Vite frontendとSupabaseを分離しているため、後続で観客向け公開route、
 認証済みoperator、Stage単位のCAS、Realtime通知＋再取得を追加できます。ただし今回の
-13 migrationにはLive進行状態tableも権限もありません。Cloud Event V1をLive進行状態の
+14 migrationにはLive進行状態tableも権限もありません。Cloud Event V1をLive進行状態の
 保存先として流用せず、Liveデータ・認可・公開read契約は次PRで別設計にします。

@@ -1,9 +1,10 @@
 # Cloud Snapshot V2 cutover preflight
 
 この文書は、Snapshot V1をWorkspace共通Master＋Snapshot V2へ正式移行する前の
-**read-only検証基盤**と、将来の運用手順を定義します。現時点ではread-only inspection
-runnerはありますが、cutoverを実行するrunner、ready切替RPC、Event一括変換RPCは
-ありません。Preflightの成功や
+**read-only検証基盤**と、将来の運用手順を定義します。read-only inspection runnerに加え、
+検証済みinspectionからversioned planを構築するPure helperと、Workspace全体を1 transaction
+で変換するbackend-only RPCは実装済みです。ただし、cutoverを実行するproduction runnerや
+Appからの呼出経路はありません。Preflightの成功や
 `structuralStatus: "convertible"`を、本番cutoverの実行許可として扱ってはいけません。
 
 ## 現在の実装境界
@@ -57,8 +58,8 @@ read-only結果を`ready`へ昇格させる経路はありません。
 | 正規化Master本体 | read-onlyで検証可能 | 同一generationのMember/Band本体、revision、順序付きrelationを比較 |
 | 旧client/V1 writerの停止とdrain | 人間による運用確認が必要 | DB readだけでは開いているtabや配備済みclientを証明できない |
 | バックアップ・maintenance window | 人間による運用確認が必要 | 実施記録・restore rehearsalが必要 |
-| Cutoverの原子性・競合検知 | 最終DB transactionが必要 | status/generation/Event revision/fingerprintをlock下で再検証する契約が未実装 |
-| rollback・復旧 | 運用手順とDB契約が必要 | cutover前backupと、全変更を一括rollbackできるtransactionが必要 |
+| Cutoverの原子性・競合検知 | DB契約を実装済み、実環境確認が必要 | backend-only RPCがstatus/generation/全Event revision・fingerprint・Master/reference/backfillをlock下で再検証する |
+| rollback・復旧 | transaction rollbackをfixture化、運用復旧は未検証 | commit前は全変更を一括rollback。commit後は事前backupとrestore rehearsalが必要 |
 
 `unverifiedRequirements`に残る項目を、警告を無視して成功へ変換してはいけません。
 旧source RPCのreference件数だけでは組合せを証明しません。新inspection RPCの厳密な
@@ -70,6 +71,71 @@ Snapshot fingerprintは認証ではなく、同じRPC応答内のSnapshot本体�
 PostgreSQL `jsonb::text`のキー順・空白・escape規則を再現できる、Snapshot parserが許可した
 安全な整数を含むJSONだけを照合します。小数など元のPostgreSQL numeric表記をJavaScript値から
 復元できない入力は推測せずinspection全体を拒否します。
+
+## Atomic cutover backend（実行経路は未公開）
+
+`createCloudV2AtomicCutoverPlan()`は完全なinspection JSONとWorkspace IDを受け取り、既存の
+非同期fingerprint parser、Preflight、Backfill planner、V2 serializerを再利用します。legacy、
+completed backfill、正規化Master、Reference Index、構造変換がすべて一致した場合だけ、全Eventの
+`eventId`、`expectedRevision`、`expectedSnapshotFingerprint`、`snapshotV2`を含むversion 1 planを
+返します。これはDB入力の構築であって運用許可ではなく、Preflightの`safeToCutover: false`は変更
+しません。
+
+`20261015100000_cloud_v2_atomic_cutover.sql`は次のservice-role限定関数を追加します。
+
+```sql
+public.cutover_cloud_v2_validated(
+  p_workspace_id uuid,
+  p_expected_generation text,
+  p_expected_backfill_plan_fingerprint text,
+  p_plan jsonb
+) returns jsonb
+```
+
+入力planは`version`、Workspace/generation/backfill fingerprint、全Event候補だけを許可します。
+欠落・余分なkey、SQL/JSON null、重複Event、空ID、不正型、PostgreSQL signed bigint範囲外を
+`22023`で拒否します。Snapshot fingerprintは各lock済みV1 rowの
+`digest(event_snapshot::text, 'sha256')`から再計算します。completed backfillのplan fingerprintは
+Snapshot digestと別物として記録値へ照合し、さらに6件数、Master本体、Band member順序、
+Event–Master relationを現在のlock済み行から再検証します。
+
+ロック順序は対象Workspaceだけに限定します。
+
+1. `workspaces`親行 `FOR UPDATE`（新規Event/membership等のFK child INSERTを停止）
+2. `cloud_workspace_master_states` `FOR SHARE`
+3. 全`cloud_events`をEvent IDのC順で`FOR UPDATE`
+4. generation row `FOR UPDATE`
+5. completed backfill、Member、Band、Band–Member、Event referenceを決定順で`FOR SHARE`
+6. V1から独立照合した全V2候補を更新
+7. status rowを`FOR UPDATE NOWAIT`へ昇格し、全EventがV2であることを確認後に`ready`へ更新
+
+親行lock取得前に開始したwriterは完了を待ってからCASを再検証し、取得後の新規FK child INSERTは
+transaction終了まで待ちます。V1 INSERT guardはBEFORE triggerがFK検査より先に動く点を考慮し、
+INSERT時だけ親Workspaceを`FOR KEY SHARE`してからstatusを検査します。したがってcutover後に
+再開した旧INSERTはreadyを再評価して拒否されます。既存Event writerはEvent row lockで直列化
+されます。status SHAREを
+保持したbackfill/writerがEvent lock待ちになった場合、最後の`NOWAIT`昇格は`55P03`で全cutoverを
+rollbackし、lock upgrade deadlockを避けます。advisory lockは本番排他には使用しません。
+
+主なSQLSTATEは次のとおりです。
+
+- `22023`: plan/型/range不正
+- `42501`: browser roleのEXECUTE拒否
+- `P0002`: Workspace不在
+- `40001`: generation、Event集合、revision、Snapshot fingerprintのstale CAS
+- `55000`: status、backfill、Master、relation、V1/V2構造の不整合
+- `55P03`: 競合中のstatus lockを安全に即時拒否
+
+成功responseは`status`、Workspace ID、source/result generation、Event件数、変換件数、
+Event ID/revisionだけで、Snapshot本文やMaster名を含みません。各Event UPDATEは既存triggerにより
+revisionとgenerationを進め、最後のstatus UPDATEも既存generation triggerを使用します。増分を
+RPC内で固定値として代入しません。completed backfill記録は当時のbackfill証拠として変更せず、
+cutover後の現在generationへ書き換えません。
+
+すでに`ready`のWorkspaceは成功扱いせず`55000`です。通信切断でcommit成否が不明な場合は、
+同じplanを盲目的に再実行せず、inspection/read APIでstatus、全Event version/revision、result
+generationを再取得します。commit前のSQL例外はtransaction全体がrollbackされますが、commit後の
+不整合は自動V2→V1変換ではなく事前backupからの復旧対象です。
 
 ## Read-only operator runner
 
@@ -217,6 +283,45 @@ psql "$env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL" `
 接続URLやpassword、service-role keyを標準出力や保存ログへ出さないでください。静的/Node
 テストだけを実DB成功として扱いません。
 
+### Atomic cutover migrationの新規使い捨てDB検証
+
+14番目のmigrationは既存の55822 inspection環境へ手動適用せず、空いているhost portを確認して
+新しいSupabase環境を作り、全14 migrationをfresh適用します。以下の`<new-db-port>`とdblink
+URLは、その新環境だけを指すことをcontainer名・公開portで二重確認してください。既存環境の
+停止、volume削除、`db reset`は行いません。
+
+```powershell
+$env:ACAPPELLA_TT_ATOMIC_CUTOVER_TEST_DATABASE_URL = `
+  'postgresql://postgres:<password>@127.0.0.1:<new-db-port>/postgres'
+$env:ACAPPELLA_TT_ATOMIC_CUTOVER_DBLINK_DATABASE_URL = `
+  'postgresql://postgres:<password>@<confirmed-new-db-container-ip>:5432/postgres?connect_timeout=5'
+
+# 新規environmentへ全14 migrationをfresh適用した後に実行する。
+psql "$env:ACAPPELLA_TT_ATOMIC_CUTOVER_TEST_DATABASE_URL" `
+  -v ON_ERROR_STOP=1 `
+  -f .\supabase\tests\cloud_v2_atomic_cutover.sql
+
+psql "$env:ACAPPELLA_TT_ATOMIC_CUTOVER_TEST_DATABASE_URL" `
+  -v ON_ERROR_STOP=1 `
+  -v "test_db_url=$env:ACAPPELLA_TT_ATOMIC_CUTOVER_DBLINK_DATABASE_URL" `
+  -f .\supabase\tests\cloud_v2_atomic_cutover_concurrency.sql
+
+node .\scripts\cloudEventMigrationCatalogRegression.mjs `
+  --db-url-env ACAPPELLA_TT_ATOMIC_CUTOVER_TEST_DATABASE_URL `
+  --confirm-disposable
+```
+
+通常fixtureは1 transaction内で、単一/複数Event、共有Master、stale CAS、全Event集合、
+backfill fingerprint、権限、旧V1 writer拒否、他Workspace不変を検査してROLLBACKします。
+test-only triggerが2件目のEvent更新で例外を発生させ、1件目のSnapshot/revision/generationも
+元へ戻ることを確認します。並行fixtureは実RPCを呼び、writer先行、cutover先行、二重cutoverを
+`pg_stat_activity.wait_event_type = 'Lock'`のbounded pollingで観測します。test-only advisory
+gateは実RPCが本番lockと全検証を取得した後の同期点にだけ使用し、排他契約の代用にはしません。
+cutover先行では既存V1 UPDATEに加えて新規V1 INSERTも実際に待機させ、ready commit後の拒否を
+確認します。正常終了時に固定3 Workspaceと関連11 tableの残存0件を確認します。開始時に固定IDまたは同期
+functionが残っていれば自動削除せず停止するため、対象が専用使い捨てDBであることと全fixture内容
+を確認してから、その環境自体を破棄して作り直してください。
+
 ### 今回未検証の事項
 
 - writerがgeneration更新lockを先に取得した状態からのinspection
@@ -229,9 +334,10 @@ psql "$env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL" `
 
 これらを上記の実測成功から推測して検証済みとして扱いません。
 
-## 将来の正式cutover手順
+## 将来の正式cutover運用手順
 
-以下は将来実装する手順であり、現在実行可能なrunbookではありません。
+backend transactionは実装済みですが、以下はmaintenance、backup、writer drain、production
+runner、App切替まで含む将来手順であり、現在実行可能なproduction runbookではありません。
 
 1. migration history/catalog preflightを通し、対象環境と適用済みversionを確認する
 2. Workspace単位の復元可能なバックアップを取得し、restore手順を確認する
@@ -262,15 +368,14 @@ V1 writerが残ったままreadyへ切り替えてはいけません。既存bac
 - commit後の事後検証失敗に備え、事前backupからWorkspace単位で復旧する手順を用意する
 - Snapshot JSONやmigration historyを手作業で部分修正しない
 
-## 次のPRで必要なDB/API契約
+## 次のPR以降に必要な運用/API接続
 
-現行read契約だけでは正式cutoverを安全に完了できません。少なくとも次が必要です。
+Atomic DB契約だけでは正式cutoverを安全に完了できません。少なくとも次が必要です。
 
-- backend-onlyのatomic cutover RPC: 上記証拠をlock下で再検証し、全V1→V2変換、
-  reference更新、ready切替を同一transactionで実行する
-- expected generation、Event revision/fingerprint集合、plan fingerprintを必須CAS入力にする
-- dry-run/read-only routeとapply routeを分離し、applyをservice-role限定にする
-- 失敗時に部分commitを残さず、成功後の検証に必要なresult generationと件数だけを返す
+- production operator runnerまたは管理APIを、read-only inspectionと明確に分離して設計する
+- maintenance/backup/V1 writer drainの人手証拠を確認してからだけbackend RPCを呼ぶ
+- commit成否不明時とcommit後検証用のread-only確認手順を自動化する
+- Appのhydrate/saveをV2へ切り替え、同一generationのEvent＋Master読取を接続する
 
 新しいRPC/migrationを追加する際は、migration history preflight、catalog regression、
 ACL/inherited privilege検査、使い捨てDBでの競合・rollbackテストも同じPRで更新します。
