@@ -20,6 +20,7 @@ import {
 } from '../src/cloud/postgresJsonbFingerprint.ts'
 import {
   sanitizePsqlDiagnostic,
+  validateDatabaseUrl as validateCleanupConcurrencyDatabaseUrl,
 } from '../scripts/cloudV2CutoverInspectionCleanupConcurrency.mjs'
 import {
   validateDatabaseUrl as validateBackfillIntegrationDatabaseUrl,
@@ -33,6 +34,10 @@ const inspectionRunnerPath = fileURLToPath(new URL(
 ))
 const backfillIntegrationRunnerPath = fileURLToPath(new URL(
   '../scripts/cloudV2CutoverInspectionBackfillIntegration.mjs',
+  import.meta.url,
+))
+const cleanupConcurrencyRunnerPath = fileURLToPath(new URL(
+  '../scripts/cloudV2CutoverInspectionCleanupConcurrency.mjs',
   import.meta.url,
 ))
 
@@ -90,6 +95,35 @@ const runBackfillIntegrationCli = (args, environment) => new Promise((resolve, r
   const timeout = setTimeout(() => {
     child.kill()
     reject(new Error('Backfill integration CLI test timed out.'))
+  }, 10_000)
+  child.once('error', error => {
+    clearTimeout(timeout)
+    reject(error)
+  })
+  child.once('close', code => {
+    clearTimeout(timeout)
+    resolve({ code, stdout, stderr })
+  })
+})
+
+const runCleanupConcurrencyCli = (args, environment) => new Promise((resolve, reject) => {
+  const child = spawn(process.execPath, [
+    cleanupConcurrencyRunnerPath,
+    ...args,
+  ], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
+    env: { ...process.env, ...environment },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let stdout = ''
+  let stderr = ''
+  child.stdout.setEncoding('utf8')
+  child.stderr.setEncoding('utf8')
+  child.stdout.on('data', chunk => { stdout += chunk })
+  child.stderr.on('data', chunk => { stderr += chunk })
+  const timeout = setTimeout(() => {
+    child.kill()
+    reject(new Error('Cleanup concurrency CLI test timed out.'))
   }, 10_000)
   child.once('error', error => {
     clearTimeout(timeout)
@@ -513,6 +547,32 @@ test('all completed backfill counts independently block otherwise consistent evi
   }
 })
 
+test('operator runner exits 2 for every inconsistent completed backfill count', async () => {
+  const countKeys = [
+    'eventCount',
+    'memberCount',
+    'bandCount',
+    'bandMemberRelationCount',
+    'eventMemberReferenceCount',
+    'eventBandReferenceCount',
+  ]
+  for (const key of countKeys) {
+    const raw = await createRawInspection()
+    raw.existing.completedBackfill[key] += 1
+    const result = await withInspectionServer(raw, url => runInspectionCli([
+      '--workspace-id', workspaceId,
+    ], {
+      ACAPPELLA_TT_CUTOVER_INSPECTION_SUPABASE_URL: url,
+    }))
+
+    assert.equal(result.code, 2, `${key}: ${result.stderr}`)
+    assert.match(result.stdout, /"cutoverReadiness": "blocked"/u, key)
+    assert.match(result.stdout, /"code": "BACKFILL_STATE_INCONSISTENT"/u, key)
+    assert.match(result.stdout, /"status": "consistent"/u, key)
+    assert.match(result.stdout, /"safeToCutover": false/u, key)
+  }
+})
+
 test('completed backfill record presence and count contradictions stay blocked', async () => {
   const fixtures = []
   for (const completedBackfills of [0, 2]) {
@@ -846,6 +906,45 @@ test('backfill integration database URL rejects overrides, fragments, and malfor
     assert.equal(caught.message.includes(url), false)
     assert.equal(caught.cause, undefined)
   }
+})
+
+test('cleanup concurrency database URL is restricted before psql starts', async () => {
+  for (const url of [
+    'postgresql://postgres:secret@127.0.0.1:55822/postgres',
+    'postgres://postgres:secret@localhost:55822/postgres?connect_timeout=10',
+  ]) assert.doesNotThrow(() => validateCleanupConcurrencyDatabaseUrl(url), url)
+
+  for (const [url, pattern] of [
+    ['postgresql://postgres:secret@127.0.0.1:54322/postgres', /port 55822/u],
+    ['postgresql://postgres:secret@127.0.0.1:55822/other', /postgres database/u],
+    ['postgresql://postgres:secret@127.0.0.1:55822/postgres?host=elsewhere', /unsupported/u],
+    ['postgresql://postgres:secret@127.0.0.1:55822/postgres?hostaddr=127.0.0.2', /unsupported/u],
+    ['postgresql://postgres:secret@127.0.0.1:55822/postgres?port=5432', /unsupported/u],
+    ['postgresql://postgres:secret@127.0.0.1:55822/postgres?dbname=other', /unsupported/u],
+    ['postgresql://postgres:secret@127.0.0.1:55822/postgres?service=other', /unsupported/u],
+    ['postgresql://postgres:secret@127.0.0.1:55822/postgres?options=-cstatement_timeout%3D0', /unsupported/u],
+    ['postgresql://postgres:secret@127.0.0.1:55822/postgres?connect_timeout=0', /1 through 30/u],
+    ['postgresql://postgres:secret@127.0.0.1:55822/postgres?connect_timeout=31', /1 through 30/u],
+    ['postgresql://postgres:secret@127.0.0.1:55822/postgres?connect_timeout=5&connect_timeout=6', /duplicate/u],
+    ['postgresql://postgres:secret@127.0.0.1:55822/postgres#other', /fragment/u],
+    ['postgresql://postgres:secret@127.0.0.1:55822/postgres#', /fragment/u],
+    ['postgresql://postgres:secret@127.0.0.1:55822/post%ZZgres', /percent-encoding/u],
+    ['postgresql://postgres:secret%ZZ@127.0.0.1:55822/postgres', /percent-encoding/u],
+    ['postgresql://postgres:secret@127.0.0.1:55822/postgres?connect_timeout=%ZZ', /percent-encoding/u],
+  ]) assert.throws(() => validateCleanupConcurrencyDatabaseUrl(url), pattern, url)
+
+  const password = 'cleanup-url-password-must-not-leak'
+  const rejected = await runCleanupConcurrencyCli([
+    '--db-url-env', 'ACAPPELLA_TT_CLEANUP_TEST_URL',
+    '--confirm-disposable',
+  ], {
+    ACAPPELLA_TT_CLEANUP_TEST_URL:
+      `postgresql://postgres:${password}@127.0.0.1:55822/postgres?host=elsewhere`,
+  })
+  assert.equal(rejected.code, 1)
+  assert.match(rejected.stderr, /unsupported query parameter/u)
+  assert.doesNotMatch(rejected.stderr, new RegExp(password, 'u'))
+  assert.doesNotMatch(rejected.stderr, /psql could not be started/u)
 })
 
 test('disposable SQL fixtures verify isolation, ACL, generation locking, and async drain', async () => {

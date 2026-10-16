@@ -5,6 +5,8 @@ const workspaceId = '79500000-0000-4000-8000-000000000001'
 const authUserId = '00000000-0000-4000-8000-000000000075'
 const authEmail = 'cloud-v2-cleanup-race@example.invalid'
 const cleanupGateKey = '7950000075000001'
+const expectedDatabasePort = '55822'
+const allowedDatabaseUrlParameter = 'connect_timeout'
 const processTimeoutMs = 30_000
 const pollLimit = 200
 const diagnosticBufferLimit = 16_000
@@ -73,7 +75,7 @@ const parseArguments = rawArguments => {
       dbUrlEnv = value
       continue
     }
-    throw new Error(`Unknown argument: ${argument}`)
+    throw new Error('Unknown command-line argument.')
   }
   ensure(confirmDisposable && dbUrlEnv, (
     'A disposable --db-url-env and --confirm-disposable are required.'
@@ -81,7 +83,15 @@ const parseArguments = rawArguments => {
   return { dbUrlEnv }
 }
 
-const validateDatabaseUrl = value => {
+const decodeUrlComponent = value => {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    throw new Error('The disposable PostgreSQL URL contains invalid percent-encoding.')
+  }
+}
+
+export const validateDatabaseUrl = value => {
   let url
   try {
     url = new URL(value)
@@ -96,6 +106,39 @@ const validateDatabaseUrl = value => {
     ['localhost', '127.0.0.1', '[::1]', '::1'].includes(url.hostname.toLowerCase()),
     'The cleanup concurrency runner accepts loopback databases only.',
   )
+  ensure(
+    url.port === expectedDatabasePort,
+    `The cleanup concurrency runner only accepts the disposable port ${expectedDatabasePort}.`,
+  )
+  ensure(
+    decodeUrlComponent(url.pathname) === '/postgres',
+    'The cleanup concurrency runner only accepts the disposable postgres database.',
+  )
+  ensure(
+    url.hash === '' && !value.includes('#'),
+    'The disposable PostgreSQL URL must not contain a fragment.',
+  )
+
+  decodeUrlComponent(url.username)
+  decodeUrlComponent(url.password)
+  if (url.search) decodeUrlComponent(url.search.slice(1))
+
+  const queryEntries = [...url.searchParams.entries()]
+  ensure(
+    queryEntries.every(([name]) => name === allowedDatabaseUrlParameter),
+    'The disposable PostgreSQL URL contains an unsupported query parameter.',
+  )
+  const timeoutValues = url.searchParams.getAll(allowedDatabaseUrlParameter)
+  ensure(
+    timeoutValues.length <= 1,
+    'The disposable PostgreSQL URL contains duplicate connect_timeout parameters.',
+  )
+  if (timeoutValues.length === 1) {
+    ensure(
+      /^(?:[1-9]|[12][0-9]|30)$/u.test(timeoutValues[0]),
+      'connect_timeout must be an integer from 1 through 30 seconds.',
+    )
+  }
 }
 
 const psqlBaseArguments = databaseUrl => [
@@ -524,14 +567,18 @@ const run = async databaseUrl => {
 }
 
 const main = async () => {
+  let activeDatabaseUrl
   try {
     const { dbUrlEnv } = parseArguments(process.argv.slice(2))
-    const databaseUrl = process.env[dbUrlEnv]?.trim()
-    ensure(databaseUrl, `Environment variable ${dbUrlEnv} is required.`)
-    validateDatabaseUrl(databaseUrl)
-    await run(databaseUrl)
+    activeDatabaseUrl = process.env[dbUrlEnv]?.trim()
+    ensure(activeDatabaseUrl, 'The database URL environment variable is required.')
+    validateDatabaseUrl(activeDatabaseUrl)
+    await run(activeDatabaseUrl)
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : 'Cleanup concurrency test failed.'}\n`)
+    const message = error instanceof Error
+      ? sanitizePsqlDiagnostic(error.message, activeDatabaseUrl ?? '')
+      : 'Cleanup concurrency test failed.'
+    process.stderr.write(`${message}\n`)
     process.exitCode = 1
   }
 }
