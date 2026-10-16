@@ -4042,7 +4042,7 @@ test('migration実ファイルはAuth→Cloud Event→RPC/権限変更の依存�
   ))).filter(name => name.endsWith('.sql')).sort()
   const versions = migrations.map(name => name.split('_', 1)[0])
 
-  assert.equal(migrations.length, 12)
+  assert.equal(migrations.length, 13)
   assert.equal(new Set(versions).size, versions.length)
   assert.ok(migrations.indexOf('20261007_auth_workspace.sql') <
     migrations.indexOf('20261008110000_cloud_event_persistence.sql'))
@@ -4062,6 +4062,8 @@ test('migration実ファイルはAuth→Cloud Event→RPC/権限変更の依存�
     migrations.indexOf('20261013100000_cloud_workspace_master_backfill.sql'))
   assert.ok(migrations.indexOf('20261013100000_cloud_workspace_master_backfill.sql') <
     migrations.indexOf('20261013110000_cloud_event_v2_persistence_foundation.sql'))
+  assert.ok(migrations.indexOf('20261013110000_cloud_event_v2_persistence_foundation.sql') <
+    migrations.indexOf('20261014100000_cloud_v2_cutover_inspection.sql'))
   assert.equal(migrations.includes('20261007120000_cloud_event_persistence.sql'), false)
 
   for (const migration of migrations) {
@@ -4593,7 +4595,10 @@ test('実DB regression scriptは実role・RLS・RPC・2接続のlock順序を検
   assert.match(instructions, /psql/i)
   assert.match(instructions, /cloud_event_authorized_page_concurrency\.sql/i)
   assert.match(instructions, /ACAPPELLA_TT_DBLINK_DATABASE_URL/)
-  assert.match(instructions, /host\.docker\.internal:54322/)
+  assert.match(instructions, /127\.0\.0\.1:55822/)
+  assert.match(instructions, /docker inspect/i)
+  assert.match(instructions, /require_auth=scram-sha-256,md5/i)
+  assert.doesNotMatch(instructions, /172\.21\.0\.2/)
   assert.match(masterFoundationSql, /^\\set ON_ERROR_STOP on/m)
   assert.match(masterFoundationSql, /^begin;[\s\S]*rollback;$/m)
   assert.match(masterFoundationSql,

@@ -413,6 +413,16 @@ workspace_master_backfill_apply_function as (
     'public.backfill_workspace_masters_validated(uuid,text,text,jsonb,boolean)'
   )
 ),
+cloud_v2_cutover_inspection_function as (
+  select pg_proc.oid, pg_proc.proacl, pg_proc.proowner, pg_proc.prosecdef,
+    pg_proc.prosrc, pg_proc.proconfig, pg_proc.provolatile,
+    pg_proc.prorettype, pg_proc.pronargs, pg_language.lanname
+  from pg_catalog.pg_proc
+  join pg_catalog.pg_language on pg_language.oid = pg_proc.prolang
+  where pg_proc.oid = to_regprocedure(
+    'public.inspect_cloud_v2_cutover_state(uuid)'
+  )
+),
 constraint_definitions as (
   select
     pg_constraint.contype,
@@ -2126,6 +2136,58 @@ later_schema as (
         'EXECUTE'
       ) from service_role
         cross join workspace_master_backfill_apply_function), false),
+    'cloudV2CutoverInspectionContract',
+      (select count(*) = 1 and bool_and(
+          prosecdef
+          and provolatile = 'v'
+          and prorettype = 'jsonb'::regtype
+          and pronargs = 1
+          and lanname = 'plpgsql'
+          and array_to_string(proconfig, ',') in ('search_path=""', 'search_path=')
+          and lower(prosrc) like '%cloud_workspace_master_states%for share%'
+          and lower(prosrc) like '%cloud_event_workspace_generations%for share%'
+          and lower(prosrc) like '%from public.cloud_events%'
+          and lower(prosrc) like '%from public.workspace_master_members%'
+          and lower(prosrc) like '%from public.workspace_master_bands%'
+          and lower(prosrc) like '%from public.workspace_master_band_members%'
+          and lower(prosrc) like '%from public.cloud_event_member_references%'
+          and lower(prosrc) like '%from public.cloud_event_band_references%'
+          and lower(prosrc) like '%from public.cloud_workspace_master_backfills%'
+          and lower(prosrc) not like '%insert into%'
+          and lower(prosrc) not like '%update public.%'
+          and lower(prosrc) not like '%delete from%'
+          and lower(prosrc) not like '%truncate%'
+        ) from cloud_v2_cutover_inspection_function)
+      and (select count(*) = 1 from authenticated_role)
+      and (select count(*) = 1 from anon_role)
+      and (select count(*) = 1 from service_role)
+      and coalesce((select has_function_privilege(
+        service_role.oid,
+        cloud_v2_cutover_inspection_function.oid,
+        'EXECUTE'
+      ) from service_role cross join cloud_v2_cutover_inspection_function), false)
+      and not coalesce((select has_function_privilege(
+        authenticated_role.oid,
+        cloud_v2_cutover_inspection_function.oid,
+        'EXECUTE'
+      ) from authenticated_role cross join cloud_v2_cutover_inspection_function), false)
+      and not coalesce((select has_function_privilege(
+        anon_role.oid,
+        cloud_v2_cutover_inspection_function.oid,
+        'EXECUTE'
+      ) from anon_role cross join cloud_v2_cutover_inspection_function), false)
+      and not exists (
+        select 1
+        from cloud_v2_cutover_inspection_function
+        cross join lateral pg_catalog.aclexplode(coalesce(
+          cloud_v2_cutover_inspection_function.proacl,
+          pg_catalog.acldefault(
+            'f', cloud_v2_cutover_inspection_function.proowner
+          )
+        )) as function_acl
+        where function_acl.grantee = 0
+          and function_acl.privilege_type = 'EXECUTE'
+      ),
     'cloudEventV2PersistenceContract',
       (select count(*) = 1 and bool_and(
           cloud_event_v2_save_function.prosecdef
