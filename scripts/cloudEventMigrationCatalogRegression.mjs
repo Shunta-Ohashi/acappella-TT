@@ -140,6 +140,14 @@ const scenarios = [
     !result.laterSchema.cloudV2CutoverInspectionContract],
   ['cloud_v2_cutover_inspection_authenticated_inherited_execute', result =>
     !result.laterSchema.cloudV2CutoverInspectionContract],
+  ['cloud_v2_atomic_cutover_missing', result =>
+    !result.laterSchema.cloudV2AtomicCutoverContract],
+  ['cloud_v2_atomic_cutover_v1_insert_guard_missing_parent_lock', result =>
+    !result.laterSchema.cloudV2AtomicCutoverContract],
+  ['cloud_v2_atomic_cutover_authenticated_execute', result =>
+    !result.laterSchema.cloudV2AtomicCutoverContract],
+  ['cloud_v2_atomic_cutover_authenticated_inherited_execute', result =>
+    !result.laterSchema.cloudV2AtomicCutoverContract],
   ['profiles_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_type', result => !result.authWorkspaceChecks.profilesColumns],
@@ -258,7 +266,8 @@ const main = async () => {
       !baseline.laterSchema.workspaceMasterContractPrivileges ||
       !baseline.laterSchema.workspaceMasterBackfillContract ||
       !baseline.laterSchema.cloudEventV2PersistenceContract ||
-      !baseline.laterSchema.cloudV2CutoverInspectionContract
+      !baseline.laterSchema.cloudV2CutoverInspectionContract ||
+      !baseline.laterSchema.cloudV2AtomicCutoverContract
     ) {
       throw new Error('baseline: expected known safe catalog')
     }

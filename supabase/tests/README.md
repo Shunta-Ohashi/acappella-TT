@@ -25,6 +25,7 @@ They create rows in `auth.users` and require an administrator connection.
    - `20261013100000_cloud_workspace_master_backfill.sql`
    - `20261013110000_cloud_event_v2_persistence_foundation.sql`
    - `20261014100000_cloud_v2_cutover_inspection.sql`
+   - `20261015100000_cloud_v2_atomic_cutover.sql`
 
    These names are ordered both by their migration version prefixes and by
    ordinary filename sorting; do not infer that every external migration tool
@@ -78,6 +79,11 @@ psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
 psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
   -v "test_db_url=$env:ACAPPELLA_TT_DBLINK_DATABASE_URL" `
   -f supabase/tests/cloud_v2_cutover_inspection_concurrency.sql
+psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
+  -f supabase/tests/cloud_v2_atomic_cutover.sql
+psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
+  -v "test_db_url=$env:ACAPPELLA_TT_DBLINK_DATABASE_URL" `
+  -f supabase/tests/cloud_v2_atomic_cutover_concurrency.sql
 pnpm test:cloud-v2-cutover-cleanup-concurrency -- `
   --db-url-env ACAPPELLA_TT_TEST_DATABASE_URL `
   --confirm-disposable
