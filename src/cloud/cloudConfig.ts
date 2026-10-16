@@ -10,6 +10,7 @@ export type CloudConfig =
 export interface CloudConfigInput {
   supabaseUrl?: unknown
   supabasePublishableKey?: unknown
+  cloudRequired?: unknown
 }
 
 const normalizeEnvValue = (value: unknown): string =>
@@ -17,11 +18,37 @@ const normalizeEnvValue = (value: unknown): string =>
 
 const LOOPBACK_HTTP_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]'])
 
-const isAllowedCloudUrl = (value: string): boolean => {
+const isLoopbackHostname = (hostname: string): boolean =>
+  LOOPBACK_HTTP_HOSTNAMES.has(hostname) ||
+  hostname.endsWith('.localhost') ||
+  /^127(?:\.\d{1,3}){3}$/u.test(hostname)
+
+const isServiceRoleKey = (value: string): boolean => {
+  if (value.startsWith('sb_secret_')) return true
+  const payload = value.split('.')[1]
+  if (!payload) return false
+  try {
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const decoded = JSON.parse(atob(normalized)) as unknown
+    return typeof decoded === 'object' && decoded !== null &&
+      'role' in decoded && decoded.role === 'service_role'
+  } catch {
+    return false
+  }
+}
+
+const isAllowedCloudUrl = (value: string, cloudRequired: boolean): boolean => {
   try {
     const url = new URL(value)
+    if (
+      url.username || url.password || url.search || url.hash ||
+      (url.pathname !== '' && url.pathname !== '/')
+    ) return false
+    if (cloudRequired) {
+      return url.protocol === 'https:' && !isLoopbackHostname(url.hostname)
+    }
     return url.protocol === 'https:' ||
-      (url.protocol === 'http:' && LOOPBACK_HTTP_HOSTNAMES.has(url.hostname))
+      (url.protocol === 'http:' && isLoopbackHostname(url.hostname))
   } catch {
     return false
   }
@@ -30,21 +57,39 @@ const isAllowedCloudUrl = (value: string): boolean => {
 export const resolveCloudConfig = ({
   supabaseUrl,
   supabasePublishableKey,
+  cloudRequired,
 }: CloudConfigInput): CloudConfig => {
   const normalizedUrl = normalizeEnvValue(supabaseUrl)
   const normalizedKey = normalizeEnvValue(supabasePublishableKey)
+  const normalizedCloudRequired = normalizeEnvValue(cloudRequired)
+  const requiresCloud = normalizedCloudRequired === 'true'
 
-  if (!normalizedUrl && !normalizedKey) return { status: 'disabled' }
+  if (normalizedCloudRequired && !['true', 'false'].includes(normalizedCloudRequired)) {
+    return {
+      status: 'invalid',
+      message: 'VITE_CLOUD_REQUIREDはtrueまたはfalseで設定してください。',
+    }
+  }
+
+  if (!normalizedUrl && !normalizedKey && !requiresCloud) return { status: 'disabled' }
   if (!normalizedUrl || !normalizedKey) {
     return {
       status: 'invalid',
       message: 'SupabaseのURLとPublishable Keyを両方設定してください。',
     }
   }
-  if (!isAllowedCloudUrl(normalizedUrl)) {
+  if (!isAllowedCloudUrl(normalizedUrl, requiresCloud)) {
     return {
       status: 'invalid',
-      message: 'VITE_SUPABASE_URLにHTTPS URL（ローカル開発ではloopback HTTP）を設定してください。',
+      message: requiresCloud
+        ? '公開用Supabase URLにはloopbackではないHTTPS originを設定してください。'
+        : 'VITE_SUPABASE_URLにHTTPS URL（ローカル開発ではloopback HTTP）を設定してください。',
+    }
+  }
+  if (isServiceRoleKey(normalizedKey)) {
+    return {
+      status: 'invalid',
+      message: 'ブラウザにはSupabase Publishable Keyだけを設定してください。',
     }
   }
 
@@ -62,4 +107,5 @@ const runtimeEnv = (import.meta as ImportMeta & {
 export const cloudConfig = resolveCloudConfig({
   supabaseUrl: runtimeEnv?.VITE_SUPABASE_URL,
   supabasePublishableKey: runtimeEnv?.VITE_SUPABASE_PUBLISHABLE_KEY,
+  cloudRequired: runtimeEnv?.VITE_CLOUD_REQUIRED,
 })

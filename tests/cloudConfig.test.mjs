@@ -20,6 +20,16 @@ test('Supabase envが両方未設定ならCloudをdisabledにする', () => {
   }), { status: 'disabled' })
 })
 
+test('Cloud必須環境は設定不足をlocal-onlyへfallbackさせない', () => {
+  assert.equal(resolveCloudConfig({ cloudRequired: 'true' }).status, 'invalid')
+  assert.equal(resolveCloudConfig({
+    cloudRequired: 'true',
+    supabaseUrl: 'https://project.supabase.co',
+    supabasePublishableKey: 'publishable-key',
+  }).status, 'enabled')
+  assert.equal(resolveCloudConfig({ cloudRequired: 'unexpected' }).status, 'invalid')
+})
+
 test('Supabase envが両方設定済みなら正規化してCloudをenabledにする', () => {
   assert.deepEqual(resolveCloudConfig({
     supabaseUrl: ' https://project.supabase.co ',
@@ -53,6 +63,38 @@ test('Supabase URLはHTTPSと開発用loopback HTTPだけを許可する', () =>
       supabaseUrl,
       supabasePublishableKey: 'publishable-key',
     }).status, 'invalid', supabaseUrl)
+  }
+})
+
+test('Cloud必須環境はremote HTTPS originだけを許可する', () => {
+  for (const supabaseUrl of [
+    'http://127.0.0.1:54321',
+    'https://localhost',
+    'https://127.1.2.3',
+    'https://user:password@project.supabase.co',
+    'https://project.supabase.co/rest/v1',
+    'https://project.supabase.co/?key=value',
+    'https://project.supabase.co/#fragment',
+  ]) {
+    assert.equal(resolveCloudConfig({
+      cloudRequired: 'true',
+      supabaseUrl,
+      supabasePublishableKey: 'publishable-key',
+    }).status, 'invalid', supabaseUrl)
+  }
+})
+
+test('service-role形式のkeyをブラウザ設定として拒否する', () => {
+  const serviceRolePayload = Buffer.from(JSON.stringify({ role: 'service_role' }))
+    .toString('base64url')
+  for (const supabasePublishableKey of [
+    'sb_secret_example',
+    `header.${serviceRolePayload}.signature`,
+  ]) {
+    assert.equal(resolveCloudConfig({
+      supabaseUrl: 'https://project.supabase.co',
+      supabasePublishableKey,
+    }).status, 'invalid')
   }
 })
 

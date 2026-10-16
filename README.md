@@ -54,14 +54,23 @@ npm run preview
 
 ## Deployment
 
-Vercelではrepository rootをプロジェクトとして登録し、次の設定でデプロイします。
+Vercelではrepository rootをプロジェクトとして登録し、次の設定でデプロイします。設定は
+`vercel.json`にも固定しています。
 
 - Framework Preset: `Vite`
-- Build Command: `npm run build`
+- Install Command: `pnpm install --frozen-lockfile`
+- Build Command: `node scripts/validateCloudDeployment.mjs --require-cloud && pnpm build`
 - Output Directory: `dist`
 - Root Directory: repository root
+- Node.js: `24.x`
 
 通常画面はroot URL、事前共有タイムテーブルは`#share=...`形式のhash URLを使用します。現時点ではpath-based routingを使用していないため、SPA rewriteは不要です。
+
+Vercel buildでは`VITE_CLOUD_REQUIRED=true`と、安全なremote Supabase URL・Publishable
+Keyを必須にします。不足やloopback URLがあればbuildを失敗させ、公開サイトが意図せず
+local-only modeになることを防ぎます。ローカル開発ではこのflagを設定しなければ従来の
+local-only modeを利用できます。テスト環境の構築と公開確認は
+[Live TT deployment runbook](docs/live-tt-deployment.md)を参照してください。
 
 ## Data storage
 
