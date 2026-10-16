@@ -17,8 +17,9 @@ localStorageを変更しません。結果にもSnapshot本文、Member/Band名�
 
 Preflightは既存実装を次の順で再利用します。
 
-1. `parseCloudWorkspaceMasterBackfillSource()`でsource envelope、Workspace、generation、
-   Event ID/revision/fingerprint、backfill記録を検査する
+1. inspection parserでSnapshotを検証し、PostgreSQL 17の`jsonb::text`表現を再構成して
+   SHA-256を照合した後、`parseCloudWorkspaceMasterBackfillSource()`でsource envelope、
+   Workspace、generation、Event ID/revision/fingerprint、backfill記録を検査する
 2. `createCloudWorkspaceMasterBackfillPlan()`でV1 snapshot、共有Member/Band競合、
    Band→Member closure、順序付き`defaultMemberIds`、Event→Master referenceを検査する
 3. 各Eventを`createCloudEventSnapshotV2()`でV2へ変換する
@@ -44,7 +45,7 @@ read-only結果を`ready`へ昇格させる経路はありません。
 | --- | --- | --- |
 | Workspace master state | read-onlyで検証可能 | source RPCの`legacy/conflict/ready`を検査。cutover対象はlegacyのみ |
 | V1 Snapshot形式・Event所有関係 | read-onlyで検証可能 | 既存V1 parserとrelationship validatorを再利用 |
-| Event ID・revision・source fingerprint | read-onlyで検証可能 | source RPCが同一transactionで取得 |
+| Event ID・revision・source fingerprint | read-onlyで検証可能 | source RPCが同一transactionで取得。Snapshot parser通過後、`jsonb::text`互換表現のSHA-256と照合 |
 | Workspace generation | read-onlyで観測可能 | source RPCのgeneration。最終値の固定はtransaction内で再検証が必要 |
 | 共有Member/Bandの一致 | read-onlyで検証可能 | backfill plannerの完全一致・fail-closed mergeを再利用 |
 | `Band.defaultMemberIds`の順序と参照 | read-onlyで検証可能 | planのpositionとV2 transitive closure、round tripで検査 |
@@ -61,7 +62,14 @@ read-only結果を`ready`へ昇格させる経路はありません。
 
 `unverifiedRequirements`に残る項目を、警告を無視して成功へ変換してはいけません。
 旧source RPCのreference件数だけでは組合せを証明しません。新inspection RPCの厳密な
-parserを通った場合だけ`REFERENCE_INDEX_CONTENTS_NOT_OBSERVED`を解除します。
+parserに加えてBackfill planの構築が成功し、期待Reference集合と実relation行を比較できた場合だけ
+`REFERENCE_INDEX_CONTENTS_NOT_OBSERVED`を解除します。planを構築できない共有Master競合や
+不正Masterがあれば、relation行が返っていても証拠は`indeterminate`のままです。
+
+Snapshot fingerprintは認証ではなく、同じRPC応答内のSnapshot本体とdigestの整合性検査です。
+PostgreSQL `jsonb::text`のキー順・空白・escape規則を再現できる、Snapshot parserが許可した
+安全な整数を含むJSONだけを照合します。小数など元のPostgreSQL numeric表記をJavaScript値から
+復元できない入力は推測せずinspection全体を拒否します。
 
 ## Read-only operator runner
 
@@ -144,12 +152,23 @@ $env:ACAPPELLA_TT_DISPOSABLE_DBLINK_DATABASE_URL =
 
 psql "$env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL" `
   -v ON_ERROR_STOP=1 `
+  -f .\supabase\tests\cloud_v2_cutover_inspection_fingerprint.sql
+
+psql "$env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL" `
+  -v ON_ERROR_STOP=1 `
   -f .\supabase\tests\cloud_v2_cutover_inspection.sql
 
 psql "$env:ACAPPELLA_TT_DISPOSABLE_DATABASE_URL" `
   -v ON_ERROR_STOP=1 `
   -v "test_db_url=$env:ACAPPELLA_TT_DISPOSABLE_DBLINK_DATABASE_URL" `
   -f .\supabase\tests\cloud_v2_cutover_inspection_concurrency.sql
+
+# Backfill apply後の実RPC JSONを非同期parser/Preflightまで通す。
+# port 55822のloopback PostgreSQL 17専用で、全fixtureをROLLBACKする。
+node --experimental-strip-types `
+  .\scripts\cloudV2CutoverInspectionBackfillIntegration.mjs `
+  --db-url-env ACAPPELLA_TT_DISPOSABLE_DATABASE_URL `
+  --confirm-disposable
 
 pnpm test:cloud-v2-cutover-cleanup-concurrency -- `
   --db-url-env ACAPPELLA_TT_DISPOSABLE_DATABASE_URL `
@@ -159,6 +178,12 @@ node .\scripts\cloudEventMigrationCatalogRegression.mjs `
   --db-url-env ACAPPELLA_TT_DISPOSABLE_DATABASE_URL `
   --confirm-disposable
 ```
+
+Backfill/inspection結合runnerはランダムなWorkspace/Event IDを使用し、Workspace・Event作成、
+Backfill apply、inspection RPC、非同期parser/Preflight検証までを同じPostgreSQL transaction内で
+実行します。検証の成否にかかわらず`ROLLBACK`し、接続異常時も接続終了によるrollbackを
+利用します。最後に別接続から関連11テーブルの残存が0件であることを確認し、
+DELETE/TRUNCATEによるfallback cleanupは行いません。
 
 通常fixtureは専用UUIDを1つのtransaction内で作成し、最後にROLLBACKします。並行fixtureは
 独立dblink sessionのcommitが必要であり、正常終了時だけ専用Workspaceを削除して残存0件を

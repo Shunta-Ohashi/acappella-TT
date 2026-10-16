@@ -22,6 +22,7 @@ import {
   isValidCloudWorkspaceBand,
   isValidCloudWorkspaceMember,
 } from './cloudWorkspaceMasterValidation.ts'
+import { createPostgresJsonbSha256Fingerprint } from './postgresJsonbFingerprint.ts'
 
 export type CloudV2CutoverReferenceKind =
   | 'bandMembers'
@@ -179,10 +180,10 @@ const sortedUnique = (values: readonly string[]): boolean =>
  * Invalid, truncated, cross-Workspace, or internally inconsistent evidence is
  * rejected rather than converted into an empty/partial inspection.
  */
-export const parseCloudV2CutoverInspection = (
+export const parseCloudV2CutoverInspection = async (
   value: unknown,
   expectedWorkspaceId: string,
-): CloudV2CutoverInspection | undefined => {
+): Promise<CloudV2CutoverInspection | undefined> => {
   if (
     !uuidPattern.test(expectedWorkspaceId) ||
     !isExactRecord(value, [
@@ -212,7 +213,8 @@ export const parseCloudV2CutoverInspection = (
 
   const workspaceId = expectedWorkspaceId
   const rawEvents = value.events
-  const sourceEvents = rawEvents.map(event => {
+  const sourceEvents = []
+  for (const event of rawEvents) {
     if (
       !isExactRecord(event, [
         'workspaceId', 'eventId', 'eventName', 'snapshotVersion', 'snapshot',
@@ -227,17 +229,18 @@ export const parseCloudV2CutoverInspection = (
     ) return undefined
     const snapshot = parseCloudEventSnapshotEnvelope(event.snapshot)
     if (!snapshot || event.snapshotVersion !== snapshot.version) return undefined
-    return {
+    const snapshotFingerprint = await createPostgresJsonbSha256Fingerprint(event.snapshot)
+    if (snapshotFingerprint !== event.snapshotFingerprint) return undefined
+    sourceEvents.push({
       workspaceId,
       eventId: event.eventId,
       eventName: event.eventName,
       snapshot: copy(event.snapshot),
       snapshotFingerprint: event.snapshotFingerprint,
       revision: event.revision,
-    }
-  })
-  if (sourceEvents.some(event => event === undefined)) return undefined
-  const eventIds = sourceEvents.map(event => event!.eventId)
+    })
+  }
+  const eventIds = sourceEvents.map(event => event.eventId)
   if (!sortedUnique(eventIds)) return undefined
 
   const members = value.masters.members.map(member => parseMemberRecord(member, workspaceId))
@@ -423,7 +426,7 @@ export const createCloudV2CutoverInspectionReport = async (
   expectedWorkspaceId: string,
   expectedGeneration?: string,
 ): Promise<CloudV2CutoverInspectionReport | undefined> => {
-  const inspection = parseCloudV2CutoverInspection(rawInspection, expectedWorkspaceId)
+  const inspection = await parseCloudV2CutoverInspection(rawInspection, expectedWorkspaceId)
   if (!inspection) return undefined
 
   const base = await createCloudV2CutoverPreflight({
@@ -448,9 +451,14 @@ export const createCloudV2CutoverInspectionReport = async (
   }
 
   const issues = [...base.issues]
-  const unverifiedRequirements = base.unverifiedRequirements.filter(requirement =>
-    requirement !== 'REFERENCE_INDEX_CONTENTS_NOT_OBSERVED')
+  const unverifiedRequirements = [...base.unverifiedRequirements]
   if (planResult.ok) {
+    const referenceRequirementIndex = unverifiedRequirements.indexOf(
+      'REFERENCE_INDEX_CONTENTS_NOT_OBSERVED',
+    )
+    if (referenceRequirementIndex >= 0) {
+      unverifiedRequirements.splice(referenceRequirementIndex, 1)
+    }
     const expected = {
       bandMembers: new Set(planResult.plan.bandMembers.map(relation =>
         `${relation.bandId}\u0000${relation.memberId}\u0000${relation.position}`)),
