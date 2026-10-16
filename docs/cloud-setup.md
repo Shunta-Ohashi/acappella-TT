@@ -6,7 +6,7 @@
 
 Supabase Dashboardでprojectを作成します。frontendへ設定するのはProject URLとPublishable keyだけです。`service_role` keyはブラウザ・Vercel・repositoryへ絶対に設定しないでください。
 
-開発・build環境にはNode.js 22.12.0以上を使用します。VercelもNode.js 22系に設定してください。
+開発・build環境にはNode.js 22.12.0以上を使用します。Vercelは公開手順に合わせてNode.js 24.xに設定してください。
 
 ## 2. migrationを適用する
 
@@ -248,7 +248,14 @@ VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_KEY
 
 ## 6. Vercel environment variables
 
-Vercel projectのEnvironment Variablesへ`VITE_SUPABASE_URL`と`VITE_SUPABASE_PUBLISHABLE_KEY`を設定します。Productionと必要なPreview environmentへ設定し、設定後に再デプロイします。
+Vercel projectのEnvironment Variablesへ`VITE_SUPABASE_URL`、
+`VITE_SUPABASE_PUBLISHABLE_KEY`、`VITE_CLOUD_REQUIRED=true`を設定します。Productionと
+利用するPreview environmentへ設定し、設定後に再デプロイします。Vercel buildは3値を
+事前検証し、未設定、remoteでないURL、HTTP URL、server keyを検出すると失敗します。
+`service_role` keyはVercelへ設定しません。
+
+新しいオンラインテストProjectをCloud Snapshot V1のまま公開する手順は
+[Live TT deployment runbook](./live-tt-deployment.md)を参照してください。
 
 ## 7. Auth URL Configuration
 
