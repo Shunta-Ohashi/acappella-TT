@@ -35,7 +35,8 @@ begin
     'workspace_master_backfill_authenticated_inherited_execute',
     'workspace_master_backfill_authenticated_inherited_table_read',
     'cloud_event_v2_save_authenticated_inherited_execute',
-    'cloud_v2_cutover_inspection_authenticated_inherited_execute'
+    'cloud_v2_cutover_inspection_authenticated_inherited_execute',
+    'cloud_v2_atomic_cutover_authenticated_inherited_execute'
   ) then
     if exists (
       select 1 from pg_catalog.pg_roles
@@ -99,6 +100,11 @@ begin
       when scenario = 'cloud_v2_cutover_inspection_authenticated_inherited_execute' then
         execute format(
           'grant execute on function public.inspect_cloud_v2_cutover_state(uuid) to %I',
+          inherited_role_name
+        );
+      when scenario = 'cloud_v2_atomic_cutover_authenticated_inherited_execute' then
+        execute format(
+          'grant execute on function public.cutover_cloud_v2_validated(uuid,text,text,jsonb) to %I',
           inherited_role_name
         );
     end case;
@@ -418,6 +424,41 @@ begin
     when 'cloud_v2_cutover_inspection_authenticated_execute' then
       grant execute on function public.inspect_cloud_v2_cutover_state(uuid)
         to authenticated;
+    when 'cloud_v2_atomic_cutover_missing' then
+      drop function public.cutover_cloud_v2_validated(uuid, text, text, jsonb);
+    when 'cloud_v2_atomic_cutover_v1_insert_guard_missing_parent_lock' then
+      execute $replacement$
+        create or replace function public.guard_ready_workspace_from_v1_event_write()
+        returns trigger
+        language plpgsql
+        security definer
+        set search_path = ''
+        as $function$
+        declare
+          master_status text;
+        begin
+          if (new.event_snapshot -> 'version') is distinct from '1'::jsonb then
+            return new;
+          end if;
+          select cloud_workspace_master_states.status into master_status
+          from public.cloud_workspace_master_states
+          where cloud_workspace_master_states.workspace_id = new.workspace_id
+          for share;
+          if master_status is null then
+            raise exception 'Workspace master state is unavailable'
+              using errcode = '55000';
+          elsif master_status is not distinct from 'ready' then
+            raise exception 'Snapshot V1 writes are disabled for ready Workspaces'
+              using errcode = '55000';
+          end if;
+          return new;
+        end;
+        $function$
+      $replacement$;
+    when 'cloud_v2_atomic_cutover_authenticated_execute' then
+      grant execute on function public.cutover_cloud_v2_validated(
+        uuid, text, text, jsonb
+      ) to authenticated;
     when 'profiles_missing' then
       alter table public.profiles rename to catalog_regression_profiles;
     when 'profiles_column_missing' then
