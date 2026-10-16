@@ -496,7 +496,8 @@ begin
       v_workspace_id, v_generation::text, repeat('c', 64),
       pg_temp.atomic_cutover_plan(v_workspace_id, v_generation)
     );
-    raise exception 'test-only mid-cutover failure was not raised';
+    raise exception 'test-only mid-cutover failure was not raised'
+      using errcode = 'P0004';
   exception when SQLSTATE 'P0001' then null;
   end;
 
@@ -570,7 +571,7 @@ begin
         where workspace_id = v_workspace_id
           and (event_snapshot -> 'version' is distinct from '2'::jsonb
             or event_snapshot is distinct from
-              pg_temp.atomic_cutover_snapshot_v2(event_id)
+              pg_temp.atomic_cutover_v2_snapshot(event_id)
             or revision is distinct from 2))
     or (select to_jsonb(bf) from public.cloud_workspace_master_backfills as bf
         where bf.workspace_id = v_workspace_id) is distinct from v_backfill_before

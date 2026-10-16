@@ -36,7 +36,8 @@ test('atomic cutover validates complete CAS evidence before conversion', async (
   assert.match(sql, /p_expected_generation !~ '\^\(0\|\[1-9\]\[0-9\]\*\)\$'/u)
   assert.match(sql, /9223372036854775807/u)
   assert.match(sql, /count\(\*\) <> count\(distinct planned_event\.value ->> 'eventId'\)/iu)
-  assert.match(sql, /planned_event_count <> \([\s\S]*count\(\*\) from public\.cloud_events/iu)
+  assert.match(sql, /select count\(\*\) into current_event_count[\s\S]*planned_event_count is distinct from current_event_count[\s\S]*errcode = '40001'/iu)
+  assert.match(sql, /completed_backfill\.event_count is distinct from current_event_count/iu)
   assert.match(sql, /cloud_events\.revision is distinct from[\s\S]*expectedRevision/iu)
   assert.match(sql, /extensions\.digest\(cloud_events\.event_snapshot::text, 'sha256'\)/iu)
   assert.match(sql, /completed_backfill\.plan_fingerprint[\s\S]*p_expected_backfill_plan_fingerprint/iu)
@@ -56,6 +57,7 @@ test('atomic cutover lock order freezes inserts, rows, generation, and evidence'
   const statusShare = sql.indexOf('from public.cloud_workspace_master_states')
   const eventLock = sql.indexOf('from public.cloud_events', statusShare)
   const generationLock = sql.indexOf('from public.cloud_event_workspace_generations')
+  const eventCountCas = sql.indexOf('select count(*) into current_event_count')
   const backfillLock = sql.indexOf('from public.cloud_workspace_master_backfills')
   const memberLock = sql.indexOf('perform 1 from public.workspace_master_members')
   const conversion = sql.indexOf('update public.cloud_events')
@@ -65,7 +67,8 @@ test('atomic cutover lock order freezes inserts, rows, generation, and evidence'
   assert.ok(statusShare > workspaceLock)
   assert.ok(eventLock > statusShare)
   assert.ok(generationLock > eventLock)
-  assert.ok(backfillLock > generationLock)
+  assert.ok(eventCountCas > generationLock)
+  assert.ok(backfillLock > eventCountCas)
   assert.ok(memberLock > backfillLock)
   assert.ok(conversion > memberLock)
   assert.ok(stateUpgrade > conversion)
@@ -76,6 +79,8 @@ test('atomic cutover lock order freezes inserts, rows, generation, and evidence'
 
 test('atomic cutover re-derives V2 Event state and exact Master/reference evidence', async () => {
   const sql = await readFile(migrationUrl, 'utf8')
+  assert.match(sql, /\(cloud_events\.event_snapshot -> 'appState'\) - array\[/iu)
+  assert.doesNotMatch(sql, /cloud_events\.event_snapshot -> 'appState'\s*-\s*array\[/iu)
   assert.match(sql, /\(source_row\.event_snapshot -> 'appState'\) - 'members' - 'bands'/iu)
   assert.match(sql, /public\.is_cloud_event_v2_snapshot_shape/iu)
   assert.match(sql, /public\.cloud_event_member_references/iu)
@@ -105,6 +110,7 @@ test('disposable SQL exercises real RPC success, fail-closed CAS, and mid-loop r
   assert.match(sql, /set local role authenticated/iu)
   assert.match(sql, /stale Event Snapshot fingerprint was accepted/iu)
   assert.match(sql, /duplicate Event ID was accepted/iu)
+  assert.match(sql, /partial Event set was accepted'[\s\S]*exception when SQLSTATE '40001' then null/iu)
   for (const count of [
     'event_count',
     'member_count',
@@ -113,6 +119,7 @@ test('disposable SQL exercises real RPC success, fail-closed CAS, and mid-loop r
     'event_member_reference_count',
     'event_band_reference_count',
   ]) assert.match(sql, new RegExp(`'${count}'`, 'u'), count)
+  assert.match(sql, /incorrect completed-backfill %[\s\S]*exception when SQLSTATE '55000' then null/iu)
   assert.match(sql, /mismatched normalized Member was accepted/iu)
   assert.match(sql, /mismatched ordered Band members were accepted/iu)
   assert.match(sql, /mismatched Event-Member reference combination was accepted/iu)
@@ -120,9 +127,12 @@ test('disposable SQL exercises real RPC success, fail-closed CAS, and mid-loop r
   assert.match(sql, /conflict Workspace was accepted/iu)
   assert.match(sql, /cloud_v2_atomic_cutover_test_failure/iu)
   assert.match(sql, /old\.event_id = 'event-b'/iu)
+  assert.match(sql, /mid-cutover failure was not raised'[\s\S]*errcode = 'P0004';\s*exception when SQLSTATE 'P0001' then null/iu)
+  assert.match(sql, /second Event failure'[\s\S]*errcode = 'P0001'/iu)
   assert.match(sql, /Mid-cutover error did not roll back the complete transaction/iu)
   assert.match(sql, /event_snapshot -> 'version' is distinct from '2'/iu)
-  assert.match(sql, /event_snapshot is distinct from[\s\S]*atomic_cutover_snapshot_v2/iu)
+  assert.match(sql, /event_snapshot is distinct from[\s\S]*atomic_cutover_v2_snapshot/iu)
+  assert.doesNotMatch(sql, /atomic_cutover_snapshot_v2/iu)
   assert.match(sql, /revision is distinct from 2/iu)
   assert.match(sql, /v_master_evidence_before/iu)
   assert.match(sql, /ready Workspace accepted a resumed Snapshot V1 writer/iu)
@@ -131,11 +141,27 @@ test('disposable SQL exercises real RPC success, fail-closed CAS, and mid-loop r
 
 test('disposable concurrency fixture executes the real cutover RPC in all races', async () => {
   const sql = await readFile(concurrencyUrl, 'utf8')
+  const cutoverReachedGate = sql.indexOf(
+    'cutover-first: real cutover did not reach the synchronization gate',
+  )
+  const sourceSnapshotCapture = sql.indexOf(
+    'select event_snapshot into strict v_source_snapshot',
+  )
+  const waitingWriterSend = sql.indexOf(
+    "dblink_send_query('atomic_writer', format",
+  )
+  assert.ok(cutoverReachedGate >= 0)
+  assert.ok(sourceSnapshotCapture > cutoverReachedGate)
+  assert.ok(waitingWriterSend > sourceSnapshotCapture)
   assert.match(sql, /public\.cutover_cloud_v2_validated/giu)
   assert.match(sql, /writer-first/iu)
   assert.match(sql, /cutover-first/iu)
   assert.match(sql, /double-cutover/iu)
   assert.match(sql, /cutover-first V1 INSERT unexpectedly succeeded/iu)
+  assert.match(sql, /select event_snapshot into strict v_source_snapshot[\s\S]*source Snapshot V1 was not observable/iu)
+  assert.match(sql, /event_snapshot = jsonb_set\(\s*%L::jsonb,[\s\S]*v_source_snapshot::text/iu)
+  assert.match(sql, /exception when SQLSTATE '55000' then null/iu)
+  assert.doesNotMatch(sql, /exception when SQLSTATE '23514'/iu)
   assert.match(sql, /cloud-v2-atomic-inserter/iu)
   assert.match(sql, /V1 INSERT did not wait for the Workspace parent lock/iu)
   assert.match(sql, /wait_event_type = 'Lock'/iu)

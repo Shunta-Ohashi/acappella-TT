@@ -325,15 +325,26 @@ select pg_temp.assert_atomic_lock_wait(
   'cutover-first: real cutover did not reach the synchronization gate'
 );
 do $send_cutover_first_writer$
+declare
+  v_source_snapshot jsonb;
 begin
-  if extensions.dblink_send_query('atomic_writer', $remote$
+  select event_snapshot into strict v_source_snapshot
+  from public.cloud_events
+  where workspace_id = '79200000-0000-4000-8000-000000000001'
+    and event_id = 'event-race';
+
+  if v_source_snapshot -> 'version' is distinct from '1'::jsonb then
+    raise exception 'cutover-first: source Snapshot V1 was not observable';
+  end if;
+
+  if extensions.dblink_send_query('atomic_writer', format($remote$
     do $writer$
     begin
       begin
         update public.cloud_events
         set event_name = 'Late V1 writer',
             event_snapshot = jsonb_set(
-              event_snapshot, '{appState,events,0,name}',
+              %L::jsonb, '{appState,events,0,name}',
               to_jsonb('Late V1 writer'::text)
             )
         where workspace_id = '79200000-0000-4000-8000-000000000001'
@@ -343,7 +354,7 @@ begin
       end;
     end
     $writer$;
-  $remote$) <> 1 then
+  $remote$, v_source_snapshot::text)) <> 1 then
     raise exception 'cutover-first: could not send V1 writer';
   end if;
 end

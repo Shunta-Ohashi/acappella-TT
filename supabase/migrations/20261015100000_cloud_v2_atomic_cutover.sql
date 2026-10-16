@@ -65,6 +65,7 @@ declare
   current_generation bigint;
   result_generation bigint;
   planned_event_count integer;
+  current_event_count bigint;
   converted_event_count integer := 0;
   event_entry jsonb;
   source_row public.cloud_events%rowtype;
@@ -205,6 +206,16 @@ begin
       using errcode = '40001';
   end if;
 
+  -- Classify an incomplete Plan as stale CAS input before validating the
+  -- completed-backfill evidence against the authoritative locked Event set.
+  select count(*) into current_event_count
+  from public.cloud_events
+  where cloud_events.workspace_id = p_workspace_id;
+  if planned_event_count is distinct from current_event_count then
+    raise exception 'Cloud Event set changed after Cloud V2 cutover planning'
+      using errcode = '40001';
+  end if;
+
   select * into completed_backfill
   from public.cloud_workspace_master_backfills
   where cloud_workspace_master_backfills.workspace_id = p_workspace_id
@@ -214,16 +225,13 @@ begin
       is distinct from p_expected_backfill_plan_fingerprint
     or completed_backfill.result_generation is distinct from current_generation
     or completed_backfill.source_generation > completed_backfill.result_generation
-    or completed_backfill.event_count is distinct from planned_event_count then
+    or completed_backfill.event_count is distinct from current_event_count then
     raise exception 'Completed Workspace Master backfill evidence is inconsistent'
       using errcode = '55000';
   end if;
 
   -- Full Event-set equality plus revision and PostgreSQL jsonb::text digest CAS.
-  if planned_event_count <> (
-      select count(*) from public.cloud_events
-      where cloud_events.workspace_id = p_workspace_id
-    ) or exists (
+  if exists (
       select 1
       from public.cloud_events
       where cloud_events.workspace_id = p_workspace_id
@@ -239,7 +247,7 @@ begin
             'scheduleItems', 'paAssignments', 'dutyTypes', 'dutyAssignments',
             'timetableLocks', 'timetableOrderConstraints'
           ])
-          or cloud_events.event_snapshot -> 'appState' - array[
+          or (cloud_events.event_snapshot -> 'appState') - array[
             'version', 'members', 'bands', 'events', 'eventDays', 'stages',
             'sections', 'eventMembers', 'eventMemberDays', 'eventBands',
             'scheduleItems', 'paAssignments', 'dutyTypes', 'dutyAssignments',
