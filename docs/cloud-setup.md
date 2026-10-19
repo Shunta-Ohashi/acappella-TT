@@ -272,6 +272,14 @@ Magic Linkのredirect先は、実行中ページのoriginから通常App rootを
 
 Cloud Eventの保存はbrowserから`save-cloud-event` Edge Functionを呼びます。Functionは同じsourceの`parseCloudEventSnapshot()`でPersistence V5 / snapshot V1、ownership、ID一意性、exact Member/Band closureを検証してから、backend専用`save_cloud_event_validated` RPCを呼びます。validatorは`src/cloud/cloudEventSnapshot.ts`から相対importするため、別schemaを手作業で同期する必要はありません。
 
+Hosted ProjectのV1 HTTP認証・認可を既存データ無変更で確認する場合は、
+[Live TT deployment runbookのHosted V1 HTTP認可smoke](./live-tt-deployment.md#powershellからのhosted-v1-http認可smoke)
+を使用します。runnerはデフォルトdry-runで、確認済みProject/Workspaceへだけ接続し、
+Authorizationなし・不正JWT、viewer read、存在しない専用Event IDに対するviewer Delete拒否、
+実行前後のEvent ID/revision/generation不変を確認します。対象に保存済みEventがなければ
+検証不能として失敗します。誤認可時にrowを作り得るSave検証はHostedでは明示的に`SKIP`し、
+使い捨て環境の検証と区別します。
+
 FunctionはSupabaseのJWT verificationを有効なまま配備し（`--no-verify-jwt`を使用しない）、handler内でもBearer tokenを`auth.getUser(token)`へ渡して本人確認します。
 
 Function runtimeだけに以下を設定します。実値を`VITE_`環境変数、frontend、Git、response、logへ入れないでください。

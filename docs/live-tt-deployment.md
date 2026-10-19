@@ -178,6 +178,83 @@ path-based routerはなく、通常画面も共有画面も同じ静的`index.ht
    認証なしで入れない。
 9. スマートフォンでMagic Link、reload、画面復帰を確認する。
 
+### PowerShellからのHosted V1 HTTP認可smoke
+
+既存Event・Workspace・Auth userを変更しないread-only中心のrunnerを用意しています。
+確認済みProjectのPublishable Keyだけを環境変数へ設定し、対象は既存viewer membershipの
+Workspace UUIDに限定します。server key、service-role key、DB passwordは使用しません。
+
+最初は`--run`を付けず、通信を一切行わないdry-runでProject refとWorkspace UUIDの二重確認
+だけを行います。
+
+```powershell
+cd '<REPOSITORY_PATH>'
+$env:ACAPPELLA_TT_CLOUD_V1_SMOKE_SUPABASE_URL = 'https://<PROJECT_REF>.supabase.co'
+$env:ACAPPELLA_TT_CLOUD_V1_SMOKE_PUBLISHABLE_KEY = '<PUBLISHABLE_KEY>'
+
+pnpm test:cloud-v1-hosted-authz-smoke -- `
+  --workspace-id '<VIEWER_WORKSPACE_UUID>' `
+  --confirm-workspace-id '<VIEWER_WORKSPACE_UUID>' `
+  --confirm-project-ref '<PROJECT_REF>'
+```
+
+dry-runが成功したら、公開Appで既存viewerのメールアドレスへ新しいMagic Linkを1通だけ要求
+します。メール内のlinkを開かずに、Supabase Project originの
+`/auth/v1/verify?token=...&type=magiclink`という実linkをコピーします。メール配信サービスの
+追跡URLへ置き換わっている場合はrunnerが拒否するため、別originのURLを入力しません。
+続いて次を実行し、promptへlinkを貼り付けてEnterを押します。入力内容は画面に表示されず、
+tokenはAuthとの交換後もprocess memory内だけで使用されます。CLI引数、環境変数、ファイル、
+stdout/stderrへMagic Link、access token、refresh tokenを保存・出力しません。
+
+`--run`はAuth Admin APIによるuser CRUDやmembership変更を行いませんが、Magic Linkの検証
+は通常のログインそのものなので、one-time tokenを消費し、Supabase Auth側でsession発行・
+sign-in時刻・監査情報が記録される可能性があります。このAuth上のログイン副作用まで禁止
+する場合、有効JWTの認証検証とは両立しないため`--run`を実行せず、dry-runだけに留めます。
+
+```powershell
+pnpm test:cloud-v1-hosted-authz-smoke -- `
+  --run `
+  --workspace-id '<VIEWER_WORKSPACE_UUID>' `
+  --confirm-workspace-id '<VIEWER_WORKSPACE_UUID>' `
+  --confirm-project-ref '<PROJECT_REF>'
+```
+
+runnerは15秒の通信timeoutを使用し、次を個別に`PASS`または`SKIP`で表示します。
+
+- Authorizationなしと形式不正JWTがpage RPCでHTTP 401になる
+- Magic Linkで認証したuserが確認済みWorkspaceの`viewer`である
+- viewerのtable readが、そのuser自身のmembershipに含まれないWorkspaceを露出しない
+- V1 authorized page RPCが成功し、table readとEvent ID/revisionが一致する
+- 対象Workspaceに保存済みEventが1件以上あり、空Workspaceを認可検証済みと誤認しない
+- UUIDから生成した存在しない専用Event IDが読取結果にないことを確認してから、viewerの
+  Delete RPCがHTTP 403かつPostgreSQL SQLSTATE `42501`で拒否される
+- 実行前後で読取可能な全Event ID/revisionと対象Workspace generationが変化しない
+
+正常終了表示は次のとおりです。Save/Create requestを送っていないことと、確認済みの存在
+しないランダムEvent IDに対してDelete認可拒否RPCを1回送ったことを区別しています。
+
+```text
+COMPLETED 9 PASS, 2 SKIP; no save/create request was sent; one delete-denial RPC was sent for a confirmed-absent random Event ID.
+```
+
+2件の`SKIP`はviewerとWorkspace外userのSave認可です。Hostedでは、Save認可が誤って通った
+場合にランダムEventでも新規rowが作成され、HTTP越しにrollbackできません。
+`INVALID_SNAPSHOT`などの入力検証エラーを認可拒否の成功とは数えないため、この2件はHosted
+では実行しません。専用の使い捨てSupabase環境で、正しいSnapshot fixture、専用user/
+Workspace、実行後cleanupを用意した別smokeで検証します。したがって、上記COMPLETED表示を
+Save認可まで検証済みという意味には扱いません。
+
+終了後は現在のPowerShell processから公開値も除去します。
+
+```powershell
+Remove-Item `
+  Env:ACAPPELLA_TT_CLOUD_V1_SMOKE_SUPABASE_URL, `
+  Env:ACAPPELLA_TT_CLOUD_V1_SMOKE_PUBLISHABLE_KEY
+```
+
+通信失敗、応答形式不正、期待status不一致、前後状態不一致はいずれも非ゼロexitです。失敗時
+にもURL、token、key、メールアドレス、Snapshot本文は診断へ出力しません。
+
 ## 9. 停止・復旧
 
 - 認証、権限、保存のいずれかが不明ならVercel deploymentをPromoteせず、配布済みURLの
