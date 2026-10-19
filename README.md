@@ -17,7 +17,7 @@
 
 ## 開発
 
-必要なruntimeはNode.js 22.12.0以上です。
+必要なruntimeはNode.js 24.xです。ローカル、GitHub Actions、Vercel buildで同じmajorを使用します。
 
 ```bash
 npm install

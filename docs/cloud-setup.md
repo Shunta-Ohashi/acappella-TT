@@ -6,7 +6,7 @@
 
 Supabase Dashboardでprojectを作成します。frontendへ設定するのはProject URLとPublishable keyだけです。`service_role` keyはブラウザ・Vercel・repositoryへ絶対に設定しないでください。
 
-開発・build環境にはNode.js 22.12.0以上を使用します。Vercelは公開手順に合わせてNode.js 24.xに設定してください。
+開発・build環境にはNode.js 24.xを使用します。`package.json`、GitHub Actions、Vercel buildで同じmajorを固定します。
 
 ## 2. migrationを適用する
 

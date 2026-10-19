@@ -14,6 +14,20 @@ const validCloudEnvironment = {
   VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_example',
 }
 
+test('packageとGitHub ActionsはNode.js 24を明示する', async () => {
+  const packageConfiguration = JSON.parse(await readFile(
+    new URL('../package.json', import.meta.url),
+    'utf8',
+  ))
+  assert.equal(packageConfiguration.engines?.node, '24.x')
+
+  const workflow = await readFile(
+    new URL('../.github/workflows/ci.yml', import.meta.url),
+    'utf8',
+  )
+  assert.match(workflow, /^\s*node-version:\s*24\s*$/mu)
+})
+
 test('local buildはCloud flag未設定またはfalseでlocal-onlyを維持する', () => {
   assert.deepEqual(validateCloudDeploymentEnvironment({}), { cloudRequired: false })
   assert.deepEqual(validateCloudDeploymentEnvironment({

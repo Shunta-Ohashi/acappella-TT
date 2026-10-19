@@ -25,7 +25,7 @@ PowerShell 7でrepository rootへ移動し、CLIとローカル検証を確認�
 
 ```powershell
 cd '<REPOSITORY_PATH>'
-node --version       # 24.xを推奨
+node --version       # 24.x必須
 corepack enable
 pnpm --version       # 10.x
 supabase --version
