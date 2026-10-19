@@ -6,7 +6,7 @@
 
 Supabase Dashboardでprojectを作成します。frontendへ設定するのはProject URLとPublishable keyだけです。`service_role` keyはブラウザ・Vercel・repositoryへ絶対に設定しないでください。
 
-開発・build環境にはNode.js 22.12.0以上を使用します。VercelもNode.js 22系に設定してください。
+開発・build環境にはNode.js 24.xを使用します。`package.json`、GitHub Actions、Vercel buildで同じmajorを固定します。
 
 ## 2. migrationを適用する
 
@@ -248,7 +248,14 @@ VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_KEY
 
 ## 6. Vercel environment variables
 
-Vercel projectのEnvironment Variablesへ`VITE_SUPABASE_URL`と`VITE_SUPABASE_PUBLISHABLE_KEY`を設定します。Productionと必要なPreview environmentへ設定し、設定後に再デプロイします。
+Vercel projectのEnvironment Variablesへ`VITE_SUPABASE_URL`、
+`VITE_SUPABASE_PUBLISHABLE_KEY`、`VITE_CLOUD_REQUIRED=true`を設定します。Productionと
+利用するPreview environmentへ設定し、設定後に再デプロイします。Vercel buildは3値を
+事前検証し、未設定、remoteでないURL、HTTP URL、server keyを検出すると失敗します。
+`service_role` keyはVercelへ設定しません。
+
+新しいオンラインテストProjectをCloud Snapshot V1のまま公開する手順は
+[Live TT deployment runbook](./live-tt-deployment.md)を参照してください。
 
 ## 7. Auth URL Configuration
 
@@ -264,6 +271,14 @@ Magic Linkのredirect先は、実行中ページのoriginから通常App rootを
 ## 8. Cloud Event保存Function
 
 Cloud Eventの保存はbrowserから`save-cloud-event` Edge Functionを呼びます。Functionは同じsourceの`parseCloudEventSnapshot()`でPersistence V5 / snapshot V1、ownership、ID一意性、exact Member/Band closureを検証してから、backend専用`save_cloud_event_validated` RPCを呼びます。validatorは`src/cloud/cloudEventSnapshot.ts`から相対importするため、別schemaを手作業で同期する必要はありません。
+
+Hosted ProjectのV1 HTTP認証・認可を既存データ無変更で確認する場合は、
+[Live TT deployment runbookのHosted V1 HTTP認可smoke](./live-tt-deployment.md#powershellからのhosted-v1-http認可smoke)
+を使用します。runnerはデフォルトdry-runで、確認済みProject/Workspaceへだけ接続し、
+Authorizationなし・不正JWT、viewer read、存在しない専用Event IDに対するviewer Delete拒否、
+実行前後のEvent ID/revision/generation不変を確認します。対象に保存済みEventがなければ
+検証不能として失敗します。誤認可時にrowを作り得るSave検証はHostedでは明示的に`SKIP`し、
+使い捨て環境の検証と区別します。
 
 FunctionはSupabaseのJWT verificationを有効なまま配備し（`--no-verify-jwt`を使用しない）、handler内でもBearer tokenを`auth.getUser(token)`へ渡して本人確認します。
 
