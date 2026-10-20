@@ -152,7 +152,13 @@ const scenarios = [
     !result.laterSchema.liveTimetableFoundationContract],
   ['live_timetable_authenticated_write', result =>
     !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_authenticated_column_update', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_public_column_update', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
   ['live_timetable_authenticated_inherited_write', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_authenticated_inherited_column_update', result =>
     !result.laterSchema.liveTimetableFoundationContract],
   ['live_timetable_backend_execute_exposed', result =>
     !result.laterSchema.liveTimetableFoundationContract],

@@ -11,8 +11,12 @@ import {
 } from '../src/live/liveTimetableProjection.ts'
 import {
   createLiveTimetableRepository,
+  createSupabaseLiveTimetableGateway,
   parsePublicLiveTimetable,
 } from '../src/live/liveTimetableRepository.ts'
+import {
+  deleteLiveSmokeAuthUsers,
+} from '../scripts/liveTimetableFoundationSmokeCleanup.mjs'
 
 const workspaceId = '78000000-0000-4000-8000-000000000001'
 const liveId = '78000000-0000-4000-8000-000000000002'
@@ -562,6 +566,91 @@ test('Repositoryは不正CAS引数をRPC前に拒否し公開nullを未検証成
   assert.equal(calls, 1)
 })
 
+test('Repositoryは既知のEdge error codeだけを保持し未知・壊れた応答を潰す', async () => {
+  const createRepository = functionError => createLiveTimetableRepository(
+    createSupabaseLiveTimetableGateway({
+      functions: {
+        async invoke() { return { data: null, error: functionError } },
+      },
+    }),
+  )
+  const create = repository => repository.createProjection({
+    workspaceId,
+    eventId: 'event-live',
+    expectedSourceRevision: 3,
+    mode: 'create',
+    expectedManagementRevision: null,
+  })
+
+  for (const code of [
+    'EVENT_NOT_FOUND',
+    'INVALID_SOURCE',
+    'PROJECTION_REPLACEMENT_FORBIDDEN',
+    'AUTHENTICATION_REQUIRED',
+    'CONFIGURATION_ERROR',
+    'INVALID_RESPONSE',
+  ]) {
+    const result = await create(createRepository({
+      context: {
+        async json() {
+          return { status: 'error', error: { code, message: 'untrusted' } }
+        },
+      },
+    }))
+    assert.equal(result.ok, false)
+    assert.equal(result.error.code, code)
+    assert.equal(result.error.message.includes('untrusted'), false)
+  }
+
+  for (const functionError of [
+    { context: { async json() {
+      return { status: 'error', error: { code: 'UNKNOWN_EDGE_CODE' } }
+    } } },
+    { context: { async json() {
+      return { status: 'error', error: { code: 123 } }
+    } } },
+    { context: { async json() { throw new Error('secret transport body') } } },
+    { code: 'EVENT_NOT_FOUND', message: 'spoofed structured response' },
+    { code: 'FunctionsFetchError', message: 'secret transport message' },
+  ]) {
+    const result = await create(createRepository(functionError))
+    assert.equal(result.ok, false)
+    assert.equal(result.error.code, 'SUPABASE_ERROR')
+    assert.equal(result.error.message.includes('secret'), false)
+  }
+})
+
+test('Live smoke Auth cleanupは全対象を試行しerror・例外・部分失敗を成功扱いしない', async () => {
+  const userIds = ['user-a', 'user-b', 'user-c']
+  const successfulCalls = []
+  await deleteLiveSmokeAuthUsers({
+    auth: { admin: { async deleteUser(userId) {
+      successfulCalls.push(userId)
+      return { data: {}, error: null }
+    } } },
+  }, userIds)
+  assert.deepEqual(successfulCalls, userIds)
+
+  for (const failureMode of ['error', 'throw']) {
+    const calls = []
+    await assert.rejects(
+      deleteLiveSmokeAuthUsers({
+        auth: { admin: { async deleteUser(userId) {
+          calls.push(userId)
+          if (userId === 'user-b') {
+            if (failureMode === 'throw') throw new Error('private user detail')
+            return { data: null, error: { message: 'private user detail' } }
+          }
+          return { data: {}, error: null }
+        } } },
+      }, userIds),
+      error => error.message === 'Dedicated Auth fixture cleanup failed.' &&
+        !error.message.includes('private user detail'),
+    )
+    assert.deepEqual(calls, userIds)
+  }
+})
+
 test('Live foundation migrationは原子的・分離・fail-closed契約を保持する', async () => {
   const sql = await readFile(new URL(
     '../supabase/migrations/20261019154519_live_timetable_state_foundation.sql',
@@ -712,16 +801,28 @@ test('Live実HTTP・Realtime runnerは専用loopbackと厳密cleanupを要求す
   assert.match(runner, /select: EXPECTED_REALTIME_COLUMNS/)
   assert.match(runner, /assert\.deepEqual\(settled, Array\(probes\.length\)\.fill\('SUBSCRIBED'\)\)/)
   assert.match(runner, /realtimeUpdateAuthorization: 'passed'/)
+  assert.match(runner, /set updated_at=updated_at/)
+  assert.match(runner, /attempt < 4 && !controlDelivered/)
+  assert.match(runner, /assert\.equal\(controlDelivered, true/)
+  assert.doesNotMatch(runner, /pg_catalog\.pg_replication_slots/)
+  assert.ok(runner.indexOf('console.log(JSON.stringify(successReport))') >
+    runner.indexOf('await deleteLiveSmokeAuthUsers(admin, createdUserIds)'))
   assert.doesNotMatch(runner, /console\.log\([^)]*(?:anonKey|serviceRoleKey|token)/)
   assert.match(setup, /Live HTTP fixture precondition failed/)
   assert.match(cleanup, /cleanup target differs from its dedicated fixture/)
   assert.match(cleanup, /workspace_master_band_members/)
   assert.match(cleanup, /cloud_workspace_master_backfills/)
+  assert.match(cleanup, /select id from public\.workspaces[\s\S]*for update/i)
+  assert.match(cleanup, /event_id is distinct from fixture_event_id/i)
   assert.match(cleanup, /Live HTTP fixture cleanup is incomplete/)
 
   assert.match(
     preflight,
     /cloudV2AtomicCutoverContract[\s\S]*\) \|\| jsonb_build_object\([\s\S]*liveTimetableFoundationContract/,
+  )
+  assert.match(
+    preflight,
+    /liveTimetableFoundationContract[\s\S]*has_any_column_privilege\([\s\S]*'INSERT,UPDATE,REFERENCES'/i,
   )
   assert.match(
     catalogRegression,

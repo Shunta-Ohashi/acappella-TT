@@ -38,6 +38,7 @@ begin
     'cloud_v2_cutover_inspection_authenticated_inherited_execute',
     'cloud_v2_atomic_cutover_authenticated_inherited_execute',
     'live_timetable_authenticated_inherited_write',
+    'live_timetable_authenticated_inherited_column_update',
     'live_timetable_authenticated_inherited_backend_execute'
   ) then
     if exists (
@@ -112,6 +113,11 @@ begin
       when scenario = 'live_timetable_authenticated_inherited_write' then
         execute format(
           'grant update on table public.live_timetable_stages to %I',
+          inherited_role_name
+        );
+      when scenario = 'live_timetable_authenticated_inherited_column_update' then
+        execute format(
+          'grant update (revision) on table public.live_timetable_stages to %I',
           inherited_role_name
         );
       when scenario = 'live_timetable_authenticated_inherited_backend_execute' then
@@ -475,6 +481,11 @@ begin
       alter table public.live_timetable_stages disable row level security;
     when 'live_timetable_authenticated_write' then
       grant update on table public.live_timetable_stages to authenticated;
+    when 'live_timetable_authenticated_column_update' then
+      grant update (revision) on table public.live_timetable_stages
+        to authenticated;
+    when 'live_timetable_public_column_update' then
+      grant update (revision) on table public.live_timetable_stages to public;
     when 'live_timetable_backend_execute_exposed' then
       grant execute on function
         public.create_or_replace_live_timetable_projection(

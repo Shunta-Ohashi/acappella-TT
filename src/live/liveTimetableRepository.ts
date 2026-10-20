@@ -581,6 +581,21 @@ const databaseFailure = (
     case '42501':
     case 'ACCESS_DENIED':
       return errorResult('ACCESS_DENIED', 'Live TTへのアクセス権限がありません。')
+    case 'AUTHENTICATION_REQUIRED':
+      return errorResult('AUTHENTICATION_REQUIRED', '認証が必要です。')
+    case 'CONFIGURATION_ERROR':
+      return errorResult('CONFIGURATION_ERROR', 'Live TTのserver設定が不足しています。')
+    case 'EVENT_NOT_FOUND':
+      return errorResult('EVENT_NOT_FOUND', '元のCloud Eventが見つかりません。')
+    case 'INVALID_SOURCE':
+      return errorResult('INVALID_SOURCE', '投影元のCloud Eventを検証できません。')
+    case 'PROJECTION_REPLACEMENT_FORBIDDEN':
+      return errorResult(
+        'PROJECTION_REPLACEMENT_FORBIDDEN',
+        '進行開始後または公開中の投影は差し替えできません。',
+      )
+    case 'INVALID_RESPONSE':
+      return errorResult('INVALID_RESPONSE', 'Live TTの応答を検証できません。')
     case 'P0002':
     case 'LIVE_NOT_FOUND':
       return errorResult('LIVE_NOT_FOUND', 'Live TTが見つかりません。')
@@ -922,7 +937,7 @@ const parseFunctionError = async (error: unknown): Promise<LiveTimetableDatabase
       return {}
     }
   }
-  return error
+  return {}
 }
 
 export const createSupabaseLiveTimetableGateway = (

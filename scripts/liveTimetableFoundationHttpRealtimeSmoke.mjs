@@ -10,6 +10,7 @@ import { createCloudEventSnapshot } from '../src/cloud/cloudEventSnapshot.ts'
 import {
   createSupabaseLiveTimetableRepository,
 } from '../src/live/liveTimetableRepository.ts'
+import { deleteLiveSmokeAuthUsers } from './liveTimetableFoundationSmokeCleanup.mjs'
 
 const execFileAsync = promisify(execFile)
 const API_PORT = '56121'
@@ -62,7 +63,7 @@ const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, millise
 const waitFor = async (predicate, message, timeoutMilliseconds = 12_000) => {
   const deadline = Date.now() + timeoutMilliseconds
   while (Date.now() < deadline) {
-    if (predicate()) return
+    if (await predicate()) return
     await sleep(50)
   }
   throw new Error(message)
@@ -188,6 +189,7 @@ const run = async () => {
   const createdUserIds = []
   const probes = []
   let fixtureCreated = false
+  let successReport
 
   const admin = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -430,10 +432,34 @@ const run = async () => {
     ]) probes.push(createRealtimeProbe(client, label, workspaceId))
     const settled = await Promise.all(probes.map(probe => probe.ready))
     assert.deepEqual(settled, Array(probes.length).fill('SUBSCRIBED'))
-    // SUBSCRIBED is the protocol acknowledgement. Give the local replication
-    // subscription a bounded moment to begin streaming before the positive
-    // control mutation, otherwise a fast first UPDATE can race its startup.
+    // SUBSCRIBED only acknowledges the WebSocket channel. A fresh local
+    // Realtime tenant can report it before postgres_changes is ready, while
+    // replication slots already appear active. Prove end-to-end delivery with
+    // bounded no-op UPDATEs against this disposable fixture before testing the
+    // first semantic mutation. No published value or revision is changed.
+    let controlDelivered = false
+    for (let attempt = 0; attempt < 4 && !controlDelivered; attempt += 1) {
+      await runPsqlCommand(
+        "update public.live_timetable_stages set updated_at=updated_at where live_timetable_id=current_setting('live_smoke.live_id')::uuid and workspace_id=current_setting('live_smoke.workspace_id')::uuid",
+        { live_id: liveId, workspace_id: workspaceId },
+      )
+      try {
+        await waitFor(
+          () => probes.slice(0, 3).every(probe => probe.events.length >= 1),
+          'Realtime control update was not delivered.',
+          3_000,
+        )
+        controlDelivered = true
+      } catch {
+        // Retry only this idempotent disposable-fixture control update.
+      }
+    }
+    assert.equal(controlDelivered, true, 'Realtime control updates were not delivered.')
     await sleep(500)
+    assert.equal(probes[3].events.length, 0)
+    assert.equal(probes[4].events.length, 0)
+    probes.slice(0, 3).forEach(probe => probe.events.forEach(assertRealtimePayload))
+    probes.forEach(probe => { probe.events.length = 0 })
 
     const published = await repositories.owner.setPublication(
       liveId, '9007199254740993', true,
@@ -578,7 +604,7 @@ const run = async () => {
       .flatMap(probe => probe.events)
       .filter(event => event.eventType === 'DELETE').length
 
-    console.log(JSON.stringify({
+    successReport = {
       ok: true,
       authHttp: 'passed',
       repositoryParser: 'passed',
@@ -588,7 +614,7 @@ const run = async () => {
         outsider: settled[3],
         anon: settled[4],
       },
-    }))
+    }
   } finally {
     await Promise.allSettled(probes.map(probe => probe.channel.unsubscribe()))
     let databaseCleaned = !fixtureCreated
@@ -609,13 +635,13 @@ const run = async () => {
       }
     }
     if (databaseCleaned) {
-      for (const userId of createdUserIds) {
-        await admin.auth.admin.deleteUser(userId)
-      }
+      await deleteLiveSmokeAuthUsers(admin, createdUserIds)
     } else {
       throw new Error('Dedicated fixture cleanup failed; Auth users were preserved for inspection.')
     }
   }
+
+  console.log(JSON.stringify(successReport))
 }
 
 run().catch(error => {

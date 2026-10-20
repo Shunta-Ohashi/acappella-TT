@@ -2426,6 +2426,26 @@ later_schema as (
             direct_role.oid, live_table.oid, privilege.privilege_name
           )
       )
+      and not exists (
+        select 1
+        from (values
+          (to_regclass('public.live_timetables')),
+          (to_regclass('public.live_timetable_stages')),
+          (to_regclass('public.live_timetable_entries')),
+          (to_regclass('public.live_timetable_stage_operators'))
+        ) as live_table(oid)
+        cross join (
+          select authenticated_role.oid from authenticated_role
+          union all select anon_role.oid from anon_role
+          union all select service_role.oid from service_role
+        ) as effective_role
+        where live_table.oid is null
+          or has_any_column_privilege(
+            effective_role.oid,
+            live_table.oid,
+            'INSERT,UPDATE,REFERENCES'
+          )
+      )
       and (select count(*) = 8 and bool_and(
           pg_proc.prosecdef
           and pg_proc.provolatile = 'v'
