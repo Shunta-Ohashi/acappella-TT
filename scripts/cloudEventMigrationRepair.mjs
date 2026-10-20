@@ -20,6 +20,7 @@ const LATER_MIGRATIONS = {
   cloudEventV2Persistence: '20261013110000',
   cloudV2CutoverInspection: '20261014100000',
   cloudV2AtomicCutover: '20261015100000',
+  liveTimetableFoundation: '20261019154519',
 }
 
 const LATER_MIGRATION_VERSIONS = Object.values(LATER_MIGRATIONS)
@@ -126,6 +127,7 @@ export const REQUIRED_LATER_SCHEMA_CHECKS = [
   'cloudEventV2PersistenceContract',
   'cloudV2CutoverInspectionContract',
   'cloudV2AtomicCutoverContract',
+  'liveTimetableFoundationContract',
 ]
 
 const isRecord = value =>
@@ -160,7 +162,11 @@ const isInspection = value =>
   isRecord(value.workspaceMasterData) &&
   Number.isSafeInteger(value.workspaceMasterData.rowCount) &&
   value.workspaceMasterData.rowCount >= 0 &&
-  typeof value.workspaceMasterData.digest === 'string'
+  typeof value.workspaceMasterData.digest === 'string' &&
+  isRecord(value.liveTimetableData) &&
+  Number.isSafeInteger(value.liveTimetableData.rowCount) &&
+  value.liveTimetableData.rowCount >= 0 &&
+  typeof value.liveTimetableData.digest === 'string'
 
 const compareExpected = (mismatches, actual, expected, label) => {
   if (actual !== expected) {
@@ -382,6 +388,12 @@ export const analyzeCloudEventMigrationInspection = inspection => {
     )
     compareExpected(
       mismatches,
+      inspection.laterSchema.liveTimetableFoundationContract,
+      laterApplied.liveTimetableFoundation,
+      'liveTimetableFoundationContract/history',
+    )
+    compareExpected(
+      mismatches,
       inspection.laterSchema.authorizedSaveFunction,
       laterApplied.authorizedSave,
       'authorized save function/history',
@@ -528,7 +540,9 @@ const sameNonHistoryState = (before, after) =>
   JSON.stringify(before.laterSchema) === JSON.stringify(after.laterSchema) &&
   JSON.stringify(before.cloudData) === JSON.stringify(after.cloudData) &&
   JSON.stringify(before.workspaceMasterData) ===
-    JSON.stringify(after.workspaceMasterData)
+    JSON.stringify(after.workspaceMasterData) &&
+  JSON.stringify(before.liveTimetableData) ===
+    JSON.stringify(after.liveTimetableData)
 
 const sameMigrationHistory = (expected, actual) =>
   expected.historyTableExists === actual.historyTableExists &&

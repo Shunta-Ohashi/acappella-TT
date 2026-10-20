@@ -241,6 +241,9 @@ sentinel and the migration-history row are absent. Suggested sentinels are:
   `to_regprocedure('public.inspect_cloud_v2_cutover_state(uuid)') is null`
 - `20261015100000`:
   `to_regprocedure('public.cutover_cloud_v2_validated(uuid,text,text,jsonb)') is null`
+- `20261019154519`:
+  `to_regclass('public.live_timetables') is null` and
+  `to_regprocedure('public.start_live_timetable_entry(uuid,text,text,text,text)') is null`
 
 Use the target version in the following history check and require `false`:
 

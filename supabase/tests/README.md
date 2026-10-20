@@ -26,6 +26,7 @@ They create rows in `auth.users` and require an administrator connection.
    - `20261013110000_cloud_event_v2_persistence_foundation.sql`
    - `20261014100000_cloud_v2_cutover_inspection.sql`
    - `20261015100000_cloud_v2_atomic_cutover.sql`
+   - `20261019154519_live_timetable_state_foundation.sql`
 
    These names are ordered both by their migration version prefixes and by
    ordinary filename sorting; do not infer that every external migration tool
@@ -84,6 +85,13 @@ psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
 psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
   -v "test_db_url=$env:ACAPPELLA_TT_DBLINK_DATABASE_URL" `
   -f supabase/tests/cloud_v2_atomic_cutover_concurrency.sql
+psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
+  -f supabase/tests/live_timetable_state_foundation.sql
+# The Live concurrency fixture is added beside the foundation fixture and must
+# use only a separately confirmed disposable database.
+psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
+  -v "test_db_url=$env:ACAPPELLA_TT_DBLINK_DATABASE_URL" `
+  -f supabase/tests/live_timetable_state_foundation_concurrency.sql
 pnpm test:cloud-v2-cutover-cleanup-concurrency -- `
   --db-url-env ACAPPELLA_TT_TEST_DATABASE_URL `
   --confirm-disposable
@@ -91,6 +99,23 @@ node scripts/cloudEventMigrationCatalogRegression.mjs `
   --db-url-env ACAPPELLA_TT_TEST_DATABASE_URL `
   --confirm-disposable
 ```
+
+The Live TT foundation also has a real local Auth/HTTP/Realtime smoke runner.
+It is hard-bound to API `56121` and PostgreSQL `56122`, requires
+`--confirm-disposable`, uses real local Auth JWTs, and exercises the deployed
+`create-live-timetable` Function plus the repository parser. It creates random
+fixture identities and rejects cleanup if unrelated Master/reference/backfill
+rows exist. Follow the two-terminal and secret-handling instructions in
+[`docs/live-tt-state-foundation.md`](../../docs/live-tt-state-foundation.md#専用local-auth--http--realtime-smoke),
+then run:
+
+```powershell
+pnpm test:live-timetable-http-realtime-smoke
+```
+
+Realtime UPDATE delivery uses a positive authorized-member control and verifies
+zero outsider/anon events. DELETE delivery is reported separately and is never
+treated as the source of truth; consumers must perform an authorized re-fetch.
 
 The deployed Workspace-master Edge adapter has a separate real-HTTP smoke
 runner. It creates real local Auth users through the Admin API, signs each user

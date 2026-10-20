@@ -148,6 +148,20 @@ const scenarios = [
     !result.laterSchema.cloudV2AtomicCutoverContract],
   ['cloud_v2_atomic_cutover_authenticated_inherited_execute', result =>
     !result.laterSchema.cloudV2AtomicCutoverContract],
+  ['live_timetable_stage_rls_disabled', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_authenticated_write', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_authenticated_inherited_write', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_backend_execute_exposed', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_authenticated_inherited_backend_execute', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_realtime_missing', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_realtime_columns_broadened', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
   ['profiles_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_type', result => !result.authWorkspaceChecks.profilesColumns],

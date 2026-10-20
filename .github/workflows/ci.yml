@@ -90,3 +90,10 @@ jobs:
           --frozen
           --config supabase/functions/save-cloud-event-v2/deno.json
           supabase/functions/save-cloud-event-v2/index.ts
+
+      - name: Check Live Timetable Projection Edge Function
+        run: >-
+          deno check
+          --frozen
+          --config supabase/functions/create-live-timetable/deno.json
+          supabase/functions/create-live-timetable/index.ts

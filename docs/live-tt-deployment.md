@@ -12,12 +12,13 @@
 - envなしのlocal開発は従来どおりlocal-only modeを利用できる
 - VercelではCloud設定が欠けたbuildを失敗させ、local-only公開を防ぐ
 
-2026年10月16日時点のrepositoryには14 migrationがあります。新しい空のSupabaseテスト
-Projectには、`20261015100000_cloud_v2_atomic_cutover.sql`までをversion順に適用します。
+2026年10月20日時点のrepositoryには15 migrationがあります。新しい空のSupabaseテスト
+Projectには、`20261019154519_live_timetable_state_foundation.sql`までをversion順に適用します。
 9〜14番目は将来のV2基盤を追加しますが、migration適用だけではWorkspace Masterの
 backfill、Atomic Cutover、`ready`切替を実行せず、現行AppのV1保存・hydrateも切り替え
-ません。今回の公開手順ではbackfillや`cutover_cloud_v2_validated()`を実行せず、Appの
-V2 hydrate/saveも有効化しません。
+ません。15番目は独立したLive TT backend foundationを追加するだけで、Live投影の作成・
+公開、既存Eventの変更、App UIの切替を行いません。今回の公開手順ではbackfillや
+`cutover_cloud_v2_validated()`を実行せず、AppのV2 hydrate/saveも有効化しません。
 
 ## 2. 事前準備
 
@@ -67,12 +68,12 @@ supabase login
 supabase link --project-ref '<PROJECT_REF>'
 supabase migration list --linked
 supabase db push --linked --dry-run
-# dry-runがrepositoryの全14 migrationをversion順に提示することを目視確認する
+# dry-runがrepositoryの全15 migrationをversion順に提示することを目視確認する
 supabase db push --linked
 supabase migration list --linked
 ```
 
-適用後はremote側に14 versionが順番どおり存在し、未適用・未知versionがないことを確認
+適用後はremote側に15 versionが順番どおり存在し、未適用・未知versionがないことを確認
 します。migrationが失敗した場合は公開へ進まず、schema catalogと
 `supabase_migrations.schema_migrations`を確認します。既存migrationを手動再実行したり、
 履歴だけを成功扱いにしたりしません。履歴不一致の調査方法は
@@ -83,8 +84,12 @@ Snapshot V1行のV2変換、Workspaceの`ready`切替は自動実行されませ
 backfill RPCや`cutover_cloud_v2_validated()`を呼び出さず、現行Snapshot V1アプリを
 そのまま配備します。
 
+15番目のLive TT migrationも既存Eventから投影を自動作成せず、公開を自動で有効に
+しません。`create-live-timetable` FunctionとLive UIはこのV1公開手順の必須要素ではなく、
+使い捨て環境での専用検証を完了するまでHostedへ配備しません。
+
 Catalog regressionは一時的なcatalog変更をtransaction内で行うため、共有オンラインProject
-では実行しません。必要なら同じ14 migrationを適用した別の使い捨てDBで実行します。
+では実行しません。必要なら同じ15 migrationを適用した別の使い捨てDBで実行します。
 
 ## 4. V1 Edge Function
 
@@ -271,6 +276,7 @@ Remove-Item `
 ## 10. 次のLive TT PRとの境界
 
 この構成は静的Vite frontendとSupabaseを分離しているため、後続で観客向け公開route、
-認証済みoperator、Stage単位のCAS、Realtime通知＋再取得を追加できます。ただし今回の
-14 migrationにはLive進行状態tableも権限もありません。Cloud Event V1をLive進行状態の
-保存先として流用せず、Liveデータ・認可・公開read契約は次PRで別設計にします。
+認証済みoperator、Stage単位のCAS、Realtime通知＋再取得を追加できます。15番目の
+migrationには独立したLive進行状態tableとbackend契約がありますが、このPRでは通常Appの
+route、操作UI、Realtime購読loopを有効化しません。Cloud Event V1をLive進行状態の保存先
+として流用せず、既存V1編集画面とは分離したままにします。
