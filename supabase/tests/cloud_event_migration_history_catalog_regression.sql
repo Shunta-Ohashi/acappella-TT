@@ -479,6 +479,13 @@ begin
       ) to authenticated;
     when 'live_timetable_stage_rls_disabled' then
       alter table public.live_timetable_stages disable row level security;
+    when 'live_timetable_stage_select_policy_extra' then
+      create policy catalog_regression_live_timetable_stage_read_all
+        on public.live_timetable_stages
+        as permissive
+        for select
+        to authenticated
+        using (true);
     when 'live_timetable_authenticated_write' then
       grant update on table public.live_timetable_stages to authenticated;
     when 'live_timetable_authenticated_column_update' then

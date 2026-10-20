@@ -2360,15 +2360,19 @@ later_schema as (
           and lower(pg_indexes.indexdef) like
             '%unique%where (status = ''in_progress''%'
       )
-      and (select count(*) = 1
+      and (select count(*) = 1 and bool_and(
+          pg_policies.policyname =
+            'live_timetable_stages_select_for_workspace_member'
+          and pg_policies.permissive = 'PERMISSIVE'
+          and pg_policies.roles = array['authenticated']::name[]
+          and pg_policies.cmd = 'SELECT'
+          and pg_policies.with_check is null
+          and lower(coalesce(pg_policies.qual, '')) like '%workspace_members%'
+          and lower(coalesce(pg_policies.qual, '')) like '%auth.uid%'
+        )
         from pg_catalog.pg_policies
         where pg_policies.schemaname = 'public'
-          and pg_policies.tablename = 'live_timetable_stages'
-          and pg_policies.policyname =
-            'live_timetable_stages_select_for_workspace_member'
-          and pg_policies.cmd = 'SELECT'
-          and lower(coalesce(pg_policies.qual, '')) like '%workspace_members%'
-          and lower(coalesce(pg_policies.qual, '')) like '%auth.uid%')
+          and pg_policies.tablename = 'live_timetable_stages')
       and exists (
         select 1
         from pg_catalog.pg_publication_tables

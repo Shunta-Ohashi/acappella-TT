@@ -80,7 +80,7 @@ const createDomainState = eventId => ({
     performanceSlotMinutes: [10],
   }],
   eventDays: [{
-    id: `${eventId}-day`, eventId, date: '2026-11-01', order: 0,
+    id: `${eventId}-day`, eventId, date: '2026-11-01', label: '   ', order: 0,
   }],
   stages: [
     {
@@ -211,7 +211,7 @@ const run = async () => {
     }
   }
 
-  const runPsqlCommand = async (sql, variables = {}) => {
+  const runPsqlCommand = async (sql, variables = {}, operation = 'fixture command') => {
     const args = [databaseUrl, '-X', '-v', 'ON_ERROR_STOP=1', '-At']
     const settingOptions = []
     for (const [key, value] of Object.entries(variables)) {
@@ -231,7 +231,7 @@ const run = async () => {
         },
       })).stdout.trim()
     } catch {
-      throw new Error('Dedicated psql command failed.')
+      throw new Error(`Dedicated psql command failed (${operation}).`)
     }
   }
 
@@ -359,6 +359,20 @@ const run = async () => {
     assert.equal(staleSource.status, 409)
     assert.equal(staleSource.value?.error?.code, 'REVISION_CONFLICT')
 
+    const missingEvent = await rawInvoke(sessions.owner.token, {
+      workspaceId, eventId: `missing-${suffix}`, expectedSourceRevision: 1,
+      mode: 'create', expectedManagementRevision: null,
+    })
+    assert.equal(missingEvent.status, 409)
+    assert.equal(missingEvent.value?.error?.code, 'EVENT_NOT_FOUND')
+
+    const missingLive = await rawInvoke(sessions.owner.token, {
+      workspaceId, eventId, expectedSourceRevision: 1,
+      mode: 'replace', expectedManagementRevision: '1',
+    })
+    assert.equal(missingLive.status, 409)
+    assert.equal(missingLive.value?.error?.code, 'LIVE_NOT_FOUND')
+
     for (const role of ['editor', 'viewer', 'outsider']) {
       const denied = await repositories[role].createProjection({
         workspaceId, eventId, expectedSourceRevision: 1,
@@ -420,6 +434,7 @@ const run = async () => {
     const bigintRead = await repositories.owner.loadAuthorized(liveId)
     assert.equal(bigintRead.ok, true)
     assert.equal(bigintRead.value.managementRevision, '9007199254740993')
+    assert.equal(bigintRead.value.eventDays[0].label, null)
 
     for (const [label, client] of [
       ['owner', sessions.owner.client],
@@ -459,6 +474,69 @@ const run = async () => {
     assert.equal(probes[3].events.length, 0)
     assert.equal(probes[4].events.length, 0)
     probes.slice(0, 3).forEach(probe => probe.events.forEach(assertRealtimePayload))
+    probes.forEach(probe => { probe.events.length = 0 })
+
+    // Postgres Changes must re-evaluate the current RLS policy after a
+    // membership is revoked. Keep the already-SUBSCRIBED channel connected,
+    // prove the distinct UPDATE reached the owner, and only then accept zero
+    // delivery to the revoked viewer as evidence. Restore this dedicated
+    // fixture membership even when an assertion fails so strict cleanup can
+    // still validate and remove the complete fixture.
+    let viewerMembershipRestoreRequired = false
+    try {
+      viewerMembershipRestoreRequired = true
+      const removedRole = await runPsqlCommand(
+        "with removed as (delete from public.workspace_members where workspace_id=current_setting('live_smoke.workspace_id')::uuid and user_id=current_setting('live_smoke.viewer_id')::uuid and role='viewer' returning role) select role from removed",
+        { workspace_id: workspaceId, viewer_id: users.viewer.id },
+        'revoke viewer membership',
+      )
+      assert.equal(removedRole, 'viewer')
+      probes.forEach(probe => { probe.events.length = 0 })
+
+      const revocationUpdate = await runPsqlCommand(
+        "with changed as (update public.live_timetable_stages set revision=revision+1,updated_at=clock_timestamp() where id=(select id from public.live_timetable_stages where live_timetable_id=current_setting('live_smoke.live_id')::uuid and workspace_id=current_setting('live_smoke.workspace_id')::uuid order by id limit 1) returning id,revision) select id::text || '|' || revision::text from changed",
+        { live_id: liveId, workspace_id: workspaceId },
+        'emit post-revocation update',
+      )
+      const [revocationStageId, revocationRevision] = revocationUpdate.split('|')
+      assert.match(revocationStageId, /^[0-9a-f-]{36}$/u)
+      assert.match(revocationRevision, /^[1-9][0-9]*$/u)
+      const isRevocationUpdate = event =>
+        event.eventType === 'UPDATE' &&
+        event.new.id === revocationStageId &&
+        String(event.new.revision) === revocationRevision
+      await waitFor(
+        () => probes[0].events.some(isRevocationUpdate),
+        'Owner did not receive the post-revocation Realtime update.',
+      )
+      await sleep(750)
+      probes[0].events.forEach(assertRealtimePayload)
+      assert.equal(
+        probes[2].events.filter(isRevocationUpdate).length,
+        0,
+        'Revoked viewer received a post-revocation Realtime update.',
+      )
+      const revokedViewerRead = await repositories.viewer.loadAuthorized(liveId)
+      assert.equal(revokedViewerRead.ok, false)
+      assert.equal(revokedViewerRead.error.code, 'ACCESS_DENIED')
+    } finally {
+      if (viewerMembershipRestoreRequired) {
+        await runPsqlCommand(
+          "insert into public.workspace_members (workspace_id,user_id,role) values (current_setting('live_smoke.workspace_id')::uuid,current_setting('live_smoke.viewer_id')::uuid,'viewer') on conflict (workspace_id,user_id) do nothing",
+          { workspace_id: workspaceId, viewer_id: users.viewer.id },
+          'restore viewer membership',
+        )
+        const restoredRole = await runPsqlCommand(
+          "select role from public.workspace_members where workspace_id=current_setting('live_smoke.workspace_id')::uuid and user_id=current_setting('live_smoke.viewer_id')::uuid",
+          { workspace_id: workspaceId, viewer_id: users.viewer.id },
+          'verify viewer membership restoration',
+        )
+        assert.equal(restoredRole, 'viewer')
+      }
+    }
+    const restoredViewerRead = await repositories.viewer.loadAuthorized(liveId)
+    assert.equal(restoredViewerRead.ok, true)
+    assert.equal(restoredViewerRead.value.role, 'viewer')
     probes.forEach(probe => { probe.events.length = 0 })
 
     const published = await repositories.owner.setPublication(
@@ -609,6 +687,7 @@ const run = async () => {
       authHttp: 'passed',
       repositoryParser: 'passed',
       realtimeUpdateAuthorization: 'passed',
+      realtimeRevokedViewerAuthorization: 'passed',
       realtimeDeleteMemberEventsObserved: memberDeleteEvents,
       realtimeNegativeStatuses: {
         outsider: settled[3],

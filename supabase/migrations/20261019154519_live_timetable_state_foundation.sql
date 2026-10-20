@@ -837,7 +837,7 @@ begin
   else
     if not found then
       raise exception 'Live Timetable does not exist'
-        using errcode = 'P0002';
+        using errcode = 'P0003';
     end if;
     if live_row.management_revision < 1
       or p_expected_management_revision::bigint < 1

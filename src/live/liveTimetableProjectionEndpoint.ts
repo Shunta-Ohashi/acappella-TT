@@ -162,6 +162,7 @@ const databaseErrorResponse = (
     case '23505':
     case 'LIVE_ALREADY_EXISTS':
       return errorResponse(409, 'LIVE_ALREADY_EXISTS', 'このEventのLive TTは既に存在します。')
+    case 'P0003':
     case 'LIVE_NOT_FOUND':
       return errorResponse(409, 'LIVE_NOT_FOUND', 'Live TTが見つかりません。')
     case '40001':

@@ -23,6 +23,10 @@ Live TTとみなしてはいけません。
 SHA-256 fingerprintを再照合します。置換は未公開・未開始に限定し、古いStage operator
 割当を引き継ぎません。
 
+投影Edgeの不存在分類は、元Cloud Eventを取得できない`P0002`を`EVENT_NOT_FOUND`、
+元Eventは存在するが`replace`対象のLive TTがない`P0003`を`LIVE_NOT_FOUND`として
+区別します。メッセージ文字列には依存せず、他のLive RPCが使う`P0002`の意味は変更しません。
+
 ## 認可とCAS
 
 - owner: 投影作成/置換、公開切替、operator割当、全Stageの開始/終了
@@ -140,8 +144,11 @@ Remove-Item Env:LIVE_TT_SMOKE_DATABASE_URL
 ```
 
 PASSには実Auth JWT、Edge HTTP、backend-only RPC、repository parser、owner/editor/viewerの
-UPDATE通知positive control、outsider/anonへの非配信、公開DTO allowlist、bigint revision、
-Cloud Event本文/revision/generation不変、厳密cleanupをすべて含みます。DELETE通知の観測数は
+UPDATE通知positive control、接続中viewerのmembership取消後にownerだけへ届くdistinct UPDATE、
+取消済みviewerの認可read拒否、outsider/anonへの非配信、空白EventDay labelの`null`正規化、
+`EVENT_NOT_FOUND`/`LIVE_NOT_FOUND`の区別、公開DTO allowlist、bigint revision、Cloud Event本文/
+revision/generation不変、membership復元後の厳密cleanupをすべて含みます。viewerへの通知0件は
+ownerへの同一UPDATEのpositive deliveryを確認した場合だけ認可証拠にします。DELETE通知の観測数は
 診断値であり、0件を認可PASSの根拠にはしません。Hostedでの結果にも読み替えません。
 
 ## 使い捨てPostgreSQL検証
@@ -169,10 +176,11 @@ psql $env:ACAPPELLA_TT_TEST_DATABASE_URL `
 固定IDを厳密cleanupします。中断時は対象ID・名称・関連行を検査し、別データが混在して
 いれば削除してはいけません。
 
-Catalog regressionはLive tableのRLS無効化、browser write、継承権限、backend RPC露出、
-Realtime publication欠落・配信列拡大をtransaction内で破損させ、read-only preflightがfail closedに
-なることを確認します。実DBで未実行の間は、SQL fixtureの存在やNode静的テストだけを
-PostgreSQLでの成功証拠として扱いません。
+Catalog regressionはLive tableのRLS無効化、追加のpermissive SELECT policy、browser write、
+継承権限、backend RPC露出、Realtime publication欠落・配信列拡大をtransaction内で破損させ、
+read-only preflightがfail closedになり、rollback後のbaselineが復帰することを確認します。
+実DBで未実行の間は、SQL fixtureの存在やNode静的テストだけをPostgreSQLでの成功証拠として
+扱いません。
 
 ## 後続PRへ残すもの
 

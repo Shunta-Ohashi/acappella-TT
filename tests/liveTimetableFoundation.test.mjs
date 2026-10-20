@@ -166,6 +166,31 @@ test('Snapshot V1から日・Stage・Section・正式Timeline順のLive投影を
   assert.equal(JSON.stringify(projection).includes('Do not publish this title'), false)
 })
 
+test('EventDayの空ラベルだけをnullへ正規化し有効な表示を保持する', () => {
+  for (const { label, expected } of [
+    { label: undefined, expected: null },
+    { label: '', expected: null },
+    { label: '   ', expected: null },
+    { label: '学祭初日', expected: '学祭初日' },
+    { label: '  学祭初日  ', expected: '  学祭初日  ' },
+  ]) {
+    const state = createDomainState()
+    const target = state.eventDays.find(day => day.id === 'day-b')
+    if (label === undefined) delete target.label
+    else target.label = label
+    const snapshotResult = createCloudEventSnapshot(state, 'event-live')
+    assert.equal(snapshotResult.ok, true)
+    const before = structuredClone(snapshotResult.snapshot)
+    const result = createLiveTimetableProjection(snapshotResult.snapshot)
+    assert.equal(result.ok, true)
+    assert.equal(
+      result.projection.eventDays.find(day => day.sourceEventDayId === 'day-b').label,
+      expected,
+    )
+    assert.deepEqual(snapshotResult.snapshot, before)
+  }
+})
+
 test('malformed V1と不正Timelineをfail closedにする', () => {
   assert.deepEqual(createLiveTimetableProjection({ version: 1 }), {
     ok: false,
@@ -282,6 +307,32 @@ test('投影Endpointは認証・source・revision/response不整合をfail close
   )
   assert.equal(stale.status, 409)
   assert.equal((await stale.json()).error.code, 'REVISION_CONFLICT')
+
+  const missingEvent = await handleLiveTimetableProjectionRequest(
+    jsonRequest(projectionRequest()),
+    {
+      ...baseDependencies,
+      async loadProjectionSource() {
+        return { data: null, error: { code: 'P0002' } }
+      },
+    },
+  )
+  assert.equal(missingEvent.status, 409)
+  assert.equal((await missingEvent.json()).error.code, 'EVENT_NOT_FOUND')
+
+  const missingLive = await handleLiveTimetableProjectionRequest(
+    jsonRequest(projectionRequest({
+      mode: 'replace', expectedManagementRevision: '1',
+    })),
+    {
+      ...baseDependencies,
+      async persistProjection() {
+        return { data: null, error: { code: 'P0003' } }
+      },
+    },
+  )
+  assert.equal(missingLive.status, 409)
+  assert.equal((await missingLive.json()).error.code, 'LIVE_NOT_FOUND')
 
   const malformed = structuredClone(sourceValue())
   malformed.event_snapshot.appState.eventDays = null
@@ -584,6 +635,7 @@ test('Repositoryは既知のEdge error codeだけを保持し未知・壊れた�
 
   for (const code of [
     'EVENT_NOT_FOUND',
+    'LIVE_NOT_FOUND',
     'INVALID_SOURCE',
     'PROJECTION_REPLACEMENT_FORBIDDEN',
     'AUTHENTICATION_REQUIRED',
@@ -691,6 +743,8 @@ test('Live foundation migrationは原子的・分離・fail-closed契約を保�
   assert.doesNotMatch(sql, /update public\.cloud_events/i)
   assert.doesNotMatch(sql, /update public\.cloud_event_workspace_generations/i)
   assert.match(sql, /display_name = '休憩'/i)
+  assert.match(sql,
+    /raise exception 'Live Timetable does not exist'[\s\S]*using errcode = 'P0003'/i)
   assert.match(sql, /delete from public\.live_timetable_stage_operators[\s\S]*delete from public\.live_timetable_stages/i)
 })
 
@@ -800,6 +854,13 @@ test('Live実HTTP・Realtime runnerは専用loopbackと厳密cleanupを要求す
   assert.match(runner, /await client\.realtime\.setAuth\(data\.session\.access_token\)/)
   assert.match(runner, /select: EXPECTED_REALTIME_COLUMNS/)
   assert.match(runner, /assert\.deepEqual\(settled, Array\(probes\.length\)\.fill\('SUBSCRIBED'\)\)/)
+  assert.match(runner,
+    /with removed as \(delete from public\.workspace_members[\s\S]*role='viewer' returning role\) select role from removed/i)
+  assert.match(runner,
+    /Owner did not receive the post-revocation Realtime update[\s\S]*Revoked viewer received a post-revocation Realtime update/i)
+  assert.match(runner,
+    /revokedViewerRead[\s\S]*ACCESS_DENIED[\s\S]*insert into public\.workspace_members/i)
+  assert.match(runner, /realtimeRevokedViewerAuthorization: 'passed'/)
   assert.match(runner, /realtimeUpdateAuthorization: 'passed'/)
   assert.match(runner, /set updated_at=updated_at/)
   assert.match(runner, /attempt < 4 && !controlDelivered/)

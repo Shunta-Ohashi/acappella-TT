@@ -268,6 +268,18 @@ begin
     '78000000-0000-4000-8000-000000000001',
     'live-foundation-event', 1
   );
+  begin
+    perform public.create_or_replace_live_timetable_projection(
+      '00000000-0000-4000-8000-000000000081',
+      '78000000-0000-4000-8000-000000000001',
+      'live-foundation-event', 1,
+      source_value ->> 'snapshot_fingerprint',
+      pg_temp.live_projection(), 'replace', '1'
+    );
+    raise exception 'Missing Live replacement was accepted'
+      using errcode = 'P0004';
+  exception when sqlstate 'P0003' then null;
+  end;
   mutation := public.create_or_replace_live_timetable_projection(
     '00000000-0000-4000-8000-000000000081',
     '78000000-0000-4000-8000-000000000001',

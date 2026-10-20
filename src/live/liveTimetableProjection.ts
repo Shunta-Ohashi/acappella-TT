@@ -65,6 +65,9 @@ export type LiveTimetableProjectionResult =
   | { ok: true; projection: LiveTimetableProjection }
   | { ok: false; reason: 'INVALID_SNAPSHOT' | 'INVALID_TIMELINE' }
 
+const normalizeEventDayLabel = (label: string | undefined): string | null =>
+  label === undefined || label.trim() === '' ? null : label
+
 const buildProjection = (
   snapshot: CloudEventSnapshotV1,
 ): LiveTimetableProjectionResult => {
@@ -153,7 +156,7 @@ const buildProjection = (
       eventDays: eventDays.map((eventDay, position) => ({
         sourceEventDayId: eventDay.id,
         date: eventDay.date,
-        label: eventDay.label ?? null,
+        label: normalizeEventDayLabel(eventDay.label),
         position,
       })),
       stages,

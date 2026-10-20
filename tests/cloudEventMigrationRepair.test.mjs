@@ -12,6 +12,9 @@ import {
   REQUIRED_LATER_SCHEMA_CHECKS,
   runCloudEventMigrationRepair,
 } from '../scripts/cloudEventMigrationRepair.mjs'
+import {
+  hasSafeLiveTimetableFoundationBaseline,
+} from '../scripts/cloudEventMigrationCatalogRegression.mjs'
 
 const AUTH_VERSION = '20261007'
 const LATER_VERSIONS = {
@@ -1322,6 +1325,7 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'cloud_v2_atomic_cutover_authenticated_execute',
     'cloud_v2_atomic_cutover_authenticated_inherited_execute',
     'live_timetable_stage_rls_disabled',
+    'live_timetable_stage_select_policy_extra',
     'live_timetable_authenticated_write',
     'live_timetable_authenticated_column_update',
     'live_timetable_public_column_update',
@@ -1339,7 +1343,7 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     catalogRegressionRunner.indexOf('const scenarios = ['),
     catalogRegressionRunner.indexOf('const parseArguments ='),
   )
-  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 111)
+  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 112)
   assert.match(catalogRegressionRunner,
     /JSON\.stringify\(\{ ok: true, scenarios: scenarios\.length \+ 1 \}\)/)
   for (const removedScenario of [
@@ -1404,6 +1408,23 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     )
   }
   assert.match(catalogRegressionRunner, /--confirm-disposable/)
+  assert.match(
+    baselineGuard,
+    /hasSafeLiveTimetableFoundationBaseline\(baseline\)/,
+  )
+  assert.match(
+    catalogRegressionRunner,
+    /restoredBaseline[\s\S]*hasSafeLiveTimetableFoundationBaseline\(restoredBaseline\)/,
+  )
+  assert.equal(hasSafeLiveTimetableFoundationBaseline({
+    laterSchema: { liveTimetableFoundationContract: true },
+  }), true)
+  assert.equal(hasSafeLiveTimetableFoundationBaseline({
+    laterSchema: { liveTimetableFoundationContract: false },
+  }), false)
+  assert.equal(hasSafeLiveTimetableFoundationBaseline({ laterSchema: {} }), false)
+  assert.equal(hasSafeLiveTimetableFoundationBaseline({}), false)
+  assert.equal(hasSafeLiveTimetableFoundationBaseline(undefined), false)
   assert.match(guide, /20261008110000[\s\S]*--status applied/)
   assert.match(guide, /20261007120000[\s\S]*--status reverted/)
   assert.match(guide, /--db-url/)
