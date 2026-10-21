@@ -2367,8 +2367,14 @@ later_schema as (
           and pg_policies.roles = array['authenticated']::name[]
           and pg_policies.cmd = 'SELECT'
           and pg_policies.with_check is null
-          and lower(coalesce(pg_policies.qual, '')) like '%workspace_members%'
-          and lower(coalesce(pg_policies.qual, '')) like '%auth.uid%'
+          and regexp_replace(
+            coalesce(pg_policies.qual, ''), '\s+', ' ', 'g'
+          ) = regexp_replace(
+            $live_stage_policy$(EXISTS ( SELECT 1
+   FROM workspace_members
+  WHERE ((workspace_members.workspace_id = live_timetable_stages.workspace_id) AND (workspace_members.user_id = ( SELECT auth.uid() AS uid)) AND (workspace_members.role = ANY (ARRAY['owner'::text, 'editor'::text, 'viewer'::text])))))$live_stage_policy$,
+            '\s+', ' ', 'g'
+          )
         )
         from pg_catalog.pg_policies
         where pg_policies.schemaname = 'public'
@@ -2398,16 +2404,53 @@ later_schema as (
         to_regclass('public.live_timetable_stages'),
         'SELECT'
       ) from authenticated_role), false)
-      and not coalesce((select has_table_privilege(
-        anon_role.oid,
+      and coalesce((select has_any_column_privilege(
+        authenticated_role.oid,
         to_regclass('public.live_timetable_stages'),
         'SELECT'
-      ) from anon_role), false)
+      ) from authenticated_role), false)
       and not coalesce((select has_table_privilege(
-        service_role.oid,
+        authenticated_role.oid,
         to_regclass('public.live_timetable_stages'),
-        'SELECT'
-      ) from service_role), false)
+        'SELECT WITH GRANT OPTION'
+      ) from authenticated_role), false)
+      and not coalesce((select has_any_column_privilege(
+        authenticated_role.oid,
+        to_regclass('public.live_timetable_stages'),
+        'SELECT WITH GRANT OPTION'
+      ) from authenticated_role), false)
+      and not exists (
+        select 1
+        from (values
+          (to_regclass('public.live_timetables'), false),
+          (to_regclass('public.live_timetable_stages'), true),
+          (to_regclass('public.live_timetable_entries'), false),
+          (to_regclass('public.live_timetable_stage_operators'), false)
+        ) as live_table(oid, authenticated_select_allowed)
+        cross join (
+          select 'authenticated'::text as role_name,
+            authenticated_role.oid from authenticated_role
+          union all select 'anon', anon_role.oid from anon_role
+          union all select 'service_role', service_role.oid from service_role
+        ) as effective_role
+        where live_table.oid is null
+          or case
+            when effective_role.role_name = 'authenticated'
+              and live_table.authenticated_select_allowed
+            then not has_table_privilege(
+                effective_role.oid, live_table.oid, 'SELECT'
+              )
+              or not has_any_column_privilege(
+                effective_role.oid, live_table.oid, 'SELECT'
+              )
+            else has_table_privilege(
+                effective_role.oid, live_table.oid, 'SELECT'
+              )
+              or has_any_column_privilege(
+                effective_role.oid, live_table.oid, 'SELECT'
+              )
+          end
+      )
       and not exists (
         select 1
         from (values

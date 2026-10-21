@@ -152,6 +152,20 @@ const scenarios = [
     !result.laterSchema.liveTimetableFoundationContract],
   ['live_timetable_stage_select_policy_extra', result =>
     !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_stage_select_policy_uncorrelated', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_anon_live_select', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_authenticated_entry_select', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_authenticated_operator_select', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_public_select', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_authenticated_inherited_select', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_authenticated_column_select', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
   ['live_timetable_authenticated_write', result =>
     !result.laterSchema.liveTimetableFoundationContract],
   ['live_timetable_authenticated_column_update', result =>

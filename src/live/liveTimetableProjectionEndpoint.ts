@@ -151,6 +151,7 @@ const getThrownCode = (error: unknown): string | undefined =>
 
 const databaseErrorResponse = (
   error: LiveTimetableProjectionDatabaseError,
+  phase: 'source' | 'persist',
 ): Response => {
   switch (error.code) {
     case '42501':
@@ -168,9 +169,12 @@ const databaseErrorResponse = (
     case '40001':
     case 'REVISION_CONFLICT':
       return errorResponse(409, 'REVISION_CONFLICT', '元EventまたはLive TTが更新されています。')
-    case '55000':
     case 'PROJECTION_REPLACEMENT_FORBIDDEN':
       return errorResponse(409, 'PROJECTION_REPLACEMENT_FORBIDDEN', '進行開始後または公開中の投影は差し替えできません。')
+    case '55000':
+      return phase === 'source'
+        ? errorResponse(400, 'INVALID_SOURCE', '投影元のCloud Eventを検証できません。')
+        : errorResponse(409, 'PROJECTION_REPLACEMENT_FORBIDDEN', '進行開始後または公開中の投影は差し替えできません。')
     case '22023':
     case 'INVALID_SOURCE':
       return errorResponse(400, 'INVALID_SOURCE', '投影元のCloud Eventを検証できません。')
@@ -332,7 +336,9 @@ export const handleLiveTimetableProjectionRequest = async (
       eventId: parsedRequest.eventId,
       expectedSourceRevision: parsedRequest.expectedSourceRevision,
     })
-    if (sourceResult.error) return databaseErrorResponse(sourceResult.error)
+    if (sourceResult.error) {
+      return databaseErrorResponse(sourceResult.error, 'source')
+    }
     const source = parseSource(sourceResult.data, parsedRequest)
     if (!source) {
       return errorResponse(502, 'INVALID_RESPONSE', '投影元の応答を検証できませんでした。')
@@ -353,7 +359,9 @@ export const handleLiveTimetableProjectionRequest = async (
       mode: parsedRequest.mode,
       expectedManagementRevision: parsedRequest.expectedManagementRevision,
     })
-    if (persisted.error) return databaseErrorResponse(persisted.error)
+    if (persisted.error) {
+      return databaseErrorResponse(persisted.error, 'persist')
+    }
     if (!isValidMutationResponse(
       persisted.data,
       parsedRequest,

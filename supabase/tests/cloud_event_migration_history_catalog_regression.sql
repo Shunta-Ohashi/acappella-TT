@@ -37,6 +37,7 @@ begin
     'cloud_event_v2_save_authenticated_inherited_execute',
     'cloud_v2_cutover_inspection_authenticated_inherited_execute',
     'cloud_v2_atomic_cutover_authenticated_inherited_execute',
+    'live_timetable_authenticated_inherited_select',
     'live_timetable_authenticated_inherited_write',
     'live_timetable_authenticated_inherited_column_update',
     'live_timetable_authenticated_inherited_backend_execute'
@@ -113,6 +114,11 @@ begin
       when scenario = 'live_timetable_authenticated_inherited_write' then
         execute format(
           'grant update on table public.live_timetable_stages to %I',
+          inherited_role_name
+        );
+      when scenario = 'live_timetable_authenticated_inherited_select' then
+        execute format(
+          'grant select on table public.live_timetable_entries to %I',
           inherited_role_name
         );
       when scenario = 'live_timetable_authenticated_inherited_column_update' then
@@ -486,6 +492,35 @@ begin
         for select
         to authenticated
         using (true);
+    when 'live_timetable_stage_select_policy_uncorrelated' then
+      alter policy live_timetable_stages_select_for_workspace_member
+        on public.live_timetable_stages
+        using (
+          exists (
+            select 1
+            from public.workspace_members
+            where workspace_members.user_id = (select auth.uid())
+              and workspace_members.role in ('owner', 'editor', 'viewer')
+          )
+        );
+    when 'live_timetable_anon_live_select' then
+      grant select on table public.live_timetables to anon;
+    when 'live_timetable_authenticated_entry_select' then
+      grant select on table public.live_timetable_entries to authenticated;
+    when 'live_timetable_authenticated_operator_select' then
+      grant select on table public.live_timetable_stage_operators
+        to authenticated;
+    when 'live_timetable_public_select' then
+      grant select on table public.live_timetable_stages to public;
+      create policy catalog_regression_live_timetable_stage_public_read_all
+        on public.live_timetable_stages
+        as permissive
+        for select
+        to public
+        using (true);
+    when 'live_timetable_authenticated_column_select' then
+      grant select (display_name) on table public.live_timetable_entries
+        to authenticated;
     when 'live_timetable_authenticated_write' then
       grant update on table public.live_timetable_stages to authenticated;
     when 'live_timetable_authenticated_column_update' then

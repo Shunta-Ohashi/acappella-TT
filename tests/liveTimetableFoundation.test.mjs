@@ -320,6 +320,43 @@ test('投影Endpointは認証・source・revision/response不整合をfail close
   assert.equal(missingEvent.status, 409)
   assert.equal((await missingEvent.json()).error.code, 'EVENT_NOT_FOUND')
 
+  for (const requestBody of [
+    projectionRequest(),
+    projectionRequest({ mode: 'replace', expectedManagementRevision: '1' }),
+  ]) {
+    const snapshotV2Source = await handleLiveTimetableProjectionRequest(
+      jsonRequest(requestBody),
+      {
+        ...baseDependencies,
+        async loadProjectionSource() {
+          return { data: null, error: { code: '55000' } }
+        },
+      },
+    )
+    assert.equal(snapshotV2Source.status, 400)
+    assert.equal((await snapshotV2Source.json()).error.code, 'INVALID_SOURCE')
+  }
+
+  for (const requestBody of [
+    projectionRequest(),
+    projectionRequest({ mode: 'replace', expectedManagementRevision: '1' }),
+  ]) {
+    const forbiddenPersistence = await handleLiveTimetableProjectionRequest(
+      jsonRequest(requestBody),
+      {
+        ...baseDependencies,
+        async persistProjection() {
+          return { data: null, error: { code: '55000' } }
+        },
+      },
+    )
+    assert.equal(forbiddenPersistence.status, 409)
+    assert.equal(
+      (await forbiddenPersistence.json()).error.code,
+      'PROJECTION_REPLACEMENT_FORBIDDEN',
+    )
+  }
+
   const missingLive = await handleLiveTimetableProjectionRequest(
     jsonRequest(projectionRequest({
       mode: 'replace', expectedManagementRevision: '1',
@@ -812,6 +849,22 @@ test('実DB fixtureはrollback境界とStage単位の並行契約を検証する
   assert.match(concurrency, /concurrent Live create did not produce one winner/i)
   assert.match(
     concurrency,
+    /assert_live_concurrency_cleanup_target[\s\S]*from public\.workspaces[\s\S]*for update[\s\S]*from public\.workspace_members[\s\S]*order by user_id for update[\s\S]*from public\.cloud_events[\s\S]*order by event_id for update/i,
+  )
+  assert.match(
+    concurrency,
+    /workspace_master_members[\s\S]*workspace_master_bands[\s\S]*workspace_master_band_members[\s\S]*cloud_event_member_references[\s\S]*cloud_event_band_references[\s\S]*cloud_workspace_master_backfills/i,
+  )
+  assert.match(
+    concurrency,
+    /live-unexpected-cleanup-event[\s\S]*cleanup_live_concurrency_fixture\(\)[\s\S]*exception when sqlstate '55000'[\s\S]*before_digest is distinct from after_digest[\s\S]*rollback;/i,
+  )
+  assert.match(
+    concurrency,
+    /begin;\s*select pg_temp\.cleanup_live_concurrency_fixture\(\);[\s\S]*drop function public\.live_concurrency_projection_for[\s\S]*commit;/i,
+  )
+  assert.match(
+    concurrency,
     /create function public\.live_concurrency_projection_for\([\s\S]*security definer[\s\S]*grant execute on function public\.live_concurrency_projection_for\(text, text\)[\s\S]*to service_role/i,
   )
   assert.match(concurrency, /pg_stat_clear_snapshot\(\)/i)
@@ -885,6 +938,29 @@ test('Live実HTTP・Realtime runnerは専用loopbackと厳密cleanupを要求す
     preflight,
     /liveTimetableFoundationContract[\s\S]*has_any_column_privilege\([\s\S]*'INSERT,UPDATE,REFERENCES'/i,
   )
+  assert.match(
+    preflight,
+    /live_timetable_stages_select_for_workspace_member[\s\S]*regexp_replace\([\s\S]*workspace_members\.workspace_id = live_timetable_stages\.workspace_id[\s\S]*workspace_members\.user_id = \( SELECT auth\.uid\(\) AS uid\)/i,
+  )
+  assert.doesNotMatch(
+    preflight,
+    /live_timetable_stages_select_for_workspace_member[\s\S]{0,1000}qual[^\n]*like/i,
+  )
+  assert.match(
+    preflight,
+    /live_timetables'\), false\)[\s\S]*live_timetable_stages'\), true\)[\s\S]*live_timetable_entries'\), false\)[\s\S]*live_timetable_stage_operators'\), false\)[\s\S]*has_table_privilege\([\s\S]*'SELECT'[\s\S]*has_any_column_privilege\([\s\S]*'SELECT'/i,
+  )
+  for (const selectScenario of [
+    'live_timetable_stage_select_policy_uncorrelated',
+    'live_timetable_anon_live_select',
+    'live_timetable_authenticated_entry_select',
+    'live_timetable_authenticated_operator_select',
+    'live_timetable_public_select',
+    'live_timetable_authenticated_inherited_select',
+    'live_timetable_authenticated_column_select',
+  ]) {
+    assert.match(catalogRegression, new RegExp(`'${selectScenario}'`))
+  }
   assert.match(
     catalogRegression,
     /membership_primary_key_missing[\s\S]*drop constraint live_timetable_stage_operators_workspace_id_user_id_fkey[\s\S]*drop constraint workspace_members_pkey/,

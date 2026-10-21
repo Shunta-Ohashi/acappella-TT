@@ -1326,6 +1326,13 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'cloud_v2_atomic_cutover_authenticated_inherited_execute',
     'live_timetable_stage_rls_disabled',
     'live_timetable_stage_select_policy_extra',
+    'live_timetable_stage_select_policy_uncorrelated',
+    'live_timetable_anon_live_select',
+    'live_timetable_authenticated_entry_select',
+    'live_timetable_authenticated_operator_select',
+    'live_timetable_public_select',
+    'live_timetable_authenticated_inherited_select',
+    'live_timetable_authenticated_column_select',
     'live_timetable_authenticated_write',
     'live_timetable_authenticated_column_update',
     'live_timetable_public_column_update',
@@ -1343,7 +1350,7 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     catalogRegressionRunner.indexOf('const scenarios = ['),
     catalogRegressionRunner.indexOf('const parseArguments ='),
   )
-  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 112)
+  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 119)
   assert.match(catalogRegressionRunner,
     /JSON\.stringify\(\{ ok: true, scenarios: scenarios\.length \+ 1 \}\)/)
   for (const removedScenario of [
