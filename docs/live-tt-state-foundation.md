@@ -5,6 +5,12 @@ backend foundationの契約と、使い捨て環境での検証境界を記録�
 画面、公開route、Realtime購読loopはまだ実装しません。この段階を本番運用可能な
 Live TTとみなしてはいけません。
 
+`20261021050414_live_timetable_operator_ui.sql`適用後は、viewerもownerから明示割当を
+受けたStageを操作できます。割当時の`granted_role`と現在のWorkspace roleが一致する
+場合だけ有効で、role変更後はownerの明示再割当が必要です。また`is_published`はLive進行
+の有効化、`public_view_enabled`は匿名公開のopt-inとして分離されます。UI・同期の追加契約は
+[Live TT operator UI](./live-tt-operator-ui.md)を参照してください。
+
 ## データ境界
 
 - Cloud Event Snapshot V1は編集用の正式データのままです。
@@ -31,9 +37,9 @@ SHA-256 fingerprintを再照合します。置換は未公開・未開始に限�
 
 - owner: 投影作成/置換、公開切替、operator割当、全Stageの開始/終了
 - editor: 明示的に割り当てられたStageの開始/終了だけ
-- viewer: 認証済みreadだけ。過去にoperatorだったとしても現在のmembershipがviewerなら更新不可
+- viewer: 認証済みreadと、viewerとして明示割当されたStageの進行操作。割当時roleと現在roleの不一致は拒否
 - outsider/anon: Workspace内部read/write不可
-- 公開閲覧: 推測困難な`public_id`を知り、かつ`is_published=true`の場合だけ、allowlist DTOをread可能
+- 公開閲覧: 推測困難な`public_id`を知り、`is_published=true`かつ`public_view_enabled=true`の場合だけ、allowlist DTOをread可能
 
 RPC契約は次のとおりです。すべて`SECURITY DEFINER`かつ空の`search_path`を使用し、
 PUBLIC EXECUTEを明示的に取り消します。tableへのbrowser直接writeは許可しません。
@@ -45,8 +51,10 @@ PUBLIC EXECUTEを明示的に取り消します。tableへのbrowser直接write�
 | `load_live_timetable_authorized` | `authenticated` | `auth.uid()` | 現在のowner/editor/viewerだけ。operator一覧はownerだけ |
 | `load_live_timetable_public` | `anon`, `authenticated` | actorなし | 公開UUID 1件、公開中、allowlist DTOのみ |
 | `set_live_timetable_publication` | `authenticated` | `auth.uid()` | ownerだけ、management revision CAS |
-| `set_live_timetable_stage_operator` | `authenticated` | `auth.uid()` | ownerだけ。割当先は現在のeditor、management/projection CAS |
-| `start_live_timetable_entry`, `end_live_timetable_entry` | `authenticated` | `auth.uid()` | owner、または現在もeditorで対象Stageへ割当済みのuser |
+| `set_live_timetable_stage_operator` | `authenticated` | `auth.uid()` | ownerだけ。割当先は現在のeditor/viewer、割当時role snapshot、management/projection CAS |
+| `start_live_timetable_entry`, `end_live_timetable_entry` | `authenticated` | `auth.uid()` | owner、または現在roleが割当時roleと一致する対象Stageのeditor/viewer |
+| `find_live_timetable_for_event_authorized` | `authenticated` | `auth.uid()` | member-only。Event名・保存revision・Live IDだけを返しSnapshot本文を返さない |
+| `list_live_timetable_operator_candidates` | `authenticated` | `auth.uid()` | owner-only。現在のeditor/viewerのUUID・表示名だけを返す |
 
 内部helperと共通transition関数は`anon`、`authenticated`、`service_role`のいずれにも
 EXECUTEを与えません。権限はrole membership経由の実効権限とcolumn ACLを含めてmigration
@@ -153,7 +161,7 @@ ownerへの同一UPDATEのpositive deliveryを確認した場合だけ認可証�
 
 ## 使い捨てPostgreSQL検証
 
-既存DBをresetせず、新規のSupabase互換PostgreSQL 17へ全15 migrationをfresh適用します。
+既存DBをresetせず、新規のSupabase互換PostgreSQL 17へ全16 migrationをfresh適用します。
 接続先、port、database名を目視確認し、共有・staging・productionには実行しません。
 
 ```powershell
@@ -184,8 +192,7 @@ read-only preflightがfail closedになり、rollback後のbaselineが復帰す�
 
 ## 後続PRへ残すもの
 
-- operator/public viewer UIとroute
-- Realtime再取得loop、再接続、bounded polling
+- 匿名観客向けLive TT routeと、`public_view_enabled`を運用上有効化する手順
 - skip/cancel/実時間訂正と監査履歴
 - Live記録の削除・保存期間・export
 - 公開IDのrotate/revoke

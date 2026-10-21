@@ -322,6 +322,7 @@ import {
   type CloudEventHydrationState,
 } from './cloud/cloudEventLifecycle.ts'
 import { isEventEditorCloudNavigationLocked } from './ui/eventEditorInteraction.ts'
+import { createLiveTimetableHash } from './live/liveTimetableRouting.ts'
 import './App.css'
 
 type AppView = 'event-editor' | AppSection
@@ -4160,6 +4161,9 @@ function App() {
           stages={stages}
           eventBands={eventBands}
           onOpenEvent={handleOpenEvent}
+          onOpenLive={cloudWorkspace
+            ? eventId => { window.location.hash = createLiveTimetableHash(eventId) }
+            : undefined}
           onCreateEvent={() => setIsCreateEventDialogOpen(true)}
           readOnly={!canEditWorkspace}
         />

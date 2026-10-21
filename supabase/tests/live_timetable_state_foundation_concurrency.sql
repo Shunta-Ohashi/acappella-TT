@@ -198,16 +198,16 @@ insert into public.live_timetable_entries (
    '78100000-0000-4000-8000-000000000021',
    'item-b', 'performance', 0, 'B', 660, 670);
 insert into public.live_timetable_stage_operators (
-  workspace_id, live_timetable_id, stage_id, user_id
+  workspace_id, live_timetable_id, stage_id, user_id, granted_role
 ) values
   ('78100000-0000-4000-8000-000000000001',
    '78100000-0000-4000-8000-000000000010',
    '78100000-0000-4000-8000-000000000020',
-   '00000000-0000-4000-8000-000000000092'),
+   '00000000-0000-4000-8000-000000000092', 'editor'),
   ('78100000-0000-4000-8000-000000000001',
    '78100000-0000-4000-8000-000000000010',
    '78100000-0000-4000-8000-000000000021',
-   '00000000-0000-4000-8000-000000000092');
+   '00000000-0000-4000-8000-000000000092', 'editor');
 commit;
 
 select extensions.dblink_connect('live_writer_a', :'test_db_url');
@@ -626,12 +626,13 @@ update public.live_timetables
 set management_revision = 1
 where id = '78100000-0000-4000-8000-000000000010';
 insert into public.live_timetable_stage_operators (
-  workspace_id, live_timetable_id, stage_id, user_id
+  workspace_id, live_timetable_id, stage_id, user_id, granted_role
 ) values (
   '78100000-0000-4000-8000-000000000001',
   '78100000-0000-4000-8000-000000000010',
   '78100000-0000-4000-8000-000000000020',
-  '00000000-0000-4000-8000-000000000092'
+  '00000000-0000-4000-8000-000000000092',
+  'editor'
 ) on conflict do nothing;
 
 select extensions.dblink_exec('live_writer_a', $remote$

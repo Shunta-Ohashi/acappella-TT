@@ -88,6 +88,19 @@ export interface PublicLiveTimetable {
   stages: LiveTimetableStageView[]
 }
 
+export interface LiveTimetableDiscovery {
+  workspaceId: string
+  eventId: string
+  eventName: string
+  sourceRevision: number
+  liveId: string | null
+}
+
+export interface LiveTimetableOperatorCandidate {
+  userId: string
+  displayName: string
+}
+
 export type LiveTimetableRepositoryErrorCode =
   | 'ACCESS_DENIED'
   | 'AUTHENTICATION_REQUIRED'
@@ -100,6 +113,7 @@ export type LiveTimetableRepositoryErrorCode =
   | 'LIVE_NOT_FOUND'
   | 'NOT_FOUND'
   | 'OPERATOR_NOT_EDITOR'
+  | 'OPERATOR_NOT_ELIGIBLE'
   | 'PROJECTION_REPLACEMENT_FORBIDDEN'
   | 'REVISION_CONFLICT'
   | 'STATE_CONFLICT'
@@ -134,6 +148,13 @@ export interface LiveTimetableDatabaseGateway {
   }) => Promise<LiveTimetableDatabaseResult<unknown>>
   loadAuthorized: (liveId: string) => Promise<LiveTimetableDatabaseResult<unknown>>
   loadPublic: (publicId: string) => Promise<LiveTimetableDatabaseResult<unknown>>
+  findForEvent: (input: {
+    workspaceId: string
+    eventId: string
+  }) => Promise<LiveTimetableDatabaseResult<unknown>>
+  listOperatorCandidates: (
+    liveId: string,
+  ) => Promise<LiveTimetableDatabaseResult<unknown>>
   setPublication: (input: {
     liveId: string
     expectedManagementRevision: string
@@ -168,6 +189,13 @@ export interface LiveTimetableRepository {
   loadPublic: (
     publicId: string,
   ) => Promise<LiveTimetableRepositoryResult<PublicLiveTimetable>>
+  findForEvent: (
+    workspaceId: string,
+    eventId: string,
+  ) => Promise<LiveTimetableRepositoryResult<LiveTimetableDiscovery>>
+  listOperatorCandidates: (
+    liveId: string,
+  ) => Promise<LiveTimetableRepositoryResult<LiveTimetableOperatorCandidate[]>>
   setPublication: (
     liveId: string,
     expectedManagementRevision: string,
@@ -569,6 +597,53 @@ export const parsePublicLiveTimetable = (
   }
 }
 
+export const parseLiveTimetableDiscovery = (
+  value: unknown,
+  expectedWorkspaceId: string,
+  expectedEventId: string,
+): LiveTimetableDiscovery | undefined => {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    'status', 'workspaceId', 'eventId', 'eventName', 'sourceRevision', 'liveId',
+  ]) || value.status !== 'ok' || value.workspaceId !== expectedWorkspaceId ||
+    value.eventId !== expectedEventId || !isNonEmptyString(value.eventName) ||
+    typeof value.sourceRevision !== 'number' ||
+    !Number.isSafeInteger(value.sourceRevision) || value.sourceRevision < 1 ||
+    (value.liveId !== null && normalizeUuid(value.liveId) === undefined)) {
+    return undefined
+  }
+  return {
+    workspaceId: expectedWorkspaceId,
+    eventId: expectedEventId,
+    eventName: value.eventName,
+    sourceRevision: value.sourceRevision,
+    liveId: value.liveId === null ? null : normalizeUuid(value.liveId) as string,
+  }
+}
+
+export const parseLiveTimetableOperatorCandidates = (
+  value: unknown,
+  expectedLiveId: string,
+): LiveTimetableOperatorCandidate[] | undefined => {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    'status', 'liveId', 'candidates',
+  ]) || value.status !== 'ok' || normalizeUuid(value.liveId) !== expectedLiveId ||
+    !Array.isArray(value.candidates)) return undefined
+
+  const candidates: LiveTimetableOperatorCandidate[] = []
+  const userIds = new Set<string>()
+  for (const candidate of value.candidates) {
+    if (!isRecord(candidate) || !hasOnlyKeys(candidate, [
+      'userId', 'displayName',
+    ])) return undefined
+    const userId = normalizeUuid(candidate.userId)
+    if (!userId || !isNonEmptyString(candidate.displayName) ||
+      userIds.has(userId)) return undefined
+    userIds.add(userId)
+    candidates.push({ userId, displayName: candidate.displayName })
+  }
+  return candidates
+}
+
 const errorResult = (
   code: LiveTimetableRepositoryErrorCode,
   message: string,
@@ -610,7 +685,11 @@ const databaseFailure = (
       return errorResult('STATE_CONFLICT', 'Live TTの現在状態ではこの操作を実行できません。')
     case 'LTT01':
     case 'OPERATOR_NOT_EDITOR':
-      return errorResult('OPERATOR_NOT_EDITOR', '割当先は現在のeditorである必要があります。')
+    case 'OPERATOR_NOT_ELIGIBLE':
+      return errorResult(
+        'OPERATOR_NOT_ELIGIBLE',
+        '割当先は現在のeditorまたはviewerである必要があります。',
+      )
     case '22023':
       return errorResult('INVALID_ARGUMENT', 'Live TTの引数が正しくありません。')
     default:
@@ -798,6 +877,50 @@ export const createLiveTimetableRepository = (
     }
   },
 
+  async findForEvent(workspaceId, eventId) {
+    const normalizedWorkspaceId = normalizeUuid(workspaceId)
+    if (!normalizedWorkspaceId || !isNonEmptyString(eventId)) {
+      return errorResult('INVALID_ARGUMENT', 'Workspace IDとEvent IDが必要です。')
+    }
+    try {
+      const result = await gateway.findForEvent({
+        workspaceId: normalizedWorkspaceId,
+        eventId,
+      })
+      if (result.error) return databaseFailure(result.error)
+      const parsed = parseLiveTimetableDiscovery(
+        result.data,
+        normalizedWorkspaceId,
+        eventId,
+      )
+      return parsed
+        ? { ok: true, value: parsed }
+        : errorResult('INVALID_RESPONSE', 'Live TT discovery応答を検証できません。')
+    } catch {
+      return databaseFailure({})
+    }
+  },
+
+  async listOperatorCandidates(liveId) {
+    const normalizedLiveId = normalizeUuid(liveId)
+    if (!normalizedLiveId) {
+      return errorResult('INVALID_ARGUMENT', 'Live IDが正しくありません。')
+    }
+    try {
+      const result = await gateway.listOperatorCandidates(normalizedLiveId)
+      if (result.error) return databaseFailure(result.error)
+      const parsed = parseLiveTimetableOperatorCandidates(
+        result.data,
+        normalizedLiveId,
+      )
+      return parsed
+        ? { ok: true, value: parsed }
+        : errorResult('INVALID_RESPONSE', 'operator候補応答を検証できません。')
+    } catch {
+      return databaseFailure({})
+    }
+  },
+
   async setPublication(liveId, expectedManagementRevision, published) {
     if (!isValidIdAndRevisions(liveId, expectedManagementRevision) ||
       typeof published !== 'boolean') {
@@ -960,6 +1083,19 @@ export const createSupabaseLiveTimetableGateway = (
   async loadPublic(publicId) {
     const result = await client.rpc('load_live_timetable_public', {
       p_public_id: publicId,
+    })
+    return { data: result.data, error: result.error }
+  },
+  async findForEvent(input) {
+    const result = await client.rpc('find_live_timetable_for_event_authorized', {
+      p_workspace_id: input.workspaceId,
+      p_event_id: input.eventId,
+    })
+    return { data: result.data, error: result.error }
+  },
+  async listOperatorCandidates(liveId) {
+    const result = await client.rpc('list_live_timetable_operator_candidates', {
+      p_live_id: liveId,
     })
     return { data: result.data, error: result.error }
   },

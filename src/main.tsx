@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { resolveAppStartupMode } from './appStartup.ts'
 import { cloudConfig } from './cloud/cloudConfig.ts'
 import { isTimetablePreShareHash } from './share/timetablePreShareRouting.ts'
+import { resolveLiveTimetableHash } from './live/liveTimetableRouting.ts'
 import './index.css'
 
 const root = createRoot(document.getElementById('root')!)
@@ -10,6 +11,7 @@ const startupMode = resolveAppStartupMode({
   isShare: isTimetablePreShareHash(window.location.hash),
   cloudStatus: cloudConfig.status,
 })
+const requestedLiveRoute = resolveLiveTimetableHash(window.location.hash)
 
 const renderAppStartupError = () => {
   root.render(
@@ -20,7 +22,15 @@ const renderAppStartupError = () => {
   )
 }
 
-if (startupMode === 'local') {
+if (startupMode === 'local' && requestedLiveRoute) {
+  root.render(
+    <main role="alert">
+      <h1>Live TTはCloudモード専用です</h1>
+      <p>Cloud設定を有効にして、認証済みのWorkspaceから開いてください。</p>
+      <a href="#">イベント画面へ戻る</a>
+    </main>,
+  )
+} else if (startupMode === 'local') {
   void import('./App.tsx').then((app) => {
     const App = app.default
     root.render(
@@ -38,14 +48,13 @@ if (startupMode === 'local') {
   )
 } else if (startupMode === 'cloud-enabled') {
   void Promise.all([
-    import('./App.tsx'),
+    import('./cloud/CloudRouteApp.tsx'),
     import('./cloud/CloudAppGate.tsx'),
-  ]).then(([app, cloud]) => {
-    const App = app.default
+  ]).then(([route, cloud]) => {
     root.render(
       <StrictMode>
         <cloud.CloudAppGate config={cloudConfig}>
-          <App />
+          <route.CloudRouteApp />
         </cloud.CloudAppGate>
       </StrictMode>,
     )

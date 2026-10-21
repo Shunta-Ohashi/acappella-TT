@@ -2860,6 +2860,163 @@ later_schema as (
           and column_acl.grantee = 0
           and column_acl.privilege_type in ('INSERT', 'UPDATE')
       )
+  ) || jsonb_build_object(
+    'liveTimetableOperatorUiContract',
+      exists (
+        select 1
+        from pg_catalog.pg_attribute
+        join pg_catalog.pg_attrdef
+          on pg_attrdef.adrelid = pg_attribute.attrelid
+          and pg_attrdef.adnum = pg_attribute.attnum
+        where pg_attribute.attrelid =
+            to_regclass('public.live_timetables')
+          and pg_attribute.attname = 'public_view_enabled'
+          and pg_attribute.atttypid = 'boolean'::regtype
+          and pg_attribute.attnotnull
+          and not pg_attribute.attisdropped
+          and pg_get_expr(pg_attrdef.adbin, pg_attrdef.adrelid) = 'false'
+      )
+      and exists (
+        select 1
+        from pg_catalog.pg_attribute
+        where pg_attribute.attrelid =
+            to_regclass('public.live_timetable_stage_operators')
+          and pg_attribute.attname = 'granted_role'
+          and pg_attribute.atttypid = 'text'::regtype
+          and pg_attribute.attnotnull
+          and not pg_attribute.attisdropped
+      )
+      and exists (
+        select 1
+        from pg_catalog.pg_constraint
+        where pg_constraint.conrelid =
+            to_regclass('public.live_timetable_stage_operators')
+          and pg_constraint.contype = 'c'
+          and pg_get_constraintdef(pg_constraint.oid) like
+            '%granted_role%editor%viewer%'
+      )
+      and (select count(*) = 6 and bool_and(
+          pg_proc.prosecdef
+          and pg_proc.prorettype = 'jsonb'::regtype
+          and array_to_string(pg_proc.proconfig, ',') in (
+            'search_path=""', 'search_path='
+          )
+        )
+        from pg_catalog.pg_proc
+        where pg_proc.oid = any(array[
+          to_regprocedure('public.build_live_timetable_stages_json(uuid,uuid,text,boolean)'),
+          to_regprocedure('public.load_live_timetable_public(uuid)'),
+          to_regprocedure('public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)'),
+          to_regprocedure('public.transition_live_timetable_entry(text,uuid,text,text,text,text)'),
+          to_regprocedure('public.find_live_timetable_for_event_authorized(uuid,text)'),
+          to_regprocedure('public.list_live_timetable_operator_candidates(uuid)')
+        ]))
+      and lower((select pg_proc.prosrc from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+          'public.build_live_timetable_stages_json(uuid,uuid,text,boolean)'
+        ))) like '%assignment.granted_role = p_membership_role%'
+      and lower((select pg_proc.prosrc from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+          'public.load_live_timetable_public(uuid)'
+        ))) like '%is_published%public_view_enabled%'
+      and lower((select pg_proc.prosrc from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+          'public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)'
+        ))) like '%operator_role not in (''editor'', ''viewer'')%'
+      and lower((select pg_proc.prosrc from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+          'public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)'
+        ))) like '%set granted_role = excluded.granted_role%'
+      and lower((select pg_proc.prosrc from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+          'public.transition_live_timetable_entry(text,uuid,text,text,text,text)'
+        ))) like '%assignment.granted_role = membership_role%'
+      and lower((select pg_proc.prosrc from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+          'public.find_live_timetable_for_event_authorized(uuid,text)'
+        ))) like '%from public.workspace_members%for share%'
+      and lower((select pg_proc.prosrc from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+          'public.list_live_timetable_operator_candidates(uuid)'
+        ))) like '%workspace_members.role in (''editor'', ''viewer'')%'
+      and lower((select pg_proc.prosrc from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+          'public.list_live_timetable_operator_candidates(uuid)'
+        ))) not like '%auth.users%'
+      and lower((select pg_proc.prosrc from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+          'public.list_live_timetable_operator_candidates(uuid)'
+        ))) not like '%email%'
+      and not has_table_privilege(
+        'authenticated', 'public.live_timetables', 'SELECT'
+      )
+      and not has_any_column_privilege(
+        'authenticated', 'public.live_timetables', 'SELECT'
+      )
+      and has_function_privilege(
+        'authenticated',
+        'public.find_live_timetable_for_event_authorized(uuid,text)',
+        'EXECUTE'
+      )
+      and has_function_privilege(
+        'authenticated',
+        'public.list_live_timetable_operator_candidates(uuid)',
+        'EXECUTE'
+      )
+      and not exists (
+        select 1
+        from (values
+          (to_regprocedure('public.find_live_timetable_for_event_authorized(uuid,text)')),
+          (to_regprocedure('public.list_live_timetable_operator_candidates(uuid)'))
+        ) as browser_function(oid)
+        cross join (
+          select anon_role.oid from anon_role
+          union all select service_role.oid from service_role
+        ) as denied_role
+        where browser_function.oid is null
+          or has_function_privilege(
+            denied_role.oid, browser_function.oid, 'EXECUTE'
+          )
+      )
+      and not exists (
+        select 1
+        from (values
+          (to_regprocedure('public.find_live_timetable_for_event_authorized(uuid,text)')),
+          (to_regprocedure('public.list_live_timetable_operator_candidates(uuid)')),
+          (to_regprocedure('public.build_live_timetable_stages_json_v15(uuid,uuid,text,boolean)')),
+          (to_regprocedure('public.load_live_timetable_public_v15(uuid)'))
+        ) as guarded_function(oid)
+        cross join lateral pg_catalog.aclexplode(coalesce(
+          (select pg_proc.proacl from pg_catalog.pg_proc
+            where pg_proc.oid = guarded_function.oid),
+          pg_catalog.acldefault(
+            'f',
+            (select pg_proc.proowner from pg_catalog.pg_proc
+              where pg_proc.oid = guarded_function.oid)
+          )
+        )) as function_acl
+        where guarded_function.oid is null
+          or (
+            function_acl.grantee = 0
+            and function_acl.privilege_type = 'EXECUTE'
+          )
+      )
+      and not exists (
+        select 1
+        from (values
+          (to_regprocedure('public.build_live_timetable_stages_json_v15(uuid,uuid,text,boolean)')),
+          (to_regprocedure('public.load_live_timetable_public_v15(uuid)'))
+        ) as internal_function(oid)
+        cross join (
+          select authenticated_role.oid from authenticated_role
+          union all select anon_role.oid from anon_role
+          union all select service_role.oid from service_role
+        ) as direct_role
+        where internal_function.oid is null
+          or has_function_privilege(
+            direct_role.oid, internal_function.oid, 'EXECUTE'
+          )
+      )
   ) as value
 )
 select jsonb_build_object(

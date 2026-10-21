@@ -149,7 +149,7 @@ const createRealtimeProbe = (client, label, workspaceId) => {
       }
     })
   })
-  return { label, channel, events, statuses, ready }
+  return { label, client, channel, events, statuses, ready }
 }
 
 const assertRealtimePayload = payload => {
@@ -264,7 +264,7 @@ const run = async () => {
     const migrationCheck = await runPsqlCommand(
       "select count(*) || '|' || max(version) from supabase_migrations.schema_migrations",
     )
-    assert.equal(migrationCheck, '15|20261019154519')
+    assert.equal(migrationCheck, '16|20261021050414')
     const publicationColumns = (await runPsqlCommand(
       "select array_to_string(attnames, ',') from pg_catalog.pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='live_timetable_stages'",
     )).split(',').sort()
@@ -403,6 +403,25 @@ const run = async () => {
     const publicId = createdValue.publicId
     assert.equal(createdValue.sourceRevision, 1)
     assert.match(createdValue.sourceSnapshotFingerprint, /^[0-9a-f]{64}$/u)
+
+    const discovery = await repositories.viewer.findForEvent(workspaceId, eventId)
+    assert.equal(discovery.ok, true)
+    assert.equal(discovery.value.liveId, liveId)
+    assert.equal(discovery.value.eventName, 'Live HTTP Realtime fixture')
+    assert.equal(discovery.value.sourceRevision, 1)
+    const candidates = await repositories.owner.listOperatorCandidates(liveId)
+    assert.equal(candidates.ok, true)
+    assert.deepEqual(
+      new Set(candidates.value.map(candidate => candidate.userId)),
+      new Set([users.editor.id, users.viewer.id]),
+    )
+    assert.equal(
+      JSON.stringify(candidates.value).includes('@'),
+      false,
+    )
+    const deniedCandidates = await repositories.viewer.listOperatorCandidates(liveId)
+    assert.equal(deniedCandidates.ok, false)
+    assert.equal(deniedCandidates.error.code, 'ACCESS_DENIED')
 
     const duplicate = await repositories.owner.createProjection({
       workspaceId, eventId, expectedSourceRevision: 1,
@@ -570,7 +589,7 @@ const run = async () => {
     const assigned = await repositories.owner.setStageOperator(
       liveId,
       `${eventId}-stage-a`,
-      users.editor.id,
+      users.viewer.id,
       true,
       '9007199254740994',
       bigintRead.value.projectionVersion,
@@ -590,7 +609,7 @@ const run = async () => {
     const stageBeforeStart = beforeStart.value.stages.find(
       stage => stage.sourceStageId === `${eventId}-stage-a`,
     )
-    const started = await repositories.editor.startEntry(
+    const started = await repositories.viewer.startEntry(
       liveId,
       `${eventId}-stage-a`,
       `${eventId}-item-a`,
@@ -614,7 +633,7 @@ const run = async () => {
       stage => stage.sourceStageId === `${eventId}-stage-a`,
     )
     assert.equal(stageAfterStart.progressStatus, 'in_progress')
-    const ended = await repositories.editor.endEntry(
+    const ended = await repositories.viewer.endEntry(
       liveId,
       `${eventId}-stage-a`,
       `${eventId}-item-a`,
@@ -630,6 +649,12 @@ const run = async () => {
     assert.equal(probes[3].events.length, 0)
     assert.equal(probes[4].events.length, 0)
 
+    assert.equal((await repositories.owner.loadPublic(publicId)).ok, false)
+    await runPsqlCommand(
+      "update public.live_timetables set public_view_enabled=true where id=current_setting('live_smoke.live_id')::uuid and workspace_id=current_setting('live_smoke.workspace_id')::uuid",
+      { live_id: liveId, workspace_id: workspaceId },
+      'enable disposable public-view fixture',
+    )
     const publicAnon = await createSupabaseLiveTimetableRepository(
       createClient(supabaseUrl, anonKey, {
         auth: { persistSession: false, autoRefreshToken: false },
@@ -642,6 +667,7 @@ const run = async () => {
     const publicJson = JSON.stringify(publicAnon.value)
     for (const forbidden of [
       workspaceId, liveId, eventId, users.owner.id, users.editor.id,
+      users.viewer.id,
       createdValue.sourceSnapshotFingerprint, 'Private break title',
       'sourceStageId', 'sourceScheduleItemId', 'startedBy', 'endedBy',
     ]) assert.equal(publicJson.includes(forbidden), false)
@@ -695,7 +721,11 @@ const run = async () => {
       },
     }
   } finally {
-    await Promise.allSettled(probes.map(probe => probe.channel.unsubscribe()))
+    await Promise.allSettled(probes.map(async (probe) => {
+      await probe.channel.unsubscribe()
+      await probe.client.removeAllChannels()
+      probe.client.realtime.disconnect()
+    }))
     let databaseCleaned = !fixtureCreated
     if (fixtureCreated) {
       try {

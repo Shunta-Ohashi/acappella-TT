@@ -541,6 +541,20 @@ begin
         drop table public.live_timetable_stages;
       alter publication supabase_realtime
         add table public.live_timetable_stages;
+    when 'live_timetable_operator_granted_role_nullable' then
+      alter table public.live_timetable_stage_operators
+        alter column granted_role drop not null;
+    when 'live_timetable_public_view_default_true' then
+      alter table public.live_timetables
+        alter column public_view_enabled set default true;
+    when 'live_timetable_operator_discovery_anon_execute' then
+      grant execute on function
+        public.find_live_timetable_for_event_authorized(uuid, text)
+        to anon;
+    when 'live_timetable_operator_helper_authenticated_execute' then
+      grant execute on function
+        public.build_live_timetable_stages_json_v15(uuid, uuid, text, boolean)
+        to authenticated;
     when 'profiles_missing' then
       alter table public.profiles rename to catalog_regression_profiles;
     when 'profiles_column_missing' then
