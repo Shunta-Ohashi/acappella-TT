@@ -196,6 +196,10 @@ const scenarios = [
     !result.laterSchema.liveTimetableOperatorUiContract],
   ['live_timetable_operator_helper_authenticated_execute', result =>
     !result.laterSchema.liveTimetableOperatorUiContract],
+  ['live_timetable_operator_stage_builder_authenticated_execute', result =>
+    !result.laterSchema.liveTimetableOperatorUiContract],
+  ['live_timetable_operator_stage_builder_inherited_execute', result =>
+    !result.laterSchema.liveTimetableOperatorUiContract],
   ['profiles_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_type', result => !result.authWorkspaceChecks.profilesColumns],

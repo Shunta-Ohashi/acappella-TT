@@ -19,13 +19,16 @@ import {
 import {
   LIVE_TIMETABLE_REALTIME_COLUMNS,
   canApplyLiveRead,
+  canApplyLiveOperatorCandidateRead,
   canRunLiveMutation,
+  createLivePollingTimerController,
   createPostMutationReadBarrier,
   createLiveTimetableScopeKey,
   getLivePollingDelay,
   isLiveStateStale,
   isMatchingLiveRealtimePayload,
   type LiveReadToken,
+  type LiveOperatorCandidateReadToken,
 } from '../live/liveTimetableSync.ts'
 import { formatLiveTimetableTimestamp } from '../live/liveTimetablePresentation.ts'
 import './LiveTimetableOperatorPage.css'
@@ -169,6 +172,11 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
   const mutationPendingRef = useRef(false)
   const [candidates, setCandidates] = useState<LiveTimetableOperatorCandidate[]>([])
   const [candidateError, setCandidateError] = useState('')
+  const [candidateLoading, setCandidateLoading] = useState(false)
+  const [candidateContext, setCandidateContext] = useState<{
+    liveId: string
+    scopeKey: string
+  }>()
   const [selectedCandidateByStage, setSelectedCandidateByStage] = useState<
     Record<string, string>
   >({})
@@ -195,6 +203,7 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
   const inFlightReadRef = useRef<Promise<void> | null>(null)
   const pendingReadRef = useRef(false)
   const refreshRef = useRef<(reason?: string) => Promise<void>>(async () => {})
+  const candidateRequestSequenceRef = useRef(0)
 
   useEffect(() => {
     activeScopeKeyRef.current = scopeKey
@@ -369,24 +378,34 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
 
   useEffect(() => {
     if (!liveId) return
-    let timeout: ReturnType<typeof setTimeout> | undefined
     let stopped = false
+    const pollingTimer = createLivePollingTimerController({
+      setTimer: (callback, delayMilliseconds) => window.setTimeout(
+        callback,
+        delayMilliseconds,
+      ),
+      clearTimer: handle => window.clearTimeout(handle as number),
+    })
 
     const schedule = () => {
       if (stopped || document.visibilityState !== 'visible') return
-      timeout = setTimeout(() => {
-        if (stopped) return
-        if (!navigator.onLine) {
-          setConnection('offline')
-          schedule()
-          return
-        }
-        if (connection === 'offline') setConnection('polling')
-        void refreshRef.current('polling').finally(schedule)
-      }, getLivePollingDelay(consecutiveFailures, connection === 'realtime'))
+      pollingTimer.schedule(
+        getLivePollingDelay(consecutiveFailures, connection === 'realtime'),
+        async (isCurrent) => {
+          if (stopped || !isCurrent()) return
+          if (!navigator.onLine) {
+            setConnection('offline')
+            if (isCurrent()) schedule()
+            return
+          }
+          if (connection === 'offline') setConnection('polling')
+          await refreshRef.current('polling')
+          if (isCurrent()) schedule()
+        },
+      )
     }
     const handleVisibility = () => {
-      if (timeout) clearTimeout(timeout)
+      pollingTimer.cancel()
       if (document.visibilityState === 'visible') {
         setNow(Date.now())
         freshnessRequiredSequenceRef.current = requestSequenceRef.current + 1
@@ -413,7 +432,7 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
     schedule()
     return () => {
       stopped = true
-      if (timeout) clearTimeout(timeout)
+      pollingTimer.dispose()
       document.removeEventListener('visibilitychange', handleVisibility)
       window.removeEventListener('online', handleOnline)
       window.removeEventListener('offline', handleOffline)
@@ -425,22 +444,70 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
     return () => window.clearInterval(timer)
   }, [])
 
-  useEffect(() => {
-    if (!live?.canManage) return
+  const refreshCandidates = useCallback(async () => {
+    const candidateLive = liveRef.current
+    if (!candidateLive?.canManage) return
     const capturedScope = activeScopeKeyRef.current
-    void liveRepository.listOperatorCandidates(live.liveId).then((result) => {
-      if (capturedScope !== activeScopeKeyRef.current) return
-      if (result.ok) {
-        setCandidates(result.value)
-        setCandidateError('')
-      } else {
+    const token: LiveOperatorCandidateReadToken = {
+      liveId: candidateLive.liveId,
+      scopeKey: capturedScope,
+      sequence: ++candidateRequestSequenceRef.current,
+    }
+    setCandidateContext({ liveId: token.liveId, scopeKey: token.scopeKey })
+    setCandidateLoading(true)
+    setCandidates([])
+    setCandidateError('')
+    let result: Awaited<ReturnType<typeof liveRepository.listOperatorCandidates>>
+    try {
+      result = await liveRepository.listOperatorCandidates(candidateLive.liveId)
+    } catch {
+      if (canApplyLiveOperatorCandidateRead({
+        token,
+        activeLiveId: liveRef.current?.liveId,
+        activeScopeKey: activeScopeKeyRef.current,
+        latestStartedSequence: candidateRequestSequenceRef.current,
+      })) {
+        setCandidateLoading(false)
         setCandidates([])
-        setCandidateError(describeRepositoryError(result.error))
+        setCandidateError('担当候補を取得できませんでした。担当候補を再取得してください。')
       }
-    })
-  }, [live?.canManage, live?.liveId, live?.managementRevision, liveRepository])
+      return
+    }
+    if (!canApplyLiveOperatorCandidateRead({
+      token,
+      activeLiveId: liveRef.current?.liveId,
+      activeScopeKey: activeScopeKeyRef.current,
+      latestStartedSequence: candidateRequestSequenceRef.current,
+    })) return
+    setCandidateLoading(false)
+    if (result.ok) {
+      setCandidates(result.value)
+      setCandidateError('')
+    } else {
+      setCandidates([])
+      setCandidateError(`${describeRepositoryError(result.error)} 担当候補を再取得してください。`)
+    }
+  }, [liveRepository])
+
+  useEffect(() => {
+    if (!live?.canManage) {
+      candidateRequestSequenceRef.current += 1
+      return
+    }
+    void refreshCandidates()
+    return () => {
+      candidateRequestSequenceRef.current += 1
+    }
+  }, [live?.canManage, live?.liveId, live?.managementRevision, refreshCandidates])
 
   const stale = isLiveStateStale(lastSynchronizedAt, now)
+  const candidatesAreCurrent = live?.canManage === true &&
+    candidateContext?.liveId === live.liveId &&
+    candidateContext.scopeKey === scopeKey
+  const currentCandidates = candidatesAreCurrent ? candidates : []
+  const currentCandidateError = candidatesAreCurrent ? candidateError : ''
+  const currentCandidateLoading = live?.canManage === true &&
+    (!candidatesAreCurrent || candidateLoading)
   const orderedDays = live ? [...live.eventDays].sort((left, right) =>
     left.position - right.position) : []
   const effectiveDayId = orderedDays.some(day =>
@@ -472,6 +539,13 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
       error: LiveTimetableRepositoryError
     }>,
     successMessage: string,
+    onResult?: (result: {
+      ok: true
+      value: unknown
+    } | {
+      ok: false
+      error: LiveTimetableRepositoryError
+    }) => void,
   ) => {
     if (mutationPendingRef.current) return
     const capturedScope = activeScopeKeyRef.current
@@ -483,6 +557,7 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
       const result = await action()
       if (capturedScope !== activeScopeKeyRef.current) return
       refreshRequired = true
+      onResult?.(result)
       setFeedback(result.ok
         ? { kind: 'success', message: successMessage }
         : { kind: 'error', message: describeRepositoryError(result.error) })
@@ -614,7 +689,11 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
     assign: boolean,
   ) => {
     if (!live?.canManage || !stage.sourceStageId) return
-    const candidate = candidates.find(item => item.userId === userId)
+    const candidate = currentCandidates.find(item => item.userId === userId)
+    if (assign && (currentCandidateLoading || currentCandidateError || !candidate)) {
+      setCandidateError('担当候補が最新か確認できません。担当候補を再取得してください。')
+      return
+    }
     const actionLabel = assign ? '割り当て' : '解除'
     if (!window.confirm(
       `${candidate?.displayName ?? 'この担当者'}を${stage.name}から${actionLabel}しますか？`,
@@ -629,6 +708,18 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
         live.projectionVersion,
       ),
       assign ? '担当者を割り当てました。' : '担当者を解除しました。',
+      result => {
+        if (!result.ok && (
+          result.error.code === 'OPERATOR_NOT_ELIGIBLE' ||
+          result.error.code === 'OPERATOR_NOT_EDITOR'
+        )) {
+          candidateRequestSequenceRef.current += 1
+          setCandidates([])
+          setCandidateError(
+            '割当先のWorkspace権限が変わりました。担当候補を再取得してください。',
+          )
+        }
+      },
     )
   }
 
@@ -884,19 +975,31 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
               <section className="live-operator-management" aria-labelledby="operator-management-title">
                 <h2 id="operator-management-title">Stage担当者</h2>
                 <p>現在のeditor/viewerだけを、Stage単位で割り当てます。</p>
-                {candidateError && <p role="alert">{candidateError}</p>}
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={currentCandidateLoading || mutationPending}
+                  onClick={() => void refreshCandidates()}
+                >
+                  {currentCandidateLoading ? '担当候補を取得中…' : '担当候補を再取得'}
+                </button>
+                {currentCandidateError && <p role="alert">{currentCandidateError}</p>}
+                {!currentCandidateLoading && !currentCandidateError &&
+                  currentCandidates.length === 0 && (
+                  <p role="status">割り当て可能な担当候補はいません。</p>
+                )}
                 {live.stages.map(stage => {
                   const assignments = live.operators.filter(operator =>
                     operator.stageId === stage.stageId)
                   const selectedCandidate = selectedCandidateByStage[stage.stageId ?? ''] ??
-                    candidates[0]?.userId ?? ''
+                    currentCandidates[0]?.userId ?? ''
                   return (
                     <article key={stage.stageId} className="live-operator-management__stage">
                       <h3>{stage.name}</h3>
                       {assignments.length > 0 ? (
                         <ul>
                           {assignments.map(assignment => {
-                            const candidate = candidates.find(item =>
+                            const candidate = currentCandidates.find(item =>
                               item.userId === assignment.userId)
                             return (
                               <li key={assignment.userId}>
@@ -927,13 +1030,14 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
                           担当候補
                           <select
                             value={selectedCandidate}
-                            disabled={candidates.length === 0 || mutationPending}
+                            disabled={currentCandidateLoading || currentCandidateError !== '' ||
+                              currentCandidates.length === 0 || mutationPending}
                             onChange={event => setSelectedCandidateByStage(current => ({
                               ...current,
                               [stage.stageId ?? '']: event.target.value,
                             }))}
                           >
-                            {candidates.map(candidate => (
+                            {currentCandidates.map(candidate => (
                               <option key={candidate.userId} value={candidate.userId}>
                                 {candidate.displayName}
                               </option>
@@ -943,7 +1047,8 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
                         <button
                           type="button"
                           className="secondary-button"
-                          disabled={!selectedCandidate || mutationPending ||
+                          disabled={!selectedCandidate || currentCandidateLoading ||
+                            currentCandidateError !== '' || mutationPending ||
                             freshnessVerificationPending || stale}
                           onClick={() => void changeOperator(stage, selectedCandidate, true)}
                         >

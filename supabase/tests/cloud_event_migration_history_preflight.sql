@@ -520,18 +520,31 @@ auth_workspace_checks as (
       where table_schema = 'public' and table_name = 'workspaces'
     ),
     'workspaceMembersColumns', (
-      select count(*) = 4 and bool_and(case column_name
-        when 'workspace_id' then udt_name = 'uuid' and is_nullable = 'NO'
-          and column_default is null
-        when 'user_id' then udt_name = 'uuid' and is_nullable = 'NO'
-          and column_default is null
-        when 'role' then udt_name = 'text' and is_nullable = 'NO'
-          and column_default is null
-        when 'authorization_epoch' then udt_name = 'uuid' and is_nullable = 'NO'
-          and column_default = 'gen_random_uuid()'
-        else false end)
-      from information_schema.columns
-      where table_schema = 'public' and table_name = 'workspace_members'
+      case when :'applied_versions'::jsonb ? '20261021050414' then (
+        select count(*) = 4 and bool_and(case column_name
+          when 'workspace_id' then udt_name = 'uuid' and is_nullable = 'NO'
+            and column_default is null
+          when 'user_id' then udt_name = 'uuid' and is_nullable = 'NO'
+            and column_default is null
+          when 'role' then udt_name = 'text' and is_nullable = 'NO'
+            and column_default is null
+          when 'authorization_epoch' then udt_name = 'uuid' and is_nullable = 'NO'
+            and column_default = 'gen_random_uuid()'
+          else false end)
+        from information_schema.columns
+        where table_schema = 'public' and table_name = 'workspace_members'
+      ) else (
+        select count(*) = 3 and bool_and(case column_name
+          when 'workspace_id' then udt_name = 'uuid' and is_nullable = 'NO'
+            and column_default is null
+          when 'user_id' then udt_name = 'uuid' and is_nullable = 'NO'
+            and column_default is null
+          when 'role' then udt_name = 'text' and is_nullable = 'NO'
+            and column_default is null
+          else false end)
+        from information_schema.columns
+        where table_schema = 'public' and table_name = 'workspace_members'
+      ) end
     ),
     'profilesPrimaryKey', exists (
       select 1 from auth_workspace_constraints
@@ -3026,6 +3039,7 @@ later_schema as (
         from (values
           (to_regprocedure('public.find_live_timetable_for_event_authorized(uuid,text)')),
           (to_regprocedure('public.list_live_timetable_operator_candidates(uuid)')),
+          (to_regprocedure('public.build_live_timetable_stages_json(uuid,uuid,text,boolean)')),
           (to_regprocedure('public.build_live_timetable_stages_json_v15(uuid,uuid,text,boolean)')),
           (to_regprocedure('public.load_live_timetable_public_v15(uuid)'))
         ) as guarded_function(oid)
@@ -3047,6 +3061,7 @@ later_schema as (
       and not exists (
         select 1
         from (values
+          (to_regprocedure('public.build_live_timetable_stages_json(uuid,uuid,text,boolean)')),
           (to_regprocedure('public.build_live_timetable_stages_json_v15(uuid,uuid,text,boolean)')),
           (to_regprocedure('public.load_live_timetable_public_v15(uuid)'))
         ) as internal_function(oid)

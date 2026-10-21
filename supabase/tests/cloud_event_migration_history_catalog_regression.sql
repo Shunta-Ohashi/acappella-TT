@@ -40,7 +40,8 @@ begin
     'live_timetable_authenticated_inherited_select',
     'live_timetable_authenticated_inherited_write',
     'live_timetable_authenticated_inherited_column_update',
-    'live_timetable_authenticated_inherited_backend_execute'
+    'live_timetable_authenticated_inherited_backend_execute',
+    'live_timetable_operator_stage_builder_inherited_execute'
   ) then
     if exists (
       select 1 from pg_catalog.pg_roles
@@ -129,6 +130,11 @@ begin
       when scenario = 'live_timetable_authenticated_inherited_backend_execute' then
         execute format(
           'grant execute on function public.create_or_replace_live_timetable_projection(uuid,uuid,text,bigint,text,jsonb,text,text) to %I',
+          inherited_role_name
+        );
+      when scenario = 'live_timetable_operator_stage_builder_inherited_execute' then
+        execute format(
+          'grant execute on function public.build_live_timetable_stages_json(uuid,uuid,text,boolean) to %I',
           inherited_role_name
         );
     end case;
@@ -560,6 +566,10 @@ begin
     when 'live_timetable_operator_helper_authenticated_execute' then
       grant execute on function
         public.build_live_timetable_stages_json_v15(uuid, uuid, text, boolean)
+        to authenticated;
+    when 'live_timetable_operator_stage_builder_authenticated_execute' then
+      grant execute on function
+        public.build_live_timetable_stages_json(uuid, uuid, text, boolean)
         to authenticated;
     when 'profiles_missing' then
       alter table public.profiles rename to catalog_regression_profiles;

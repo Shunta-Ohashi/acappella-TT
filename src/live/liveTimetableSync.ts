@@ -113,10 +113,82 @@ export const getLivePollingDelay = (
   consecutiveFailures: number,
   realtimeHealthy: boolean,
 ): number => {
-  if (realtimeHealthy) return LIVE_HEALTHY_POLLING_INTERVAL_MS
+  // Realtime health only describes the notification transport. A failed
+  // authorized HTTP read must retry promptly even while the channel remains
+  // subscribed, because only a successful read proves state freshness.
+  if (consecutiveFailures <= 0 && realtimeHealthy) {
+    return LIVE_HEALTHY_POLLING_INTERVAL_MS
+  }
   const exponent = Math.min(Math.max(consecutiveFailures, 0), 4)
   return Math.min(1_000 * (2 ** exponent), 15_000)
 }
+
+export interface LivePollingTimerController {
+  cancel: () => void
+  dispose: () => void
+  hasScheduledTimer: () => boolean
+  schedule: (
+    delayMilliseconds: number,
+    task: (isCurrent: () => boolean) => Promise<void>,
+  ) => void
+}
+
+export const createLivePollingTimerController = ({
+  setTimer,
+  clearTimer,
+}: {
+  setTimer: (callback: () => void, delayMilliseconds: number) => unknown
+  clearTimer: (handle: unknown) => void
+}): LivePollingTimerController => {
+  let timerHandle: unknown
+  let generation = 0
+  let disposed = false
+
+  const cancel = () => {
+    generation += 1
+    if (timerHandle !== undefined) clearTimer(timerHandle)
+    timerHandle = undefined
+  }
+
+  return {
+    cancel,
+    dispose: () => {
+      disposed = true
+      cancel()
+    },
+    hasScheduledTimer: () => timerHandle !== undefined,
+    schedule: (delayMilliseconds, task) => {
+      cancel()
+      if (disposed) return
+      const scheduledGeneration = generation
+      timerHandle = setTimer(() => {
+        if (disposed || scheduledGeneration !== generation) return
+        timerHandle = undefined
+        const isCurrent = () => !disposed && scheduledGeneration === generation
+        void task(isCurrent)
+      }, delayMilliseconds)
+    },
+  }
+}
+
+export interface LiveOperatorCandidateReadToken {
+  liveId: string
+  scopeKey: string
+  sequence: number
+}
+
+export const canApplyLiveOperatorCandidateRead = ({
+  token,
+  activeLiveId,
+  activeScopeKey,
+  latestStartedSequence,
+}: {
+  token: LiveOperatorCandidateReadToken
+  activeLiveId: string | undefined
+  activeScopeKey: string
+  latestStartedSequence: number
+}): boolean => token.scopeKey === activeScopeKey &&
+  token.liveId === activeLiveId && token.sequence === latestStartedSequence
 
 export const isLiveStateStale = (
   lastSynchronizedAt: number | undefined,

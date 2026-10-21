@@ -1063,6 +1063,10 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   )
   assert.match(
     authWorkspaceChecksSql,
+    /case when :'applied_versions'::jsonb \? '20261021050414'[\s\S]*count\(\*\) = 4[\s\S]*authorization_epoch[\s\S]*else \([\s\S]*count\(\*\) = 3/i,
+  )
+  assert.match(
+    authWorkspaceChecksSql,
     /'check\(btrim\(display_name\)<>''''::text\)'/i,
   )
   assert.match(authWorkspaceChecksSql, /'check\(btrim\(name\)<>''''::text\)'/i)
@@ -1376,6 +1380,8 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'live_timetable_public_view_default_true',
     'live_timetable_operator_discovery_anon_execute',
     'live_timetable_operator_helper_authenticated_execute',
+    'live_timetable_operator_stage_builder_authenticated_execute',
+    'live_timetable_operator_stage_builder_inherited_execute',
   ]) {
     assert.match(catalogRegressionSql, new RegExp(`'${scenario}'`), scenario)
     assert.match(catalogRegressionRunner, new RegExp(`'${scenario}'`), scenario)
@@ -1384,7 +1390,7 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     catalogRegressionRunner.indexOf('const scenarios = ['),
     catalogRegressionRunner.indexOf('const parseArguments ='),
   )
-  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 125)
+  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 127)
   assert.match(catalogRegressionRunner,
     /JSON\.stringify\(\{ ok: true, scenarios: scenarios\.length \+ 1 \}\)/)
   for (const removedScenario of [

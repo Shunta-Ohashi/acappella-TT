@@ -840,6 +840,7 @@ begin
   end loop;
 
   foreach signature in array array[
+    'public.build_live_timetable_stages_json(uuid,uuid,text,boolean)',
     'public.build_live_timetable_stages_json_v15(uuid,uuid,text,boolean)',
     'public.load_live_timetable_public_v15(uuid)'
   ] loop
@@ -854,6 +855,20 @@ begin
           using errcode = '42501';
       end if;
     end loop;
+    if exists (
+      select 1
+      from pg_catalog.pg_proc
+      cross join lateral pg_catalog.aclexplode(coalesce(
+        pg_proc.proacl,
+        pg_catalog.acldefault('f', pg_proc.proowner)
+      )) as function_acl
+      where pg_proc.oid = function_oid
+        and function_acl.grantee = 0
+        and function_acl.privilege_type = 'EXECUTE'
+    ) then
+      raise exception 'PUBLIC can execute internal helper %', signature
+        using errcode = '42501';
+    end if;
   end loop;
 
   if has_table_privilege(

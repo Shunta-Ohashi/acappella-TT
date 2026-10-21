@@ -38,6 +38,10 @@ Workspace Master state、V1/V2 Snapshotを書き換えません。運用契約�
 16番目は運営向けLive TT画面に必要なmember-only discovery、owner-only担当候補、
 editor/viewerのStage割当時role・認可epoch snapshot、匿名公開の独立opt-inを追加します。既存の
 Snapshot V1保存・hydrate、Workspace status、Live投影、進行状態を自動変更しません。
+適用前preflightは16番目のmigration historyがなければ従来のmembership 3列、適用後は
+認可epochを含む4列を要求します。内部Live Stage builderへのEXECUTEがcustom roleの
+default privilegeなどから`authenticated`へ継承される環境では、16番目のtransactionを
+fail closedでrollbackします。共有role membershipをmigrationが自動変更することはありません。
 運営画面と同期契約は[Live TT operator UI](./live-tt-operator-ui.md)を参照してください。
 
 8番目の`20261008170000_cloud_event_workspace_generation.sql`は、

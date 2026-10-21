@@ -17,7 +17,8 @@ Cloud V2 backfill / cutover、匿名観客向け画面、Live DTOのlocalStorage
   role変更のたびにepochが回転するため、元のroleへ戻しても古い割当は復活せず、ownerが
   候補一覧から明示再割当する必要があります。同じroleを書き直すだけではepochを回転しません。
 - owner向け候補RPCは現在のeditor/viewerの`userId`と`displayName`だけを返し、emailや
-  Auth metadataを返しません。
+  Auth metadataを返しません。候補取得に失敗した場合は古い候補を割当に使わず、ownerが
+  「担当候補を再取得」で復旧します。scope変更後や後発requestより古い候補応答は破棄します。
 - `is_published`は運営上のLive進行有効化です。匿名公開は別の
   `public_view_enabled`も必要で、このUIからは有効化できません。
 
@@ -42,10 +43,11 @@ revision, progress_status, updated_at
 一致した通知だけを認可readのきっかけにします。read応答は取得sequence、projection version、
 management revision、Stage revision vectorを`BigInt`で比較し、古い応答を破棄します。
 
-接続が正常でも30秒ごとにbackup readを行い、エラー時は1〜15秒のbounded backoff pollingへ
+接続が正常でも30秒ごとにbackup readを行い、HTTP readが失敗した場合はRealtimeの
+SUBSCRIBED状態とは独立して1〜15秒のbounded backoff pollingへ
 移ります。タブ復帰、online復帰、JWT refreshでも即時再取得します。非表示時は定期pollingを
-止め、45秒以上同期できない画面はstaleとしてmutationを無効にします。offline mutation queueは
-ありません。
+止め、復帰時は既存timerを取り消して即時readと次のtimerを各1本だけ設定します。45秒以上
+同期できない画面はstaleとしてmutationを無効にします。offline mutation queueはありません。
 
 Supabase RealtimeのRLS認可は接続時JWTと認可cacheの影響を受けます。membership取消直後の
 既存channelが短時間7列通知を受ける可能性だけで権限を確定せず、通知後の認可readを唯一の
@@ -56,6 +58,10 @@ Supabase RealtimeのRLS認可は接続時JWTと認可cacheの影響を受けま�
 
 既に15番目まで適用済みの共有・production DBで、この未公開migrationファイルを手動実行
 しません。PR merge前は新しい使い捨てPostgreSQL 17へ全16 migrationをfresh適用します。
+preflightはmigration historyに16番目がなければ`workspace_members`の従来3列、存在すれば
+`authorization_epoch`を含む4列を要求し、historyとcatalogの食い違いを拒否します。
+内部Stage DTO builderは`PUBLIC` / `anon` / `authenticated` / `service_role`から直接にも
+継承経由にも実行できないことをmigration guardとcatalog regressionで確認します。
 
 ```powershell
 $env:ACAPPELLA_TT_TEST_DATABASE_URL = `

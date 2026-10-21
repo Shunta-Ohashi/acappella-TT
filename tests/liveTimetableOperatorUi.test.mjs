@@ -18,8 +18,10 @@ import {
   LIVE_TIMETABLE_REALTIME_COLUMNS,
   LIVE_HEALTHY_POLLING_INTERVAL_MS,
   LIVE_STATE_MAX_AGE_MS,
+  canApplyLiveOperatorCandidateRead,
   canApplyLiveRead,
   canRunLiveMutation,
+  createLivePollingTimerController,
   createPostMutationReadBarrier,
   createLiveTimetableScopeKey,
   getLivePollingDelay,
@@ -185,6 +187,8 @@ test('polling backoff・stale・offline mutation gateはfail closed', () => {
   assert.equal(getLivePollingDelay(4, false), 15_000)
   assert.equal(getLivePollingDelay(99, false), 15_000)
   assert.equal(getLivePollingDelay(0, true), 30_000)
+  assert.equal(getLivePollingDelay(1, true), 2_000)
+  assert.equal(getLivePollingDelay(4, true), 15_000)
   assert.ok(LIVE_HEALTHY_POLLING_INTERVAL_MS < LIVE_STATE_MAX_AGE_MS)
   assert.equal(isLiveStateStale(undefined, 100), true)
   assert.equal(isLiveStateStale(1_000, 45_000), false)
@@ -200,6 +204,71 @@ test('polling backoff・stale・offline mutation gateはfail closed', () => {
     assert.equal(canRunLiveMutation({
       online: true, stale: false, pending: false,
       canOperate: true, progressEnabled: true,
+      ...override,
+    }), false)
+  }
+})
+
+test('polling timerはin-flight readと再scheduleが重なっても1本だけを維持する', async () => {
+  let nextHandle = 0
+  const callbacks = new Map()
+  const controller = createLivePollingTimerController({
+    setTimer(callback) {
+      const handle = ++nextHandle
+      callbacks.set(handle, callback)
+      return handle
+    },
+    clearTimer(handle) {
+      callbacks.delete(handle)
+    },
+  })
+  let finishFirstRead
+  const firstRead = new Promise(resolve => { finishFirstRead = resolve })
+  let oldReadRescheduled = false
+
+  controller.schedule(30_000, async isCurrent => {
+    await firstRead
+    if (isCurrent()) oldReadRescheduled = true
+  })
+  assert.equal(callbacks.size, 1)
+  const firstCallback = callbacks.values().next().value
+  callbacks.clear()
+  firstCallback()
+
+  // visibility復帰相当の再scheduleは、実行中だった旧readを失効させる。
+  controller.schedule(30_000, async () => {})
+  controller.schedule(2_000, async () => {})
+  assert.equal(callbacks.size, 1)
+  finishFirstRead()
+  await firstRead
+  await Promise.resolve()
+  assert.equal(oldReadRescheduled, false)
+  assert.equal(callbacks.size, 1)
+
+  controller.dispose()
+  assert.equal(callbacks.size, 0)
+  controller.schedule(1_000, async () => {})
+  assert.equal(callbacks.size, 0)
+})
+
+test('担当候補readは最新sequence・現在scope・現在Liveだけを反映する', () => {
+  const token = { liveId, scopeKey: 'scope-a', sequence: 3 }
+  assert.equal(canApplyLiveOperatorCandidateRead({
+    token,
+    activeLiveId: liveId,
+    activeScopeKey: 'scope-a',
+    latestStartedSequence: 3,
+  }), true)
+  for (const override of [
+    { activeLiveId: '10000000-0000-0000-0000-000000000099' },
+    { activeScopeKey: 'scope-b' },
+    { latestStartedSequence: 4 },
+  ]) {
+    assert.equal(canApplyLiveOperatorCandidateRead({
+      token,
+      activeLiveId: liveId,
+      activeScopeKey: 'scope-a',
+      latestStartedSequence: 3,
       ...override,
     }), false)
   }
@@ -400,6 +469,9 @@ test('migration #16はviewer grant snapshot・public分離・RPC ACLを追加す
   assert.match(sql, /workspace_members\.role in \('editor', 'viewer'\)/i)
   assert.doesNotMatch(sql, /auth\.users[\s\S]*email/i)
   assert.match(sql, /revoke all on function public\.find_live_timetable_for_event_authorized[\s\S]*grant execute[\s\S]*to authenticated/i)
+  assert.match(sql,
+    /foreach signature in array array\[[\s\S]*public\.build_live_timetable_stages_json\(uuid,uuid,text,boolean\)[\s\S]*has_function_privilege\(role_name, function_oid, 'EXECUTE'\)/i)
+  assert.match(sql, /PUBLIC can execute internal helper/i)
 })
 
 test('Live UIは独立route・再read・確認・非永続scopeを維持する', async () => {
@@ -431,12 +503,18 @@ test('Live UIは独立route・再read・確認・非永続scopeを維持する',
   assert.match(page, /mutationPendingRef\.current = false/)
   assert.match(page, /navigator\.onLine/)
   assert.match(page, /document\.visibilityState/)
+  assert.match(page, /createLivePollingTimerController/)
+  assert.match(page, /pollingTimer\.cancel\(\)/)
+  assert.match(page, /if \(isCurrent\(\)\) schedule\(\)/)
   assert.match(page, /setFreshnessVerificationPending\(true\)/)
   assert.match(page, /setFreshnessVerificationPending\(false\)/)
   assert.match(page, /formatLiveTimetableTimestamp\(entry\.actualStartedAt, live\.timeZone\)/)
   assert.match(page, /const discoveryState = await discover\(\)/)
   assert.match(page, /作成結果を確認できませんでした/)
   assert.match(page, /role=\{feedback\.kind === 'error' \? 'alert' : 'status'\}/)
+  assert.match(page, /担当候補を再取得/)
+  assert.match(page, /canApplyLiveOperatorCandidateRead/)
+  assert.match(page, /setCandidates\(\[\]\)/)
   assert.doesNotMatch(page, /localStorage|sessionStorage/)
 })
 
