@@ -34,7 +34,10 @@ export function CloudRouteApp() {
           inert={route !== undefined}
           aria-hidden={route !== undefined}
         >
-          <App key={cloud?.workspaceVisitId} />
+          <App
+            key={cloud?.workspaceVisitId}
+            isActive={route === undefined}
+          />
         </div>
       )}
       {route && <LiveTimetableOperatorPage eventId={route.eventId} />}

@@ -20,6 +20,7 @@ import {
   LIVE_STATE_MAX_AGE_MS,
   canApplyLiveOperatorCandidateRead,
   canApplyLiveRead,
+  canDispatchConfirmedLiveMutation,
   canRunLiveMutation,
   createLivePollingTimerController,
   createPostMutationReadBarrier,
@@ -28,6 +29,7 @@ import {
   isLiveStateStale,
   isLiveTimetableReadAtLeastAsFresh,
   isMatchingLiveRealtimePayload,
+  resolveLiveOperatorCandidateSelection,
 } from '../src/live/liveTimetableSync.ts'
 
 const liveId = '10000000-0000-0000-0000-000000000001'
@@ -274,6 +276,64 @@ test('担当候補readは最新sequence・現在scope・現在Liveだけを反�
   }
 })
 
+test('確認ダイアログ後は実時刻・通信・scope・barrierを再評価する', () => {
+  const base = {
+    online: true,
+    lastSynchronizedAt: 10_000,
+    now: 10_100,
+    pending: false,
+    freshnessRequiredSequence: 0,
+    expectedScopeKey: 'scope-a',
+    activeScopeKey: 'scope-a',
+    expectedLiveId: liveId,
+    activeLiveId: liveId,
+    authorized: true,
+  }
+  assert.equal(canDispatchConfirmedLiveMutation(base), true)
+  assert.equal(canDispatchConfirmedLiveMutation({
+    ...base,
+    now: 10_000 + LIVE_STATE_MAX_AGE_MS + 1,
+  }), false)
+  assert.equal(canDispatchConfirmedLiveMutation({ ...base, online: false }), false)
+  assert.equal(canDispatchConfirmedLiveMutation({
+    ...base, activeScopeKey: 'scope-b',
+  }), false)
+  assert.equal(canDispatchConfirmedLiveMutation({
+    ...base, freshnessRequiredSequence: 5,
+  }), false)
+  assert.equal(canDispatchConfirmedLiveMutation({ ...base, pending: true }), false)
+  assert.equal(canDispatchConfirmedLiveMutation({ ...base, authorized: false }), false)
+  assert.equal(canDispatchConfirmedLiveMutation({
+    ...base, activeLiveId: '10000000-0000-0000-0000-000000000099',
+  }), false)
+  assert.equal(canDispatchConfirmedLiveMutation({
+    ...base,
+    lastSynchronizedAt: 60_000,
+    now: 60_001,
+  }), true)
+})
+
+test('担当候補更新後は消失IDを送らず有効候補へfallbackする', () => {
+  const candidateA = { userId: 'candidate-a' }
+  const candidateB = { userId: 'candidate-b' }
+  assert.equal(resolveLiveOperatorCandidateSelection(
+    candidateA.userId,
+    [candidateA, candidateB],
+  ), candidateA.userId)
+  assert.equal(resolveLiveOperatorCandidateSelection(
+    candidateA.userId,
+    [candidateB],
+  ), candidateB.userId)
+  assert.equal(resolveLiveOperatorCandidateSelection(
+    candidateA.userId,
+    [],
+  ), '')
+  assert.equal(resolveLiveOperatorCandidateSelection(
+    undefined,
+    [candidateB],
+  ), candidateB.userId)
+})
+
 test('Realtime更新がない正常な長時間進行でも補助readによりstaleにならない', () => {
   let lastSuccessfulAuthorizedRead = 0
   for (let now = 0; now <= 5 * 60_000; now += 1_000) {
@@ -475,9 +535,10 @@ test('migration #16はviewer grant snapshot・public分離・RPC ACLを追加す
 })
 
 test('Live UIは独立route・再read・確認・非永続scopeを維持する', async () => {
-  const [page, routeApp, main, eventList] = await Promise.all([
+  const [page, routeApp, app, main, eventList] = await Promise.all([
     readFile(new URL('../src/components/LiveTimetableOperatorPage.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/cloud/CloudRouteApp.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/App.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/main.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/EventList.tsx', import.meta.url), 'utf8'),
   ])
@@ -486,6 +547,10 @@ test('Live UIは独立route・再read・確認・非永続scopeを維持する',
   assert.match(routeApp, /hidden=\{route !== undefined\}/)
   assert.match(routeApp, /inert=\{route !== undefined\}/)
   assert.match(routeApp, /key=\{cloud\?\.workspaceVisitId\}/)
+  assert.match(routeApp, /isActive=\{route === undefined\}/)
+  assert.match(app, /const timetableHistoryShortcutsEnabled = timetableHistoryActive && isActive/)
+  assert.match(app, /if \(!timetableHistoryShortcutsEnabled\) return/)
+  assert.match(app, /if \(!timetableHistoryActive\) \{[\s\S]*timetableHistoryController\.reset\(\)/)
   assert.match(main, /CloudRouteApp/)
   assert.match(main, /createLocalAppReturnUrl/)
   assert.match(eventList, /運営向けLive TTを開く/)
@@ -508,12 +573,17 @@ test('Live UIは独立route・再read・確認・非永続scopeを維持する',
   assert.match(page, /if \(isCurrent\(\)\) schedule\(\)/)
   assert.match(page, /setFreshnessVerificationPending\(true\)/)
   assert.match(page, /setFreshnessVerificationPending\(false\)/)
+  assert.match(page, /canDispatchConfirmedLiveMutation/)
+  assert.match(page, /now: Date\.now\(\)/)
+  assert.match(page, /pre-mutation-confirmation/)
   assert.match(page, /formatLiveTimetableTimestamp\(entry\.actualStartedAt, live\.timeZone\)/)
   assert.match(page, /const discoveryState = await discover\(\)/)
   assert.match(page, /作成結果を確認できませんでした/)
   assert.match(page, /role=\{feedback\.kind === 'error' \? 'alert' : 'status'\}/)
   assert.match(page, /担当候補を再取得/)
+  assert.match(page, /Live TTの作成状況を再確認/)
   assert.match(page, /canApplyLiveOperatorCandidateRead/)
+  assert.match(page, /resolveLiveOperatorCandidateSelection/)
   assert.match(page, /setCandidates\(\[\]\)/)
   assert.doesNotMatch(page, /localStorage|sessionStorage/)
 })

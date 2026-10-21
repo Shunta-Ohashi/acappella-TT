@@ -211,6 +211,45 @@ export const canRunLiveMutation = ({
   progressEnabled: boolean
 }): boolean => online && !stale && !pending && canOperate && progressEnabled
 
+export const canDispatchConfirmedLiveMutation = ({
+  online,
+  lastSynchronizedAt,
+  now,
+  pending,
+  freshnessRequiredSequence,
+  expectedScopeKey,
+  activeScopeKey,
+  expectedLiveId,
+  activeLiveId,
+  authorized,
+}: {
+  online: boolean
+  lastSynchronizedAt: number | undefined
+  now: number
+  pending: boolean
+  freshnessRequiredSequence: number
+  expectedScopeKey: string
+  activeScopeKey: string
+  expectedLiveId: string
+  activeLiveId: string | undefined
+  authorized: boolean
+}): boolean => expectedScopeKey === activeScopeKey &&
+  expectedLiveId === activeLiveId && freshnessRequiredSequence === 0 &&
+  canRunLiveMutation({
+    online,
+    stale: isLiveStateStale(lastSynchronizedAt, now),
+    pending,
+    canOperate: authorized,
+    progressEnabled: true,
+  })
+
+export const resolveLiveOperatorCandidateSelection = (
+  selectedUserId: string | undefined,
+  candidates: readonly { userId: string }[],
+): string => candidates.some(candidate => candidate.userId === selectedUserId)
+  ? selectedUserId as string
+  : candidates[0]?.userId ?? ''
+
 export const isMatchingLiveRealtimePayload = (
   value: unknown,
   workspaceId: string,

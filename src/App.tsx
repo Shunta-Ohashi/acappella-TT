@@ -374,7 +374,11 @@ const DEFAULT_EVENT_SETTINGS = {
 const READ_ONLY_WORKSPACE_MESSAGE =
   '閲覧権限のワークスペースではデータを変更できません。'
 
-function App() {
+interface AppProps {
+  isActive?: boolean
+}
+
+function App({ isActive = true }: AppProps) {
   const cloudWorkspace = useOptionalCloudWorkspace()
   const cloudEnabled = cloudWorkspace !== null
   const canEditWorkspace = cloudWorkspace === null ||
@@ -895,6 +899,7 @@ function App() {
 
   const timetableHistoryActive = canEditWorkspace && activeView === 'event-editor' &&
     activeStep === 6 && selectedEventId.length > 0
+  const timetableHistoryShortcutsEnabled = timetableHistoryActive && isActive
   useEffect(() => {
     if (!timetableHistoryActive) {
       timetableHistoryController.reset()
@@ -2009,7 +2014,7 @@ function App() {
   )
 
   useEffect(() => {
-    if (!timetableHistoryActive) return
+    if (!timetableHistoryShortcutsEnabled) return
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.isComposing || event.altKey || (!event.ctrlKey && !event.metaKey)) return
       const target = event.target instanceof Element ? event.target : null
@@ -2029,7 +2034,7 @@ function App() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [timetableHistoryActive, canUndoTimetable, canRedoTimetable])
+  }, [timetableHistoryShortcutsEnabled, canUndoTimetable, canRedoTimetable])
 
   const timetableResetInput = selectedEvent && timetableEventDay
     ? { event: selectedEvent, eventDay: timetableEventDay, eventDays, stages, eventBands,

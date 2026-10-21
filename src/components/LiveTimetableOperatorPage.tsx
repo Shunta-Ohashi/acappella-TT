@@ -20,6 +20,7 @@ import {
   LIVE_TIMETABLE_REALTIME_COLUMNS,
   canApplyLiveRead,
   canApplyLiveOperatorCandidateRead,
+  canDispatchConfirmedLiveMutation,
   canRunLiveMutation,
   createLivePollingTimerController,
   createPostMutationReadBarrier,
@@ -27,6 +28,7 @@ import {
   getLivePollingDelay,
   isLiveStateStale,
   isMatchingLiveRealtimePayload,
+  resolveLiveOperatorCandidateSelection,
   type LiveReadToken,
   type LiveOperatorCandidateReadToken,
 } from '../live/liveTimetableSync.ts'
@@ -164,6 +166,7 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
   }>()
   const [connection, setConnection] = useState<ConnectionState>('connecting')
   const [lastSynchronizedAt, setLastSynchronizedAt] = useState<number>()
+  const lastSynchronizedAtRef = useRef<number | undefined>(undefined)
   const [now, setNow] = useState(0)
   const [consecutiveFailures, setConsecutiveFailures] = useState(0)
   const [mutationPending, setMutationPending] = useState(false)
@@ -171,6 +174,7 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
     useState(false)
   const mutationPendingRef = useRef(false)
   const [candidates, setCandidates] = useState<LiveTimetableOperatorCandidate[]>([])
+  const candidatesRef = useRef<LiveTimetableOperatorCandidate[]>([])
   const [candidateError, setCandidateError] = useState('')
   const [candidateLoading, setCandidateLoading] = useState(false)
   const [candidateContext, setCandidateContext] = useState<{
@@ -290,6 +294,7 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
       setLive(result.value)
       setPageError('')
       const synchronizedAt = Date.now()
+      lastSynchronizedAtRef.current = synchronizedAt
       setLastSynchronizedAt(synchronizedAt)
       setNow(synchronizedAt)
       setConsecutiveFailures(0)
@@ -455,6 +460,7 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
     }
     setCandidateContext({ liveId: token.liveId, scopeKey: token.scopeKey })
     setCandidateLoading(true)
+    candidatesRef.current = []
     setCandidates([])
     setCandidateError('')
     let result: Awaited<ReturnType<typeof liveRepository.listOperatorCandidates>>
@@ -468,6 +474,7 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
         latestStartedSequence: candidateRequestSequenceRef.current,
       })) {
         setCandidateLoading(false)
+        candidatesRef.current = []
         setCandidates([])
         setCandidateError('担当候補を取得できませんでした。担当候補を再取得してください。')
       }
@@ -481,9 +488,11 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
     })) return
     setCandidateLoading(false)
     if (result.ok) {
+      candidatesRef.current = result.value
       setCandidates(result.value)
       setCandidateError('')
     } else {
+      candidatesRef.current = []
       setCandidates([])
       setCandidateError(`${describeRepositoryError(result.error)} 担当候補を再取得してください。`)
     }
@@ -529,6 +538,46 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
     canOperate: selectedStage.canOperate === true,
     progressEnabled: live?.isPublished === true,
   }) : false
+
+  const requireFreshMutationConfirmation = useCallback(() => {
+    freshnessRequiredSequenceRef.current = requestSequenceRef.current + 1
+    setFreshnessVerificationPending(true)
+    setFeedback({
+      kind: 'error',
+      message: '確認中に同期状態または権限が変わりました。最新状態を再取得し、内容を確認してもう一度操作してください。',
+    })
+    void refreshRef.current('pre-mutation-confirmation')
+  }, [])
+
+  const getConfirmedMutationLive = useCallback(({
+    expectedScopeKey,
+    expectedLiveId,
+    authorized,
+  }: {
+    expectedScopeKey: string
+    expectedLiveId: string
+    authorized: (current: AuthorizedLiveTimetable) => boolean
+  }): AuthorizedLiveTimetable | undefined => {
+    const current = liveRef.current
+    const allowed = canDispatchConfirmedLiveMutation({
+      online: navigator.onLine,
+      lastSynchronizedAt: lastSynchronizedAtRef.current,
+      now: Date.now(),
+      pending: mutationPendingRef.current,
+      freshnessRequiredSequence: freshnessRequiredSequenceRef.current,
+      expectedScopeKey,
+      activeScopeKey: activeScopeKeyRef.current,
+      expectedLiveId,
+      activeLiveId: current?.liveId,
+      authorized: current ? authorized(current) : false,
+    })
+    if (allowed) return current
+    if (expectedScopeKey === activeScopeKeyRef.current &&
+      expectedLiveId === current?.liveId) {
+      requireFreshMutationConfirmation()
+    }
+    return undefined
+  }, [requireFreshMutationConfirmation])
 
   const runMutation = useCallback(async (
     action: () => Promise<{
@@ -640,13 +689,22 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
 
   const setProgressEnabled = async (enabled: boolean) => {
     if (!live?.canManage) return
+    const expectedScopeKey = activeScopeKeyRef.current
+    const expectedLiveId = live.liveId
     const description = enabled ? 'Live進行を有効にしますか？' :
       'Live進行を無効にしますか？ 進行記録は保持されます。'
     if (!window.confirm(description)) return
+    const current = getConfirmedMutationLive({
+      expectedScopeKey,
+      expectedLiveId,
+      authorized: candidate => candidate.canManage &&
+        candidate.isPublished !== enabled,
+    })
+    if (!current) return
     await runMutation(
       () => liveRepository.setPublication(
-        live.liveId,
-        live.managementRevision,
+        current.liveId,
+        current.managementRevision,
         enabled,
       ),
       enabled ? 'Live進行を有効にしました。' : 'Live進行を無効にしました。',
@@ -658,26 +716,51 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
     entry: LiveTimetableEntryView,
   ) => {
     if (!live || !selectedStage || !entry.sourceScheduleItemId || !mutationEnabled) return
+    const expectedScopeKey = activeScopeKeyRef.current
+    const expectedLiveId = live.liveId
+    const expectedStageId = selectedStage.stageId
+    const expectedSourceStageId = selectedStage.sourceStageId
+    const expectedScheduleItemId = entry.sourceScheduleItemId
     const label = describeEntry(entry)
     const question = operation === 'start'
       ? `${label}${entry.kind === 'performance' ? 'の演奏' : ''}を開始しますか？`
       : `${label}${entry.kind === 'performance' ? 'の演奏' : ''}を終了しますか？`
     if (!window.confirm(question)) return
+    const current = getConfirmedMutationLive({
+      expectedScopeKey,
+      expectedLiveId,
+      authorized: candidate => {
+        const stage = candidate.stages.find(item =>
+          item.stageId === expectedStageId &&
+          item.sourceStageId === expectedSourceStageId)
+        if (!stage?.canOperate || !candidate.isPublished) return false
+        const currentTarget = operation === 'start'
+          ? getNextEntry(stage)
+          : getCurrentEntry(stage)
+        return currentTarget?.sourceScheduleItemId === expectedScheduleItemId &&
+          currentTarget.status === (operation === 'start' ? 'pending' : 'in_progress')
+      },
+    })
+    if (!current) return
+    const currentStage = current.stages.find(item =>
+      item.stageId === expectedStageId &&
+      item.sourceStageId === expectedSourceStageId)
+    if (!currentStage) return
     await runMutation(
       () => operation === 'start'
         ? liveRepository.startEntry(
-            live.liveId,
-            selectedStage.sourceStageId ?? '',
-            entry.sourceScheduleItemId ?? '',
-            selectedStage.revision,
-            live.projectionVersion,
+            current.liveId,
+            currentStage.sourceStageId ?? '',
+            expectedScheduleItemId,
+            currentStage.revision,
+            current.projectionVersion,
           )
         : liveRepository.endEntry(
-            live.liveId,
-            selectedStage.sourceStageId ?? '',
-            entry.sourceScheduleItemId ?? '',
-            selectedStage.revision,
-            live.projectionVersion,
+            current.liveId,
+            currentStage.sourceStageId ?? '',
+            expectedScheduleItemId,
+            currentStage.revision,
+            current.projectionVersion,
           ),
       operation === 'start' ? '開始を記録しました。' : '終了を記録しました。',
     )
@@ -695,17 +778,30 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
       return
     }
     const actionLabel = assign ? '割り当て' : '解除'
+    const expectedScopeKey = activeScopeKeyRef.current
+    const expectedLiveId = live.liveId
+    const expectedStageId = stage.stageId
+    const expectedSourceStageId = stage.sourceStageId
     if (!window.confirm(
       `${candidate?.displayName ?? 'この担当者'}を${stage.name}から${actionLabel}しますか？`,
     )) return
+    const current = getConfirmedMutationLive({
+      expectedScopeKey,
+      expectedLiveId,
+      authorized: candidateLive => candidateLive.canManage &&
+        candidateLive.stages.some(item => item.stageId === expectedStageId &&
+          item.sourceStageId === expectedSourceStageId) &&
+        (!assign || candidatesRef.current.some(item => item.userId === userId)),
+    })
+    if (!current) return
     await runMutation(
       () => liveRepository.setStageOperator(
-        live.liveId,
-        stage.sourceStageId ?? '',
+        current.liveId,
+        expectedSourceStageId,
         userId,
         assign,
-        live.managementRevision,
-        live.projectionVersion,
+        current.managementRevision,
+        current.projectionVersion,
       ),
       assign ? '担当者を割り当てました。' : '担当者を解除しました。',
       result => {
@@ -770,16 +866,14 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
             ) : (
               <p>作成はWorkspace ownerへ依頼してください。</p>
             )}
-            {pageError && (
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={mutationPending}
-                onClick={() => void discover()}
-              >
-                保存状態を再確認
-              </button>
-            )}
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={mutationPending}
+              onClick={() => void discover()}
+            >
+              Live TTの作成状況を再確認
+            </button>
           </section>
         </main>
       </AppShell>
@@ -991,8 +1085,10 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
                 {live.stages.map(stage => {
                   const assignments = live.operators.filter(operator =>
                     operator.stageId === stage.stageId)
-                  const selectedCandidate = selectedCandidateByStage[stage.stageId ?? ''] ??
-                    currentCandidates[0]?.userId ?? ''
+                  const selectedCandidate = resolveLiveOperatorCandidateSelection(
+                    selectedCandidateByStage[stage.stageId ?? ''],
+                    currentCandidates,
+                  )
                   return (
                     <article key={stage.stageId} className="live-operator-management__stage">
                       <h3>{stage.name}</h3>
