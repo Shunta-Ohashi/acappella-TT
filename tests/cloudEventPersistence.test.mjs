@@ -4042,7 +4042,7 @@ test('migration実ファイルはAuth→Cloud Event→RPC/権限変更の依存�
   ))).filter(name => name.endsWith('.sql')).sort()
   const versions = migrations.map(name => name.split('_', 1)[0])
 
-  assert.equal(migrations.length, 14)
+  assert.equal(migrations.length, 15)
   assert.equal(new Set(versions).size, versions.length)
   assert.ok(migrations.indexOf('20261007_auth_workspace.sql') <
     migrations.indexOf('20261008110000_cloud_event_persistence.sql'))
@@ -4066,6 +4066,8 @@ test('migration実ファイルはAuth→Cloud Event→RPC/権限変更の依存�
     migrations.indexOf('20261014100000_cloud_v2_cutover_inspection.sql'))
   assert.ok(migrations.indexOf('20261014100000_cloud_v2_cutover_inspection.sql') <
     migrations.indexOf('20261015100000_cloud_v2_atomic_cutover.sql'))
+  assert.ok(migrations.indexOf('20261015100000_cloud_v2_atomic_cutover.sql') <
+    migrations.indexOf('20261019154519_live_timetable_state_foundation.sql'))
   assert.equal(migrations.includes('20261007120000_cloud_event_persistence.sql'), false)
 
   for (const migration of migrations) {

@@ -11,6 +11,9 @@
 \set workspace_master_foundation_state_safe false
 \set workspace_master_row_count 0
 \set workspace_master_data_digest 'absent'
+\set live_timetable_tables_exist false
+\set live_timetable_row_count 0
+\set live_timetable_data_digest 'absent'
 
 select (to_regclass('supabase_migrations.schema_migrations') is not null)::text
   as history_table_exists
@@ -20,6 +23,43 @@ select (to_regclass('supabase_migrations.schema_migrations') is not null)::text
 select coalesce(jsonb_agg(version::text order by version::text), '[]'::jsonb)::text
   as applied_versions
 from supabase_migrations.schema_migrations
+\gset
+\endif
+
+select (
+  to_regclass('public.live_timetables') is not null
+  and to_regclass('public.live_timetable_stages') is not null
+  and to_regclass('public.live_timetable_entries') is not null
+  and to_regclass('public.live_timetable_stage_operators') is not null
+)::text as live_timetable_tables_exist
+\gset
+
+\if :live_timetable_tables_exist
+with live_rows as (
+  select 'live'::text as kind, array[id::text] as row_key,
+    to_jsonb(live_timetables)::text as payload
+  from public.live_timetables
+  union all
+  select 'stage', array[live_timetable_id::text, id::text],
+    to_jsonb(live_timetable_stages)::text
+  from public.live_timetable_stages
+  union all
+  select 'entry', array[live_timetable_id::text, stage_id::text, id::text],
+    to_jsonb(live_timetable_entries)::text
+  from public.live_timetable_entries
+  union all
+  select 'operator', array[live_timetable_id::text, stage_id::text, user_id::text],
+    to_jsonb(live_timetable_stage_operators)::text
+  from public.live_timetable_stage_operators
+)
+select
+  count(*)::text as live_timetable_row_count,
+  md5(coalesce(
+    string_agg(md5(kind || ':' || to_jsonb(row_key)::text || ':' || payload), ''
+      order by kind, row_key),
+    ''
+  )) as live_timetable_data_digest
+from live_rows
 \gset
 \endif
 
@@ -2253,6 +2293,355 @@ later_schema as (
         )) as function_acl
         where function_acl.grantee = 0
           and function_acl.privilege_type = 'EXECUTE'
+      )
+    -- Keep each jsonb_build_object call within PostgreSQL's 100-argument
+    -- function limit. The Live foundation pushed this catalog object past
+    -- 50 key/value pairs, so compose the unchanged checks as two objects.
+  ) || jsonb_build_object(
+    'liveTimetableFoundationContract',
+      (select count(*) = 4 and bool_and(pg_class.relrowsecurity)
+        from pg_catalog.pg_class
+        where pg_class.oid = any(array[
+          to_regclass('public.live_timetables'),
+          to_regclass('public.live_timetable_stages'),
+          to_regclass('public.live_timetable_entries'),
+          to_regclass('public.live_timetable_stage_operators')
+        ]))
+      and exists (
+        select 1
+        from pg_catalog.pg_constraint
+        where pg_constraint.conrelid = to_regclass('public.live_timetables')
+          and pg_constraint.confrelid = to_regclass('public.cloud_events')
+          and pg_constraint.contype = 'f'
+          and pg_constraint.confdeltype = 'r'
+      )
+      and (select count(*) = 1
+        from pg_catalog.pg_constraint
+        where pg_constraint.conrelid =
+            to_regclass('public.live_timetable_stages')
+          and pg_constraint.confrelid =
+            to_regclass('public.live_timetables')
+          and pg_constraint.contype = 'f'
+          and pg_constraint.confdeltype = 'c')
+      and (select count(*) = 1
+        from pg_catalog.pg_constraint
+        where pg_constraint.conrelid =
+            to_regclass('public.live_timetable_entries')
+          and pg_constraint.confrelid =
+            to_regclass('public.live_timetable_stages')
+          and pg_constraint.contype = 'f'
+          and pg_constraint.confdeltype = 'c')
+      and (select count(*) = 2
+        from pg_catalog.pg_constraint
+        where pg_constraint.conrelid =
+            to_regclass('public.live_timetable_stage_operators')
+          and pg_constraint.contype = 'f'
+          and pg_constraint.confrelid in (
+            to_regclass('public.live_timetable_stages'),
+            to_regclass('public.workspace_members')
+          )
+          and pg_constraint.confdeltype = 'c')
+      and exists (
+        select 1
+        from pg_catalog.pg_attribute
+        where pg_attribute.attrelid =
+            to_regclass('public.live_timetable_stages')
+          and pg_attribute.attname = 'event_day_position'
+          and pg_attribute.atttypid = 'integer'::regtype
+          and pg_attribute.attnotnull
+          and not pg_attribute.attisdropped
+      )
+      and exists (
+        select 1
+        from pg_catalog.pg_indexes
+        where pg_indexes.schemaname = 'public'
+          and pg_indexes.indexname =
+            'live_timetable_entries_one_in_progress_idx'
+          and lower(pg_indexes.indexdef) like
+            '%unique%where (status = ''in_progress''%'
+      )
+      and (select count(*) = 1 and bool_and(
+          pg_policies.policyname =
+            'live_timetable_stages_select_for_workspace_member'
+          and pg_policies.permissive = 'PERMISSIVE'
+          and pg_policies.roles = array['authenticated']::name[]
+          and pg_policies.cmd = 'SELECT'
+          and pg_policies.with_check is null
+          and regexp_replace(
+            coalesce(pg_policies.qual, ''), '\s+', ' ', 'g'
+          ) = regexp_replace(
+            $live_stage_policy$(EXISTS ( SELECT 1
+   FROM workspace_members
+  WHERE ((workspace_members.workspace_id = live_timetable_stages.workspace_id) AND (workspace_members.user_id = ( SELECT auth.uid() AS uid)) AND (workspace_members.role = ANY (ARRAY['owner'::text, 'editor'::text, 'viewer'::text])))))$live_stage_policy$,
+            '\s+', ' ', 'g'
+          )
+        )
+        from pg_catalog.pg_policies
+        where pg_policies.schemaname = 'public'
+          and pg_policies.tablename = 'live_timetable_stages')
+      and exists (
+        select 1
+        from pg_catalog.pg_publication_tables
+        where pg_publication_tables.pubname = 'supabase_realtime'
+          and pg_publication_tables.schemaname = 'public'
+          and pg_publication_tables.tablename = 'live_timetable_stages'
+      )
+      and (select count(*) = 1 and bool_and(
+          cardinality(pg_publication_tables.attnames) = 7
+          and pg_publication_tables.attnames::text[] <@ array[
+            'id', 'workspace_id', 'live_timetable_id',
+            'projection_version', 'revision', 'progress_status', 'updated_at'
+          ]::text[])
+        from pg_catalog.pg_publication_tables
+        where pg_publication_tables.pubname = 'supabase_realtime'
+          and pg_publication_tables.schemaname = 'public'
+          and pg_publication_tables.tablename = 'live_timetable_stages')
+      and (select count(*) = 1 from authenticated_role)
+      and (select count(*) = 1 from anon_role)
+      and (select count(*) = 1 from service_role)
+      and coalesce((select has_table_privilege(
+        authenticated_role.oid,
+        to_regclass('public.live_timetable_stages'),
+        'SELECT'
+      ) from authenticated_role), false)
+      and coalesce((select has_any_column_privilege(
+        authenticated_role.oid,
+        to_regclass('public.live_timetable_stages'),
+        'SELECT'
+      ) from authenticated_role), false)
+      and not coalesce((select has_table_privilege(
+        authenticated_role.oid,
+        to_regclass('public.live_timetable_stages'),
+        'SELECT WITH GRANT OPTION'
+      ) from authenticated_role), false)
+      and not coalesce((select has_any_column_privilege(
+        authenticated_role.oid,
+        to_regclass('public.live_timetable_stages'),
+        'SELECT WITH GRANT OPTION'
+      ) from authenticated_role), false)
+      and not exists (
+        select 1
+        from (values
+          (to_regclass('public.live_timetables'), false),
+          (to_regclass('public.live_timetable_stages'), true),
+          (to_regclass('public.live_timetable_entries'), false),
+          (to_regclass('public.live_timetable_stage_operators'), false)
+        ) as live_table(oid, authenticated_select_allowed)
+        cross join (
+          select 'authenticated'::text as role_name,
+            authenticated_role.oid from authenticated_role
+          union all select 'anon', anon_role.oid from anon_role
+          union all select 'service_role', service_role.oid from service_role
+        ) as effective_role
+        where live_table.oid is null
+          or case
+            when effective_role.role_name = 'authenticated'
+              and live_table.authenticated_select_allowed
+            then not has_table_privilege(
+                effective_role.oid, live_table.oid, 'SELECT'
+              )
+              or not has_any_column_privilege(
+                effective_role.oid, live_table.oid, 'SELECT'
+              )
+            else has_table_privilege(
+                effective_role.oid, live_table.oid, 'SELECT'
+              )
+              or has_any_column_privilege(
+                effective_role.oid, live_table.oid, 'SELECT'
+              )
+          end
+      )
+      and not exists (
+        select 1
+        from (values
+          (to_regclass('public.live_timetables')),
+          (to_regclass('public.live_timetable_stages')),
+          (to_regclass('public.live_timetable_entries')),
+          (to_regclass('public.live_timetable_stage_operators'))
+        ) as live_table(oid)
+        cross join (
+          select authenticated_role.oid from authenticated_role
+          union all select anon_role.oid from anon_role
+          union all select service_role.oid from service_role
+        ) as direct_role
+        cross join (values
+          ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'),
+          ('REFERENCES'), ('TRIGGER')
+        ) as privilege(privilege_name)
+        where live_table.oid is null
+          or has_table_privilege(
+            direct_role.oid, live_table.oid, privilege.privilege_name
+          )
+      )
+      and not exists (
+        select 1
+        from (values
+          (to_regclass('public.live_timetables')),
+          (to_regclass('public.live_timetable_stages')),
+          (to_regclass('public.live_timetable_entries')),
+          (to_regclass('public.live_timetable_stage_operators'))
+        ) as live_table(oid)
+        cross join (
+          select authenticated_role.oid from authenticated_role
+          union all select anon_role.oid from anon_role
+          union all select service_role.oid from service_role
+        ) as effective_role
+        where live_table.oid is null
+          or has_any_column_privilege(
+            effective_role.oid,
+            live_table.oid,
+            'INSERT,UPDATE,REFERENCES'
+          )
+      )
+      and (select count(*) = 8 and bool_and(
+          pg_proc.prosecdef
+          and pg_proc.provolatile = 'v'
+          and pg_proc.prorettype = 'jsonb'::regtype
+          and array_to_string(pg_proc.proconfig, ',') in (
+            'search_path=""', 'search_path='
+          )
+        )
+        from pg_catalog.pg_proc
+        where pg_proc.oid = any(array[
+          to_regprocedure('public.load_live_timetable_projection_source(uuid,uuid,text,bigint)'),
+          to_regprocedure('public.create_or_replace_live_timetable_projection(uuid,uuid,text,bigint,text,jsonb,text,text)'),
+          to_regprocedure('public.load_live_timetable_authorized(uuid)'),
+          to_regprocedure('public.load_live_timetable_public(uuid)'),
+          to_regprocedure('public.set_live_timetable_publication(uuid,text,boolean)'),
+          to_regprocedure('public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)'),
+          to_regprocedure('public.start_live_timetable_entry(uuid,text,text,text,text)'),
+          to_regprocedure('public.end_live_timetable_entry(uuid,text,text,text,text)')
+        ]))
+      and coalesce((select has_function_privilege(
+        service_role.oid,
+        to_regprocedure('public.load_live_timetable_projection_source(uuid,uuid,text,bigint)'),
+        'EXECUTE'
+      ) from service_role), false)
+      and coalesce((select has_function_privilege(
+        service_role.oid,
+        to_regprocedure('public.create_or_replace_live_timetable_projection(uuid,uuid,text,bigint,text,jsonb,text,text)'),
+        'EXECUTE'
+      ) from service_role), false)
+      and coalesce((select has_function_privilege(
+        authenticated_role.oid,
+        to_regprocedure('public.load_live_timetable_authorized(uuid)'),
+        'EXECUTE'
+      ) from authenticated_role), false)
+      and coalesce((select has_function_privilege(
+        anon_role.oid,
+        to_regprocedure('public.load_live_timetable_public(uuid)'),
+        'EXECUTE'
+      ) from anon_role), false)
+      and coalesce((select has_function_privilege(
+        authenticated_role.oid,
+        to_regprocedure('public.load_live_timetable_public(uuid)'),
+        'EXECUTE'
+      ) from authenticated_role), false)
+      and coalesce((select has_function_privilege(
+        authenticated_role.oid,
+        to_regprocedure('public.set_live_timetable_publication(uuid,text,boolean)'),
+        'EXECUTE'
+      ) from authenticated_role), false)
+      and coalesce((select has_function_privilege(
+        authenticated_role.oid,
+        to_regprocedure('public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)'),
+        'EXECUTE'
+      ) from authenticated_role), false)
+      and coalesce((select has_function_privilege(
+        authenticated_role.oid,
+        to_regprocedure('public.start_live_timetable_entry(uuid,text,text,text,text)'),
+        'EXECUTE'
+      ) from authenticated_role), false)
+      and coalesce((select has_function_privilege(
+        authenticated_role.oid,
+        to_regprocedure('public.end_live_timetable_entry(uuid,text,text,text,text)'),
+        'EXECUTE'
+      ) from authenticated_role), false)
+      and not coalesce((select has_function_privilege(
+        service_role.oid,
+        to_regprocedure('public.load_live_timetable_public(uuid)'),
+        'EXECUTE'
+      ) from service_role), false)
+      and not exists (
+        select 1
+        from (values
+          (to_regprocedure('public.load_live_timetable_projection_source(uuid,uuid,text,bigint)')),
+          (to_regprocedure('public.create_or_replace_live_timetable_projection(uuid,uuid,text,bigint,text,jsonb,text,text)'))
+        ) as backend_function(oid)
+        cross join (
+          select authenticated_role.oid from authenticated_role
+          union all select anon_role.oid from anon_role
+        ) as browser_role
+        where backend_function.oid is null
+          or has_function_privilege(
+            browser_role.oid, backend_function.oid, 'EXECUTE'
+          )
+      )
+      and not exists (
+        select 1
+        from (values
+          (to_regprocedure('public.load_live_timetable_projection_source(uuid,uuid,text,bigint)')),
+          (to_regprocedure('public.create_or_replace_live_timetable_projection(uuid,uuid,text,bigint,text,jsonb,text,text)')),
+          (to_regprocedure('public.load_live_timetable_authorized(uuid)')),
+          (to_regprocedure('public.load_live_timetable_public(uuid)')),
+          (to_regprocedure('public.set_live_timetable_publication(uuid,text,boolean)')),
+          (to_regprocedure('public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)')),
+          (to_regprocedure('public.start_live_timetable_entry(uuid,text,text,text,text)')),
+          (to_regprocedure('public.end_live_timetable_entry(uuid,text,text,text,text)'))
+        ) as exposed_function(oid)
+        cross join lateral pg_catalog.aclexplode(coalesce(
+          (select pg_proc.proacl from pg_catalog.pg_proc
+            where pg_proc.oid = exposed_function.oid),
+          pg_catalog.acldefault(
+            'f',
+            (select pg_proc.proowner from pg_catalog.pg_proc
+              where pg_proc.oid = exposed_function.oid)
+          )
+        )) as function_acl
+        where exposed_function.oid is null
+          or (
+            function_acl.grantee = 0
+            and function_acl.privilege_type = 'EXECUTE'
+          )
+      )
+      and not exists (
+        select 1
+        from (values
+          (to_regprocedure('public.is_live_timetable_event_days_shape(jsonb)')),
+          (to_regprocedure('public.is_live_timetable_sections_shape(jsonb)')),
+          (to_regprocedure('public.is_live_timetable_projection_shape(jsonb,text,text)')),
+          (to_regprocedure('public.populate_live_timetable_projection(uuid,uuid,jsonb,bigint)')),
+          (to_regprocedure('public.build_live_timetable_stages_json(uuid,uuid,text,boolean)')),
+          (to_regprocedure('public.is_live_timetable_revision_text(text)')),
+          (to_regprocedure('public.transition_live_timetable_entry(text,uuid,text,text,text,text)'))
+        ) as internal_function(oid)
+        cross join (
+          select authenticated_role.oid from authenticated_role
+          union all select anon_role.oid from anon_role
+          union all select service_role.oid from service_role
+        ) as direct_role
+        where internal_function.oid is null
+          or has_function_privilege(
+            direct_role.oid, internal_function.oid, 'EXECUTE'
+          )
+      )
+      and not exists (
+        select 1
+        from (values
+          (to_regprocedure('public.load_live_timetable_authorized(uuid)')),
+          (to_regprocedure('public.set_live_timetable_publication(uuid,text,boolean)')),
+          (to_regprocedure('public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)')),
+          (to_regprocedure('public.start_live_timetable_entry(uuid,text,text,text,text)')),
+          (to_regprocedure('public.end_live_timetable_entry(uuid,text,text,text,text)'))
+        ) as authenticated_function(oid)
+        cross join (
+          select anon_role.oid from anon_role
+          union all select service_role.oid from service_role
+        ) as denied_role
+        where authenticated_function.oid is null
+          or has_function_privilege(
+            denied_role.oid, authenticated_function.oid, 'EXECUTE'
+          )
       ),
     'cloudEventV2PersistenceContract',
       (select count(*) = 1 and bool_and(
@@ -2497,6 +2886,10 @@ select jsonb_build_object(
   'workspaceMasterData', jsonb_build_object(
     'rowCount', :'workspace_master_row_count'::bigint,
     'digest', :'workspace_master_data_digest'
+  ),
+  'liveTimetableData', jsonb_build_object(
+    'rowCount', :'live_timetable_row_count'::bigint,
+    'digest', :'live_timetable_data_digest'
   )
 )::text
 from auth_workspace_checks cross join base_checks cross join later_schema;

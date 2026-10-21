@@ -36,7 +36,11 @@ begin
     'workspace_master_backfill_authenticated_inherited_table_read',
     'cloud_event_v2_save_authenticated_inherited_execute',
     'cloud_v2_cutover_inspection_authenticated_inherited_execute',
-    'cloud_v2_atomic_cutover_authenticated_inherited_execute'
+    'cloud_v2_atomic_cutover_authenticated_inherited_execute',
+    'live_timetable_authenticated_inherited_select',
+    'live_timetable_authenticated_inherited_write',
+    'live_timetable_authenticated_inherited_column_update',
+    'live_timetable_authenticated_inherited_backend_execute'
   ) then
     if exists (
       select 1 from pg_catalog.pg_roles
@@ -105,6 +109,26 @@ begin
       when scenario = 'cloud_v2_atomic_cutover_authenticated_inherited_execute' then
         execute format(
           'grant execute on function public.cutover_cloud_v2_validated(uuid,text,text,jsonb) to %I',
+          inherited_role_name
+        );
+      when scenario = 'live_timetable_authenticated_inherited_write' then
+        execute format(
+          'grant update on table public.live_timetable_stages to %I',
+          inherited_role_name
+        );
+      when scenario = 'live_timetable_authenticated_inherited_select' then
+        execute format(
+          'grant select on table public.live_timetable_entries to %I',
+          inherited_role_name
+        );
+      when scenario = 'live_timetable_authenticated_inherited_column_update' then
+        execute format(
+          'grant update (revision) on table public.live_timetable_stages to %I',
+          inherited_role_name
+        );
+      when scenario = 'live_timetable_authenticated_inherited_backend_execute' then
+        execute format(
+          'grant execute on function public.create_or_replace_live_timetable_projection(uuid,uuid,text,bigint,text,jsonb,text,text) to %I',
           inherited_role_name
         );
     end case;
@@ -459,6 +483,64 @@ begin
       grant execute on function public.cutover_cloud_v2_validated(
         uuid, text, text, jsonb
       ) to authenticated;
+    when 'live_timetable_stage_rls_disabled' then
+      alter table public.live_timetable_stages disable row level security;
+    when 'live_timetable_stage_select_policy_extra' then
+      create policy catalog_regression_live_timetable_stage_read_all
+        on public.live_timetable_stages
+        as permissive
+        for select
+        to authenticated
+        using (true);
+    when 'live_timetable_stage_select_policy_uncorrelated' then
+      alter policy live_timetable_stages_select_for_workspace_member
+        on public.live_timetable_stages
+        using (
+          exists (
+            select 1
+            from public.workspace_members
+            where workspace_members.user_id = (select auth.uid())
+              and workspace_members.role in ('owner', 'editor', 'viewer')
+          )
+        );
+    when 'live_timetable_anon_live_select' then
+      grant select on table public.live_timetables to anon;
+    when 'live_timetable_authenticated_entry_select' then
+      grant select on table public.live_timetable_entries to authenticated;
+    when 'live_timetable_authenticated_operator_select' then
+      grant select on table public.live_timetable_stage_operators
+        to authenticated;
+    when 'live_timetable_public_select' then
+      grant select on table public.live_timetable_stages to public;
+      create policy catalog_regression_live_timetable_stage_public_read_all
+        on public.live_timetable_stages
+        as permissive
+        for select
+        to public
+        using (true);
+    when 'live_timetable_authenticated_column_select' then
+      grant select (display_name) on table public.live_timetable_entries
+        to authenticated;
+    when 'live_timetable_authenticated_write' then
+      grant update on table public.live_timetable_stages to authenticated;
+    when 'live_timetable_authenticated_column_update' then
+      grant update (revision) on table public.live_timetable_stages
+        to authenticated;
+    when 'live_timetable_public_column_update' then
+      grant update (revision) on table public.live_timetable_stages to public;
+    when 'live_timetable_backend_execute_exposed' then
+      grant execute on function
+        public.create_or_replace_live_timetable_projection(
+          uuid, uuid, text, bigint, text, jsonb, text, text
+        ) to authenticated;
+    when 'live_timetable_realtime_missing' then
+      alter publication supabase_realtime
+        drop table public.live_timetable_stages;
+    when 'live_timetable_realtime_columns_broadened' then
+      alter publication supabase_realtime
+        drop table public.live_timetable_stages;
+      alter publication supabase_realtime
+        add table public.live_timetable_stages;
     when 'profiles_missing' then
       alter table public.profiles rename to catalog_regression_profiles;
     when 'profiles_column_missing' then
@@ -469,6 +551,11 @@ begin
       -- rejecting any pre-existing display_name value during fixture setup.
       alter table public.profiles alter column display_name type varchar;
     when 'membership_primary_key_missing' then
+      -- The Live operator table intentionally references the composite
+      -- membership identity. Remove only that dependent FK inside this
+      -- rollback-only scenario so the preflight can observe the missing PK.
+      alter table public.live_timetable_stage_operators
+        drop constraint live_timetable_stage_operators_workspace_id_user_id_fkey;
       alter table public.workspace_members
         drop constraint workspace_members_pkey;
     when 'membership_role_check_missing' then

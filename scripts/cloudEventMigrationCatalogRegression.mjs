@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const execFileAsync = promisify(execFile)
 
@@ -148,6 +148,42 @@ const scenarios = [
     !result.laterSchema.cloudV2AtomicCutoverContract],
   ['cloud_v2_atomic_cutover_authenticated_inherited_execute', result =>
     !result.laterSchema.cloudV2AtomicCutoverContract],
+  ['live_timetable_stage_rls_disabled', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_stage_select_policy_extra', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_stage_select_policy_uncorrelated', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_anon_live_select', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_authenticated_entry_select', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_authenticated_operator_select', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_public_select', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_authenticated_inherited_select', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_authenticated_column_select', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_authenticated_write', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_authenticated_column_update', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_public_column_update', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_authenticated_inherited_write', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_authenticated_inherited_column_update', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_backend_execute_exposed', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_authenticated_inherited_backend_execute', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_realtime_missing', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_realtime_columns_broadened', result =>
+    !result.laterSchema.liveTimetableFoundationContract],
   ['profiles_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_type', result => !result.authWorkspaceChecks.profilesColumns],
@@ -201,6 +237,9 @@ const inspectScenario = async (databaseUrl, scenario) => {
   if (!jsonLine) throw new Error(`${scenario}: preflight JSON was not returned`)
   return JSON.parse(jsonLine)
 }
+
+export const hasSafeLiveTimetableFoundationBaseline = baseline =>
+  baseline?.laterSchema?.liveTimetableFoundationContract === true
 
 const main = async () => {
   let args
@@ -267,7 +306,8 @@ const main = async () => {
       !baseline.laterSchema.workspaceMasterBackfillContract ||
       !baseline.laterSchema.cloudEventV2PersistenceContract ||
       !baseline.laterSchema.cloudV2CutoverInspectionContract ||
-      !baseline.laterSchema.cloudV2AtomicCutoverContract
+      !baseline.laterSchema.cloudV2AtomicCutoverContract ||
+      !hasSafeLiveTimetableFoundationBaseline(baseline)
     ) {
       throw new Error('baseline: expected known safe catalog')
     }
@@ -278,6 +318,10 @@ const main = async () => {
         throw new Error(`${scenario}: unsafe catalog mutation was not detected`)
       }
     }
+    const restoredBaseline = await inspectScenario(databaseUrl, 'baseline')
+    if (!hasSafeLiveTimetableFoundationBaseline(restoredBaseline)) {
+      throw new Error('baseline: Live Timetable catalog did not recover after rollback')
+    }
     console.log(JSON.stringify({ ok: true, scenarios: scenarios.length + 1 }))
   } catch (error) {
     console.error(error instanceof Error ? error.message : 'Catalog regression failed')
@@ -285,4 +329,6 @@ const main = async () => {
   }
 }
 
-await main()
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main()
+}

@@ -12,6 +12,9 @@ import {
   REQUIRED_LATER_SCHEMA_CHECKS,
   runCloudEventMigrationRepair,
 } from '../scripts/cloudEventMigrationRepair.mjs'
+import {
+  hasSafeLiveTimetableFoundationBaseline,
+} from '../scripts/cloudEventMigrationCatalogRegression.mjs'
 
 const AUTH_VERSION = '20261007'
 const LATER_VERSIONS = {
@@ -27,6 +30,7 @@ const LATER_VERSIONS = {
   cloudEventV2Persistence: '20261013110000',
   cloudV2CutoverInspection: '20261014100000',
   cloudV2AtomicCutover: '20261015100000',
+  liveTimetableFoundation: '20261019154519',
 }
 
 const createInspection = ({
@@ -118,6 +122,8 @@ const createInspection = ({
         applied.has(LATER_VERSIONS.cloudV2CutoverInspection),
       cloudV2AtomicCutoverContract:
         applied.has(LATER_VERSIONS.cloudV2AtomicCutover),
+      liveTimetableFoundationContract:
+        applied.has(LATER_VERSIONS.liveTimetableFoundation),
     },
     cloudData: {
       rowCount: cloudEventsExists ? 1 : 0,
@@ -127,6 +133,12 @@ const createInspection = ({
       rowCount: applied.has(LATER_VERSIONS.workspaceMasterFoundation) ? 1 : 0,
       digest: applied.has(LATER_VERSIONS.workspaceMasterFoundation)
         ? 'fixture-master-digest'
+        : 'absent',
+    },
+    liveTimetableData: {
+      rowCount: applied.has(LATER_VERSIONS.liveTimetableFoundation) ? 1 : 0,
+      digest: applied.has(LATER_VERSIONS.liveTimetableFoundation)
+        ? 'fixture-live-digest'
         : 'absent',
     },
     ...overrides,
@@ -386,8 +398,9 @@ test('Cloud V2 atomic cutover契約はmigration historyとcatalogの不一致を
   assert.equal(missingResult.kind, 'unknown')
   assert.match(missingResult.mismatches.join('\n'), /cloudV2AtomicCutoverContract/i)
 
-  const beforeCutover = versions.filter(
-    version => version !== LATER_VERSIONS.cloudV2AtomicCutover,
+  const beforeCutover = versions.slice(
+    0,
+    versions.indexOf(LATER_VERSIONS.cloudV2AtomicCutover),
   )
   assert.equal(analyzeCloudEventMigrationInspection(createInspection({
     versions: beforeCutover,
@@ -395,6 +408,30 @@ test('Cloud V2 atomic cutover契約はmigration historyとcatalogの不一致を
 
   const prematureContract = createInspection({ versions: beforeCutover })
   prematureContract.laterSchema.cloudV2AtomicCutoverContract = true
+  assert.equal(analyzeCloudEventMigrationInspection(prematureContract).kind, 'unknown')
+})
+
+test('Live TT foundation契約はmigration historyとcatalogの不一致をfail closedする', () => {
+  const versions = createKnownVersions(NEW_CLOUD_EVENT_MIGRATION_VERSION)
+  const missingContract = createInspection({ versions })
+  missingContract.laterSchema.liveTimetableFoundationContract = false
+  const missingResult = analyzeCloudEventMigrationInspection(missingContract)
+  assert.equal(missingResult.kind, 'unknown')
+  assert.match(
+    missingResult.mismatches.join('\n'),
+    /liveTimetableFoundationContract/i,
+  )
+
+  const beforeLive = versions.slice(
+    0,
+    versions.indexOf(LATER_VERSIONS.liveTimetableFoundation),
+  )
+  assert.equal(analyzeCloudEventMigrationInspection(createInspection({
+    versions: beforeLive,
+  })).kind, 'new-only')
+
+  const prematureContract = createInspection({ versions: beforeLive })
+  prematureContract.laterSchema.liveTimetableFoundationContract = true
   assert.equal(analyzeCloudEventMigrationInspection(prematureContract).kind, 'unknown')
 })
 
@@ -954,6 +991,7 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   }
   assert.match(preflightSql, /has_function_privilege\s*\(/i)
   assert.match(preflightSql, /has_table_privilege\s*\(/i)
+  assert.match(preflightSql, /has_any_column_privilege\s*\(/i)
   assert.match(preflightSql, /has_column_privilege\s*\(/i)
   assert.match(preflightSql, /authorized_delete_function\.prosecdef/i)
   assert.match(preflightSql, /authorized_page_function\.prosecdef/i)
@@ -1286,6 +1324,24 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'cloud_v2_atomic_cutover_v1_insert_guard_missing_parent_lock',
     'cloud_v2_atomic_cutover_authenticated_execute',
     'cloud_v2_atomic_cutover_authenticated_inherited_execute',
+    'live_timetable_stage_rls_disabled',
+    'live_timetable_stage_select_policy_extra',
+    'live_timetable_stage_select_policy_uncorrelated',
+    'live_timetable_anon_live_select',
+    'live_timetable_authenticated_entry_select',
+    'live_timetable_authenticated_operator_select',
+    'live_timetable_public_select',
+    'live_timetable_authenticated_inherited_select',
+    'live_timetable_authenticated_column_select',
+    'live_timetable_authenticated_write',
+    'live_timetable_authenticated_column_update',
+    'live_timetable_public_column_update',
+    'live_timetable_authenticated_inherited_write',
+    'live_timetable_authenticated_inherited_column_update',
+    'live_timetable_backend_execute_exposed',
+    'live_timetable_authenticated_inherited_backend_execute',
+    'live_timetable_realtime_missing',
+    'live_timetable_realtime_columns_broadened',
   ]) {
     assert.match(catalogRegressionSql, new RegExp(`'${scenario}'`), scenario)
     assert.match(catalogRegressionRunner, new RegExp(`'${scenario}'`), scenario)
@@ -1294,7 +1350,7 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     catalogRegressionRunner.indexOf('const scenarios = ['),
     catalogRegressionRunner.indexOf('const parseArguments ='),
   )
-  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 101)
+  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 119)
   assert.match(catalogRegressionRunner,
     /JSON\.stringify\(\{ ok: true, scenarios: scenarios\.length \+ 1 \}\)/)
   for (const removedScenario of [
@@ -1359,6 +1415,23 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     )
   }
   assert.match(catalogRegressionRunner, /--confirm-disposable/)
+  assert.match(
+    baselineGuard,
+    /hasSafeLiveTimetableFoundationBaseline\(baseline\)/,
+  )
+  assert.match(
+    catalogRegressionRunner,
+    /restoredBaseline[\s\S]*hasSafeLiveTimetableFoundationBaseline\(restoredBaseline\)/,
+  )
+  assert.equal(hasSafeLiveTimetableFoundationBaseline({
+    laterSchema: { liveTimetableFoundationContract: true },
+  }), true)
+  assert.equal(hasSafeLiveTimetableFoundationBaseline({
+    laterSchema: { liveTimetableFoundationContract: false },
+  }), false)
+  assert.equal(hasSafeLiveTimetableFoundationBaseline({ laterSchema: {} }), false)
+  assert.equal(hasSafeLiveTimetableFoundationBaseline({}), false)
+  assert.equal(hasSafeLiveTimetableFoundationBaseline(undefined), false)
   assert.match(guide, /20261008110000[\s\S]*--status applied/)
   assert.match(guide, /20261007120000[\s\S]*--status reverted/)
   assert.match(guide, /--db-url/)
