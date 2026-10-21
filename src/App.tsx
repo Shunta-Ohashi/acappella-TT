@@ -322,7 +322,11 @@ import {
   type CloudEventHydrationState,
 } from './cloud/cloudEventLifecycle.ts'
 import { isEventEditorCloudNavigationLocked } from './ui/eventEditorInteraction.ts'
-import { createLiveTimetableHash } from './live/liveTimetableRouting.ts'
+import {
+  createLiveTimetableHash,
+  type RetainedEditorAccountAction,
+  type RetainedEditorAccountGuard,
+} from './live/liveTimetableRouting.ts'
 import './App.css'
 
 type AppView = 'event-editor' | AppSection
@@ -376,9 +380,16 @@ const READ_ONLY_WORKSPACE_MESSAGE =
 
 interface AppProps {
   isActive?: boolean
+  registerRetainedEditorAccountGuard?: (
+    scopeKey: string,
+    guard: RetainedEditorAccountGuard,
+  ) => () => void
 }
 
-function App({ isActive = true }: AppProps) {
+function App({
+  isActive = true,
+  registerRetainedEditorAccountGuard,
+}: AppProps) {
   const cloudWorkspace = useOptionalCloudWorkspace()
   const cloudEnabled = cloudWorkspace !== null
   const canEditWorkspace = cloudWorkspace === null ||
@@ -401,6 +412,16 @@ function App({ isActive = true }: AppProps) {
       })
     : STORAGE_KEY
   const requestedCloudWorkspaceVisitId = cloudWorkspace?.workspaceVisitId ?? ''
+  const retainedEditorAccountScopeKey = cloudWorkspace
+    ? JSON.stringify([
+        cloudWorkspace.user.id,
+        cloudWorkspace.workspace.id,
+        cloudWorkspace.workspaceVisitId,
+      ])
+    : ''
+  const retainedEditorAccountGuardRef = useRef<RetainedEditorAccountGuard>(
+    () => false,
+  )
   const requestedCloudWorkspaceId = cloudWorkspace?.workspace.id ?? ''
   const [activePersistenceStorageKey, setActivePersistenceStorageKey] = useState(
     requestedPersistenceStorageKey,
@@ -1917,6 +1938,24 @@ function App({ isActive = true }: AppProps) {
 
   const handleBeforeWorkspaceChange = (): boolean =>
     activeView !== 'event-editor' || !blockUnsavedEditorNavigation('workspace-switch')
+
+  useLayoutEffect(() => {
+    retainedEditorAccountGuardRef.current = (
+      action: RetainedEditorAccountAction,
+    ): boolean => action === 'sign-out'
+      ? handleBeforeSignOut()
+      : handleBeforeWorkspaceChange()
+  })
+
+  useEffect(() => {
+    if (!registerRetainedEditorAccountGuard || !retainedEditorAccountScopeKey) {
+      return
+    }
+    return registerRetainedEditorAccountGuard(
+      retainedEditorAccountScopeKey,
+      action => retainedEditorAccountGuardRef.current(action),
+    )
+  }, [registerRetainedEditorAccountGuard, retainedEditorAccountScopeKey])
 
   const clearTimetableHistoryEphemeralState = () => {
     setGenerationOptionsScope(null)

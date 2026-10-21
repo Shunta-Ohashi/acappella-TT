@@ -4,10 +4,12 @@ import test from 'node:test'
 
 import {
   createLiveTimetableRepository,
+  createSupabaseLiveTimetableGateway,
   parseLiveTimetableDiscovery,
   parseLiveTimetableOperatorCandidates,
 } from '../src/live/liveTimetableRepository.ts'
 import {
+  createRetainedEditorAccountGuardRegistry,
   createLiveTimetableHash,
   createLocalAppReturnUrl,
   resolveLiveTimetableHash,
@@ -16,20 +18,24 @@ import {
 import { formatLiveTimetableTimestamp } from '../src/live/liveTimetablePresentation.ts'
 import {
   LIVE_TIMETABLE_REALTIME_COLUMNS,
+  LIVE_AUTHORIZED_READ_TIMEOUT_MS,
   LIVE_HEALTHY_POLLING_INTERVAL_MS,
   LIVE_STATE_MAX_AGE_MS,
   canApplyLiveOperatorCandidateRead,
   canApplyLiveRead,
   canDispatchConfirmedLiveMutation,
   canRunLiveMutation,
+  createInvalidatedLiveOperatorCandidateRead,
   createLivePollingTimerController,
   createPostMutationReadBarrier,
   createLiveTimetableScopeKey,
+  describeLiveStageManagementTarget,
   getLivePollingDelay,
   isLiveStateStale,
   isLiveTimetableReadAtLeastAsFresh,
   isMatchingLiveRealtimePayload,
   resolveLiveOperatorCandidateSelection,
+  runLiveAuthorizedReadWithDeadline,
 } from '../src/live/liveTimetableSync.ts'
 
 const liveId = '10000000-0000-0000-0000-000000000001'
@@ -110,6 +116,65 @@ test('Live routeはEvent IDを安全に往復し#shareと混同しない', () =>
   assert.equal(shouldKeepCloudEditorMounted(false, undefined), true)
   assert.equal(shouldKeepCloudEditorMounted(true, { kind: 'live', eventId: 'a' }), true)
   assert.equal(createLocalAppReturnUrl('/app/', '?mode=local'), '/app/?mode=local')
+})
+
+test('retained editor account guardはdraft・scope・登録解除をfail closedで扱う', () => {
+  const registry = createRetainedEditorAccountGuardRegistry()
+  const draft = { dirty: true, value: 'unsaved' }
+  const releaseA = registry.register('visit-a', () => !draft.dirty)
+
+  assert.equal(registry.canRun({
+    required: true, scopeKey: 'visit-a', action: 'sign-out',
+  }), false)
+  assert.equal(registry.canRun({
+    required: true, scopeKey: 'visit-a', action: 'workspace-switch',
+  }), false)
+  assert.equal(draft.value, 'unsaved')
+  assert.equal(registry.canRun({
+    required: true, scopeKey: 'visit-b', action: 'sign-out',
+  }), false)
+
+  draft.dirty = false
+  assert.equal(registry.canRun({
+    required: true, scopeKey: 'visit-a', action: 'sign-out',
+  }), true)
+
+  const releaseB = registry.register('visit-b', () => true)
+  releaseA()
+  assert.equal(registry.canRun({
+    required: true, scopeKey: 'visit-b', action: 'workspace-switch',
+  }), true, 'stale cleanup must not clear the current registration')
+  releaseB()
+  assert.equal(registry.canRun({
+    required: true, scopeKey: 'visit-b', action: 'sign-out',
+  }), false)
+  assert.equal(registry.canRun({
+    required: false, scopeKey: 'direct-live', action: 'sign-out',
+  }), true, 'direct #live must not require editor hydration')
+})
+
+test('Stage管理ラベルはEventDay ID完全一致で同名Stageを日付別に識別する', () => {
+  const eventDays = [
+    { sourceEventDayId: 'day-a', date: '2026-11-01', label: '1日目', position: 0 },
+    { sourceEventDayId: 'day-b', date: '2026-11-02', label: '2日目', position: 1 },
+  ]
+  assert.equal(describeLiveStageManagementTarget({
+    sourceEventDayId: 'day-a', name: 'メインステージ',
+  }, eventDays), '2026/11/1（1日目）／メインステージ')
+  assert.equal(describeLiveStageManagementTarget({
+    sourceEventDayId: 'day-b', name: 'メインステージ',
+  }, eventDays), '2026/11/2（2日目）／メインステージ')
+  assert.equal(describeLiveStageManagementTarget({
+    sourceEventDayId: 'missing', name: 'メインステージ',
+  }, eventDays), '開催日不明／メインステージ')
+  assert.equal(describeLiveStageManagementTarget({
+    sourceEventDayId: 'day-invalid', name: 'サブステージ',
+  }, [...eventDays, {
+    sourceEventDayId: 'day-invalid', date: 'invalid', label: null, position: 2,
+  }]), '開催日不明／サブステージ')
+  assert.equal(describeLiveStageManagementTarget({
+    sourceEventDayId: 'day-a', name: 'Main',
+  }, [{ ...eventDays[0], label: null }]), '2026/11/1／Main')
 })
 
 test('実績時刻はLive timezoneで端末timezoneに依存せず日付境界も表示する', () => {
@@ -253,6 +318,118 @@ test('polling timerはin-flight readと再scheduleが重なっても1本だけ�
   assert.equal(callbacks.size, 0)
 })
 
+test('authorized read deadlineはhung slotを解放しlate responseを状態へ適用しない', async () => {
+  let timerId = 0
+  const timers = new Map()
+  const timerOptions = {
+    setTimer(callback) {
+      const id = ++timerId
+      timers.set(id, callback)
+      return id
+    },
+    clearTimer(id) {
+      timers.delete(id)
+    },
+  }
+  let finishHungRead
+  const hungRead = new Promise(resolve => { finishHungRead = resolve })
+  let inFlight = null
+  let applied = 'initial'
+  let lastSynchronizedAt = 123
+  let freshnessBarrier = 7
+
+  const run = async read => {
+    if (inFlight) return inFlight
+    const controller = new AbortController()
+    const operation = runLiveAuthorizedReadWithDeadline({
+      controller,
+      read,
+      timeoutMilliseconds: LIVE_AUTHORIZED_READ_TIMEOUT_MS,
+      ...timerOptions,
+    })
+    inFlight = operation
+    try {
+      const outcome = await operation
+      if (outcome.status === 'completed') {
+        applied = outcome.value
+        lastSynchronizedAt = 456
+        freshnessBarrier = 0
+      }
+      return outcome
+    } finally {
+      if (inFlight === operation) inFlight = null
+    }
+  }
+
+  const firstRun = run(() => hungRead)
+  assert.equal(timers.size, 1)
+  timers.values().next().value()
+  assert.deepEqual(await firstRun, { status: 'timed-out' })
+  assert.equal(inFlight, null)
+  assert.equal(applied, 'initial')
+  assert.equal(lastSynchronizedAt, 123)
+  assert.equal(freshnessBarrier, 7)
+
+  const recovered = await run(async () => 'fresh')
+  assert.deepEqual(recovered, { status: 'completed', value: 'fresh' })
+  assert.equal(applied, 'fresh')
+  assert.equal(lastSynchronizedAt, 456)
+  assert.equal(freshnessBarrier, 0)
+
+  finishHungRead('late')
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(applied, 'fresh')
+  assert.equal(lastSynchronizedAt, 456)
+  assert.equal(freshnessBarrier, 0)
+  assert.equal(timers.size, 0)
+})
+
+test('visibility・online・scope cleanup相当のabortはhung readを即時失効する', async () => {
+  for (const reason of ['visibility', 'online', 'scope-cleanup', 'strict-cleanup']) {
+    const controller = new AbortController()
+    let finishRead
+    const read = new Promise(resolve => { finishRead = resolve })
+    const outcomePromise = runLiveAuthorizedReadWithDeadline({
+      controller,
+      read: () => read,
+      timeoutMilliseconds: LIVE_AUTHORIZED_READ_TIMEOUT_MS,
+    })
+    controller.abort(reason)
+    assert.deepEqual(await outcomePromise, { status: 'aborted' })
+    finishRead('late')
+  }
+})
+
+test('正常authorized readはdeadline前に完了しSupabase adapterへAbortSignalを渡す', async () => {
+  const controller = new AbortController()
+  let receivedSignal
+  let rpcName
+  const response = { data: null, error: null }
+  const request = {
+    abortSignal(signal) {
+      receivedSignal = signal
+      return Promise.resolve(response)
+    },
+    then(resolve, reject) {
+      return Promise.resolve(response).then(resolve, reject)
+    },
+  }
+  const gateway = createSupabaseLiveTimetableGateway({
+    rpc(name) {
+      rpcName = name
+      return request
+    },
+  })
+  const outcome = await runLiveAuthorizedReadWithDeadline({
+    controller,
+    read: signal => gateway.loadAuthorized(liveId, signal),
+  })
+  assert.deepEqual(outcome, { status: 'completed', value: response })
+  assert.equal(rpcName, 'load_live_timetable_authorized')
+  assert.equal(receivedSignal, controller.signal)
+})
+
 test('担当候補readは最新sequence・現在scope・現在Liveだけを反映する', () => {
   const token = { liveId, scopeKey: 'scope-a', sequence: 3 }
   assert.equal(canApplyLiveOperatorCandidateRead({
@@ -274,6 +451,44 @@ test('担当候補readは最新sequence・現在scope・現在Liveだけを反�
       ...override,
     }), false)
   }
+})
+
+test('候補read失効はloadingを解除し旧Aを無視して再取得Bを適用できる', () => {
+  const tokenA = { liveId, scopeKey: 'scope-a', sequence: 1 }
+  const invalidated = createInvalidatedLiveOperatorCandidateRead({
+    currentSequence: tokenA.sequence,
+    liveId,
+    scopeKey: 'scope-a',
+    error: '再取得してください。',
+  })
+  assert.equal(invalidated.loading, false)
+  assert.deepEqual(invalidated.candidates, [])
+  assert.deepEqual(invalidated.context, { liveId, scopeKey: 'scope-a' })
+  assert.equal(invalidated.error, '再取得してください。')
+  assert.equal(canApplyLiveOperatorCandidateRead({
+    token: tokenA,
+    activeLiveId: liveId,
+    activeScopeKey: 'scope-a',
+    latestStartedSequence: invalidated.nextSequence,
+  }), false)
+
+  const tokenB = {
+    liveId,
+    scopeKey: 'scope-a',
+    sequence: invalidated.nextSequence + 1,
+  }
+  assert.equal(canApplyLiveOperatorCandidateRead({
+    token: tokenB,
+    activeLiveId: liveId,
+    activeScopeKey: 'scope-a',
+    latestStartedSequence: tokenB.sequence,
+  }), true)
+  assert.equal(canApplyLiveOperatorCandidateRead({
+    token: tokenA,
+    activeLiveId: liveId,
+    activeScopeKey: 'scope-b',
+    latestStartedSequence: tokenB.sequence,
+  }), false)
 })
 
 test('確認ダイアログ後は実時刻・通信・scope・barrierを再評価する', () => {
@@ -548,6 +763,10 @@ test('Live UIは独立route・再read・確認・非永続scopeを維持する',
   assert.match(routeApp, /inert=\{route !== undefined\}/)
   assert.match(routeApp, /key=\{cloud\?\.workspaceVisitId\}/)
   assert.match(routeApp, /isActive=\{route === undefined\}/)
+  assert.match(routeApp, /createRetainedEditorAccountGuardRegistry/)
+  assert.match(routeApp, /required: editorMounted/)
+  assert.match(app, /registerRetainedEditorAccountGuard/)
+  assert.match(app, /retainedEditorAccountGuardRef\.current/)
   assert.match(app, /const timetableHistoryShortcutsEnabled = timetableHistoryActive && isActive/)
   assert.match(app, /if \(!timetableHistoryShortcutsEnabled\) return/)
   assert.match(app, /if \(!timetableHistoryActive\) \{[\s\S]*timetableHistoryController\.reset\(\)/)
@@ -569,6 +788,8 @@ test('Live UIは独立route・再read・確認・非永続scopeを維持する',
   assert.match(page, /navigator\.onLine/)
   assert.match(page, /document\.visibilityState/)
   assert.match(page, /createLivePollingTimerController/)
+  assert.match(page, /runLiveAuthorizedReadWithDeadline/)
+  assert.match(page, /activeReadControllerRef\.current\?\.abort\(\)/)
   assert.match(page, /pollingTimer\.cancel\(\)/)
   assert.match(page, /if \(isCurrent\(\)\) schedule\(\)/)
   assert.match(page, /setFreshnessVerificationPending\(true\)/)
@@ -582,8 +803,20 @@ test('Live UIは独立route・再read・確認・非永続scopeを維持する',
   assert.match(page, /role=\{feedback\.kind === 'error' \? 'alert' : 'status'\}/)
   assert.match(page, /担当候補を再取得/)
   assert.match(page, /Live TTの作成状況を再確認/)
+  assert.match(page, /if \(!candidateLive\?\.canManage\) return/)
   assert.match(page, /canApplyLiveOperatorCandidateRead/)
   assert.match(page, /resolveLiveOperatorCandidateSelection/)
+  assert.match(page, /createInvalidatedLiveOperatorCandidateRead/)
+  assert.equal(
+    page.match(/handleBeforeAccountAction\('sign-out'\)/g)?.length,
+    2,
+  )
+  assert.equal(
+    page.match(/handleBeforeAccountAction\('workspace-switch'\)/g)?.length,
+    2,
+  )
+  assert.match(page, /describeLiveStageManagementTarget\(stage, live\.eventDays\)/)
+  assert.match(page, /left\.eventDayPosition - right\.eventDayPosition/)
   assert.match(page, /setCandidates\(\[\]\)/)
   assert.doesNotMatch(page, /localStorage|sessionStorage/)
 })

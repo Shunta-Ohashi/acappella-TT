@@ -28,6 +28,63 @@ export interface LiveReadToken {
 
 export const LIVE_STATE_MAX_AGE_MS = 45_000
 export const LIVE_HEALTHY_POLLING_INTERVAL_MS = 30_000
+export const LIVE_AUTHORIZED_READ_TIMEOUT_MS = 10_000
+
+export type LiveAuthorizedReadOutcome<T> =
+  | { status: 'completed'; value: T }
+  | { status: 'timed-out' }
+  | { status: 'aborted' }
+  | { status: 'failed'; error: unknown }
+
+export const runLiveAuthorizedReadWithDeadline = async <T>({
+  read,
+  controller,
+  timeoutMilliseconds = LIVE_AUTHORIZED_READ_TIMEOUT_MS,
+  setTimer = (callback, delay) => globalThis.setTimeout(callback, delay),
+  clearTimer = handle => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
+}: {
+  read: (signal: AbortSignal) => Promise<T>
+  controller: AbortController
+  timeoutMilliseconds?: number
+  setTimer?: (callback: () => void, delayMilliseconds: number) => unknown
+  clearTimer?: (handle: unknown) => void
+}): Promise<LiveAuthorizedReadOutcome<T>> => {
+  if (controller.signal.aborted) return { status: 'aborted' }
+
+  let timerHandle: unknown
+  let handleAbort = () => {}
+  const request = Promise.resolve()
+    .then(() => read(controller.signal))
+    .then<LiveAuthorizedReadOutcome<T>, LiveAuthorizedReadOutcome<T>>(
+      value => controller.signal.aborted
+        ? { status: 'aborted' }
+        : { status: 'completed', value },
+      error => controller.signal.aborted
+        ? { status: 'aborted' }
+        : { status: 'failed', error },
+    )
+  const aborted = new Promise<LiveAuthorizedReadOutcome<T>>(resolve => {
+    handleAbort = () => resolve({ status: 'aborted' })
+    controller.signal.addEventListener('abort', handleAbort, { once: true })
+  })
+  const timedOut = new Promise<LiveAuthorizedReadOutcome<T>>(resolve => {
+    timerHandle = setTimer(
+      () => resolve({ status: 'timed-out' }),
+      timeoutMilliseconds,
+    )
+  })
+
+  try {
+    const outcome = await Promise.race([request, aborted, timedOut])
+    if (outcome.status === 'timed-out' && !controller.signal.aborted) {
+      controller.abort()
+    }
+    return outcome
+  } finally {
+    if (timerHandle !== undefined) clearTimer(timerHandle)
+    controller.signal.removeEventListener('abort', handleAbort)
+  }
+}
 
 export const createLiveTimetableScopeKey = (
   scope: LiveTimetableScope,
@@ -189,6 +246,50 @@ export const canApplyLiveOperatorCandidateRead = ({
   latestStartedSequence: number
 }): boolean => token.scopeKey === activeScopeKey &&
   token.liveId === activeLiveId && token.sequence === latestStartedSequence
+
+export const createInvalidatedLiveOperatorCandidateRead = ({
+  currentSequence,
+  liveId,
+  scopeKey,
+  error,
+}: {
+  currentSequence: number
+  liveId?: string
+  scopeKey?: string
+  error: string
+}) => ({
+  nextSequence: currentSequence + 1,
+  loading: false,
+  candidates: [] as const,
+  context: liveId && scopeKey ? { liveId, scopeKey } : undefined,
+  error,
+})
+
+const formatLiveEventDayDate = (value: string): string | undefined => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!match) return undefined
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const parsed = new Date(Date.UTC(year, month - 1, day))
+  if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day) return undefined
+  return `${year}/${month}/${day}`
+}
+
+export const describeLiveStageManagementTarget = (
+  stage: Pick<LiveTimetableStageView, 'name' | 'sourceEventDayId'>,
+  eventDays: AuthorizedLiveTimetable['eventDays'],
+): string => {
+  const day = stage.sourceEventDayId
+    ? eventDays.find(candidate =>
+        candidate.sourceEventDayId === stage.sourceEventDayId)
+    : undefined
+  const date = day ? formatLiveEventDayDate(day.date) : undefined
+  if (!day || !date) return `開催日不明／${stage.name}`
+  const label = day.label?.trim()
+  return `${date}${label ? `（${label}）` : ''}／${stage.name}`
+}
 
 export const isLiveStateStale = (
   lastSynchronizedAt: number | undefined,

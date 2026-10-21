@@ -146,7 +146,10 @@ export interface LiveTimetableDatabaseGateway {
     mode: 'create' | 'replace'
     expectedManagementRevision: string | null
   }) => Promise<LiveTimetableDatabaseResult<unknown>>
-  loadAuthorized: (liveId: string) => Promise<LiveTimetableDatabaseResult<unknown>>
+  loadAuthorized: (
+    liveId: string,
+    signal?: AbortSignal,
+  ) => Promise<LiveTimetableDatabaseResult<unknown>>
   loadPublic: (publicId: string) => Promise<LiveTimetableDatabaseResult<unknown>>
   findForEvent: (input: {
     workspaceId: string
@@ -185,6 +188,7 @@ export interface LiveTimetableRepository {
     : never
   loadAuthorized: (
     liveId: string,
+    signal?: AbortSignal,
   ) => Promise<LiveTimetableRepositoryResult<AuthorizedLiveTimetable>>
   loadPublic: (
     publicId: string,
@@ -844,11 +848,11 @@ export const createLiveTimetableRepository = (
     }
   },
 
-  async loadAuthorized(liveId) {
+  async loadAuthorized(liveId, signal) {
     const normalized = normalizeUuid(liveId)
     if (!normalized) return errorResult('INVALID_ARGUMENT', 'Live IDが正しくありません。')
     try {
-      const result = await gateway.loadAuthorized(normalized)
+      const result = await gateway.loadAuthorized(normalized, signal)
       if (result.error) return databaseFailure(result.error)
       const parsed = parseAuthorizedLiveTimetable(result.data)
       return parsed
@@ -1074,10 +1078,13 @@ export const createSupabaseLiveTimetableGateway = (
       ? { data: null, error: await parseFunctionError(result.error) }
       : { data: result.data, error: null }
   },
-  async loadAuthorized(liveId) {
-    const result = await client.rpc('load_live_timetable_authorized', {
+  async loadAuthorized(liveId, signal) {
+    const request = client.rpc('load_live_timetable_authorized', {
       p_live_id: liveId,
     })
+    const result = signal
+      ? await request.abortSignal(signal)
+      : await request
     return { data: result.data, error: result.error }
   },
   async loadPublic(publicId) {

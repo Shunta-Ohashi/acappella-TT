@@ -22,21 +22,28 @@ import {
   canApplyLiveOperatorCandidateRead,
   canDispatchConfirmedLiveMutation,
   canRunLiveMutation,
+  createInvalidatedLiveOperatorCandidateRead,
   createLivePollingTimerController,
   createPostMutationReadBarrier,
   createLiveTimetableScopeKey,
+  describeLiveStageManagementTarget,
   getLivePollingDelay,
   isLiveStateStale,
   isMatchingLiveRealtimePayload,
   resolveLiveOperatorCandidateSelection,
+  runLiveAuthorizedReadWithDeadline,
   type LiveReadToken,
   type LiveOperatorCandidateReadToken,
 } from '../live/liveTimetableSync.ts'
+import type {
+  RetainedEditorAccountAction,
+} from '../live/liveTimetableRouting.ts'
 import { formatLiveTimetableTimestamp } from '../live/liveTimetablePresentation.ts'
 import './LiveTimetableOperatorPage.css'
 
 interface LiveTimetableOperatorPageProps {
   eventId: string
+  onBeforeAccountAction?: (action: RetainedEditorAccountAction) => boolean
 }
 
 type ConnectionState = 'connecting' | 'realtime' | 'polling' | 'offline'
@@ -120,6 +127,7 @@ function LiveEntrySummary({
 
 export function LiveTimetableOperatorPage({
   eventId,
+  onBeforeAccountAction,
 }: LiveTimetableOperatorPageProps) {
   const cloud = useOptionalCloudWorkspace()
   if (!cloud) {
@@ -139,11 +147,15 @@ export function LiveTimetableOperatorPage({
         eventId,
       ])}
       eventId={eventId}
+      onBeforeAccountAction={onBeforeAccountAction}
     />
   )
 }
 
-function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
+function LiveTimetableOperatorWorkspace({
+  eventId,
+  onBeforeAccountAction,
+}: LiveTimetableOperatorPageProps) {
   const cloud = useOptionalCloudWorkspace()
   if (!cloud) throw new Error('Cloud Workspace context is required.')
 
@@ -205,6 +217,7 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
   const latestAppliedSequenceRef = useRef(0)
   const freshnessRequiredSequenceRef = useRef(0)
   const inFlightReadRef = useRef<Promise<void> | null>(null)
+  const activeReadControllerRef = useRef<AbortController | undefined>(undefined)
   const pendingReadRef = useRef(false)
   const refreshRef = useRef<(reason?: string) => Promise<void>>(async () => {})
   const candidateRequestSequenceRef = useRef(0)
@@ -265,10 +278,31 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
       scopeKey: activeScopeKeyRef.current,
       sequence: ++requestSequenceRef.current,
     }
+    const controller = new AbortController()
+    activeReadControllerRef.current = controller
+    let retryWithBackoff = false
     const operation = (async () => {
-      const result = await liveRepository.loadAuthorized(liveId)
+      const outcome = await runLiveAuthorizedReadWithDeadline({
+        controller,
+        read: signal => liveRepository.loadAuthorized(liveId, signal),
+      })
       if (token.scopeKey !== activeScopeKeyRef.current) return
+      if (outcome.status === 'aborted') return
+      if (outcome.status === 'timed-out') {
+        retryWithBackoff = true
+        setConsecutiveFailures(count => count + 1)
+        setPageError('Live TTの読込がタイムアウトしました。自動再試行します。')
+        return
+      }
+      if (outcome.status === 'failed') {
+        retryWithBackoff = true
+        setConsecutiveFailures(count => count + 1)
+        setPageError('Live TTを再取得できませんでした。自動再試行します。')
+        return
+      }
+      const result = outcome.value
       if (!result.ok) {
+        retryWithBackoff = true
         setConsecutiveFailures(count => count + 1)
         setPageError(describeRepositoryError(result.error))
         if (result.error.code === 'ACCESS_DENIED' ||
@@ -307,10 +341,15 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
     try {
       await operation
     } finally {
+      if (activeReadControllerRef.current === controller) {
+        activeReadControllerRef.current = undefined
+      }
       if (inFlightReadRef.current === operation) inFlightReadRef.current = null
       if (pendingReadRef.current && token.scopeKey === activeScopeKeyRef.current) {
         pendingReadRef.current = false
-        queueMicrotask(() => { void refreshRef.current('coalesced') })
+        if (!retryWithBackoff) {
+          queueMicrotask(() => { void refreshRef.current('coalesced') })
+        }
       }
     }
   }, [liveId, liveRepository])
@@ -318,6 +357,21 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
   useEffect(() => {
     refreshRef.current = refresh
   }, [refresh])
+
+  const restartAuthorizedRead = useCallback((reason: string) => {
+    const controller = activeReadControllerRef.current
+    if (controller && !controller.signal.aborted) {
+      pendingReadRef.current = true
+      controller.abort()
+      return
+    }
+    void refreshRef.current(reason)
+  }, [])
+
+  useEffect(() => () => {
+    pendingReadRef.current = false
+    activeReadControllerRef.current?.abort()
+  }, [scopeKey])
 
   useEffect(() => {
     if (!liveId) return
@@ -415,7 +469,7 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
         setNow(Date.now())
         freshnessRequiredSequenceRef.current = requestSequenceRef.current + 1
         setFreshnessVerificationPending(true)
-        void refreshRef.current('visibility')
+        restartAuthorizedRead('visibility')
         schedule()
       }
     }
@@ -423,7 +477,7 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
       setConnection(current => current === 'realtime' ? current : 'polling')
       freshnessRequiredSequenceRef.current = requestSequenceRef.current + 1
       setFreshnessVerificationPending(true)
-      void refreshRef.current('online')
+      restartAuthorizedRead('online')
     }
     const handleOffline = () => {
       freshnessRequiredSequenceRef.current = requestSequenceRef.current + 1
@@ -442,11 +496,27 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
       window.removeEventListener('online', handleOnline)
       window.removeEventListener('offline', handleOffline)
     }
-  }, [connection, consecutiveFailures, liveId])
+  }, [connection, consecutiveFailures, liveId, restartAuthorizedRead])
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 5_000)
     return () => window.clearInterval(timer)
+  }, [])
+
+  const invalidateCandidateRead = useCallback((error: string) => {
+    const current = liveRef.current
+    const invalidated = createInvalidatedLiveOperatorCandidateRead({
+      currentSequence: candidateRequestSequenceRef.current,
+      liveId: current?.canManage ? current.liveId : undefined,
+      scopeKey: current?.canManage ? activeScopeKeyRef.current : undefined,
+      error,
+    })
+    candidateRequestSequenceRef.current = invalidated.nextSequence
+    setCandidateLoading(invalidated.loading)
+    candidatesRef.current = []
+    setCandidates([])
+    setCandidateContext(invalidated.context)
+    setCandidateError(invalidated.error)
   }, [])
 
   const refreshCandidates = useCallback(async () => {
@@ -500,14 +570,20 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
 
   useEffect(() => {
     if (!live?.canManage) {
-      candidateRequestSequenceRef.current += 1
+      invalidateCandidateRead('')
       return
     }
     void refreshCandidates()
     return () => {
       candidateRequestSequenceRef.current += 1
     }
-  }, [live?.canManage, live?.liveId, live?.managementRevision, refreshCandidates])
+  }, [
+    invalidateCandidateRead,
+    live?.canManage,
+    live?.liveId,
+    live?.managementRevision,
+    refreshCandidates,
+  ])
 
   const stale = isLiveStateStale(lastSynchronizedAt, now)
   const candidatesAreCurrent = live?.canManage === true &&
@@ -527,6 +603,9 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
     day.sourceEventDayId === effectiveDayId)
   const dayStages = live?.stages.filter(stage =>
     stage.sourceEventDayId === effectiveDayId) ?? []
+  const orderedManagementStages = live ? [...live.stages].sort((left, right) =>
+    left.eventDayPosition - right.eventDayPosition ||
+    left.position - right.position) : []
   const selectedStage = dayStages.find(stage => stage.stageId === selectedStageId) ??
     dayStages[0]
   const currentEntry = selectedStage ? getCurrentEntry(selectedStage) : undefined
@@ -782,8 +861,9 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
     const expectedLiveId = live.liveId
     const expectedStageId = stage.stageId
     const expectedSourceStageId = stage.sourceStageId
+    const targetLabel = describeLiveStageManagementTarget(stage, live.eventDays)
     if (!window.confirm(
-      `${candidate?.displayName ?? 'この担当者'}を${stage.name}から${actionLabel}しますか？`,
+      `${candidate?.displayName ?? 'この担当者'}を${targetLabel}から${actionLabel}しますか？`,
     )) return
     const current = getConfirmedMutationLive({
       expectedScopeKey,
@@ -809,9 +889,7 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
           result.error.code === 'OPERATOR_NOT_ELIGIBLE' ||
           result.error.code === 'OPERATOR_NOT_EDITOR'
         )) {
-          candidateRequestSequenceRef.current += 1
-          setCandidates([])
-          setCandidateError(
+          invalidateCandidateRead(
             '割当先のWorkspace権限が変わりました。担当候補を再取得してください。',
           )
         }
@@ -824,13 +902,34 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
     window.location.hash = ''
   }
 
+  const handleBeforeAccountAction = (
+    action: RetainedEditorAccountAction,
+  ): boolean => {
+    if (mutationPendingRef.current) return false
+    const allowed = onBeforeAccountAction?.(action) ?? true
+    if (!allowed) {
+      setFeedback({
+        kind: 'error',
+        message: '通常編集画面に未保存の編集があるか、編集状態を安全に確認できません。イベント一覧へ戻って編集内容を確認してください。',
+      })
+    }
+    return allowed
+  }
+
   if (initializing) {
     return <main className="live-operator-loading" aria-busy="true">Live TTを確認しています…</main>
   }
 
   if (!liveId) {
     return (
-      <AppShell activeSection="events" onNavigate={() => closeLive()}>
+      <AppShell
+        activeSection="events"
+        onNavigate={() => closeLive()}
+        navigationDisabled={mutationPending}
+        onBeforeSignOut={() => handleBeforeAccountAction('sign-out')}
+        onBeforeWorkspaceChange={() =>
+          handleBeforeAccountAction('workspace-switch')}
+      >
         <main className="live-operator-page">
           <button type="button" className="live-operator-back" onClick={closeLive}>
             ← イベント一覧へ
@@ -885,8 +984,9 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
       activeSection="events"
       onNavigate={() => closeLive()}
       navigationDisabled={mutationPending}
-      onBeforeSignOut={() => !mutationPending}
-      onBeforeWorkspaceChange={() => !mutationPending}
+      onBeforeSignOut={() => handleBeforeAccountAction('sign-out')}
+      onBeforeWorkspaceChange={() =>
+        handleBeforeAccountAction('workspace-switch')}
     >
       <main className="live-operator-page" aria-labelledby="live-operator-title">
         <header className="live-operator-header">
@@ -1082,7 +1182,7 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
                   currentCandidates.length === 0 && (
                   <p role="status">割り当て可能な担当候補はいません。</p>
                 )}
-                {live.stages.map(stage => {
+                {orderedManagementStages.map(stage => {
                   const assignments = live.operators.filter(operator =>
                     operator.stageId === stage.stageId)
                   const selectedCandidate = resolveLiveOperatorCandidateSelection(
@@ -1091,7 +1191,7 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
                   )
                   return (
                     <article key={stage.stageId} className="live-operator-management__stage">
-                      <h3>{stage.name}</h3>
+                      <h3>{describeLiveStageManagementTarget(stage, live.eventDays)}</h3>
                       {assignments.length > 0 ? (
                         <ul>
                           {assignments.map(assignment => {
