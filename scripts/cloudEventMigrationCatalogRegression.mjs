@@ -186,6 +186,10 @@ const scenarios = [
     !result.laterSchema.liveTimetableFoundationContract],
   ['live_timetable_operator_granted_role_nullable', result =>
     !result.laterSchema.liveTimetableOperatorUiContract],
+  ['live_timetable_operator_epoch_nullable', result =>
+    !result.laterSchema.liveTimetableOperatorUiContract],
+  ['live_timetable_membership_epoch_trigger_missing', result =>
+    !result.laterSchema.liveTimetableOperatorUiContract],
   ['live_timetable_public_view_default_true', result =>
     !result.laterSchema.liveTimetableOperatorUiContract],
   ['live_timetable_operator_discovery_anon_execute', result =>

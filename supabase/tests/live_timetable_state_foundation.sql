@@ -322,9 +322,13 @@ begin
   );
 
   insert into public.live_timetable_stage_operators (
-    workspace_id, live_timetable_id, stage_id, user_id, granted_role
+    workspace_id, live_timetable_id, stage_id, user_id, granted_role,
+    granted_authorization_epoch
   ) select workspace_id, live_timetable_id, id,
-      '00000000-0000-4000-8000-000000000082', 'editor'
+      '00000000-0000-4000-8000-000000000082', 'editor',
+      (select authorization_epoch from public.workspace_members
+        where workspace_id = '78000000-0000-4000-8000-000000000001'
+          and user_id = '00000000-0000-4000-8000-000000000082')
     from public.live_timetable_stages
     where live_timetable_id = target_live_id
       and source_stage_id = 'live-stage-a';
@@ -491,6 +495,29 @@ end
 $owner_assigns$;
 
 reset role;
+do $same_role_update_preserves_epoch$
+declare
+  epoch_before uuid;
+  epoch_after uuid;
+begin
+  select authorization_epoch into epoch_before
+  from public.workspace_members
+  where workspace_id = '78000000-0000-4000-8000-000000000001'
+    and user_id = '00000000-0000-4000-8000-000000000082';
+  update public.workspace_members
+  set role = 'editor'
+  where workspace_id = '78000000-0000-4000-8000-000000000001'
+    and user_id = '00000000-0000-4000-8000-000000000082';
+  select authorization_epoch into epoch_after
+  from public.workspace_members
+  where workspace_id = '78000000-0000-4000-8000-000000000001'
+    and user_id = '00000000-0000-4000-8000-000000000082';
+  if epoch_after is distinct from epoch_before then
+    raise exception 'Same-role membership update rotated authorization epoch';
+  end if;
+end
+$same_role_update_preserves_epoch$;
+
 update public.workspace_members
 set role = 'editor'
 where workspace_id = '78000000-0000-4000-8000-000000000001'
@@ -520,6 +547,58 @@ set role = 'viewer'
 where workspace_id = '78000000-0000-4000-8000-000000000001'
   and user_id = '00000000-0000-4000-8000-000000000083';
 set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-4000-8000-000000000083', true
+);
+do $viewer_role_round_trip_stays_stale$
+declare
+  authorized_value jsonb;
+begin
+  authorized_value := public.load_live_timetable_authorized(
+    current_setting('test.live_id')::uuid
+  );
+  if exists (
+    select 1 from jsonb_array_elements(authorized_value -> 'stages') as stage
+    where stage ->> 'sourceStageId' = 'live-stage-a'
+      and (stage ->> 'canOperate')::boolean
+  ) then
+    raise exception 'Role round trip revived canOperate';
+  end if;
+  begin
+    perform public.start_live_timetable_entry(
+      current_setting('test.live_id')::uuid,
+      'live-stage-a', 'live-item-a', '1', '2'
+    );
+    raise exception 'Role round trip revived a stale viewer grant'
+      using errcode = 'P0004';
+  exception when insufficient_privilege then null;
+  end;
+end
+$viewer_role_round_trip_stays_stale$;
+
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-4000-8000-000000000081', true
+);
+do $owner_reassigns_round_trip_viewer$
+declare
+  result jsonb;
+begin
+  result := public.set_live_timetable_stage_operator(
+    current_setting('test.live_id')::uuid,
+    'live-stage-a',
+    '00000000-0000-4000-8000-000000000083',
+    true,
+    '5',
+    '2'
+  );
+  if result ->> 'managementRevision' <> '6' then
+    raise exception 'Explicit epoch reassignment did not advance revision';
+  end if;
+end
+$owner_reassigns_round_trip_viewer$;
+
 select set_config(
   'request.jwt.claim.sub',
   '00000000-0000-4000-8000-000000000083', true
@@ -566,10 +645,10 @@ begin
     'live-stage-a',
     '00000000-0000-4000-8000-000000000083',
     false,
-    '5',
+    '6',
     '2'
   );
-  if result ->> 'managementRevision' <> '6' then
+  if result ->> 'managementRevision' <> '7' then
     raise exception 'Viewer removal did not advance management revision';
   end if;
 end
@@ -708,13 +787,13 @@ begin
     'live-stage-a',
     '00000000-0000-4000-8000-000000000082',
     true,
-    '6',
+    '7',
     '2'
   );
   owner_read := public.load_live_timetable_authorized(
     current_setting('test.live_id')::uuid
   );
-  if result ->> 'managementRevision' <> '7'
+  if result ->> 'managementRevision' <> '8'
     or not exists (
       select 1
       from jsonb_array_elements(owner_read -> 'operators') as assignment
@@ -748,6 +827,14 @@ end
 $reassigned_viewer_read_contract$;
 
 reset role;
+select set_config(
+  'test.removed_editor_epoch',
+  (select authorization_epoch::text
+    from public.workspace_members
+    where workspace_id = '78000000-0000-4000-8000-000000000001'
+      and user_id = '00000000-0000-4000-8000-000000000082'),
+  true
+);
 delete from public.workspace_members
 where workspace_id = '78000000-0000-4000-8000-000000000001'
   and user_id = '00000000-0000-4000-8000-000000000082';
@@ -787,6 +874,17 @@ insert into public.workspace_members (workspace_id, user_id, role) values (
   '00000000-0000-4000-8000-000000000082',
   'viewer'
 );
+do $readded_membership_has_new_epoch$
+begin
+  if (select authorization_epoch::text
+      from public.workspace_members
+      where workspace_id = '78000000-0000-4000-8000-000000000001'
+        and user_id = '00000000-0000-4000-8000-000000000082')
+      is not distinct from current_setting('test.removed_editor_epoch') then
+    raise exception 'Deleted and re-added membership reused authorization epoch';
+  end if;
+end
+$readded_membership_has_new_epoch$;
 set local role authenticated;
 select set_config(
   'request.jwt.claim.sub',
@@ -859,7 +957,7 @@ select set_config(
 );
 select public.set_live_timetable_publication(
   current_setting('test.live_id')::uuid,
-  '7', false
+  '8', false
 );
 
 reset role;
@@ -882,7 +980,7 @@ select set_config(
 );
 select public.set_live_timetable_publication(
   current_setting('test.live_id')::uuid,
-  '8', true
+  '9', true
 );
 
 reset role;

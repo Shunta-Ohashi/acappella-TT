@@ -22,3 +22,13 @@ export const resolveLiveTimetableHash = (
   }
 }
 
+export const shouldKeepCloudEditorMounted = (
+  wasMounted: boolean,
+  route: LiveTimetableRoute | undefined,
+): boolean => wasMounted || route === undefined
+
+export const createLocalAppReturnUrl = (
+  pathname: string,
+  search: string,
+): string => `${pathname}${search}`
+

@@ -825,6 +825,10 @@ test('実DB fixtureはrollback境界とStage単位の並行契約を検証する
   assert.match(foundation, /Assigned viewer progress contract is inconsistent/i)
   assert.match(foundation, /Assigned viewer operated an unassigned Stage/i)
   assert.match(foundation, /Viewer grant became an editor grant after role change/i)
+  assert.match(foundation, /Same-role membership update rotated authorization epoch/i)
+  assert.match(foundation, /Role round trip revived a stale viewer grant/i)
+  assert.match(foundation, /Role round trip revived canOperate/i)
+  assert.match(foundation, /Deleted and re-added membership reused authorization epoch/i)
   assert.match(foundation, /Removed viewer retained progress permission/i)
   assert.match(foundation, /Viewer with stale operator assignment was accepted/i)
   assert.match(foundation, /Explicit changed-role reassignment is invalid/i)
@@ -850,6 +854,14 @@ test('実DB fixtureはrollback境界とStage単位の並行契約を検証する
   assert.match(concurrency, /operator removal did not wait for Live operation/i)
   assert.match(concurrency, /membership downgrade did not wait for progress/i)
   assert.match(concurrency, /viewer with stale assignment started Live entry/i)
+  assert.match(
+    concurrency,
+    /membership role change did not wait for operator reassignment/i,
+  )
+  assert.match(
+    concurrency,
+    /Concurrent role change left reassigned canOperate enabled/i,
+  )
   assert.match(concurrency, /updated source was committed as Live projection/i)
   assert.match(concurrency, /deleted source was committed as Live projection/i)
   assert.match(concurrency, /duplicate Live create did not wait/i)
@@ -877,7 +889,7 @@ test('実DB fixtureはrollback境界とStage単位の並行契約を検証する
   assert.match(concurrency, /pg_stat_clear_snapshot\(\)/i)
   assert.match(concurrency, /for attempt in 1\.\.200/i)
   assert.match(concurrency, /Live concurrency fixture cleanup is incomplete/i)
-  assert.equal((concurrency.match(/do \$operation\$/g) ?? []).length, 7)
+  assert.equal((concurrency.match(/do \$operation\$/g) ?? []).length, 8)
   assert.match(readme, /live_timetable_state_foundation\.sql/i)
   assert.match(readme, /live_timetable_state_foundation_concurrency\.sql/i)
 })
@@ -955,7 +967,7 @@ test('Live実HTTP・Realtime runnerは専用loopbackと厳密cleanupを要求す
   )
   assert.match(
     preflight,
-    /liveTimetableOperatorUiContract[\s\S]*public_view_enabled[\s\S]*granted_role[\s\S]*find_live_timetable_for_event_authorized[\s\S]*list_live_timetable_operator_candidates/i,
+    /liveTimetableOperatorUiContract[\s\S]*public_view_enabled[\s\S]*granted_role[\s\S]*authorization_epoch[\s\S]*find_live_timetable_for_event_authorized[\s\S]*list_live_timetable_operator_candidates/i,
   )
   assert.match(
     preflight,
@@ -982,6 +994,8 @@ test('Live実HTTP・Realtime runnerは専用loopbackと厳密cleanupを要求す
     'live_timetable_authenticated_inherited_select',
     'live_timetable_authenticated_column_select',
     'live_timetable_operator_granted_role_nullable',
+    'live_timetable_operator_epoch_nullable',
+    'live_timetable_membership_epoch_trigger_missing',
     'live_timetable_public_view_default_true',
     'live_timetable_operator_discovery_anon_execute',
     'live_timetable_operator_helper_authenticated_execute',

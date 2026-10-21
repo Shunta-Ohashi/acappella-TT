@@ -1371,6 +1371,8 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'live_timetable_realtime_missing',
     'live_timetable_realtime_columns_broadened',
     'live_timetable_operator_granted_role_nullable',
+    'live_timetable_operator_epoch_nullable',
+    'live_timetable_membership_epoch_trigger_missing',
     'live_timetable_public_view_default_true',
     'live_timetable_operator_discovery_anon_execute',
     'live_timetable_operator_helper_authenticated_execute',
@@ -1382,7 +1384,7 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     catalogRegressionRunner.indexOf('const scenarios = ['),
     catalogRegressionRunner.indexOf('const parseArguments ='),
   )
-  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 123)
+  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 125)
   assert.match(catalogRegressionRunner,
     /JSON\.stringify\(\{ ok: true, scenarios: scenarios\.length \+ 1 \}\)/)
   for (const removedScenario of [

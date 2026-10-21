@@ -20,12 +20,14 @@ import {
   LIVE_TIMETABLE_REALTIME_COLUMNS,
   canApplyLiveRead,
   canRunLiveMutation,
+  createPostMutationReadBarrier,
   createLiveTimetableScopeKey,
   getLivePollingDelay,
   isLiveStateStale,
   isMatchingLiveRealtimePayload,
   type LiveReadToken,
 } from '../live/liveTimetableSync.ts'
+import { formatLiveTimetableTimestamp } from '../live/liveTimetablePresentation.ts'
 import './LiveTimetableOperatorPage.css'
 
 interface LiveTimetableOperatorPageProps {
@@ -48,16 +50,6 @@ const progressLabels: Record<LiveTimetableStageView['progressStatus'], string> =
   in_progress: '進行中',
   completed: '終了',
 }
-
-const formatDateTime = (value: string | null): string => value
-  ? new Intl.DateTimeFormat('ja-JP', {
-      month: 'numeric',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    }).format(new Date(value))
-  : '—'
 
 const describeEntry = (entry: LiveTimetableEntryView): string =>
   entry.kind === 'break' ? '休憩' : entry.displayName
@@ -97,9 +89,11 @@ const getNextEntry = (
 function LiveEntrySummary({
   title,
   entry,
+  timeZone,
 }: {
   title: string
   entry: LiveTimetableEntryView | undefined
+  timeZone: string
 }) {
   return (
     <section className="live-operator-entry-summary">
@@ -111,8 +105,8 @@ function LiveEntrySummary({
             {formatMinuteAsLocalTime(entry.plannedStartMinute)}〜
             {formatMinuteAsLocalTime(entry.plannedEndMinute)}
           </span>
-          <span>実開始 {formatDateTime(entry.actualStartedAt)}</span>
-          <span>実終了 {formatDateTime(entry.actualEndedAt)}</span>
+          <span>実開始 {formatLiveTimetableTimestamp(entry.actualStartedAt, timeZone)}</span>
+          <span>実終了 {formatLiveTimetableTimestamp(entry.actualEndedAt, timeZone)}</span>
         </>
       ) : <strong>ありません</strong>}
     </section>
@@ -161,7 +155,10 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
   const liveRef = useRef<AuthorizedLiveTimetable | undefined>(undefined)
   const [initializing, setInitializing] = useState(true)
   const [pageError, setPageError] = useState('')
-  const [feedback, setFeedback] = useState('')
+  const [feedback, setFeedback] = useState<{
+    kind: 'success' | 'error'
+    message: string
+  }>()
   const [connection, setConnection] = useState<ConnectionState>('connecting')
   const [lastSynchronizedAt, setLastSynchronizedAt] = useState<number>()
   const [now, setNow] = useState(0)
@@ -213,21 +210,26 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
     )
     if (capturedScope !== activeScopeKeyRef.current) return
     if (!discovery.ok) {
+      setLiveId(undefined)
+      setSavedEvent(undefined)
+      liveRef.current = undefined
+      setLive(undefined)
       setPageError(describeRepositoryError(discovery.error))
       setInitializing(false)
-      return
+      return 'failed' as const
     }
     if (discovery.value.liveId) {
       setLiveId(discovery.value.liveId)
       setSavedEvent(undefined)
       setInitializing(false)
-      return
+      return 'live' as const
     }
     setSavedEvent({
       name: discovery.value.eventName,
       revision: discovery.value.sourceRevision,
     })
     setInitializing(false)
+    return 'missing' as const
   }, [
     cloud.workspace.id,
     eventId,
@@ -269,6 +271,7 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
         token,
         activeScopeKey: activeScopeKeyRef.current,
         latestAppliedSequence: latestAppliedSequenceRef.current,
+        minimumRequiredSequence: freshnessRequiredSequenceRef.current,
         incoming: result.value,
         current,
       })) return
@@ -474,13 +477,31 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
     const capturedScope = activeScopeKeyRef.current
     mutationPendingRef.current = true
     setMutationPending(true)
-    setFeedback('')
+    setFeedback(undefined)
+    let refreshRequired = false
     try {
       const result = await action()
       if (capturedScope !== activeScopeKeyRef.current) return
-      setFeedback(result.ok ? successMessage : describeRepositoryError(result.error))
-      await refreshRef.current('post-mutation')
+      refreshRequired = true
+      setFeedback(result.ok
+        ? { kind: 'success', message: successMessage }
+        : { kind: 'error', message: describeRepositoryError(result.error) })
+    } catch {
+      if (capturedScope === activeScopeKeyRef.current) {
+        refreshRequired = true
+        setFeedback({
+          kind: 'error',
+          message: '通信結果を確定できませんでした。操作は再送せず、最新状態を再取得します。',
+        })
+      }
     } finally {
+      if (refreshRequired && capturedScope === activeScopeKeyRef.current) {
+        freshnessRequiredSequenceRef.current = createPostMutationReadBarrier(
+          requestSequenceRef.current,
+        )
+        setFreshnessVerificationPending(true)
+        await refreshRef.current('post-mutation')
+      }
       mutationPendingRef.current = false
       setMutationPending(false)
     }
@@ -491,7 +512,11 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
     if (!window.confirm(
       'Cloudへ保存済みのTTからLive TTを作成します。\n未保存の変更は反映されません。\n\n作成しますか？',
     )) return
-    await runMutation(async () => {
+    const capturedScope = activeScopeKeyRef.current
+    mutationPendingRef.current = true
+    setMutationPending(true)
+    setFeedback(undefined)
+    try {
       const result = await liveRepository.createProjection({
         workspaceId: cloud.workspace.id,
         eventId,
@@ -499,11 +524,43 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
         mode: 'create',
         expectedManagementRevision: null,
       })
-      if (result.ok || result.error.code === 'LIVE_ALREADY_EXISTS') {
-        await discover()
+      if (capturedScope !== activeScopeKeyRef.current) return
+      const discoveryState = await discover()
+      if (capturedScope !== activeScopeKeyRef.current) return
+      if (discoveryState === 'live') {
+        setFeedback(result.ok
+          ? { kind: 'success', message: 'Live TTを作成しました。' }
+          : {
+              kind: result.error.code === 'LIVE_ALREADY_EXISTS' ? 'success' : 'error',
+              message: result.error.code === 'LIVE_ALREADY_EXISTS'
+                ? '既存のLive TTを確認しました。'
+                : describeRepositoryError(result.error),
+            })
+      } else if (!result.ok) {
+        setFeedback({ kind: 'error', message: describeRepositoryError(result.error) })
+      } else if (discoveryState === 'missing') {
+        setFeedback({
+          kind: 'error',
+          message: '作成結果を確認できませんでした。再送せず、保存状態を再確認してください。',
+        })
+      } else {
+        setFeedback({
+          kind: 'error',
+          message: '作成後の保存状態を確認できませんでした。再送せず、再確認してください。',
+        })
       }
-      return result
-    }, 'Live TTを作成しました。')
+    } catch {
+      if (capturedScope !== activeScopeKeyRef.current) return
+      await discover()
+      if (capturedScope !== activeScopeKeyRef.current) return
+      setFeedback({
+        kind: 'error',
+        message: '通信結果を確定できませんでした。再送せず、保存状態を再確認してください。',
+      })
+    } finally {
+      mutationPendingRef.current = false
+      setMutationPending(false)
+    }
   }
 
   const setProgressEnabled = async (enabled: boolean) => {
@@ -594,6 +651,16 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
           <section className="live-operator-empty" aria-labelledby="live-empty-title">
             <p className="live-operator-eyebrow">運営向け Live TT</p>
             <h1 id="live-empty-title">{savedEvent?.name ?? 'Live TT'}</h1>
+            {feedback && (
+              <p
+                className={feedback.kind === 'error'
+                  ? 'live-operator-alert'
+                  : 'live-operator-feedback'}
+                role={feedback.kind === 'error' ? 'alert' : 'status'}
+              >
+                {feedback.message}
+              </p>
+            )}
             {pageError
               ? <p role="alert">{pageError}</p>
               : <p>このEventのLive TTはまだ作成されていません。</p>}
@@ -611,6 +678,16 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
               </button>
             ) : (
               <p>作成はWorkspace ownerへ依頼してください。</p>
+            )}
+            {pageError && (
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={mutationPending}
+                onClick={() => void discover()}
+              >
+                保存状態を再確認
+              </button>
             )}
           </section>
         </main>
@@ -638,14 +715,26 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
           <dl className="live-operator-connection" aria-label="同期状態">
             <div><dt>接続</dt><dd>{connectionLabels[connection]}</dd></div>
             <div><dt>最終同期</dt><dd>{lastSynchronizedAt
-              ? formatDateTime(new Date(lastSynchronizedAt).toISOString())
+              ? formatLiveTimetableTimestamp(
+                  new Date(lastSynchronizedAt).toISOString(),
+                  live?.timeZone ?? 'UTC',
+                )
               : '未同期'}</dd></div>
             <div><dt>状態</dt><dd>{stale ? '更新確認が必要' : '最新'}</dd></div>
           </dl>
         </header>
 
         {pageError && <p className="live-operator-alert" role="alert">{pageError}</p>}
-        {feedback && <p className="live-operator-feedback" role="status">{feedback}</p>}
+        {feedback && (
+          <p
+            className={feedback.kind === 'error'
+              ? 'live-operator-alert'
+              : 'live-operator-feedback'}
+            role={feedback.kind === 'error' ? 'alert' : 'status'}
+          >
+            {feedback.message}
+          </p>
+        )}
 
         {!live ? (
           <section className="live-operator-loading" aria-busy="true">
@@ -735,8 +824,8 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
                     予定 {selectedStage.plannedStartTime}〜{selectedStage.plannedEndTime ?? '未定'}
                   </p>
                   <div className="live-operator-now-next">
-                    <LiveEntrySummary title="現在" entry={currentEntry} />
-                    <LiveEntrySummary title="次" entry={nextEntry} />
+                    <LiveEntrySummary title="現在" entry={currentEntry} timeZone={live.timeZone} />
+                    <LiveEntrySummary title="次" entry={nextEntry} timeZone={live.timeZone} />
                   </div>
                   <div className="live-operator-actions">
                     {currentEntry ? (
@@ -780,8 +869,9 @@ function LiveTimetableOperatorWorkspace({ eventId }: { eventId: string }) {
                         </div>
                         <span className="live-operator-list__actual">
                           {entry.status === 'pending' ? '未開始' :
-                            entry.status === 'in_progress' ? `開始 ${formatDateTime(entry.actualStartedAt)}` :
-                              `終了 ${formatDateTime(entry.actualEndedAt)}`}
+                            entry.status === 'in_progress'
+                              ? `開始 ${formatLiveTimetableTimestamp(entry.actualStartedAt, live.timeZone)}`
+                              : `終了 ${formatLiveTimetableTimestamp(entry.actualEndedAt, live.timeZone)}`}
                         </span>
                       </li>
                     ))}

@@ -544,6 +544,12 @@ begin
     when 'live_timetable_operator_granted_role_nullable' then
       alter table public.live_timetable_stage_operators
         alter column granted_role drop not null;
+    when 'live_timetable_operator_epoch_nullable' then
+      alter table public.live_timetable_stage_operators
+        alter column granted_authorization_epoch drop not null;
+    when 'live_timetable_membership_epoch_trigger_missing' then
+      drop trigger workspace_members_rotate_authorization_epoch
+        on public.workspace_members;
     when 'live_timetable_public_view_default_true' then
       alter table public.live_timetables
         alter column public_view_enabled set default true;

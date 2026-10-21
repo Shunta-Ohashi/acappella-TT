@@ -1,17 +1,55 @@
 begin;
 
+-- A role label alone cannot distinguish an old editor grant from a later
+-- editor membership reached through editor -> viewer -> editor. Keep a
+-- per-membership authorization epoch and rotate it only when the role really
+-- changes. Direct attempts to rewrite the epoch without changing role are
+-- normalized back to the previous value by the trigger.
+alter table public.workspace_members
+  add column authorization_epoch uuid not null default gen_random_uuid();
+
+create function public.rotate_workspace_member_authorization_epoch()
+returns trigger
+language plpgsql
+volatile
+set search_path = ''
+as $$
+begin
+  if new.role is distinct from old.role then
+    new.authorization_epoch := gen_random_uuid();
+  else
+    new.authorization_epoch := old.authorization_epoch;
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.rotate_workspace_member_authorization_epoch()
+  from public, anon, authenticated, service_role;
+
+create trigger workspace_members_rotate_authorization_epoch
+  before update on public.workspace_members
+  for each row
+  execute function public.rotate_workspace_member_authorization_epoch();
+
 -- PR #79 keeps the immutable Snapshot V1 projection and Live progress data
 -- separate. Existing assignments were necessarily granted to editors under
 -- migration #15, so backfill the grant-time role as editor rather than using
 -- the assignee's current (possibly downgraded) membership role.
 alter table public.live_timetable_stage_operators
-  add column granted_role text;
+  add column granted_role text,
+  add column granted_authorization_epoch uuid;
 
-update public.live_timetable_stage_operators
-set granted_role = 'editor';
+update public.live_timetable_stage_operators as assignment
+set granted_role = 'editor',
+    granted_authorization_epoch = membership.authorization_epoch
+from public.workspace_members as membership
+where membership.workspace_id = assignment.workspace_id
+  and membership.user_id = assignment.user_id;
 
 alter table public.live_timetable_stage_operators
   alter column granted_role set not null,
+  alter column granted_authorization_epoch set not null,
   add constraint live_timetable_stage_operators_granted_role_check
     check (granted_role in ('editor', 'viewer'));
 
@@ -66,11 +104,17 @@ begin
           and exists (
             select 1
             from public.live_timetable_stage_operators as assignment
+            join public.workspace_members as membership
+              on membership.workspace_id = assignment.workspace_id
+              and membership.user_id = assignment.user_id
             where assignment.stage_id =
                 (stage.value ->> 'stageId')::uuid
               and assignment.live_timetable_id = p_live_id
               and assignment.user_id = p_actor_id
               and assignment.granted_role = p_membership_role
+              and membership.role = p_membership_role
+              and assignment.granted_authorization_epoch =
+                membership.authorization_epoch
           )
         )
       )
@@ -147,6 +191,7 @@ declare
   target_workspace_id uuid;
   caller_role text;
   operator_role text;
+  operator_authorization_epoch uuid;
   live_row record;
   target_stage_id uuid;
   changed_count integer;
@@ -190,7 +235,8 @@ begin
   from public.workspace_members
   where workspace_members.workspace_id = target_workspace_id
     and workspace_members.user_id = caller_id;
-  select workspace_members.role into operator_role
+  select workspace_members.role, workspace_members.authorization_epoch
+    into operator_role, operator_authorization_epoch
   from public.workspace_members
   where workspace_members.workspace_id = target_workspace_id
     and workspace_members.user_id = p_operator_user_id;
@@ -241,19 +287,25 @@ begin
       live_timetable_id,
       stage_id,
       user_id,
-      granted_role
+      granted_role,
+      granted_authorization_epoch
     ) values (
       target_workspace_id,
       p_live_id,
       target_stage_id,
       p_operator_user_id,
-      operator_role
+      operator_role,
+      operator_authorization_epoch
     )
     on conflict (stage_id, user_id) do update
       set granted_role = excluded.granted_role,
+          granted_authorization_epoch =
+            excluded.granted_authorization_epoch,
           created_at = clock_timestamp()
       where live_timetable_stage_operators.granted_role
-        is distinct from excluded.granted_role;
+          is distinct from excluded.granted_role
+        or live_timetable_stage_operators.granted_authorization_epoch
+          is distinct from excluded.granted_authorization_epoch;
   else
     delete from public.live_timetable_stage_operators
     where live_timetable_stage_operators.stage_id = target_stage_id
@@ -313,6 +365,7 @@ declare
   caller_id uuid := auth.uid();
   target_workspace_id uuid;
   membership_role text;
+  membership_authorization_epoch uuid;
   live_row record;
   stage_row record;
   entry_row record;
@@ -350,7 +403,8 @@ begin
       using errcode = 'P0002';
   end if;
 
-  select workspace_members.role into membership_role
+  select workspace_members.role, workspace_members.authorization_epoch
+    into membership_role, membership_authorization_epoch
   from public.workspace_members
   where workspace_members.workspace_id = target_workspace_id
     and workspace_members.user_id = caller_id
@@ -384,6 +438,8 @@ begin
     where assignment.live_timetable_id = p_live_id
       and assignment.user_id = caller_id
       and assignment.granted_role = membership_role
+      and assignment.granted_authorization_epoch =
+        membership_authorization_epoch
       and assigned_stage.source_stage_id = p_source_stage_id
       and assigned_stage.projection_version = live_row.projection_version
     for share of assignment;
@@ -685,6 +741,10 @@ comment on column public.live_timetables.public_view_enabled is
   'Independent anonymous-publication opt-in. Live progress enablement remains is_published.';
 comment on column public.live_timetable_stage_operators.granted_role is
   'Exact Workspace role recorded by the owner at assignment time; current role must still match.';
+comment on column public.workspace_members.authorization_epoch is
+  'Rotates only when the Workspace role changes so stale Live grants cannot revive after a role round trip.';
+comment on column public.live_timetable_stage_operators.granted_authorization_epoch is
+  'Workspace membership authorization epoch captured by an explicit owner assignment.';
 comment on function public.find_live_timetable_for_event_authorized(uuid, text) is
   'Member-only Event-to-Live discovery without granting direct live_timetables SELECT.';
 comment on function public.list_live_timetable_operator_candidates(uuid) is
@@ -714,6 +774,34 @@ begin
       and pg_attribute.atttypid = 'text'::regtype
       and pg_attribute.attnotnull
       and not pg_attribute.attisdropped
+  ) or not exists (
+    select 1
+    from pg_catalog.pg_attribute
+    where pg_attribute.attrelid = to_regclass('public.workspace_members')
+      and pg_attribute.attname = 'authorization_epoch'
+      and pg_attribute.atttypid = 'uuid'::regtype
+      and pg_attribute.attnotnull
+      and not pg_attribute.attisdropped
+  ) or not exists (
+    select 1
+    from pg_catalog.pg_attribute
+    where pg_attribute.attrelid =
+        to_regclass('public.live_timetable_stage_operators')
+      and pg_attribute.attname = 'granted_authorization_epoch'
+      and pg_attribute.atttypid = 'uuid'::regtype
+      and pg_attribute.attnotnull
+      and not pg_attribute.attisdropped
+  ) or not exists (
+    select 1
+    from pg_catalog.pg_trigger
+    where pg_trigger.tgrelid = to_regclass('public.workspace_members')
+      and pg_trigger.tgname = 'workspace_members_rotate_authorization_epoch'
+      and pg_trigger.tgfoid = to_regprocedure(
+        'public.rotate_workspace_member_authorization_epoch()'
+      )
+      and pg_trigger.tgtype = 19
+      and pg_trigger.tgenabled = 'O'
+      and not pg_trigger.tgisinternal
   ) then
     raise exception 'Live operator UI columns are incomplete'
       using errcode = '55000';

@@ -13,8 +13,9 @@ Cloud V2 backfill / cutover、匿名観客向け画面、Live DTOのlocalStorage
 - Live未作成時はownerだけが、保存済みrevisionを指定して`mode=create`を確認付きで実行します。
   未保存のApp編集は含まず、この画面から`replace`は実行しません。
 - ownerは全Stageを操作できます。editor/viewerはownerから割り当てられ、割当時の
-  `granted_role`と現在のWorkspace roleが一致するStageだけ操作できます。role変更後の古い
-  割当は無効で、ownerが候補一覧から明示再割当するまで復活しません。
+  `granted_role`・認可epochと現在のWorkspace membershipが一致するStageだけ操作できます。
+  role変更のたびにepochが回転するため、元のroleへ戻しても古い割当は復活せず、ownerが
+  候補一覧から明示再割当する必要があります。同じroleを書き直すだけではepochを回転しません。
 - owner向け候補RPCは現在のeditor/viewerの`userId`と`displayName`だけを返し、emailや
   Auth metadataを返しません。
 - `is_published`は運営上のLive進行有効化です。匿名公開は別の
@@ -41,7 +42,7 @@ revision, progress_status, updated_at
 一致した通知だけを認可readのきっかけにします。read応答は取得sequence、projection version、
 management revision、Stage revision vectorを`BigInt`で比較し、古い応答を破棄します。
 
-接続が正常でも60秒ごとにbackup readを行い、エラー時は1〜15秒のbounded backoff pollingへ
+接続が正常でも30秒ごとにbackup readを行い、エラー時は1〜15秒のbounded backoff pollingへ
 移ります。タブ復帰、online復帰、JWT refreshでも即時再取得します。非表示時は定期pollingを
 止め、45秒以上同期できない画面はstaleとしてmutationを無効にします。offline mutation queueは
 ありません。

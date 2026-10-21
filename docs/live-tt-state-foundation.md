@@ -7,7 +7,8 @@ Live TTとみなしてはいけません。
 
 `20261021050414_live_timetable_operator_ui.sql`適用後は、viewerもownerから明示割当を
 受けたStageを操作できます。割当時の`granted_role`と現在のWorkspace roleが一致する
-場合だけ有効で、role変更後はownerの明示再割当が必要です。また`is_published`はLive進行
+ことに加え、割当時と現在の認可epochが一致する場合だけ有効です。roleを元へ戻しても
+古い割当は復活せず、role変更後はownerの明示再割当が必要です。また`is_published`はLive進行
 の有効化、`public_view_enabled`は匿名公開のopt-inとして分離されます。UI・同期の追加契約は
 [Live TT operator UI](./live-tt-operator-ui.md)を参照してください。
 
@@ -51,8 +52,8 @@ PUBLIC EXECUTEを明示的に取り消します。tableへのbrowser直接write�
 | `load_live_timetable_authorized` | `authenticated` | `auth.uid()` | 現在のowner/editor/viewerだけ。operator一覧はownerだけ |
 | `load_live_timetable_public` | `anon`, `authenticated` | actorなし | 公開UUID 1件、公開中、allowlist DTOのみ |
 | `set_live_timetable_publication` | `authenticated` | `auth.uid()` | ownerだけ、management revision CAS |
-| `set_live_timetable_stage_operator` | `authenticated` | `auth.uid()` | ownerだけ。割当先は現在のeditor/viewer、割当時role snapshot、management/projection CAS |
-| `start_live_timetable_entry`, `end_live_timetable_entry` | `authenticated` | `auth.uid()` | owner、または現在roleが割当時roleと一致する対象Stageのeditor/viewer |
+| `set_live_timetable_stage_operator` | `authenticated` | `auth.uid()` | ownerだけ。割当先は現在のeditor/viewer、割当時role・認可epoch snapshot、management/projection CAS |
+| `start_live_timetable_entry`, `end_live_timetable_entry` | `authenticated` | `auth.uid()` | owner、または現在role・認可epochが割当時と一致する対象Stageのeditor/viewer |
 | `find_live_timetable_for_event_authorized` | `authenticated` | `auth.uid()` | member-only。Event名・保存revision・Live IDだけを返しSnapshot本文を返さない |
 | `list_live_timetable_operator_candidates` | `authenticated` | `auth.uid()` | owner-only。現在のeditor/viewerのUUID・表示名だけを返す |
 

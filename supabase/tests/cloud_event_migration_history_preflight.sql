@@ -520,13 +520,15 @@ auth_workspace_checks as (
       where table_schema = 'public' and table_name = 'workspaces'
     ),
     'workspaceMembersColumns', (
-      select count(*) = 3 and bool_and(case column_name
+      select count(*) = 4 and bool_and(case column_name
         when 'workspace_id' then udt_name = 'uuid' and is_nullable = 'NO'
           and column_default is null
         when 'user_id' then udt_name = 'uuid' and is_nullable = 'NO'
           and column_default is null
         when 'role' then udt_name = 'text' and is_nullable = 'NO'
           and column_default is null
+        when 'authorization_epoch' then udt_name = 'uuid' and is_nullable = 'NO'
+          and column_default = 'gen_random_uuid()'
         else false end)
       from information_schema.columns
       where table_schema = 'public' and table_name = 'workspace_members'
@@ -2895,6 +2897,47 @@ later_schema as (
           and pg_get_constraintdef(pg_constraint.oid) like
             '%granted_role%editor%viewer%'
       )
+      and exists (
+        select 1
+        from pg_catalog.pg_attribute
+        join pg_catalog.pg_attrdef
+          on pg_attrdef.adrelid = pg_attribute.attrelid
+          and pg_attrdef.adnum = pg_attribute.attnum
+        where pg_attribute.attrelid = to_regclass('public.workspace_members')
+          and pg_attribute.attname = 'authorization_epoch'
+          and pg_attribute.atttypid = 'uuid'::regtype
+          and pg_attribute.attnotnull
+          and not pg_attribute.attisdropped
+          and pg_get_expr(pg_attrdef.adbin, pg_attrdef.adrelid)
+            like '%gen_random_uuid()%'
+      )
+      and exists (
+        select 1
+        from pg_catalog.pg_attribute
+        where pg_attribute.attrelid =
+            to_regclass('public.live_timetable_stage_operators')
+          and pg_attribute.attname = 'granted_authorization_epoch'
+          and pg_attribute.atttypid = 'uuid'::regtype
+          and pg_attribute.attnotnull
+          and not pg_attribute.attisdropped
+      )
+      and exists (
+        select 1
+        from pg_catalog.pg_trigger
+        where pg_trigger.tgrelid = to_regclass('public.workspace_members')
+          and pg_trigger.tgname =
+            'workspace_members_rotate_authorization_epoch'
+          and pg_trigger.tgfoid = to_regprocedure(
+            'public.rotate_workspace_member_authorization_epoch()'
+          )
+          and pg_trigger.tgtype = 19
+          and pg_trigger.tgenabled = 'O'
+          and not pg_trigger.tgisinternal
+      )
+      and lower((select pg_proc.prosrc from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+          'public.rotate_workspace_member_authorization_epoch()'
+        ))) like '%new.role is distinct from old.role%new.authorization_epoch := gen_random_uuid()%'
       and (select count(*) = 6 and bool_and(
           pg_proc.prosecdef
           and pg_proc.prorettype = 'jsonb'::regtype
@@ -2914,7 +2957,7 @@ later_schema as (
       and lower((select pg_proc.prosrc from pg_catalog.pg_proc
         where pg_proc.oid = to_regprocedure(
           'public.build_live_timetable_stages_json(uuid,uuid,text,boolean)'
-        ))) like '%assignment.granted_role = p_membership_role%'
+        ))) like '%assignment.granted_role = p_membership_role%assignment.granted_authorization_epoch =%membership.authorization_epoch%'
       and lower((select pg_proc.prosrc from pg_catalog.pg_proc
         where pg_proc.oid = to_regprocedure(
           'public.load_live_timetable_public(uuid)'
@@ -2926,11 +2969,11 @@ later_schema as (
       and lower((select pg_proc.prosrc from pg_catalog.pg_proc
         where pg_proc.oid = to_regprocedure(
           'public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)'
-        ))) like '%set granted_role = excluded.granted_role%'
+        ))) like '%set granted_role = excluded.granted_role%granted_authorization_epoch =%excluded.granted_authorization_epoch%'
       and lower((select pg_proc.prosrc from pg_catalog.pg_proc
         where pg_proc.oid = to_regprocedure(
           'public.transition_live_timetable_entry(text,uuid,text,text,text,text)'
-        ))) like '%assignment.granted_role = membership_role%'
+        ))) like '%assignment.granted_role = membership_role%assignment.granted_authorization_epoch =%membership_authorization_epoch%'
       and lower((select pg_proc.prosrc from pg_catalog.pg_proc
         where pg_proc.oid = to_regprocedure(
           'public.find_live_timetable_for_event_authorized(uuid,text)'

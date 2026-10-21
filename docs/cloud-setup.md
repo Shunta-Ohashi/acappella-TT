@@ -36,7 +36,7 @@ Workspace Master state、V1/V2 Snapshotを書き換えません。運用契約�
 検証手順は[Live TT state foundation](./live-tt-state-foundation.md)を参照してください。
 
 16番目は運営向けLive TT画面に必要なmember-only discovery、owner-only担当候補、
-editor/viewerのStage割当時role snapshot、匿名公開の独立opt-inを追加します。既存の
+editor/viewerのStage割当時role・認可epoch snapshot、匿名公開の独立opt-inを追加します。既存の
 Snapshot V1保存・hydrate、Workspace status、Live投影、進行状態を自動変更しません。
 運営画面と同期契約は[Live TT operator UI](./live-tt-operator-ui.md)を参照してください。
 

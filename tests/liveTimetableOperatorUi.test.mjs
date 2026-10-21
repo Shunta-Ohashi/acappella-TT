@@ -9,14 +9,18 @@ import {
 } from '../src/live/liveTimetableRepository.ts'
 import {
   createLiveTimetableHash,
+  createLocalAppReturnUrl,
   resolveLiveTimetableHash,
+  shouldKeepCloudEditorMounted,
 } from '../src/live/liveTimetableRouting.ts'
+import { formatLiveTimetableTimestamp } from '../src/live/liveTimetablePresentation.ts'
 import {
   LIVE_TIMETABLE_REALTIME_COLUMNS,
   LIVE_HEALTHY_POLLING_INTERVAL_MS,
   LIVE_STATE_MAX_AGE_MS,
   canApplyLiveRead,
   canRunLiveMutation,
+  createPostMutationReadBarrier,
   createLiveTimetableScopeKey,
   getLivePollingDelay,
   isLiveStateStale,
@@ -98,6 +102,27 @@ test('Live routeはEvent IDを安全に往復し#shareと混同しない', () =>
   assert.equal(resolveLiveTimetableHash('#share=payload'), undefined)
   assert.equal(resolveLiveTimetableHash('#live='), undefined)
   assert.equal(resolveLiveTimetableHash('#live=%E0%A4%A'), undefined)
+  assert.equal(shouldKeepCloudEditorMounted(false, { kind: 'live', eventId: 'a' }), false)
+  assert.equal(shouldKeepCloudEditorMounted(false, undefined), true)
+  assert.equal(shouldKeepCloudEditorMounted(true, { kind: 'live', eventId: 'a' }), true)
+  assert.equal(createLocalAppReturnUrl('/app/', '?mode=local'), '/app/?mode=local')
+})
+
+test('実績時刻はLive timezoneで端末timezoneに依存せず日付境界も表示する', () => {
+  assert.equal(
+    formatLiveTimetableTimestamp('2026-10-31T15:30:45.000Z', 'Asia/Tokyo'),
+    '11/01 00:30:45',
+  )
+  assert.equal(
+    formatLiveTimetableTimestamp('2026-10-31T15:30:45.000Z', 'America/New_York'),
+    '10/31 11:30:45',
+  )
+  assert.equal(formatLiveTimetableTimestamp(null, 'Asia/Tokyo'), '—')
+  assert.equal(
+    formatLiveTimetableTimestamp('2026-10-31T15:30:45.000Z', 'Invalid/Zone'),
+    '表示不可',
+  )
+  assert.equal(formatLiveTimetableTimestamp('invalid', 'Asia/Tokyo'), '表示不可')
 })
 
 test('Live readはscopeとbigint revision vectorで古い応答を破棄する', () => {
@@ -135,6 +160,24 @@ test('Live readはscopeとbigint revision vectorで古い応答を破棄する',
     incoming: newerProjection,
     current,
   }), false)
+  const barrier = createPostMutationReadBarrier(5)
+  assert.equal(barrier, 6)
+  assert.equal(canApplyLiveRead({
+    token: { scopeKey, sequence: 5 },
+    activeScopeKey: scopeKey,
+    latestAppliedSequence: 3,
+    minimumRequiredSequence: barrier,
+    incoming: newerProjection,
+    current,
+  }), false)
+  assert.equal(canApplyLiveRead({
+    token: { scopeKey, sequence: 6 },
+    activeScopeKey: scopeKey,
+    latestAppliedSequence: 3,
+    minimumRequiredSequence: barrier,
+    incoming: newerProjection,
+    current,
+  }), true)
 })
 
 test('polling backoff・stale・offline mutation gateはfail closed', () => {
@@ -333,9 +376,15 @@ test('migration #16はviewer grant snapshot・public分離・RPC ACLを追加す
   assert.equal((sql.match(/^begin;$/gmi) ?? []).length, 1)
   assert.equal((sql.match(/^commit;$/gmi) ?? []).length, 1)
   assert.match(sql, /add column granted_role text/i)
+  assert.match(sql, /add column authorization_epoch uuid not null default gen_random_uuid\(\)/i)
+  assert.match(sql, /workspace_members_rotate_authorization_epoch/i)
+  assert.match(sql, /new\.role is distinct from old\.role/i)
+  assert.match(sql, /new\.authorization_epoch := old\.authorization_epoch/i)
+  assert.match(sql, /add column granted_authorization_epoch uuid/i)
   assert.match(sql, /set granted_role = 'editor'/i)
   assert.match(sql, /granted_role in \('editor', 'viewer'\)/i)
   assert.match(sql, /assignment\.granted_role = membership_role/i)
+  assert.match(sql, /assignment\.granted_authorization_epoch =[\s\S]*membership_authorization_epoch/i)
   assert.ok(
     sql.indexOf('assignment.granted_role = membership_role') <
       sql.indexOf('if not live_row.is_published'),
@@ -343,6 +392,7 @@ test('migration #16はviewer grant snapshot・public分離・RPC ACLを追加す
   )
   assert.match(sql, /operator_role not in \('editor', 'viewer'\)/i)
   assert.match(sql, /on conflict \(stage_id, user_id\) do update[\s\S]*granted_role/i)
+  assert.match(sql, /granted_authorization_epoch =[\s\S]*excluded\.granted_authorization_epoch/i)
   assert.match(sql, /add column public_view_enabled boolean not null default false/i)
   assert.match(sql, /is_published[\s\S]*public_view_enabled/i)
   assert.match(sql, /create function public\.find_live_timetable_for_event_authorized/i)
@@ -360,7 +410,12 @@ test('Live UIは独立route・再read・確認・非永続scopeを維持する',
     readFile(new URL('../src/components/EventList.tsx', import.meta.url), 'utf8'),
   ])
   assert.match(routeApp, /resolveLiveTimetableHash/)
+  assert.match(routeApp, /editorMounted &&/)
+  assert.match(routeApp, /hidden=\{route !== undefined\}/)
+  assert.match(routeApp, /inert=\{route !== undefined\}/)
+  assert.match(routeApp, /key=\{cloud\?\.workspaceVisitId\}/)
   assert.match(main, /CloudRouteApp/)
+  assert.match(main, /createLocalAppReturnUrl/)
   assert.match(eventList, /運営向けLive TTを開く/)
   assert.match(page, /未保存の変更は反映されません/)
   assert.match(page, /mode: 'create'/)
@@ -369,6 +424,8 @@ test('Live UIは独立route・再read・確認・非永続scopeを維持する',
   assert.match(page, /loadAuthorized/)
   assert.doesNotMatch(page, /loadEvent|createSupabaseCloudEventRepository/)
   assert.match(page, /post-mutation/)
+  assert.match(page, /createPostMutationReadBarrier/)
+  assert.match(page, /minimumRequiredSequence: freshnessRequiredSequenceRef\.current/)
   assert.match(page, /if \(mutationPendingRef\.current\) return/)
   assert.match(page, /mutationPendingRef\.current = true/)
   assert.match(page, /mutationPendingRef\.current = false/)
@@ -376,6 +433,10 @@ test('Live UIは独立route・再read・確認・非永続scopeを維持する',
   assert.match(page, /document\.visibilityState/)
   assert.match(page, /setFreshnessVerificationPending\(true\)/)
   assert.match(page, /setFreshnessVerificationPending\(false\)/)
+  assert.match(page, /formatLiveTimetableTimestamp\(entry\.actualStartedAt, live\.timeZone\)/)
+  assert.match(page, /const discoveryState = await discover\(\)/)
+  assert.match(page, /作成結果を確認できませんでした/)
+  assert.match(page, /role=\{feedback\.kind === 'error' \? 'alert' : 'status'\}/)
   assert.doesNotMatch(page, /localStorage|sessionStorage/)
 })
 

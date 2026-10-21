@@ -90,17 +90,24 @@ export const canApplyLiveRead = ({
   token,
   activeScopeKey,
   latestAppliedSequence,
+  minimumRequiredSequence = 0,
   incoming,
   current,
 }: {
   token: LiveReadToken
   activeScopeKey: string
   latestAppliedSequence: number
+  minimumRequiredSequence?: number
   incoming: AuthorizedLiveTimetable
   current: AuthorizedLiveTimetable | undefined
 }): boolean => token.scopeKey === activeScopeKey &&
   token.sequence >= latestAppliedSequence &&
+  token.sequence >= minimumRequiredSequence &&
   isLiveTimetableReadAtLeastAsFresh(incoming, current)
+
+export const createPostMutationReadBarrier = (
+  latestStartedReadSequence: number,
+): number => latestStartedReadSequence + 1
 
 export const getLivePollingDelay = (
   consecutiveFailures: number,

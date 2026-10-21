@@ -3,7 +3,10 @@ import { createRoot } from 'react-dom/client'
 import { resolveAppStartupMode } from './appStartup.ts'
 import { cloudConfig } from './cloud/cloudConfig.ts'
 import { isTimetablePreShareHash } from './share/timetablePreShareRouting.ts'
-import { resolveLiveTimetableHash } from './live/liveTimetableRouting.ts'
+import {
+  createLocalAppReturnUrl,
+  resolveLiveTimetableHash,
+} from './live/liveTimetableRouting.ts'
 import './index.css'
 
 const root = createRoot(document.getElementById('root')!)
@@ -27,7 +30,10 @@ if (startupMode === 'local' && requestedLiveRoute) {
     <main role="alert">
       <h1>Live TTはCloudモード専用です</h1>
       <p>Cloud設定を有効にして、認証済みのWorkspaceから開いてください。</p>
-      <a href="#">イベント画面へ戻る</a>
+      <a href={createLocalAppReturnUrl(
+        window.location.pathname,
+        window.location.search,
+      )}>イベント画面へ戻る</a>
     </main>,
   )
 } else if (startupMode === 'local') {
