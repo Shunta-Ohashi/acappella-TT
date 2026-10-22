@@ -72,6 +72,11 @@ export const createRetainedEditorAccountGuardRegistry =
 export const createLiveTimetableHash = (eventId: string): string =>
   `${LIVE_TIMETABLE_HASH_PREFIX}${encodeURIComponent(eventId)}`
 
+export const createLiveTimetableRouteInstanceKey = (
+  accountScopeKey: string,
+  eventId: string,
+): string => JSON.stringify([accountScopeKey, eventId])
+
 export const resolveLiveTimetableHash = (
   hash: string,
 ): LiveTimetableRoute | undefined => {

@@ -60,8 +60,9 @@ Supabase RealtimeのRLS認可は接続時JWTと認可cacheの影響を受けま�
 しません。PR merge前は新しい使い捨てPostgreSQL 17へ全16 migrationをfresh適用します。
 preflightはmigration historyに16番目がなければ`workspace_members`の従来3列、存在すれば
 `authorization_epoch`を含む4列を要求し、historyとcatalogの食い違いを拒否します。
-内部Stage DTO builderは`PUBLIC` / `anon` / `authenticated` / `service_role`から直接にも
-継承経由にも実行できないことをmigration guardとcatalog regressionで確認します。
+内部Stage DTO builderと旧authenticated read helperは、`PUBLIC` / `anon` /
+`authenticated` / `service_role`から直接にも継承経由にも実行できないことを
+migration guardとcatalog regressionで確認します。
 
 ```powershell
 $env:ACAPPELLA_TT_TEST_DATABASE_URL = `

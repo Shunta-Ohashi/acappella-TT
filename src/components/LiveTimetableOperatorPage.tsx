@@ -31,6 +31,7 @@ import {
   describeLiveStageManagementTarget,
   getLivePollingDelay,
   isLiveEntryTransitionReconciled,
+  isLiveOperatorMutationReconciled,
   isLiveStateStale,
   isMatchingLiveRealtimePayload,
   resolveLiveOperatorCandidateSelection,
@@ -970,14 +971,18 @@ function LiveTimetableOperatorWorkspace({
         ? liveRepository.startEntry(
             current.liveId,
             currentStage.sourceStageId ?? '',
+            expectedStageId ?? '',
             expectedScheduleItemId,
+            entry.position,
             currentStage.revision,
             current.projectionVersion,
           )
         : liveRepository.endEntry(
             current.liveId,
             currentStage.sourceStageId ?? '',
+            expectedStageId ?? '',
             expectedScheduleItemId,
+            entry.position,
             currentStage.revision,
             current.projectionVersion,
           ),
@@ -1025,10 +1030,13 @@ function LiveTimetableOperatorWorkspace({
         (!assign || candidatesRef.current.some(item => item.userId === userId)),
     })
     if (!current) return
+    const previousAssignedAt = current.operators.find(operator =>
+      operator.stageId === expectedStageId && operator.userId === userId)?.assignedAt
     await runMutation(
       () => liveRepository.setStageOperator(
         current.liveId,
         expectedSourceStageId,
+        expectedStageId ?? '',
         userId,
         assign,
         current.managementRevision,
@@ -1045,10 +1053,16 @@ function LiveTimetableOperatorWorkspace({
           )
         }
       },
-      candidateLive => BigInt(candidateLive.managementRevision) >
-          BigInt(current.managementRevision) &&
-        candidateLive.operators.some(operator =>
-          operator.stageId === expectedStageId && operator.userId === userId) === assign,
+      candidateLive => isLiveOperatorMutationReconciled({
+        current: candidateLive,
+        target: {
+          stageId: expectedStageId,
+          operatorUserId: userId,
+          assigned: assign,
+          previousManagementRevision: current.managementRevision,
+          previousAssignedAt,
+        },
+      }),
     )
   }
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import App from '../App.tsx'
 import { LiveTimetableOperatorPage } from '../components/LiveTimetableOperatorPage.tsx'
 import {
+  createLiveTimetableRouteInstanceKey,
   createRetainedEditorAccountGuardRegistry,
   resolveLiveTimetableHash,
   shouldKeepCloudEditorMounted,
@@ -59,6 +60,10 @@ export function CloudRouteApp() {
       )}
       {route && (
         <LiveTimetableOperatorPage
+          key={createLiveTimetableRouteInstanceKey(
+            accountScopeKey,
+            route.eventId,
+          )}
           eventId={route.eventId}
           onBeforeAccountAction={action =>
             retainedEditorAccountGuards.canRun({

@@ -366,6 +366,16 @@ const run = async () => {
     assert.equal(missingEvent.status, 409)
     assert.equal(missingEvent.value?.error?.code, 'EVENT_NOT_FOUND')
 
+    const missingDiscovery = await repositories.owner.findForEvent(
+      workspaceId,
+      `missing-${suffix}`,
+    )
+    assert.equal(missingDiscovery.ok, false)
+    assert.equal(missingDiscovery.error.code, 'EVENT_NOT_FOUND')
+    const missingAuthorizedLive = await repositories.owner.loadAuthorized(randomUUID())
+    assert.equal(missingAuthorizedLive.ok, false)
+    assert.equal(missingAuthorizedLive.error.code, 'LIVE_NOT_FOUND')
+
     const missingLive = await rawInvoke(sessions.owner.token, {
       workspaceId, eventId, expectedSourceRevision: 1,
       mode: 'replace', expectedManagementRevision: '1',
@@ -579,7 +589,10 @@ const run = async () => {
     const deniedStart = await repositories.editor.startEntry(
       liveId,
       `${eventId}-stage-a`,
+      unassignedStage.stageId,
       `${eventId}-item-a`,
+      unassignedStage.entries.find(entry =>
+        entry.sourceScheduleItemId === `${eventId}-item-a`).position,
       unassignedStage.revision,
       bigintRead.value.projectionVersion,
     )
@@ -589,6 +602,7 @@ const run = async () => {
     const assigned = await repositories.owner.setStageOperator(
       liveId,
       `${eventId}-stage-a`,
+      unassignedStage.stageId,
       users.viewer.id,
       true,
       '9007199254740994',
@@ -604,6 +618,66 @@ const run = async () => {
     assert.equal(probes[4].events.length, 0)
     probes.forEach(probe => { probe.events.length = 0 })
 
+    const repeatedAssignment = await repositories.owner.setStageOperator(
+      liveId,
+      `${eventId}-stage-a`,
+      unassignedStage.stageId,
+      users.viewer.id,
+      true,
+      assigned.value.managementRevision,
+      bigintRead.value.projectionVersion,
+    )
+    assert.equal(repeatedAssignment.ok, true)
+    assert.equal(
+      repeatedAssignment.value.managementRevision,
+      (BigInt(assigned.value.managementRevision) + 1n).toString(),
+    )
+    await waitFor(
+      () => probes.slice(0, 3).every(probe => probe.events.length >= 1),
+      'Workspace members did not receive repeated operator receipt update.',
+    )
+    probes.forEach(probe => { probe.events.length = 0 })
+
+    const absentRemoval = await repositories.owner.setStageOperator(
+      liveId,
+      `${eventId}-stage-a`,
+      unassignedStage.stageId,
+      users.editor.id,
+      false,
+      repeatedAssignment.value.managementRevision,
+      bigintRead.value.projectionVersion,
+    )
+    assert.equal(absentRemoval.ok, true)
+    assert.equal(
+      absentRemoval.value.managementRevision,
+      (BigInt(repeatedAssignment.value.managementRevision) + 1n).toString(),
+    )
+    await waitFor(
+      () => probes.slice(0, 3).every(probe => probe.events.length >= 1),
+      'Workspace members did not receive absent operator removal receipt update.',
+    )
+    probes.forEach(probe => { probe.events.length = 0 })
+    const staleOperatorCas = await repositories.owner.setStageOperator(
+      liveId,
+      `${eventId}-stage-a`,
+      unassignedStage.stageId,
+      users.viewer.id,
+      true,
+      repeatedAssignment.value.managementRevision,
+      bigintRead.value.projectionVersion,
+    )
+    assert.equal(staleOperatorCas.ok, false)
+    assert.equal(staleOperatorCas.error.code, 'REVISION_CONFLICT')
+    const afterOperatorReceipts = await repositories.owner.loadAuthorized(liveId)
+    assert.equal(afterOperatorReceipts.ok, true)
+    assert.equal(
+      afterOperatorReceipts.value.managementRevision,
+      absentRemoval.value.managementRevision,
+    )
+    assert.equal(afterOperatorReceipts.value.operators.some(operator =>
+      operator.stageId === assigned.value.stageId &&
+      operator.userId === users.viewer.id), true)
+
     const beforeStart = await repositories.owner.loadAuthorized(liveId)
     assert.equal(beforeStart.ok, true)
     const stageBeforeStart = beforeStart.value.stages.find(
@@ -612,7 +686,10 @@ const run = async () => {
     const started = await repositories.viewer.startEntry(
       liveId,
       `${eventId}-stage-a`,
+      stageBeforeStart.stageId,
       `${eventId}-item-a`,
+      stageBeforeStart.entries.find(entry =>
+        entry.sourceScheduleItemId === `${eventId}-item-a`).position,
       stageBeforeStart.revision,
       beforeStart.value.projectionVersion,
     )
@@ -636,7 +713,10 @@ const run = async () => {
     const ended = await repositories.viewer.endEntry(
       liveId,
       `${eventId}-stage-a`,
+      stageAfterStart.stageId,
       `${eventId}-item-a`,
+      stageAfterStart.entries.find(entry =>
+        entry.sourceScheduleItemId === `${eventId}-item-a`).position,
       stageAfterStart.revision,
       afterStart.value.projectionVersion,
     )
@@ -687,7 +767,7 @@ const run = async () => {
     assert.deepEqual(pageAfter.data.rows[0].event_snapshot, cloudBefore.snapshot)
 
     const unpublished = await repositories.owner.setPublication(
-      liveId, assigned.value.managementRevision, false,
+      liveId, absentRemoval.value.managementRevision, false,
     )
     assert.equal(unpublished.ok, true)
     assert.equal((await repositories.owner.loadPublic(publicId)).ok, false)

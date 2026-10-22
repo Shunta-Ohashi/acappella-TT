@@ -805,6 +805,130 @@ begin
 end
 $owner_reassigns_changed_role$;
 
+reset role;
+do $owner_repeats_operator_commands$
+declare
+  result jsonb;
+  authorized_value jsonb;
+  assignment_created_at_before timestamptz;
+  assignment_created_at_after timestamptz;
+  stage_a_updated_at_after timestamptz;
+  live_updated_at_after timestamptz;
+  stage_b_updated_at_before timestamptz;
+  projection_version_before bigint;
+begin
+  select created_at into assignment_created_at_before
+  from public.live_timetable_stage_operators
+  where live_timetable_id = current_setting('test.live_id')::uuid
+    and user_id = '00000000-0000-4000-8000-000000000082';
+  select updated_at into stage_b_updated_at_before
+  from public.live_timetable_stages
+  where live_timetable_id = current_setting('test.live_id')::uuid
+    and source_stage_id = 'live-stage-b';
+  select projection_version into projection_version_before
+  from public.live_timetables
+  where id = current_setting('test.live_id')::uuid;
+
+  result := public.set_live_timetable_stage_operator(
+    current_setting('test.live_id')::uuid,
+    'live-stage-a',
+    '00000000-0000-4000-8000-000000000082',
+    true,
+    '8',
+    '2'
+  );
+  select created_at into assignment_created_at_after
+  from public.live_timetable_stage_operators
+  where live_timetable_id = current_setting('test.live_id')::uuid
+    and user_id = '00000000-0000-4000-8000-000000000082';
+  select updated_at into stage_a_updated_at_after
+  from public.live_timetable_stages
+  where live_timetable_id = current_setting('test.live_id')::uuid
+    and source_stage_id = 'live-stage-a';
+  select updated_at into live_updated_at_after
+  from public.live_timetables
+  where id = current_setting('test.live_id')::uuid;
+  authorized_value := public.load_live_timetable_authorized(
+    current_setting('test.live_id')::uuid
+  );
+  if result ->> 'managementRevision' <> '9'
+    or (select count(*) from public.live_timetable_stage_operators
+      where live_timetable_id = current_setting('test.live_id')::uuid
+        and user_id = '00000000-0000-4000-8000-000000000082') <> 1
+    or (select projection_version from public.live_timetables
+      where id = current_setting('test.live_id')::uuid)
+        is distinct from projection_version_before
+    or (select updated_at from public.live_timetable_stages
+      where live_timetable_id = current_setting('test.live_id')::uuid
+        and source_stage_id = 'live-stage-b')
+        is distinct from stage_b_updated_at_before
+    or assignment_created_at_after <= assignment_created_at_before
+    or assignment_created_at_after is distinct from stage_a_updated_at_after
+    or assignment_created_at_after is distinct from live_updated_at_after
+    or not exists (
+      select 1
+      from jsonb_array_elements(authorized_value -> 'operators') as assignment
+      where assignment ->> 'stageId' = (
+        select id::text from public.live_timetable_stages
+        where live_timetable_id = current_setting('test.live_id')::uuid
+          and source_stage_id = 'live-stage-a'
+      )
+        and assignment ->> 'userId' =
+          '00000000-0000-4000-8000-000000000082'
+        and (assignment ->> 'assignedAt')::timestamptz
+          is not distinct from assignment_created_at_after
+    ) then
+    raise exception 'Identical operator reassignment lacks a durable revision receipt';
+  end if;
+
+  result := public.set_live_timetable_stage_operator(
+    current_setting('test.live_id')::uuid,
+    'live-stage-a',
+    '00000000-0000-4000-8000-000000000083',
+    false,
+    '9',
+    '2'
+  );
+  select updated_at into stage_a_updated_at_after
+  from public.live_timetable_stages
+  where live_timetable_id = current_setting('test.live_id')::uuid
+    and source_stage_id = 'live-stage-a';
+  select updated_at into live_updated_at_after
+  from public.live_timetables
+  where id = current_setting('test.live_id')::uuid;
+  if result ->> 'managementRevision' <> '10'
+    or exists (
+      select 1 from public.live_timetable_stage_operators
+      where live_timetable_id = current_setting('test.live_id')::uuid
+        and user_id = '00000000-0000-4000-8000-000000000083'
+    )
+    or stage_a_updated_at_after is distinct from live_updated_at_after then
+    raise exception 'Absent operator removal lacks a durable revision receipt';
+  end if;
+
+  begin
+    perform public.set_live_timetable_stage_operator(
+      current_setting('test.live_id')::uuid,
+      'live-stage-a',
+      '00000000-0000-4000-8000-000000000082',
+      true,
+      '9',
+      '2'
+    );
+    raise exception 'Stale operator CAS was accepted' using errcode = 'P0004';
+  exception when sqlstate '40001' then null;
+  end;
+  if (select management_revision from public.live_timetables
+      where id = current_setting('test.live_id')::uuid) <> 10
+    or (select count(*) from public.live_timetable_stage_operators
+      where live_timetable_id = current_setting('test.live_id')::uuid
+        and user_id = '00000000-0000-4000-8000-000000000082') <> 1 then
+    raise exception 'Rejected stale operator CAS changed Live state';
+  end if;
+end
+$owner_repeats_operator_commands$;
+set local role authenticated;
+
 select set_config(
   'request.jwt.claim.sub',
   '00000000-0000-4000-8000-000000000082', true
@@ -957,7 +1081,7 @@ select set_config(
 );
 select public.set_live_timetable_publication(
   current_setting('test.live_id')::uuid,
-  '8', false
+  '10', false
 );
 
 reset role;
@@ -980,7 +1104,7 @@ select set_config(
 );
 select public.set_live_timetable_publication(
   current_setting('test.live_id')::uuid,
-  '9', true
+  '11', true
 );
 
 reset role;

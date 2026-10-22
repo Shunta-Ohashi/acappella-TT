@@ -2977,12 +2977,20 @@ later_schema as (
         ))) like '%is_published%public_view_enabled%'
       and lower((select pg_proc.prosrc from pg_catalog.pg_proc
         where pg_proc.oid = to_regprocedure(
+          'public.load_live_timetable_authorized(uuid)'
+        ))) like '%load_live_timetable_authorized_v15%assignedat%assignment.created_at%'
+      and lower((select pg_proc.prosrc from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
           'public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)'
         ))) like '%operator_role not in (''editor'', ''viewer'')%'
       and lower((select pg_proc.prosrc from pg_catalog.pg_proc
         where pg_proc.oid = to_regprocedure(
           'public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)'
         ))) like '%set granted_role = excluded.granted_role%granted_authorization_epoch =%excluded.granted_authorization_epoch%'
+      and lower((select pg_proc.prosrc from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+          'public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)'
+        ))) like '%created_at = excluded.created_at%management_revision = management_revision + 1%'
       and lower((select pg_proc.prosrc from pg_catalog.pg_proc
         where pg_proc.oid = to_regprocedure(
           'public.transition_live_timetable_entry(text,uuid,text,text,text,text)'
@@ -3041,6 +3049,7 @@ later_schema as (
           (to_regprocedure('public.list_live_timetable_operator_candidates(uuid)')),
           (to_regprocedure('public.build_live_timetable_stages_json(uuid,uuid,text,boolean)')),
           (to_regprocedure('public.build_live_timetable_stages_json_v15(uuid,uuid,text,boolean)')),
+          (to_regprocedure('public.load_live_timetable_authorized_v15(uuid)')),
           (to_regprocedure('public.load_live_timetable_public_v15(uuid)'))
         ) as guarded_function(oid)
         cross join lateral pg_catalog.aclexplode(coalesce(
@@ -3063,6 +3072,7 @@ later_schema as (
         from (values
           (to_regprocedure('public.build_live_timetable_stages_json(uuid,uuid,text,boolean)')),
           (to_regprocedure('public.build_live_timetable_stages_json_v15(uuid,uuid,text,boolean)')),
+          (to_regprocedure('public.load_live_timetable_authorized_v15(uuid)')),
           (to_regprocedure('public.load_live_timetable_public_v15(uuid)'))
         ) as internal_function(oid)
         cross join (

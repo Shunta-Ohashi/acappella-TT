@@ -196,6 +196,8 @@ const scenarios = [
     !result.laterSchema.liveTimetableOperatorUiContract],
   ['live_timetable_operator_helper_authenticated_execute', result =>
     !result.laterSchema.liveTimetableOperatorUiContract],
+  ['live_timetable_authorized_helper_authenticated_execute', result =>
+    !result.laterSchema.liveTimetableOperatorUiContract],
   ['live_timetable_operator_stage_builder_authenticated_execute', result =>
     !result.laterSchema.liveTimetableOperatorUiContract],
   ['live_timetable_operator_stage_builder_inherited_execute', result =>

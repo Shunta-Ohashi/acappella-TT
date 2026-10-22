@@ -581,10 +581,10 @@ test('Repositoryはmutation identityと状態を厳密に照合する', async ()
   })).ok, true)
   assert.equal((await repository.setPublication(liveId, '1', true)).ok, true)
   assert.equal((await repository.setStageOperator(
-    liveId, 'stage-main', actorId, true, '1', '1',
+    liveId, 'stage-main', publicId, actorId, true, '1', '1',
   )).ok, true)
   assert.equal((await repository.startEntry(
-    liveId, 'stage-main', 'item-a', '1', '1',
+    liveId, 'stage-main', publicId, 'item-a', 0, '1', '1',
   )).ok, true)
 
   const wrongIdentity = createLiveTimetableRepository({
@@ -622,10 +622,44 @@ test('Repositoryはmutation identityと状態を厳密に照合する', async ()
     },
   })
   assert.equal((await staleMutationResponse.setStageOperator(
-    liveId, 'stage-main', actorId, true, '1', '1',
+    liveId, 'stage-main', publicId, actorId, true, '1', '1',
   )).error.code, 'INVALID_RESPONSE')
   assert.equal((await staleMutationResponse.startEntry(
-    liveId, 'stage-main', 'item-a', '1', '1',
+    liveId, 'stage-main', publicId, 'item-a', 0, '1', '1',
+  )).error.code, 'INVALID_RESPONSE')
+
+  for (const managementRevision of ['1', '3']) {
+    const invalidReceipt = createLiveTimetableRepository({
+      ...baseGateway,
+      async setStageOperator(input) {
+        const value = await baseGateway.setStageOperator(input)
+        value.data.managementRevision = managementRevision
+        return value
+      },
+    })
+    assert.equal((await invalidReceipt.setStageOperator(
+      liveId, 'stage-main', publicId, actorId, true, '1', '1',
+    )).error.code, 'INVALID_RESPONSE')
+  }
+
+  const wrongMutationTarget = createLiveTimetableRepository({
+    ...baseGateway,
+    async setStageOperator(input) {
+      const value = await baseGateway.setStageOperator(input)
+      value.data.stageId = '78000000-0000-4000-8000-000000000099'
+      return value
+    },
+    async transitionEntry(input) {
+      const value = await baseGateway.transitionEntry(input)
+      value.data.entry.position = 1
+      return value
+    },
+  })
+  assert.equal((await wrongMutationTarget.setStageOperator(
+    liveId, 'stage-main', publicId, actorId, true, '1', '1',
+  )).error.code, 'INVALID_RESPONSE')
+  assert.equal((await wrongMutationTarget.startEntry(
+    liveId, 'stage-main', publicId, 'item-a', 0, '1', '1',
   )).error.code, 'INVALID_RESPONSE')
 })
 
@@ -641,7 +675,7 @@ test('Repositoryは不正CAS引数をRPC前に拒否し公開nullを未検証成
   }
   const repository = createLiveTimetableRepository(gateway)
   assert.equal((await repository.startEntry(
-    liveId, 'stage-main', 'item-a', '01', '1',
+    liveId, 'stage-main', publicId, 'item-a', 0, '01', '1',
   )).error.code, 'INVALID_ARGUMENT')
   assert.equal((await repository.setPublication(
     liveId, '9223372036854775808', true,
@@ -832,6 +866,9 @@ test('実DB fixtureはrollback境界とStage単位の並行契約を検証する
   assert.match(foundation, /Removed viewer retained progress permission/i)
   assert.match(foundation, /Viewer with stale operator assignment was accepted/i)
   assert.match(foundation, /Explicit changed-role reassignment is invalid/i)
+  assert.match(foundation, /Identical operator reassignment lacks a durable revision receipt/i)
+  assert.match(foundation, /Absent operator removal lacks a durable revision receipt/i)
+  assert.match(foundation, /Stale operator CAS was accepted/i)
   assert.match(foundation, /Membership deletion left a Live operator assignment/i)
   assert.match(foundation, /Workspace outsider read was accepted/i)
   assert.match(foundation, /Progress enablement unexpectedly enabled anonymous read/i)

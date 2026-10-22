@@ -5,12 +5,15 @@ import test from 'node:test'
 import {
   createLiveTimetableRepository,
   createSupabaseLiveTimetableGateway,
+  parseAuthorizedLiveTimetable,
   parseLiveTimetableDiscovery,
   parseLiveTimetableOperatorCandidates,
+  parsePublicLiveTimetable,
 } from '../src/live/liveTimetableRepository.ts'
 import {
   createRetainedEditorAccountGuardRegistry,
   createLiveTimetableHash,
+  createLiveTimetableRouteInstanceKey,
   createLocalAppReturnUrl,
   resolveRetainedEditorAccountGuardDecision,
   resolveLiveTimetableHash,
@@ -36,6 +39,7 @@ import {
   describeLiveStageManagementTarget,
   getLivePollingDelay,
   isLiveEntryTransitionReconciled,
+  isLiveOperatorMutationReconciled,
   isLiveStateStale,
   isLiveTimetableReadAtLeastAsFresh,
   isMatchingLiveRealtimePayload,
@@ -114,6 +118,66 @@ const createLive = ({
   }],
 })
 
+const createAuthorizedRpcValue = options => {
+  const value = structuredClone(createLive(options))
+  const {
+    role, canManage, operators, stages,
+    ...live
+  } = value
+  return {
+    status: 'ok',
+    live,
+    permissions: { role, canManage },
+    operators,
+    stages,
+  }
+}
+
+const createPublicRpcValue = options => {
+  const value = structuredClone(createLive(options))
+  return {
+    status: 'ok',
+    live: {
+      publicId: value.publicId,
+      eventName: value.eventName,
+      timeZone: value.timeZone,
+      projectionVersion: value.projectionVersion,
+      managementRevision: value.managementRevision,
+      eventDays: value.eventDays.map(({ date, position }) => ({ date, position })),
+    },
+    stages: value.stages.map(stage => ({
+      name: stage.name,
+      eventDayPosition: stage.eventDayPosition,
+      position: stage.position,
+      plannedStartTime: stage.plannedStartTime,
+      plannedEndTime: stage.plannedEndTime,
+      sections: stage.sections.map(section => ({
+        name: section.name,
+        position: section.position,
+        plannedStartTime: section.plannedStartTime,
+        plannedEndTime: section.plannedEndTime,
+      })),
+      revision: stage.revision,
+      projectionVersion: stage.projectionVersion,
+      progressStatus: stage.progressStatus,
+      currentEntryPosition: stage.currentEntryPosition,
+      nextEntryPosition: stage.nextEntryPosition,
+      nextPerformancePosition: stage.nextPerformancePosition,
+      updatedAt: stage.updatedAt,
+      entries: stage.entries.map(entry => ({
+        position: entry.position,
+        kind: entry.kind,
+        displayName: entry.displayName,
+        plannedStartMinute: entry.plannedStartMinute,
+        plannedEndMinute: entry.plannedEndMinute,
+        status: entry.status,
+        actualStartedAt: entry.actualStartedAt,
+        actualEndedAt: entry.actualEndedAt,
+      })),
+    })),
+  }
+}
+
 test('Live routeはEvent IDを安全に往復し#shareと混同しない', () => {
   const hash = createLiveTimetableHash('event/日本語 & live')
   assert.deepEqual(resolveLiveTimetableHash(hash), {
@@ -122,6 +186,14 @@ test('Live routeはEvent IDを安全に往復し#shareと混同しない', () =>
   assert.equal(resolveLiveTimetableHash('#share=payload'), undefined)
   assert.equal(resolveLiveTimetableHash('#live='), undefined)
   assert.equal(resolveLiveTimetableHash('#live=%E0%A4%A'), undefined)
+  assert.notEqual(
+    createLiveTimetableRouteInstanceKey('workspace-a', 'event-a'),
+    createLiveTimetableRouteInstanceKey('workspace-a', 'event-b'),
+  )
+  assert.notEqual(
+    createLiveTimetableRouteInstanceKey('workspace-a', 'event-a'),
+    createLiveTimetableRouteInstanceKey('workspace-b', 'event-a'),
+  )
   assert.equal(shouldKeepCloudEditorMounted(false, { kind: 'live', eventId: 'a' }), false)
   assert.equal(shouldKeepCloudEditorMounted(false, undefined), true)
   assert.equal(shouldKeepCloudEditorMounted(true, { kind: 'live', eventId: 'a' }), true)
@@ -292,7 +364,8 @@ test('polling backoff・stale・offline mutation gateはfail closed', () => {
   assert.ok(LIVE_HEALTHY_POLLING_INTERVAL_MS < LIVE_STATE_MAX_AGE_MS)
   assert.equal(isLiveStateStale(undefined, 100), true)
   assert.equal(isLiveStateStale(1_000, 45_000), false)
-  assert.equal(isLiveStateStale(1_000, 46_001), true)
+  assert.equal(isLiveStateStale(1_000, 46_000), true)
+  assert.equal(isLiveStateStale(1_001, 1_000), true)
   assert.equal(canRunLiveMutation({
     online: true, stale: false, pending: false,
     canOperate: true, progressEnabled: true,
@@ -307,6 +380,99 @@ test('polling backoff・stale・offline mutation gateはfail closed', () => {
       ...override,
     }), false)
   }
+})
+
+test('authorized parserはowner専用operator情報をscopeと一意性まで検証する', () => {
+  const owner = createAuthorizedRpcValue({ role: 'owner' })
+  owner.operators = [{
+    stageId: owner.stages[0].stageId,
+    userId,
+    assignedAt: '2026-10-21T00:00:01.000Z',
+  }]
+  assert.equal(parseAuthorizedLiveTimetable(owner)?.operators.length, 1)
+
+  const leaked = structuredClone(owner)
+  leaked.permissions = { role: 'editor', canManage: false }
+  assert.equal(parseAuthorizedLiveTimetable(leaked), undefined)
+
+  const duplicate = structuredClone(owner)
+  duplicate.operators.push(structuredClone(duplicate.operators[0]))
+  assert.equal(parseAuthorizedLiveTimetable(duplicate), undefined)
+
+  const unknownStage = structuredClone(owner)
+  unknownStage.operators[0].stageId =
+    '40000000-0000-0000-0000-000000000099'
+  assert.equal(parseAuthorizedLiveTimetable(unknownStage), undefined)
+})
+
+test('Live read parserはDBと同じ階層・revision・実績時刻契約を要求する', () => {
+  const authorized = createAuthorizedRpcValue({ role: 'owner' })
+  assert.notEqual(parseAuthorizedLiveTimetable(authorized), undefined)
+
+  for (const damage of [
+    value => { value.live.eventDays[0].position = 1 },
+    value => { value.stages[0].sourceEventDayId = 'unknown-day' },
+    value => { value.stages[0].projectionVersion = '2' },
+    value => { value.stages[0].plannedStartTime = '29:99' },
+    value => {
+      value.stages[0].entries[0].actualStartedAt =
+        '2026-10-21T00:00:01.000Z'
+    },
+    value => { value.stages[0].entries[0].sourceSectionId = '' },
+    value => { value.stages[0].entries[0].startedBy = userId },
+  ]) {
+    const invalid = structuredClone(authorized)
+    damage(invalid)
+    assert.equal(parseAuthorizedLiveTimetable(invalid), undefined)
+  }
+
+  const inProgressWithoutActor = structuredClone(authorized)
+  Object.assign(inProgressWithoutActor.stages[0].entries[0], {
+    status: 'in_progress',
+    actualStartedAt: '2026-10-21T00:00:01.000Z',
+    startedBy: null,
+  })
+  Object.assign(inProgressWithoutActor.stages[0], {
+    progressStatus: 'in_progress',
+    currentEntryPosition: 0,
+    nextEntryPosition: null,
+    nextPerformancePosition: null,
+  })
+  assert.equal(parseAuthorizedLiveTimetable(inProgressWithoutActor), undefined)
+
+  const publicResponse = createPublicRpcValue()
+  assert.notEqual(parsePublicLiveTimetable(publicResponse), undefined)
+  publicResponse.stages[0].projectionVersion = '2'
+  assert.equal(parsePublicLiveTimetable(publicResponse), undefined)
+})
+
+test('Repository readは要求したLive・公開IDと応答identityを照合する', async () => {
+  const authorized = createAuthorizedRpcValue({ role: 'owner' })
+  const publicResponse = createPublicRpcValue()
+  const gateway = {
+    async createProjection() { return { data: null, error: null } },
+    async loadAuthorized() { return { data: authorized, error: null } },
+    async loadPublic() { return { data: publicResponse, error: null } },
+    async findForEvent() { return { data: null, error: null } },
+    async listOperatorCandidates() { return { data: null, error: null } },
+    async setPublication() { return { data: null, error: null } },
+    async setStageOperator() { return { data: null, error: null } },
+    async transitionEntry() { return { data: null, error: null } },
+  }
+  const repository = createLiveTimetableRepository(gateway)
+  assert.equal((await repository.loadAuthorized(liveId)).ok, true)
+  assert.equal((await repository.loadPublic(publicResponse.live.publicId)).ok, true)
+
+  const otherLiveId = '10000000-0000-0000-0000-000000000099'
+  const otherPublicId = '10000000-0000-0000-0000-000000000098'
+  assert.equal((await repository.loadAuthorized(otherLiveId)).error.code,
+    'INVALID_RESPONSE')
+  assert.equal((await repository.loadPublic(otherPublicId)).error.code,
+    'INVALID_RESPONSE')
+
+  assert.equal(parseAuthorizedLiveTimetable(authorized)?.liveId, liveId)
+  assert.equal(parsePublicLiveTimetable(publicResponse)?.publicId,
+    publicResponse.live.publicId)
 })
 
 test('polling timerはin-flight readと再scheduleが重なっても1本だけを維持する', async () => {
@@ -525,6 +691,68 @@ test('結果不明mutationは同一scopeのauthorized readが期待revisionを�
     activeScopeKey: 'scope-a',
     current: { ...before, isPublished: false, managementRevision: '6' },
   }), true)
+})
+
+test('operator結果不明は管理revision前進と対象Stage/Userの最新状態を両方要求する', () => {
+  const before = createLive({ managementRevision: '5' })
+  const previousAssignedAt = '2026-10-21T00:00:00.000Z'
+  const receiptAt = '2026-10-21T00:01:00.000Z'
+  const target = {
+    stageId: before.stages[0].stageId,
+    operatorUserId: userId,
+    assigned: true,
+    previousManagementRevision: '5',
+    previousAssignedAt,
+  }
+  const assigned = {
+    ...before,
+    managementRevision: '6',
+    updatedAt: receiptAt,
+    stages: [{ ...before.stages[0], updatedAt: receiptAt }],
+    operators: [{ stageId: target.stageId, userId, assignedAt: receiptAt }],
+  }
+  assert.equal(isLiveOperatorMutationReconciled({ current: assigned, target }), true)
+  assert.equal(isLiveOperatorMutationReconciled({
+    current: { ...assigned, managementRevision: '5' }, target,
+  }), false, 'unchanged revision')
+  assert.equal(isLiveOperatorMutationReconciled({
+    current: {
+      ...assigned,
+      stages: before.stages,
+      operators: [{
+        stageId: target.stageId, userId, assignedAt: previousAssignedAt,
+      }],
+    },
+    target,
+  }), false, 'unrelated management revision')
+  assert.equal(isLiveOperatorMutationReconciled({
+    current: {
+      ...assigned,
+      operators: [{
+        stageId: target.stageId, userId, assignedAt: previousAssignedAt,
+      }],
+    },
+    target,
+  }), false, 'same-stage unrelated operator mutation')
+  assert.equal(isLiveOperatorMutationReconciled({
+    current: { ...assigned, managementRevision: '7' }, target,
+  }), false, 'later management revision is not this command receipt')
+  assert.equal(isLiveOperatorMutationReconciled({
+    current: assigned,
+    target: { ...target, stageId: '40000000-0000-0000-0000-000000000099' },
+  }), false)
+  assert.equal(isLiveOperatorMutationReconciled({
+    current: assigned,
+    target: { ...target, operatorUserId: '30000000-0000-0000-0000-000000000099' },
+  }), false)
+  assert.equal(isLiveOperatorMutationReconciled({
+    current: { ...assigned, operators: [] },
+    target: { ...target, assigned: false },
+  }), true, 'observed assignment removal also requires a durable revision receipt')
+  assert.equal(isLiveOperatorMutationReconciled({
+    current: { ...assigned, operators: [] },
+    target: { ...target, assigned: false, previousAssignedAt: undefined },
+  }), false, 'an already-absent removal has no target-row receipt')
 })
 
 test('start結果不明は対象entryが別端末で終了済みでも開始記録とrevision前進で解消する', () => {
@@ -913,7 +1141,7 @@ test('authorized readが失敗し続ける通信断ではstale後のmutationを�
   assert.equal(isLiveStateStale(
     lastSuccessfulAuthorizedRead,
     LIVE_STATE_MAX_AGE_MS,
-  ), false)
+  ), true)
   const stale = isLiveStateStale(
     lastSuccessfulAuthorizedRead,
     LIVE_STATE_MAX_AGE_MS + 1,
@@ -1057,6 +1285,27 @@ test('repositoryはdiscovery/candidateのscopeとexact応答を維持する', as
   ])
 })
 
+test('discoveryだけはP0002をEvent不存在へ変換し他RPCのLive不存在を維持する', async () => {
+  const gateway = {
+    async createProjection() { return { data: null, error: null } },
+    async loadAuthorized() { return { data: null, error: { code: 'P0002' } } },
+    async loadPublic() { return { data: null, error: null } },
+    async findForEvent() { return { data: null, error: { code: 'P0002' } } },
+    async listOperatorCandidates() { return { data: null, error: null } },
+    async setPublication() { return { data: null, error: null } },
+    async setStageOperator() { return { data: null, error: null } },
+    async transitionEntry() { return { data: null, error: null } },
+  }
+  const repository = createLiveTimetableRepository(gateway)
+  const discovery = await repository.findForEvent(workspaceId, 'missing-event')
+  assert.equal(discovery.ok, false)
+  assert.deepEqual(discovery.error, {
+    code: 'EVENT_NOT_FOUND',
+    message: 'Cloudに保存されたEventが見つかりません。通常のイベント編集画面でCloudへ保存してから、Live TTを開いてください。',
+  })
+  assert.equal((await repository.loadAuthorized(liveId)).error.code, 'LIVE_NOT_FOUND')
+})
+
 test('migration #16はviewer grant snapshot・public分離・RPC ACLを追加する', async () => {
   const sql = await readFile(new URL(
     '../supabase/migrations/20261021050414_live_timetable_operator_ui.sql',
@@ -1082,6 +1331,10 @@ test('migration #16はviewer grant snapshot・public分離・RPC ACLを追加す
   assert.match(sql, /operator_role not in \('editor', 'viewer'\)/i)
   assert.match(sql, /on conflict \(stage_id, user_id\) do update[\s\S]*granted_role/i)
   assert.match(sql, /granted_authorization_epoch =[\s\S]*excluded\.granted_authorization_epoch/i)
+  assert.match(sql, /created_at = excluded\.created_at/i)
+  assert.match(sql,
+    /previous_assignment_at[\s\S]*for update[\s\S]*previous_assignment_at \+ interval '1 microsecond'/i)
+  assert.match(sql, /load_live_timetable_authorized_v15[\s\S]*'assignedAt', assignment\.created_at/i)
   assert.match(sql, /add column public_view_enabled boolean not null default false/i)
   assert.match(sql, /is_published[\s\S]*public_view_enabled/i)
   assert.match(sql, /create function public\.find_live_timetable_for_event_authorized/i)
@@ -1090,19 +1343,23 @@ test('migration #16はviewer grant snapshot・public分離・RPC ACLを追加す
   assert.doesNotMatch(sql, /auth\.users[\s\S]*email/i)
   assert.match(sql, /revoke all on function public\.find_live_timetable_for_event_authorized[\s\S]*grant execute[\s\S]*to authenticated/i)
   assert.match(sql,
-    /foreach signature in array array\[[\s\S]*public\.build_live_timetable_stages_json\(uuid,uuid,text,boolean\)[\s\S]*has_function_privilege\(role_name, function_oid, 'EXECUTE'\)/i)
+    /foreach signature in array array\[[\s\S]*public\.build_live_timetable_stages_json\(uuid,uuid,text,boolean\)[\s\S]*public\.load_live_timetable_authorized_v15\(uuid\)[\s\S]*has_function_privilege\(role_name, function_oid, 'EXECUTE'\)/i)
   assert.match(sql, /PUBLIC can execute internal helper/i)
 })
 
 test('Live UIは独立route・再read・確認・非永続scopeを維持する', async () => {
-  const [page, routeApp, app, main, eventList] = await Promise.all([
+  const [page, routeApp, app, main, eventList, csvHelp, grid] = await Promise.all([
     readFile(new URL('../src/components/LiveTimetableOperatorPage.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/cloud/CloudRouteApp.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/App.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/main.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/EventList.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/components/CsvImportHelpPopover.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/components/TimetableGrid.tsx', import.meta.url), 'utf8'),
   ])
   assert.match(routeApp, /resolveLiveTimetableHash/)
+  assert.match(routeApp,
+    /key=\{createLiveTimetableRouteInstanceKey\([\s\S]*accountScopeKey,[\s\S]*route\.eventId/i)
   assert.match(routeApp, /editorMounted &&/)
   assert.match(routeApp, /hidden=\{route !== undefined\}/)
   assert.match(routeApp, /inert=\{route !== undefined\}/)
@@ -1174,6 +1431,9 @@ test('Live UIは独立route・再read・確認・非永続scopeを維持する',
   assert.match(page, /describeLiveStageManagementTarget\(stage, live\.eventDays\)/)
   assert.match(page, /left\.eventDayPosition - right\.eventDayPosition/)
   assert.match(page, /setCandidates\(\[\]\)/)
+  assert.match(csvHelp, /useRetainedAppActivity/)
+  assert.match(csvHelp, /if \(!active \|\| !isOpen\) return/)
+  assert.match(grid, /if \(!active\) \{[\s\S]*pointerSelectionRef\.current = null/)
   assert.doesNotMatch(page, /localStorage|sessionStorage/)
 })
 

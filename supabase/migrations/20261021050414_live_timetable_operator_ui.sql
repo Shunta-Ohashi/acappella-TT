@@ -130,6 +130,49 @@ revoke all on function public.build_live_timetable_stages_json(
   uuid, uuid, text, boolean
 ) from public, anon, authenticated, service_role;
 
+-- Expose the grant issuance timestamp only in the authenticated owner DTO.
+-- Together with the Live/Stage timestamps written by the operator RPC, this
+-- lets a client distinguish its target grant from an unrelated management
+-- revision after an HTTP response is lost.
+alter function public.load_live_timetable_authorized(uuid)
+  rename to load_live_timetable_authorized_v15;
+
+revoke all on function public.load_live_timetable_authorized_v15(uuid)
+  from public, anon, authenticated, service_role;
+
+create function public.load_live_timetable_authorized(p_live_id uuid)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  response jsonb;
+  operators_json jsonb;
+begin
+  response := public.load_live_timetable_authorized_v15(p_live_id);
+  if response #>> '{permissions,canManage}' = 'true' then
+    select coalesce(jsonb_agg(jsonb_build_object(
+      'stageId', assignment.stage_id,
+      'userId', assignment.user_id,
+      'assignedAt', assignment.created_at
+    ) order by assignment.stage_id, assignment.user_id), '[]'::jsonb)
+    into operators_json
+    from public.live_timetable_stage_operators as assignment
+    where assignment.live_timetable_id = p_live_id;
+
+    response := jsonb_set(response, '{operators}', operators_json, true);
+  end if;
+  return response;
+end;
+$$;
+
+revoke all on function public.load_live_timetable_authorized(uuid)
+  from public, anon, authenticated, service_role;
+grant execute on function public.load_live_timetable_authorized(uuid)
+  to authenticated;
+
 -- Preserve the original public DTO builder but put an additional, locked,
 -- opt-in gate in front of it. The renamed helper is never browser executable.
 alter function public.load_live_timetable_public(uuid)
@@ -169,9 +212,11 @@ revoke all on function public.load_live_timetable_public(uuid)
 grant execute on function public.load_live_timetable_public(uuid)
   to anon, authenticated;
 
--- Owner-only assignment now records the assignee's exact role. Reassigning an
--- existing stale row is an explicit role grant and therefore increments the
--- management CAS revision; an identical assignment remains a no-op.
+-- Owner-only assignment records the assignee's exact role. Every accepted
+-- assign/remove command advances the management CAS revision, including a
+-- command whose desired row state already exists. The revision is the durable
+-- receipt used by the UI after an HTTP response is lost; authorization and CAS
+-- checks still run before this receipt is written.
 create or replace function public.set_live_timetable_stage_operator(
   p_live_id uuid,
   p_source_stage_id text,
@@ -194,8 +239,8 @@ declare
   operator_authorization_epoch uuid;
   live_row record;
   target_stage_id uuid;
-  changed_count integer;
   changed_at timestamptz;
+  previous_assignment_at timestamptz;
 begin
   if caller_id is null then
     raise exception 'Live operator mutation requires authentication'
@@ -282,48 +327,54 @@ begin
   end if;
 
   if p_assign then
+    select live_timetable_stage_operators.created_at
+      into previous_assignment_at
+    from public.live_timetable_stage_operators
+    where live_timetable_stage_operators.stage_id = target_stage_id
+      and live_timetable_stage_operators.user_id = p_operator_user_id
+    for update;
+  end if;
+  changed_at := clock_timestamp();
+  if previous_assignment_at is not null
+    and changed_at <= previous_assignment_at then
+    changed_at := previous_assignment_at + interval '1 microsecond';
+  end if;
+  if p_assign then
     insert into public.live_timetable_stage_operators (
       workspace_id,
       live_timetable_id,
       stage_id,
       user_id,
       granted_role,
-      granted_authorization_epoch
+      granted_authorization_epoch,
+      created_at
     ) values (
       target_workspace_id,
       p_live_id,
       target_stage_id,
       p_operator_user_id,
       operator_role,
-      operator_authorization_epoch
+      operator_authorization_epoch,
+      changed_at
     )
     on conflict (stage_id, user_id) do update
       set granted_role = excluded.granted_role,
           granted_authorization_epoch =
             excluded.granted_authorization_epoch,
-          created_at = clock_timestamp()
-      where live_timetable_stage_operators.granted_role
-          is distinct from excluded.granted_role
-        or live_timetable_stage_operators.granted_authorization_epoch
-          is distinct from excluded.granted_authorization_epoch;
+          created_at = excluded.created_at;
   else
     delete from public.live_timetable_stage_operators
     where live_timetable_stage_operators.stage_id = target_stage_id
       and live_timetable_stage_operators.user_id = p_operator_user_id;
   end if;
-  get diagnostics changed_count = row_count;
-
-  if changed_count > 0 then
-    changed_at := clock_timestamp();
-    update public.live_timetables
-    set management_revision = management_revision + 1,
-        updated_at = changed_at
-    where id = p_live_id
-    returning * into live_row;
-    update public.live_timetable_stages
-    set updated_at = changed_at
-    where id = target_stage_id;
-  end if;
+  update public.live_timetables
+  set management_revision = management_revision + 1,
+      updated_at = changed_at
+  where id = p_live_id
+  returning * into live_row;
+  update public.live_timetable_stages
+  set updated_at = changed_at
+  where id = target_stage_id;
 
   return jsonb_build_object(
     'status', 'ok',
@@ -842,6 +893,7 @@ begin
   foreach signature in array array[
     'public.build_live_timetable_stages_json(uuid,uuid,text,boolean)',
     'public.build_live_timetable_stages_json_v15(uuid,uuid,text,boolean)',
+    'public.load_live_timetable_authorized_v15(uuid)',
     'public.load_live_timetable_public_v15(uuid)'
   ] loop
     function_oid := to_regprocedure(signature);

@@ -567,6 +567,10 @@ begin
       grant execute on function
         public.build_live_timetable_stages_json_v15(uuid, uuid, text, boolean)
         to authenticated;
+    when 'live_timetable_authorized_helper_authenticated_execute' then
+      grant execute on function
+        public.load_live_timetable_authorized_v15(uuid)
+        to authenticated;
     when 'live_timetable_operator_stage_builder_authenticated_execute' then
       grant execute on function
         public.build_live_timetable_stages_json(uuid, uuid, text, boolean)

@@ -93,6 +93,38 @@ export const isLiveEntryTransitionReconciled = ({
     : entry.status === 'completed' && entry.actualEndedAt !== null
 }
 
+export interface LiveOperatorMutationReconciliationTarget {
+  stageId: LiveTimetableStageView['stageId']
+  operatorUserId: string
+  assigned: boolean
+  previousManagementRevision: string
+  previousAssignedAt?: string
+}
+
+export const isLiveOperatorMutationReconciled = ({
+  current,
+  target,
+}: {
+  current: AuthorizedLiveTimetable
+  target: LiveOperatorMutationReconciliationTarget
+}): boolean => {
+  if (BigInt(current.managementRevision) !==
+      BigInt(target.previousManagementRevision) + 1n) return false
+  const stage = current.stages.find(candidate =>
+    candidate.stageId === target.stageId)
+  if (!stage || stage.updatedAt !== current.updatedAt) return false
+  const assignment = current.operators.find(operator =>
+    operator.stageId === target.stageId &&
+    operator.userId === target.operatorUserId)
+  if (target.assigned) {
+    return assignment?.assignedAt === current.updatedAt &&
+      assignment.assignedAt !== target.previousAssignedAt
+  }
+  // The UI only offers removal for an observed assignment. If it was already
+  // absent, no durable row exists that can identify this particular command.
+  return target.previousAssignedAt !== undefined && assignment === undefined
+}
+
 export const runLiveAuthorizedReadWithDeadline = async <T>({
   read,
   controller,
@@ -395,8 +427,11 @@ export const isLiveStateStale = (
   lastSynchronizedAt: number | undefined,
   now: number,
   maximumAgeMilliseconds = LIVE_STATE_MAX_AGE_MS,
-): boolean => lastSynchronizedAt === undefined ||
-  now - lastSynchronizedAt > maximumAgeMilliseconds
+): boolean => {
+  if (lastSynchronizedAt === undefined) return true
+  const age = now - lastSynchronizedAt
+  return age < 0 || age >= maximumAgeMilliseconds
+}
 
 export const canRunLiveMutation = ({
   online,
