@@ -154,9 +154,10 @@ export interface LiveTimetableDatabaseGateway {
   findForEvent: (input: {
     workspaceId: string
     eventId: string
-  }) => Promise<LiveTimetableDatabaseResult<unknown>>
+  }, signal?: AbortSignal) => Promise<LiveTimetableDatabaseResult<unknown>>
   listOperatorCandidates: (
     liveId: string,
+    signal?: AbortSignal,
   ) => Promise<LiveTimetableDatabaseResult<unknown>>
   setPublication: (input: {
     liveId: string
@@ -196,9 +197,11 @@ export interface LiveTimetableRepository {
   findForEvent: (
     workspaceId: string,
     eventId: string,
+    signal?: AbortSignal,
   ) => Promise<LiveTimetableRepositoryResult<LiveTimetableDiscovery>>
   listOperatorCandidates: (
     liveId: string,
+    signal?: AbortSignal,
   ) => Promise<LiveTimetableRepositoryResult<LiveTimetableOperatorCandidate[]>>
   setPublication: (
     liveId: string,
@@ -881,7 +884,7 @@ export const createLiveTimetableRepository = (
     }
   },
 
-  async findForEvent(workspaceId, eventId) {
+  async findForEvent(workspaceId, eventId, signal) {
     const normalizedWorkspaceId = normalizeUuid(workspaceId)
     if (!normalizedWorkspaceId || !isNonEmptyString(eventId)) {
       return errorResult('INVALID_ARGUMENT', 'Workspace IDとEvent IDが必要です。')
@@ -890,7 +893,7 @@ export const createLiveTimetableRepository = (
       const result = await gateway.findForEvent({
         workspaceId: normalizedWorkspaceId,
         eventId,
-      })
+      }, signal)
       if (result.error) return databaseFailure(result.error)
       const parsed = parseLiveTimetableDiscovery(
         result.data,
@@ -905,13 +908,13 @@ export const createLiveTimetableRepository = (
     }
   },
 
-  async listOperatorCandidates(liveId) {
+  async listOperatorCandidates(liveId, signal) {
     const normalizedLiveId = normalizeUuid(liveId)
     if (!normalizedLiveId) {
       return errorResult('INVALID_ARGUMENT', 'Live IDが正しくありません。')
     }
     try {
-      const result = await gateway.listOperatorCandidates(normalizedLiveId)
+      const result = await gateway.listOperatorCandidates(normalizedLiveId, signal)
       if (result.error) return databaseFailure(result.error)
       const parsed = parseLiveTimetableOperatorCandidates(
         result.data,
@@ -1093,17 +1096,23 @@ export const createSupabaseLiveTimetableGateway = (
     })
     return { data: result.data, error: result.error }
   },
-  async findForEvent(input) {
-    const result = await client.rpc('find_live_timetable_for_event_authorized', {
+  async findForEvent(input, signal) {
+    const request = client.rpc('find_live_timetable_for_event_authorized', {
       p_workspace_id: input.workspaceId,
       p_event_id: input.eventId,
     })
+    const result = signal
+      ? await request.abortSignal(signal)
+      : await request
     return { data: result.data, error: result.error }
   },
-  async listOperatorCandidates(liveId) {
-    const result = await client.rpc('list_live_timetable_operator_candidates', {
+  async listOperatorCandidates(liveId, signal) {
+    const request = client.rpc('list_live_timetable_operator_candidates', {
       p_live_id: liveId,
     })
+    const result = signal
+      ? await request.abortSignal(signal)
+      : await request
     return { data: result.data, error: result.error }
   },
   async setPublication(input) {

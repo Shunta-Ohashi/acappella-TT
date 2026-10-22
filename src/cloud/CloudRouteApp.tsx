@@ -7,6 +7,7 @@ import {
   shouldKeepCloudEditorMounted,
 } from '../live/liveTimetableRouting.ts'
 import { useOptionalCloudWorkspace } from './useCloudWorkspace.ts'
+import { NativeDialogActivityProvider } from '../ui/NativeDialogActivityProvider.tsx'
 
 export function CloudRouteApp() {
   const [route, setRoute] = useState(() =>
@@ -45,13 +46,15 @@ export function CloudRouteApp() {
           inert={route !== undefined}
           aria-hidden={route !== undefined}
         >
-          <App
-            key={cloud?.workspaceVisitId}
-            isActive={route === undefined}
-            registerRetainedEditorAccountGuard={
-              retainedEditorAccountGuards.register
-            }
-          />
+          <NativeDialogActivityProvider active={route === undefined}>
+            <App
+              key={cloud?.workspaceVisitId}
+              isActive={route === undefined}
+              registerRetainedEditorAccountGuard={
+                retainedEditorAccountGuards.register
+              }
+            />
+          </NativeDialogActivityProvider>
         </div>
       )}
       {route && (

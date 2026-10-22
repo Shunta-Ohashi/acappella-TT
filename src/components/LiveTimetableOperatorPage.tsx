@@ -19,6 +19,8 @@ import {
 import {
   LIVE_TIMETABLE_REALTIME_COLUMNS,
   canApplyLiveRead,
+  canApplyLatestScopedRequest,
+  canResolveLiveMutationReconciliation,
   canApplyLiveOperatorCandidateRead,
   canDispatchConfirmedLiveMutation,
   canRunLiveMutation,
@@ -32,7 +34,9 @@ import {
   isMatchingLiveRealtimePayload,
   resolveLiveOperatorCandidateSelection,
   runLiveAuthorizedReadWithDeadline,
+  runLiveMutationWithDeadline,
   type LiveReadToken,
+  type LiveMutationReconciliation,
   type LiveOperatorCandidateReadToken,
 } from '../live/liveTimetableSync.ts'
 import type {
@@ -182,9 +186,17 @@ function LiveTimetableOperatorWorkspace({
   const [now, setNow] = useState(0)
   const [consecutiveFailures, setConsecutiveFailures] = useState(0)
   const [mutationPending, setMutationPending] = useState(false)
+  const [mutationReconciliationPending, setMutationReconciliationPending] =
+    useState(false)
+  const [creationOutcomeUnknown, setCreationOutcomeUnknown] = useState(false)
   const [freshnessVerificationPending, setFreshnessVerificationPending] =
     useState(false)
   const mutationPendingRef = useRef(false)
+  const componentMountedRef = useRef(false)
+  const mutationOperationSequenceRef = useRef(0)
+  const mutationPendingOwnerRef = useRef(0)
+  const mutationReconciliationRef = useRef<LiveMutationReconciliation | undefined>(undefined)
+  const creationOutcomeUnknownRef = useRef(false)
   const [candidates, setCandidates] = useState<LiveTimetableOperatorCandidate[]>([])
   const candidatesRef = useRef<LiveTimetableOperatorCandidate[]>([])
   const [candidateError, setCandidateError] = useState('')
@@ -221,40 +233,82 @@ function LiveTimetableOperatorWorkspace({
   const pendingReadRef = useRef(false)
   const refreshRef = useRef<(reason?: string) => Promise<void>>(async () => {})
   const candidateRequestSequenceRef = useRef(0)
+  const candidateReadControllerRef = useRef<AbortController | undefined>(undefined)
+  const discoveryRequestSequenceRef = useRef(0)
+  const discoveryReadControllerRef = useRef<AbortController | undefined>(undefined)
 
   useEffect(() => {
     activeScopeKeyRef.current = scopeKey
   }, [scopeKey])
 
+  useEffect(() => {
+    componentMountedRef.current = true
+    return () => {
+      componentMountedRef.current = false
+    }
+  }, [])
+
   const discover = useCallback(async () => {
-    const capturedScope = activeScopeKeyRef.current
+    discoveryReadControllerRef.current?.abort()
+    const controller = new AbortController()
+    discoveryReadControllerRef.current = controller
+    const token: LiveReadToken = {
+      scopeKey: activeScopeKeyRef.current,
+      sequence: ++discoveryRequestSequenceRef.current,
+    }
     setInitializing(true)
     setPageError('')
-    const discovery = await liveRepository.findForEvent(
-      cloud.workspace.id,
-      eventId,
-    )
-    if (capturedScope !== activeScopeKeyRef.current) return
+    setSavedEvent(undefined)
+    const outcome = await runLiveAuthorizedReadWithDeadline({
+      controller,
+      read: signal => liveRepository.findForEvent(
+        cloud.workspace.id,
+        eventId,
+        signal,
+      ),
+    })
+    if (!canApplyLatestScopedRequest({
+      token,
+      activeScopeKey: activeScopeKeyRef.current,
+      latestStartedSequence: discoveryRequestSequenceRef.current,
+    })) return 'stale' as const
+    if (discoveryReadControllerRef.current === controller) {
+      discoveryReadControllerRef.current = undefined
+    }
+    setInitializing(false)
+    if (outcome.status === 'aborted') return 'stale' as const
+    if (outcome.status === 'timed-out') {
+      setLiveId(undefined)
+      liveRef.current = undefined
+      setLive(undefined)
+      setPageError('Live TTの作成状況確認がタイムアウトしました。再確認してください。')
+      return 'failed' as const
+    }
+    if (outcome.status === 'failed') {
+      setLiveId(undefined)
+      liveRef.current = undefined
+      setLive(undefined)
+      setPageError('Live TTの作成状況を確認できませんでした。再確認してください。')
+      return 'failed' as const
+    }
+    const discovery = outcome.value
     if (!discovery.ok) {
       setLiveId(undefined)
-      setSavedEvent(undefined)
       liveRef.current = undefined
       setLive(undefined)
       setPageError(describeRepositoryError(discovery.error))
-      setInitializing(false)
       return 'failed' as const
     }
     if (discovery.value.liveId) {
+      creationOutcomeUnknownRef.current = false
+      setCreationOutcomeUnknown(false)
       setLiveId(discovery.value.liveId)
-      setSavedEvent(undefined)
-      setInitializing(false)
       return 'live' as const
     }
     setSavedEvent({
       name: discovery.value.eventName,
       revision: discovery.value.sourceRevision,
     })
-    setInitializing(false)
     return 'missing' as const
   }, [
     cloud.workspace.id,
@@ -263,7 +317,16 @@ function LiveTimetableOperatorWorkspace({
   ])
 
   useEffect(() => {
-    queueMicrotask(() => { void discover() })
+    let active = true
+    queueMicrotask(() => {
+      if (active) void discover()
+    })
+    return () => {
+      active = false
+      discoveryRequestSequenceRef.current += 1
+      discoveryReadControllerRef.current?.abort()
+      discoveryReadControllerRef.current = undefined
+    }
   }, [discover])
 
   const refresh = useCallback(async (reason = 'manual') => {
@@ -332,6 +395,19 @@ function LiveTimetableOperatorWorkspace({
       setLastSynchronizedAt(synchronizedAt)
       setNow(synchronizedAt)
       setConsecutiveFailures(0)
+      const reconciliation = mutationReconciliationRef.current
+      if (reconciliation && canResolveLiveMutationReconciliation({
+        reconciliation,
+        activeScopeKey: token.scopeKey,
+        current: result.value,
+      })) {
+        mutationReconciliationRef.current = undefined
+        setMutationReconciliationPending(false)
+        setFeedback({
+          kind: 'success',
+          message: '結果不明だった操作が最新状態へ反映済みであることを確認しました。',
+        })
+      }
       if (token.sequence >= freshnessRequiredSequenceRef.current) {
         freshnessRequiredSequenceRef.current = 0
         setFreshnessVerificationPending(false)
@@ -400,7 +476,8 @@ function LiveTimetableOperatorWorkspace({
       })
 
     channel.subscribe((status) => {
-      if (capturedScope !== activeScopeKeyRef.current) return
+      if (!componentMountedRef.current ||
+        capturedScope !== activeScopeKeyRef.current) return
       if (status === 'SUBSCRIBED') {
         setConnection('realtime')
         void refreshRef.current('subscribed')
@@ -504,6 +581,8 @@ function LiveTimetableOperatorWorkspace({
   }, [])
 
   const invalidateCandidateRead = useCallback((error: string) => {
+    candidateReadControllerRef.current?.abort()
+    candidateReadControllerRef.current = undefined
     const current = liveRef.current
     const invalidated = createInvalidatedLiveOperatorCandidateRead({
       currentSequence: candidateRequestSequenceRef.current,
@@ -522,6 +601,9 @@ function LiveTimetableOperatorWorkspace({
   const refreshCandidates = useCallback(async () => {
     const candidateLive = liveRef.current
     if (!candidateLive?.canManage) return
+    candidateReadControllerRef.current?.abort()
+    const controller = new AbortController()
+    candidateReadControllerRef.current = controller
     const capturedScope = activeScopeKeyRef.current
     const token: LiveOperatorCandidateReadToken = {
       liveId: candidateLive.liveId,
@@ -533,30 +615,37 @@ function LiveTimetableOperatorWorkspace({
     candidatesRef.current = []
     setCandidates([])
     setCandidateError('')
-    let result: Awaited<ReturnType<typeof liveRepository.listOperatorCandidates>>
-    try {
-      result = await liveRepository.listOperatorCandidates(candidateLive.liveId)
-    } catch {
-      if (canApplyLiveOperatorCandidateRead({
-        token,
-        activeLiveId: liveRef.current?.liveId,
-        activeScopeKey: activeScopeKeyRef.current,
-        latestStartedSequence: candidateRequestSequenceRef.current,
-      })) {
-        setCandidateLoading(false)
-        candidatesRef.current = []
-        setCandidates([])
-        setCandidateError('担当候補を取得できませんでした。担当候補を再取得してください。')
-      }
-      return
-    }
+    const outcome = await runLiveAuthorizedReadWithDeadline({
+      controller,
+      read: signal => liveRepository.listOperatorCandidates(
+        candidateLive.liveId,
+        signal,
+      ),
+    })
     if (!canApplyLiveOperatorCandidateRead({
       token,
       activeLiveId: liveRef.current?.liveId,
       activeScopeKey: activeScopeKeyRef.current,
       latestStartedSequence: candidateRequestSequenceRef.current,
     })) return
+    if (candidateReadControllerRef.current === controller) {
+      candidateReadControllerRef.current = undefined
+    }
     setCandidateLoading(false)
+    if (outcome.status === 'aborted') return
+    if (outcome.status === 'timed-out') {
+      candidatesRef.current = []
+      setCandidates([])
+      setCandidateError('担当候補の取得がタイムアウトしました。担当候補を再取得してください。')
+      return
+    }
+    if (outcome.status === 'failed') {
+      candidatesRef.current = []
+      setCandidates([])
+      setCandidateError('担当候補を取得できませんでした。担当候補を再取得してください。')
+      return
+    }
+    const result = outcome.value
     if (result.ok) {
       candidatesRef.current = result.value
       setCandidates(result.value)
@@ -576,6 +665,8 @@ function LiveTimetableOperatorWorkspace({
     void refreshCandidates()
     return () => {
       candidateRequestSequenceRef.current += 1
+      candidateReadControllerRef.current?.abort()
+      candidateReadControllerRef.current = undefined
     }
   }, [
     invalidateCandidateRead,
@@ -593,6 +684,8 @@ function LiveTimetableOperatorWorkspace({
   const currentCandidateError = candidatesAreCurrent ? candidateError : ''
   const currentCandidateLoading = live?.canManage === true &&
     (!candidatesAreCurrent || candidateLoading)
+  const mutationBlocked = mutationPending || freshnessVerificationPending ||
+    mutationReconciliationPending
   const orderedDays = live ? [...live.eventDays].sort((left, right) =>
     left.position - right.position) : []
   const effectiveDayId = orderedDays.some(day =>
@@ -613,7 +706,7 @@ function LiveTimetableOperatorWorkspace({
   const mutationEnabled = selectedStage ? canRunLiveMutation({
     online: navigator.onLine,
     stale,
-    pending: mutationPending || freshnessVerificationPending,
+    pending: mutationBlocked,
     canOperate: selectedStage.canOperate === true,
     progressEnabled: live?.isPublished === true,
   }) : false
@@ -642,7 +735,8 @@ function LiveTimetableOperatorWorkspace({
       online: navigator.onLine,
       lastSynchronizedAt: lastSynchronizedAtRef.current,
       now: Date.now(),
-      pending: mutationPendingRef.current,
+      pending: mutationPendingRef.current ||
+        mutationReconciliationRef.current !== undefined,
       freshnessRequiredSequence: freshnessRequiredSequenceRef.current,
       expectedScopeKey,
       activeScopeKey: activeScopeKeyRef.current,
@@ -674,29 +768,52 @@ function LiveTimetableOperatorWorkspace({
       ok: false
       error: LiveTimetableRepositoryError
     }) => void,
+    confirms?: (current: AuthorizedLiveTimetable) => boolean,
   ) => {
-    if (mutationPendingRef.current) return
+    if (mutationPendingRef.current || mutationReconciliationRef.current) return
     const capturedScope = activeScopeKeyRef.current
+    const capturedLiveId = liveRef.current?.liveId
+    if (!capturedLiveId) return
+    const operationId = ++mutationOperationSequenceRef.current
+    mutationPendingOwnerRef.current = operationId
     mutationPendingRef.current = true
     setMutationPending(true)
     setFeedback(undefined)
     let refreshRequired = false
     try {
-      const result = await action()
-      if (capturedScope !== activeScopeKeyRef.current) return
+      const outcome = await runLiveMutationWithDeadline({ mutation: action })
+      if (!componentMountedRef.current ||
+        capturedScope !== activeScopeKeyRef.current) return
+      const isUnknown = outcome.status !== 'completed' ||
+        (!outcome.value.ok && (
+          outcome.value.error.code === 'SUPABASE_ERROR' ||
+          outcome.value.error.code === 'INVALID_RESPONSE'
+        ))
+      if (isUnknown) {
+        mutationReconciliationRef.current = {
+          operationId,
+          scopeKey: capturedScope,
+          liveId: capturedLiveId,
+          confirms: confirms ?? (() => false),
+        }
+        setMutationReconciliationPending(true)
+        freshnessRequiredSequenceRef.current = createPostMutationReadBarrier(
+          requestSequenceRef.current,
+        )
+        setFreshnessVerificationPending(true)
+        setFeedback({
+          kind: 'error',
+          message: '操作の結果を確定できません。自動再送はせず、最新状態で反映済みと確認できるまで新しい操作を停止します。',
+        })
+        void refreshRef.current('mutation-timeout-reconciliation')
+        return
+      }
+      const result = outcome.value
       refreshRequired = true
       onResult?.(result)
       setFeedback(result.ok
         ? { kind: 'success', message: successMessage }
         : { kind: 'error', message: describeRepositoryError(result.error) })
-    } catch {
-      if (capturedScope === activeScopeKeyRef.current) {
-        refreshRequired = true
-        setFeedback({
-          kind: 'error',
-          message: '通信結果を確定できませんでした。操作は再送せず、最新状態を再取得します。',
-        })
-      }
     } finally {
       if (refreshRequired && capturedScope === activeScopeKeyRef.current) {
         freshnessRequiredSequenceRef.current = createPostMutationReadBarrier(
@@ -705,31 +822,60 @@ function LiveTimetableOperatorWorkspace({
         setFreshnessVerificationPending(true)
         await refreshRef.current('post-mutation')
       }
-      mutationPendingRef.current = false
-      setMutationPending(false)
+      if (componentMountedRef.current &&
+        mutationPendingOwnerRef.current === operationId) {
+        mutationPendingRef.current = false
+        setMutationPending(false)
+      }
     }
   }, [])
 
+  const markCreationOutcomeUnknown = useCallback(() => {
+    creationOutcomeUnknownRef.current = true
+    setCreationOutcomeUnknown(true)
+    setFeedback({
+      kind: 'error',
+      message: 'Live TT作成の結果が不明です。自動再送はしません。作成状況を再確認し、既存Liveが見つかるまで再作成しないでください。',
+    })
+  }, [])
+
   const createProjection = async () => {
-    if (!savedEvent || cloud.membership.role !== 'owner' || mutationPendingRef.current) return
+    if (!savedEvent || cloud.membership.role !== 'owner' ||
+      mutationPendingRef.current || creationOutcomeUnknownRef.current) return
     if (!window.confirm(
       'Cloudへ保存済みのTTからLive TTを作成します。\n未保存の変更は反映されません。\n\n作成しますか？',
     )) return
     const capturedScope = activeScopeKeyRef.current
+    const operationId = ++mutationOperationSequenceRef.current
+    mutationPendingOwnerRef.current = operationId
     mutationPendingRef.current = true
     setMutationPending(true)
     setFeedback(undefined)
     try {
-      const result = await liveRepository.createProjection({
-        workspaceId: cloud.workspace.id,
-        eventId,
-        expectedSourceRevision: savedEvent.revision,
-        mode: 'create',
-        expectedManagementRevision: null,
+      const outcome = await runLiveMutationWithDeadline({
+        mutation: () => liveRepository.createProjection({
+          workspaceId: cloud.workspace.id,
+          eventId,
+          expectedSourceRevision: savedEvent.revision,
+          mode: 'create',
+          expectedManagementRevision: null,
+        }),
       })
-      if (capturedScope !== activeScopeKeyRef.current) return
+      if (!componentMountedRef.current ||
+        capturedScope !== activeScopeKeyRef.current) return
+      if (outcome.status !== 'completed' ||
+        (!outcome.value.ok && (
+          outcome.value.error.code === 'SUPABASE_ERROR' ||
+          outcome.value.error.code === 'INVALID_RESPONSE'
+        ))) {
+        markCreationOutcomeUnknown()
+        void discover()
+        return
+      }
+      const result = outcome.value
       const discoveryState = await discover()
-      if (capturedScope !== activeScopeKeyRef.current) return
+      if (!componentMountedRef.current ||
+        capturedScope !== activeScopeKeyRef.current) return
       if (discoveryState === 'live') {
         setFeedback(result.ok
           ? { kind: 'success', message: 'Live TTを作成しました。' }
@@ -739,30 +885,17 @@ function LiveTimetableOperatorWorkspace({
                 ? '既存のLive TTを確認しました。'
                 : describeRepositoryError(result.error),
             })
-      } else if (!result.ok) {
+      } else if (!result.ok && result.error.code !== 'LIVE_ALREADY_EXISTS') {
         setFeedback({ kind: 'error', message: describeRepositoryError(result.error) })
-      } else if (discoveryState === 'missing') {
-        setFeedback({
-          kind: 'error',
-          message: '作成結果を確認できませんでした。再送せず、保存状態を再確認してください。',
-        })
       } else {
-        setFeedback({
-          kind: 'error',
-          message: '作成後の保存状態を確認できませんでした。再送せず、再確認してください。',
-        })
+        markCreationOutcomeUnknown()
       }
-    } catch {
-      if (capturedScope !== activeScopeKeyRef.current) return
-      await discover()
-      if (capturedScope !== activeScopeKeyRef.current) return
-      setFeedback({
-        kind: 'error',
-        message: '通信結果を確定できませんでした。再送せず、保存状態を再確認してください。',
-      })
     } finally {
-      mutationPendingRef.current = false
-      setMutationPending(false)
+      if (componentMountedRef.current &&
+        mutationPendingOwnerRef.current === operationId) {
+        mutationPendingRef.current = false
+        setMutationPending(false)
+      }
     }
   }
 
@@ -787,6 +920,9 @@ function LiveTimetableOperatorWorkspace({
         enabled,
       ),
       enabled ? 'Live進行を有効にしました。' : 'Live進行を無効にしました。',
+      undefined,
+      candidate => candidate.isPublished === enabled &&
+        BigInt(candidate.managementRevision) > BigInt(current.managementRevision),
     )
   }
 
@@ -842,6 +978,21 @@ function LiveTimetableOperatorWorkspace({
             current.projectionVersion,
           ),
       operation === 'start' ? '開始を記録しました。' : '終了を記録しました。',
+      undefined,
+      candidate => {
+        const stage = candidate.stages.find(item =>
+          item.stageId === expectedStageId &&
+          item.sourceStageId === expectedSourceStageId)
+        const reconciledEntry = stage?.entries.find(item =>
+          item.sourceScheduleItemId === expectedScheduleItemId)
+        return stage !== undefined &&
+          BigInt(stage.revision) > BigInt(currentStage.revision) &&
+          (operation === 'start'
+          ? reconciledEntry?.status === 'in_progress' &&
+            reconciledEntry.actualStartedAt !== null
+          : reconciledEntry?.status === 'completed' &&
+            reconciledEntry.actualEndedAt !== null)
+      },
     )
   }
 
@@ -894,6 +1045,10 @@ function LiveTimetableOperatorWorkspace({
           )
         }
       },
+      candidateLive => BigInt(candidateLive.managementRevision) >
+          BigInt(current.managementRevision) &&
+        candidateLive.operators.some(operator =>
+          operator.stageId === expectedStageId && operator.userId === userId) === assign,
     )
   }
 
@@ -957,13 +1112,19 @@ function LiveTimetableOperatorWorkspace({
               <button
                 type="button"
                 className="primary-button live-operator-primary-action"
-                disabled={!savedEvent || mutationPending}
+                disabled={!savedEvent || mutationPending || creationOutcomeUnknown}
                 onClick={() => void createProjection()}
               >
                 {mutationPending ? '作成中…' : 'Live TTを作成'}
               </button>
             ) : (
               <p>作成はWorkspace ownerへ依頼してください。</p>
+            )}
+            {creationOutcomeUnknown && (
+              <p role="alert">
+                作成要求の結果が不明なため、重複送信を防ぐ目的で作成操作を停止しています。
+                再確認で既存Liveが見つかるまで再作成しないでください。
+              </p>
             )}
             <button
               type="button"
@@ -1083,8 +1244,7 @@ function LiveTimetableOperatorWorkspace({
                 <button
                   type="button"
                   className={live.isPublished ? 'secondary-button' : 'primary-button'}
-                  disabled={mutationPending || freshnessVerificationPending ||
-                    stale || !navigator.onLine}
+                  disabled={mutationBlocked || stale || !navigator.onLine}
                   onClick={() => void setProgressEnabled(!live.isPublished)}
                 >
                   {live.isPublished ? 'Live進行を無効化' : 'Live進行を有効化'}
@@ -1203,7 +1363,7 @@ function LiveTimetableOperatorWorkspace({
                                 {candidate && (
                                   <button
                                     type="button"
-                                    disabled={mutationPending || freshnessVerificationPending || stale}
+                                    disabled={mutationBlocked || stale}
                                     onClick={() => void changeOperator(stage, assignment.userId, true)}
                                   >
                                     現在の権限で再割当
@@ -1211,7 +1371,7 @@ function LiveTimetableOperatorWorkspace({
                                 )}
                                 <button
                                   type="button"
-                                  disabled={mutationPending || freshnessVerificationPending || stale}
+                                  disabled={mutationBlocked || stale}
                                   onClick={() => void changeOperator(stage, assignment.userId, false)}
                                 >
                                   解除
@@ -1243,9 +1403,8 @@ function LiveTimetableOperatorWorkspace({
                         <button
                           type="button"
                           className="secondary-button"
-                          disabled={!selectedCandidate || currentCandidateLoading ||
-                            currentCandidateError !== '' || mutationPending ||
-                            freshnessVerificationPending || stale}
+                            disabled={!selectedCandidate || currentCandidateLoading ||
+                              currentCandidateError !== '' || mutationBlocked || stale}
                           onClick={() => void changeOperator(stage, selectedCandidate, true)}
                         >
                           割り当て

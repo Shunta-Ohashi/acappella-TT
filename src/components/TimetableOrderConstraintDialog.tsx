@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
+import { useId, useRef, useState, type FormEvent } from 'react'
 import type {
   Event,
   EventBand,
@@ -12,6 +12,7 @@ import type {
   TimetableOrderConstraintMutationResult,
 } from '../domain/timetableOrderConstraints'
 import { getInitialTimetableOrderConstraintSectionId } from '../ui/timetableOrderConstraintPresentation'
+import { useNativeDialogActivity } from '../ui/nativeDialogActivity'
 
 interface TimetableOrderConstraintDialogProps {
   event: Event
@@ -63,14 +64,7 @@ export function TimetableOrderConstraintDialog({
   const cannotAddBandRow = bandRows.length >= orderedBands.length ||
     bandRows.some(row => !row.eventBandId)
 
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    dialog.showModal()
-    return () => {
-      if (dialog.open) dialog.close()
-    }
-  }, [])
+  useNativeDialogActivity(dialogRef)
 
   const updateBand = (rowId: string, eventBandId: string) => {
     setBandRows(previous => previous.map(row =>

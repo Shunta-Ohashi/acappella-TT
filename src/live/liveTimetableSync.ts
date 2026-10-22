@@ -29,12 +29,36 @@ export interface LiveReadToken {
 export const LIVE_STATE_MAX_AGE_MS = 45_000
 export const LIVE_HEALTHY_POLLING_INTERVAL_MS = 30_000
 export const LIVE_AUTHORIZED_READ_TIMEOUT_MS = 10_000
+export const LIVE_MUTATION_WAIT_TIMEOUT_MS = 30_000
 
 export type LiveAuthorizedReadOutcome<T> =
   | { status: 'completed'; value: T }
   | { status: 'timed-out' }
   | { status: 'aborted' }
   | { status: 'failed'; error: unknown }
+
+export type LiveMutationWaitOutcome<T> =
+  | { status: 'completed'; value: T }
+  | { status: 'timed-out' }
+  | { status: 'failed'; error: unknown }
+
+export interface LiveMutationReconciliation {
+  operationId: number
+  scopeKey: string
+  liveId: string
+  confirms: (current: AuthorizedLiveTimetable) => boolean
+}
+
+export const canResolveLiveMutationReconciliation = ({
+  reconciliation,
+  activeScopeKey,
+  current,
+}: {
+  reconciliation: LiveMutationReconciliation
+  activeScopeKey: string
+  current: AuthorizedLiveTimetable
+}): boolean => reconciliation.scopeKey === activeScopeKey &&
+  reconciliation.liveId === current.liveId && reconciliation.confirms(current)
 
 export const runLiveAuthorizedReadWithDeadline = async <T>({
   read,
@@ -85,6 +109,49 @@ export const runLiveAuthorizedReadWithDeadline = async <T>({
     controller.signal.removeEventListener('abort', handleAbort)
   }
 }
+
+export const runLiveMutationWithDeadline = async <T>({
+  mutation,
+  timeoutMilliseconds = LIVE_MUTATION_WAIT_TIMEOUT_MS,
+  setTimer = (callback, delay) => globalThis.setTimeout(callback, delay),
+  clearTimer = handle => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
+}: {
+  mutation: () => Promise<T>
+  timeoutMilliseconds?: number
+  setTimer?: (callback: () => void, delayMilliseconds: number) => unknown
+  clearTimer?: (handle: unknown) => void
+}): Promise<LiveMutationWaitOutcome<T>> => {
+  let timerHandle: unknown
+  const request = Promise.resolve()
+    .then(mutation)
+    .then<LiveMutationWaitOutcome<T>, LiveMutationWaitOutcome<T>>(
+      value => ({ status: 'completed', value }),
+      error => ({ status: 'failed', error }),
+    )
+  const timedOut = new Promise<LiveMutationWaitOutcome<T>>(resolve => {
+    timerHandle = setTimer(
+      () => resolve({ status: 'timed-out' }),
+      timeoutMilliseconds,
+    )
+  })
+
+  try {
+    return await Promise.race([request, timedOut])
+  } finally {
+    if (timerHandle !== undefined) clearTimer(timerHandle)
+  }
+}
+
+export const canApplyLatestScopedRequest = ({
+  token,
+  activeScopeKey,
+  latestStartedSequence,
+}: {
+  token: LiveReadToken
+  activeScopeKey: string
+  latestStartedSequence: number
+}): boolean => token.scopeKey === activeScopeKey &&
+  token.sequence === latestStartedSequence
 
 export const createLiveTimetableScopeKey = (
   scope: LiveTimetableScope,

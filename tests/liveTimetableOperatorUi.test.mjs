@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 import {
@@ -20,10 +20,13 @@ import {
   LIVE_TIMETABLE_REALTIME_COLUMNS,
   LIVE_AUTHORIZED_READ_TIMEOUT_MS,
   LIVE_HEALTHY_POLLING_INTERVAL_MS,
+  LIVE_MUTATION_WAIT_TIMEOUT_MS,
   LIVE_STATE_MAX_AGE_MS,
   canApplyLiveOperatorCandidateRead,
   canApplyLiveRead,
+  canApplyLatestScopedRequest,
   canDispatchConfirmedLiveMutation,
+  canResolveLiveMutationReconciliation,
   canRunLiveMutation,
   createInvalidatedLiveOperatorCandidateRead,
   createLivePollingTimerController,
@@ -36,7 +39,12 @@ import {
   isMatchingLiveRealtimePayload,
   resolveLiveOperatorCandidateSelection,
   runLiveAuthorizedReadWithDeadline,
+  runLiveMutationWithDeadline,
 } from '../src/live/liveTimetableSync.ts'
+import {
+  consumeNativeDialogActivityClose,
+  synchronizeNativeDialogActivity,
+} from '../src/ui/nativeDialogActivityState.ts'
 
 const liveId = '10000000-0000-0000-0000-000000000001'
 const workspaceId = '20000000-0000-0000-0000-000000000001'
@@ -385,6 +393,135 @@ test('authorized read deadlineはhung slotを解放しlate responseを状態へ�
   assert.equal(timers.size, 0)
 })
 
+test('native dialogはApp非active中だけtop layerから外れdraftを保持して復帰する', () => {
+  const draft = { eventName: '入力途中', validationError: '日付を確認してください' }
+  const dialog = {
+    open: false,
+    isConnected: true,
+    showCount: 0,
+    closeCount: 0,
+    showModal() {
+      this.showCount += 1
+      this.open = true
+    },
+    close() {
+      this.closeCount += 1
+      this.open = false
+    },
+  }
+
+  assert.equal(synchronizeNativeDialogActivity(dialog, true), 'opened')
+  assert.equal(synchronizeNativeDialogActivity(dialog, true), 'unchanged')
+  assert.equal(dialog.showCount, 1)
+  assert.equal(synchronizeNativeDialogActivity(dialog, false, true), 'suspended')
+  assert.equal(dialog.open, false)
+  assert.equal(consumeNativeDialogActivityClose(dialog), true)
+  assert.equal(consumeNativeDialogActivityClose(dialog), false)
+  assert.deepEqual(draft, {
+    eventName: '入力途中', validationError: '日付を確認してください',
+  })
+  assert.equal(synchronizeNativeDialogActivity(dialog, true), 'opened')
+  assert.equal(dialog.showCount, 2)
+  assert.equal(dialog.closeCount, 1)
+})
+
+test('切断済みnative dialogやStrictMode相当の重複cleanupは再表示しない', () => {
+  const dialog = {
+    open: true,
+    isConnected: true,
+    showCount: 0,
+    closeCount: 0,
+    showModal() { this.showCount += 1; this.open = true },
+    close() { this.closeCount += 1; this.open = false },
+  }
+  assert.equal(synchronizeNativeDialogActivity(dialog, false), 'suspended')
+  assert.equal(synchronizeNativeDialogActivity(dialog, false), 'unchanged')
+  dialog.isConnected = false
+  assert.equal(synchronizeNativeDialogActivity(dialog, true), 'unchanged')
+  assert.equal(dialog.showCount, 0)
+  assert.equal(dialog.closeCount, 1)
+})
+
+test('mutation deadlineはserver処理を取消扱いせずpendingを解放しlate結果を無視する', async () => {
+  let timerCallback
+  let finishMutation
+  const pendingMutation = new Promise(resolve => { finishMutation = resolve })
+  let onResultCount = 0
+  let pending = true
+  let reconciliationPending = false
+
+  const operation = runLiveMutationWithDeadline({
+    mutation: () => pendingMutation,
+    timeoutMilliseconds: LIVE_MUTATION_WAIT_TIMEOUT_MS,
+    setTimer(callback) { timerCallback = callback; return 1 },
+    clearTimer() {},
+  }).then(outcome => {
+    if (outcome.status === 'completed') onResultCount += 1
+    if (outcome.status === 'timed-out') reconciliationPending = true
+    pending = false
+    return outcome
+  })
+
+  await Promise.resolve()
+  timerCallback()
+  assert.deepEqual(await operation, { status: 'timed-out' })
+  assert.equal(pending, false)
+  assert.equal(reconciliationPending, true)
+  assert.equal(onResultCount, 0)
+
+  finishMutation({ ok: true })
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(onResultCount, 0)
+  assert.equal(reconciliationPending, true)
+})
+
+test('結果不明mutationは同一scopeのauthorized readが期待revisionを確認するまで解消しない', () => {
+  const before = createLive({ managementRevision: '5' })
+  const reconciliation = {
+    operationId: 9,
+    scopeKey: 'scope-a',
+    liveId,
+    confirms: current => current.isPublished === false &&
+      BigInt(current.managementRevision) > 5n,
+  }
+  assert.equal(canResolveLiveMutationReconciliation({
+    reconciliation,
+    activeScopeKey: 'scope-a',
+    current: before,
+  }), false)
+  assert.equal(canResolveLiveMutationReconciliation({
+    reconciliation,
+    activeScopeKey: 'scope-b',
+    current: { ...before, isPublished: false, managementRevision: '6' },
+  }), false)
+  assert.equal(canResolveLiveMutationReconciliation({
+    reconciliation,
+    activeScopeKey: 'scope-a',
+    current: { ...before, isPublished: false, managementRevision: '6' },
+  }), true)
+})
+
+test('discovery retryは同一scopeでも最新sequenceだけを適用する', () => {
+  const tokenA = { scopeKey: 'scope-a', sequence: 1 }
+  const tokenB = { scopeKey: 'scope-a', sequence: 2 }
+  assert.equal(canApplyLatestScopedRequest({
+    token: tokenA,
+    activeScopeKey: 'scope-a',
+    latestStartedSequence: tokenB.sequence,
+  }), false)
+  assert.equal(canApplyLatestScopedRequest({
+    token: tokenB,
+    activeScopeKey: 'scope-a',
+    latestStartedSequence: tokenB.sequence,
+  }), true)
+  assert.equal(canApplyLatestScopedRequest({
+    token: tokenB,
+    activeScopeKey: 'scope-b',
+    latestStartedSequence: tokenB.sequence,
+  }), false)
+})
+
 test('visibility・online・scope cleanup相当のabortはhung readを即時失効する', async () => {
   for (const reason of ['visibility', 'online', 'scope-cleanup', 'strict-cleanup']) {
     const controller = new AbortController()
@@ -428,6 +565,34 @@ test('正常authorized readはdeadline前に完了しSupabase adapterへAbortSig
   assert.deepEqual(outcome, { status: 'completed', value: response })
   assert.equal(rpcName, 'load_live_timetable_authorized')
   assert.equal(receivedSignal, controller.signal)
+})
+
+test('discoveryと担当候補readもSupabase adapterへAbortSignalを渡す', async () => {
+  const calls = []
+  const response = { data: null, error: null }
+  const client = {
+    rpc(name) {
+      return {
+        abortSignal(signal) {
+          calls.push([name, signal])
+          return Promise.resolve(response)
+        },
+        then(resolve, reject) {
+          return Promise.resolve(response).then(resolve, reject)
+        },
+      }
+    },
+  }
+  const gateway = createSupabaseLiveTimetableGateway(client)
+  const discoveryController = new AbortController()
+  const candidateController = new AbortController()
+  await gateway.findForEvent({ workspaceId, eventId: 'event-a' },
+    discoveryController.signal)
+  await gateway.listOperatorCandidates(liveId, candidateController.signal)
+  assert.deepEqual(calls, [
+    ['find_live_timetable_for_event_authorized', discoveryController.signal],
+    ['list_live_timetable_operator_candidates', candidateController.signal],
+  ])
 })
 
 test('担当候補readは最新sequence・現在scope・現在Liveだけを反映する', () => {
@@ -489,6 +654,63 @@ test('候補read失効はloadingを解除し旧Aを無視して再取得Bを適�
     activeScopeKey: 'scope-b',
     latestStartedSequence: tokenB.sequence,
   }), false)
+})
+
+test('担当候補Aのtimeout後にretry Bだけを適用しAのlate成功を無視する', async () => {
+  let timerId = 0
+  const timers = new Map()
+  const timerOptions = {
+    setTimer(callback) { const id = ++timerId; timers.set(id, callback); return id },
+    clearTimer(id) { timers.delete(id) },
+  }
+  let finishA
+  const pendingA = new Promise(resolve => { finishA = resolve })
+  let latestSequence = 1
+  let loading = true
+  let candidates = []
+  const tokenA = { liveId, scopeKey: 'scope-a', sequence: 1 }
+  const controllerA = new AbortController()
+  const requestA = runLiveAuthorizedReadWithDeadline({
+    controller: controllerA,
+    read: () => pendingA,
+    ...timerOptions,
+  }).then(outcome => {
+    if (!canApplyLiveOperatorCandidateRead({
+      token: tokenA,
+      activeLiveId: liveId,
+      activeScopeKey: 'scope-a',
+      latestStartedSequence: latestSequence,
+    })) return
+    loading = false
+    if (outcome.status === 'completed') candidates = outcome.value
+  })
+  timers.values().next().value()
+  await requestA
+  assert.equal(loading, false)
+  assert.deepEqual(candidates, [])
+
+  const tokenB = { liveId, scopeKey: 'scope-a', sequence: ++latestSequence }
+  loading = true
+  const controllerB = new AbortController()
+  const outcomeB = await runLiveAuthorizedReadWithDeadline({
+    controller: controllerB,
+    read: async () => [{ userId: 'candidate-b' }],
+    ...timerOptions,
+  })
+  if (outcomeB.status === 'completed' && canApplyLiveOperatorCandidateRead({
+    token: tokenB,
+    activeLiveId: liveId,
+    activeScopeKey: 'scope-a',
+    latestStartedSequence: latestSequence,
+  })) candidates = outcomeB.value
+  loading = false
+  assert.deepEqual(candidates, [{ userId: 'candidate-b' }])
+  assert.equal(loading, false)
+
+  finishA([{ userId: 'candidate-a' }])
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.deepEqual(candidates, [{ userId: 'candidate-b' }])
 })
 
 test('確認ダイアログ後は実時刻・通信・scope・barrierを再評価する', () => {
@@ -763,6 +985,7 @@ test('Live UIは独立route・再read・確認・非永続scopeを維持する',
   assert.match(routeApp, /inert=\{route !== undefined\}/)
   assert.match(routeApp, /key=\{cloud\?\.workspaceVisitId\}/)
   assert.match(routeApp, /isActive=\{route === undefined\}/)
+  assert.match(routeApp, /NativeDialogActivityProvider active=\{route === undefined\}/)
   assert.match(routeApp, /createRetainedEditorAccountGuardRegistry/)
   assert.match(routeApp, /required: editorMounted/)
   assert.match(app, /registerRetainedEditorAccountGuard/)
@@ -789,6 +1012,11 @@ test('Live UIは独立route・再read・確認・非永続scopeを維持する',
   assert.match(page, /document\.visibilityState/)
   assert.match(page, /createLivePollingTimerController/)
   assert.match(page, /runLiveAuthorizedReadWithDeadline/)
+  assert.match(page, /runLiveMutationWithDeadline/)
+  assert.match(page, /mutationReconciliationRef/)
+  assert.match(page, /creationOutcomeUnknownRef/)
+  assert.match(page, /discoveryReadControllerRef\.current\?\.abort\(\)/)
+  assert.match(page, /candidateReadControllerRef\.current\?\.abort\(\)/)
   assert.match(page, /activeReadControllerRef\.current\?\.abort\(\)/)
   assert.match(page, /pollingTimer\.cancel\(\)/)
   assert.match(page, /if \(isCurrent\(\)\) schedule\(\)/)
@@ -799,7 +1027,7 @@ test('Live UIは独立route・再read・確認・非永続scopeを維持する',
   assert.match(page, /pre-mutation-confirmation/)
   assert.match(page, /formatLiveTimetableTimestamp\(entry\.actualStartedAt, live\.timeZone\)/)
   assert.match(page, /const discoveryState = await discover\(\)/)
-  assert.match(page, /作成結果を確認できませんでした/)
+  assert.match(page, /Live TT作成の結果が不明です/)
   assert.match(page, /role=\{feedback\.kind === 'error' \? 'alert' : 'status'\}/)
   assert.match(page, /担当候補を再取得/)
   assert.match(page, /Live TTの作成状況を再確認/)
@@ -819,5 +1047,48 @@ test('Live UIは独立route・再read・確認・非永続scopeを維持する',
   assert.match(page, /left\.eventDayPosition - right\.eventDayPosition/)
   assert.match(page, /setCandidates\(\[\]\)/)
   assert.doesNotMatch(page, /localStorage|sessionStorage/)
+})
+
+test('通常Appの全native dialogは共通activity境界で休止・復帰する', async () => {
+  const componentsUrl = new URL('../src/components/', import.meta.url)
+  const fileNames = (await readdir(componentsUrl)).filter(name => name.endsWith('.tsx'))
+  const dialogFiles = []
+  for (const fileName of fileNames) {
+    const source = await readFile(new URL(fileName, componentsUrl), 'utf8')
+    if (!source.includes('<dialog')) continue
+    dialogFiles.push(fileName)
+    assert.match(source, /useNativeDialogActivity\(dialogRef(?:, true)?\)/,
+      `${fileName} must participate in retained App activity`)
+    assert.doesNotMatch(source, /\.showModal\(\)/,
+      `${fileName} must not bypass the shared activity boundary`)
+  }
+  assert.deepEqual(dialogFiles.sort(), [
+    'AddEventMembersDialog.tsx',
+    'BandEditorDialog.tsx',
+    'CreateEventDialog.tsx',
+    'CsvImportPreviewDialog.tsx',
+    'DeleteConfirmationDialog.tsx',
+    'DutyAssignmentEditorDialog.tsx',
+    'EventBandConditionDialog.tsx',
+    'EventBandEditorDialog.tsx',
+    'EventMemberDayDetailsDialog.tsx',
+    'MemberEditorDialog.tsx',
+    'PaAssignmentEditorDialog.tsx',
+    'TimetableDutyAutoAssignmentDialog.tsx',
+    'TimetableGenerationOptionsDialog.tsx',
+    'TimetableGenerationPreviewDialog.tsx',
+    'TimetableGridAssignmentDeletionDialog.tsx',
+    'TimetableGridAssignmentDialog.tsx',
+    'TimetableOrderConstraintDialog.tsx',
+    'TimetableResetConfirmDialog.tsx',
+  ])
+
+  for (const fileName of [
+    'TimetableGenerationOptionsDialog.tsx',
+    'TimetableResetConfirmDialog.tsx',
+  ]) {
+    const source = await readFile(new URL(fileName, componentsUrl), 'utf8')
+    assert.match(source, /consumeNativeDialogActivityClose\(event\.currentTarget\)/)
+  }
 })
 
