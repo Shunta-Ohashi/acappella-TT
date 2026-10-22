@@ -324,6 +324,7 @@ import {
 import { isEventEditorCloudNavigationLocked } from './ui/eventEditorInteraction.ts'
 import {
   createLiveTimetableHash,
+  resolveRetainedEditorAccountGuardDecision,
   type RetainedEditorAccountAction,
   type RetainedEditorAccountGuard,
 } from './live/liveTimetableRouting.ts'
@@ -420,7 +421,7 @@ function App({
       ])
     : ''
   const retainedEditorAccountGuardRef = useRef<RetainedEditorAccountGuard>(
-    () => false,
+    () => ({ allowed: false, reason: 'guard-unavailable' }),
   )
   const requestedCloudWorkspaceId = cloudWorkspace?.workspace.id ?? ''
   const [activePersistenceStorageKey, setActivePersistenceStorageKey] = useState(
@@ -1933,18 +1934,36 @@ function App({
     setActiveView(section)
   }
 
-  const handleBeforeSignOut = (): boolean =>
-    activeView !== 'event-editor' || !blockUnsavedEditorNavigation('sign-out')
+  const handleBeforeSignOut = (): boolean => {
+    if (appNavigationDisabled) return false
+    return activeView !== 'event-editor' ||
+      !blockUnsavedEditorNavigation('sign-out')
+  }
 
-  const handleBeforeWorkspaceChange = (): boolean =>
-    activeView !== 'event-editor' || !blockUnsavedEditorNavigation('workspace-switch')
+  const handleBeforeWorkspaceChange = (): boolean => {
+    if (appNavigationDisabled) return false
+    return activeView !== 'event-editor' ||
+      !blockUnsavedEditorNavigation('workspace-switch')
+  }
 
   useLayoutEffect(() => {
     retainedEditorAccountGuardRef.current = (
       action: RetainedEditorAccountAction,
-    ): boolean => action === 'sign-out'
-      ? handleBeforeSignOut()
-      : handleBeforeWorkspaceChange()
+    ) => {
+      if (appNavigationDisabled) {
+        return resolveRetainedEditorAccountGuardDecision({
+          cloudNavigationLocked: true,
+          editorNavigationAllowed: false,
+        })
+      }
+      const allowed = action === 'sign-out'
+        ? handleBeforeSignOut()
+        : handleBeforeWorkspaceChange()
+      return resolveRetainedEditorAccountGuardDecision({
+        cloudNavigationLocked: false,
+        editorNavigationAllowed: allowed,
+      })
+    }
   })
 
   useEffect(() => {

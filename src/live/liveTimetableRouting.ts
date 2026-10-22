@@ -6,9 +6,31 @@ export interface LiveTimetableRoute {
 }
 
 export type RetainedEditorAccountAction = 'sign-out' | 'workspace-switch'
+export type RetainedEditorAccountBlockReason =
+  | 'cloud-operation'
+  | 'editor-state'
+  | 'guard-unavailable'
+export type RetainedEditorAccountGuardDecision =
+  | { allowed: true }
+  | { allowed: false; reason: RetainedEditorAccountBlockReason }
 export type RetainedEditorAccountGuard = (
   action: RetainedEditorAccountAction,
-) => boolean
+) => RetainedEditorAccountGuardDecision
+
+export const resolveRetainedEditorAccountGuardDecision = ({
+  cloudNavigationLocked,
+  editorNavigationAllowed,
+}: {
+  cloudNavigationLocked: boolean
+  editorNavigationAllowed: boolean
+}): RetainedEditorAccountGuardDecision => {
+  if (cloudNavigationLocked) {
+    return { allowed: false, reason: 'cloud-operation' }
+  }
+  return editorNavigationAllowed
+    ? { allowed: true }
+    : { allowed: false, reason: 'editor-state' }
+}
 
 export interface RetainedEditorAccountGuardRegistry {
   register: (
@@ -19,7 +41,7 @@ export interface RetainedEditorAccountGuardRegistry {
     required: boolean
     scopeKey: string
     action: RetainedEditorAccountAction
-  }) => boolean
+  }) => RetainedEditorAccountGuardDecision
 }
 
 export const createRetainedEditorAccountGuardRegistry =
@@ -38,9 +60,9 @@ export const createRetainedEditorAccountGuardRegistry =
       }
     },
     canRun: ({ required, scopeKey, action }) => {
-      if (!required) return true
+      if (!required) return { allowed: true }
       if (!registration || registration.scopeKey !== scopeKey) {
-        return false
+        return { allowed: false, reason: 'guard-unavailable' }
       }
       return registration.guard(action)
     },

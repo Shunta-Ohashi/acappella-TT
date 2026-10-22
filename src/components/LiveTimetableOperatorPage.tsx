@@ -30,6 +30,7 @@ import {
   createLiveTimetableScopeKey,
   describeLiveStageManagementTarget,
   getLivePollingDelay,
+  isLiveEntryTransitionReconciled,
   isLiveStateStale,
   isMatchingLiveRealtimePayload,
   resolveLiveOperatorCandidateSelection,
@@ -41,13 +42,16 @@ import {
 } from '../live/liveTimetableSync.ts'
 import type {
   RetainedEditorAccountAction,
+  RetainedEditorAccountGuardDecision,
 } from '../live/liveTimetableRouting.ts'
 import { formatLiveTimetableTimestamp } from '../live/liveTimetablePresentation.ts'
 import './LiveTimetableOperatorPage.css'
 
 interface LiveTimetableOperatorPageProps {
   eventId: string
-  onBeforeAccountAction?: (action: RetainedEditorAccountAction) => boolean
+  onBeforeAccountAction?: (
+    action: RetainedEditorAccountAction,
+  ) => RetainedEditorAccountGuardDecision
 }
 
 type ConnectionState = 'connecting' | 'realtime' | 'polling' | 'offline'
@@ -405,7 +409,7 @@ function LiveTimetableOperatorWorkspace({
         setMutationReconciliationPending(false)
         setFeedback({
           kind: 'success',
-          message: '結果不明だった操作が最新状態へ反映済みであることを確認しました。',
+          message: '結果不明だった操作の対象について、最新の状態を確認しました。操作元は特定できないため、現在の状態を正として表示します。',
         })
       }
       if (token.sequence >= freshnessRequiredSequenceRef.current) {
@@ -979,20 +983,16 @@ function LiveTimetableOperatorWorkspace({
           ),
       operation === 'start' ? '開始を記録しました。' : '終了を記録しました。',
       undefined,
-      candidate => {
-        const stage = candidate.stages.find(item =>
-          item.stageId === expectedStageId &&
-          item.sourceStageId === expectedSourceStageId)
-        const reconciledEntry = stage?.entries.find(item =>
-          item.sourceScheduleItemId === expectedScheduleItemId)
-        return stage !== undefined &&
-          BigInt(stage.revision) > BigInt(currentStage.revision) &&
-          (operation === 'start'
-          ? reconciledEntry?.status === 'in_progress' &&
-            reconciledEntry.actualStartedAt !== null
-          : reconciledEntry?.status === 'completed' &&
-            reconciledEntry.actualEndedAt !== null)
-      },
+      candidate => isLiveEntryTransitionReconciled({
+        current: candidate,
+        target: {
+          operation,
+          stageId: expectedStageId,
+          sourceStageId: expectedSourceStageId,
+          sourceScheduleItemId: expectedScheduleItemId,
+          previousStageRevision: currentStage.revision,
+        },
+      }),
     )
   }
 
@@ -1061,14 +1061,16 @@ function LiveTimetableOperatorWorkspace({
     action: RetainedEditorAccountAction,
   ): boolean => {
     if (mutationPendingRef.current) return false
-    const allowed = onBeforeAccountAction?.(action) ?? true
-    if (!allowed) {
+    const decision = onBeforeAccountAction?.(action) ?? { allowed: true }
+    if (!decision.allowed) {
       setFeedback({
         kind: 'error',
-        message: '通常編集画面に未保存の編集があるか、編集状態を安全に確認できません。イベント一覧へ戻って編集内容を確認してください。',
+        message: decision.reason === 'cloud-operation'
+          ? 'Cloudへの保存・削除処理中です。処理が完了してからログアウトまたはワークスペース切替を行ってください。'
+          : '通常編集画面に未保存の編集があるか、編集状態を安全に確認できません。イベント一覧へ戻って編集内容を確認してください。',
       })
     }
-    return allowed
+    return decision.allowed
   }
 
   if (initializing) {

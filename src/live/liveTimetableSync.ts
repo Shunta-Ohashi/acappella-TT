@@ -60,6 +60,39 @@ export const canResolveLiveMutationReconciliation = ({
 }): boolean => reconciliation.scopeKey === activeScopeKey &&
   reconciliation.liveId === current.liveId && reconciliation.confirms(current)
 
+export type LiveEntryTransitionOperation = 'start' | 'end'
+
+export interface LiveEntryTransitionReconciliationTarget {
+  operation: LiveEntryTransitionOperation
+  stageId: LiveTimetableStageView['stageId']
+  sourceStageId: LiveTimetableStageView['sourceStageId']
+  sourceScheduleItemId: string
+  previousStageRevision: string
+}
+
+export const isLiveEntryTransitionReconciled = ({
+  current,
+  target,
+}: {
+  current: AuthorizedLiveTimetable
+  target: LiveEntryTransitionReconciliationTarget
+}): boolean => {
+  const stage = current.stages.find(candidate =>
+    candidate.stageId === target.stageId &&
+    candidate.sourceStageId === target.sourceStageId)
+  if (!stage || BigInt(stage.revision) <= BigInt(target.previousStageRevision)) {
+    return false
+  }
+  const entry = stage.entries.find(candidate =>
+    candidate.sourceScheduleItemId === target.sourceScheduleItemId)
+  if (!entry) return false
+
+  return target.operation === 'start'
+    ? (entry.status === 'in_progress' || entry.status === 'completed') &&
+      entry.actualStartedAt !== null
+    : entry.status === 'completed' && entry.actualEndedAt !== null
+}
+
 export const runLiveAuthorizedReadWithDeadline = async <T>({
   read,
   controller,

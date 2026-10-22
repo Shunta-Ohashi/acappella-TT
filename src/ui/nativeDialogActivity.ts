@@ -8,11 +8,14 @@ import { synchronizeNativeDialogActivity } from './nativeDialogActivityState'
 
 export { consumeNativeDialogActivityClose } from './nativeDialogActivityState'
 
+export const useRetainedAppActivity = (): boolean =>
+  useContext(NativeDialogActivityContext)
+
 export const useNativeDialogActivity = (
   dialogRef: RefObject<HTMLDialogElement | null>,
   trackSuspendedClose = false,
 ) => {
-  const active = useContext(NativeDialogActivityContext)
+  const active = useRetainedAppActivity()
 
   useLayoutEffect(() => {
     const dialog = dialogRef.current

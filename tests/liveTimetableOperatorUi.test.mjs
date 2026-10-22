@@ -12,6 +12,7 @@ import {
   createRetainedEditorAccountGuardRegistry,
   createLiveTimetableHash,
   createLocalAppReturnUrl,
+  resolveRetainedEditorAccountGuardDecision,
   resolveLiveTimetableHash,
   shouldKeepCloudEditorMounted,
 } from '../src/live/liveTimetableRouting.ts'
@@ -34,6 +35,7 @@ import {
   createLiveTimetableScopeKey,
   describeLiveStageManagementTarget,
   getLivePollingDelay,
+  isLiveEntryTransitionReconciled,
   isLiveStateStale,
   isLiveTimetableReadAtLeastAsFresh,
   isMatchingLiveRealtimePayload,
@@ -129,36 +131,59 @@ test('Live routeはEvent IDを安全に往復し#shareと混同しない', () =>
 test('retained editor account guardはdraft・scope・登録解除をfail closedで扱う', () => {
   const registry = createRetainedEditorAccountGuardRegistry()
   const draft = { dirty: true, value: 'unsaved' }
-  const releaseA = registry.register('visit-a', () => !draft.dirty)
+  const releaseA = registry.register('visit-a', () =>
+    resolveRetainedEditorAccountGuardDecision({
+      cloudNavigationLocked: false,
+      editorNavigationAllowed: !draft.dirty,
+    }))
 
-  assert.equal(registry.canRun({
+  assert.deepEqual(registry.canRun({
     required: true, scopeKey: 'visit-a', action: 'sign-out',
-  }), false)
-  assert.equal(registry.canRun({
+  }), { allowed: false, reason: 'editor-state' })
+  assert.deepEqual(registry.canRun({
     required: true, scopeKey: 'visit-a', action: 'workspace-switch',
-  }), false)
+  }), { allowed: false, reason: 'editor-state' })
   assert.equal(draft.value, 'unsaved')
-  assert.equal(registry.canRun({
+  assert.deepEqual(registry.canRun({
     required: true, scopeKey: 'visit-b', action: 'sign-out',
-  }), false)
+  }), { allowed: false, reason: 'guard-unavailable' })
 
   draft.dirty = false
-  assert.equal(registry.canRun({
+  assert.deepEqual(registry.canRun({
     required: true, scopeKey: 'visit-a', action: 'sign-out',
-  }), true)
+  }), { allowed: true })
 
-  const releaseB = registry.register('visit-b', () => true)
+  const releaseB = registry.register('visit-b', () => ({ allowed: true }))
   releaseA()
-  assert.equal(registry.canRun({
+  assert.deepEqual(registry.canRun({
     required: true, scopeKey: 'visit-b', action: 'workspace-switch',
-  }), true, 'stale cleanup must not clear the current registration')
+  }), { allowed: true }, 'stale cleanup must not clear the current registration')
   releaseB()
-  assert.equal(registry.canRun({
+  assert.deepEqual(registry.canRun({
     required: true, scopeKey: 'visit-b', action: 'sign-out',
-  }), false)
-  assert.equal(registry.canRun({
+  }), { allowed: false, reason: 'guard-unavailable' })
+  assert.deepEqual(registry.canRun({
     required: false, scopeKey: 'direct-live', action: 'sign-out',
-  }), true, 'direct #live must not require editor hydration')
+  }), { allowed: true }, 'direct #live must not require editor hydration')
+})
+
+test('retained editor account guardはCloud処理lockをdraftより先に判定する', () => {
+  assert.deepEqual(resolveRetainedEditorAccountGuardDecision({
+    cloudNavigationLocked: true,
+    editorNavigationAllowed: true,
+  }), { allowed: false, reason: 'cloud-operation' }, 'pending + clean')
+  assert.deepEqual(resolveRetainedEditorAccountGuardDecision({
+    cloudNavigationLocked: true,
+    editorNavigationAllowed: false,
+  }), { allowed: false, reason: 'cloud-operation' }, 'pending + dirty')
+  assert.deepEqual(resolveRetainedEditorAccountGuardDecision({
+    cloudNavigationLocked: false,
+    editorNavigationAllowed: true,
+  }), { allowed: true }, 'save success/failure後にlockが解除されcleanなら許可')
+  assert.deepEqual(resolveRetainedEditorAccountGuardDecision({
+    cloudNavigationLocked: false,
+    editorNavigationAllowed: false,
+  }), { allowed: false, reason: 'editor-state' }, 'lock解除後もdraftは拒否')
 })
 
 test('Stage管理ラベルはEventDay ID完全一致で同名Stageを日付別に識別する', () => {
@@ -500,6 +525,104 @@ test('結果不明mutationは同一scopeのauthorized readが期待revisionを�
     activeScopeKey: 'scope-a',
     current: { ...before, isPublished: false, managementRevision: '6' },
   }), true)
+})
+
+test('start結果不明は対象entryが別端末で終了済みでも開始記録とrevision前進で解消する', () => {
+  const target = {
+    operation: 'start',
+    stageId: '40000000-0000-0000-0000-000000000001',
+    sourceStageId: 'stage-a',
+    sourceScheduleItemId: 'item-a',
+    previousStageRevision: '1',
+  }
+  const withEntry = (overrides = {}, stageOverrides = {}) => {
+    const current = createLive({ stageRevision: stageOverrides.revision ?? '2' })
+    return {
+      ...current,
+      stages: [{
+        ...current.stages[0],
+        ...stageOverrides,
+        entries: [{ ...current.stages[0].entries[0], ...overrides }],
+      }],
+    }
+  }
+  const inProgress = withEntry({
+    status: 'in_progress', actualStartedAt: '2026-10-22T01:00:00Z',
+  })
+  const completed = withEntry({
+    status: 'completed',
+    actualStartedAt: '2026-10-22T01:00:00Z',
+    actualEndedAt: '2026-10-22T01:10:00Z',
+  })
+  assert.equal(isLiveEntryTransitionReconciled({ current: inProgress, target }), true)
+  assert.equal(isLiveEntryTransitionReconciled({ current: completed, target }), true)
+  assert.equal(isLiveEntryTransitionReconciled({
+    current: withEntry({ status: 'pending', actualStartedAt: null }), target,
+  }), false)
+  assert.equal(isLiveEntryTransitionReconciled({
+    current: withEntry({ status: 'completed', actualStartedAt: null }), target,
+  }), false)
+  assert.equal(isLiveEntryTransitionReconciled({
+    current: withEntry({
+      status: 'completed', actualStartedAt: '2026-10-22T01:00:00Z',
+    }, { revision: '1' }), target,
+  }), false, 'stale read/revision前進なし')
+  assert.equal(isLiveEntryTransitionReconciled({
+    current: completed, target: { ...target, stageId: 'different-stage' },
+  }), false)
+  assert.equal(isLiveEntryTransitionReconciled({
+    current: completed, target: { ...target, sourceStageId: 'different-source-stage' },
+  }), false)
+  assert.equal(isLiveEntryTransitionReconciled({
+    current: completed, target: { ...target, sourceScheduleItemId: 'different-item' },
+  }), false)
+
+  const reconciliation = {
+    operationId: 10,
+    scopeKey: 'scope-a',
+    liveId,
+    confirms: current => isLiveEntryTransitionReconciled({ current, target }),
+  }
+  assert.equal(canResolveLiveMutationReconciliation({
+    reconciliation, activeScopeKey: 'scope-b', current: completed,
+  }), false, '別scope')
+  assert.equal(canResolveLiveMutationReconciliation({
+    reconciliation,
+    activeScopeKey: 'scope-a',
+    current: { ...completed, liveId: 'different-live' },
+  }), false, '別Live')
+})
+
+test('end結果不明はcompletedかつ終了記録とrevision前進のときだけ解消する', () => {
+  const base = createLive({ stageRevision: '2' })
+  const current = status => ({
+    ...base,
+    stages: [{
+      ...base.stages[0],
+      entries: [{
+        ...base.stages[0].entries[0],
+        status,
+        actualStartedAt: '2026-10-22T01:00:00Z',
+        actualEndedAt: status === 'completed' ? '2026-10-22T01:10:00Z' : null,
+      }],
+    }],
+  })
+  const target = {
+    operation: 'end',
+    stageId: base.stages[0].stageId,
+    sourceStageId: base.stages[0].sourceStageId,
+    sourceScheduleItemId: 'item-a',
+    previousStageRevision: '1',
+  }
+  assert.equal(isLiveEntryTransitionReconciled({
+    current: current('completed'), target,
+  }), true)
+  assert.equal(isLiveEntryTransitionReconciled({
+    current: current('in_progress'), target,
+  }), false, 'end未完了')
+  const missingEnd = current('completed')
+  missingEnd.stages[0].entries[0].actualEndedAt = null
+  assert.equal(isLiveEntryTransitionReconciled({ current: missingEnd, target }), false)
 })
 
 test('discovery retryは同一scopeでも最新sequenceだけを適用する', () => {
@@ -990,6 +1113,11 @@ test('Live UIは独立route・再read・確認・非永続scopeを維持する',
   assert.match(routeApp, /required: editorMounted/)
   assert.match(app, /registerRetainedEditorAccountGuard/)
   assert.match(app, /retainedEditorAccountGuardRef\.current/)
+  assert.match(
+    app,
+    /retainedEditorAccountGuardRef\.current[\s\S]*if \(appNavigationDisabled\)[\s\S]*cloudNavigationLocked: true[\s\S]*handleBeforeSignOut/,
+  )
+  assert.match(page, /Cloudへの保存・削除処理中です/)
   assert.match(app, /const timetableHistoryShortcutsEnabled = timetableHistoryActive && isActive/)
   assert.match(app, /if \(!timetableHistoryShortcutsEnabled\) return/)
   assert.match(app, /if \(!timetableHistoryActive\) \{[\s\S]*timetableHistoryController\.reset\(\)/)
@@ -1047,6 +1175,38 @@ test('Live UIは独立route・再read・確認・非永続scopeを維持する',
   assert.match(page, /left\.eventDayPosition - right\.eventDayPosition/)
   assert.match(page, /setCandidates\(\[\]\)/)
   assert.doesNotMatch(page, /localStorage|sessionStorage/)
+})
+
+test('retained App外へ出るPortalはactivity境界に参加する3種だけである', async () => {
+  const sourceRoot = new URL('../src/', import.meta.url)
+  const paths = await readdir(sourceRoot, { recursive: true })
+  const portalFiles = []
+  for (const relativePath of paths) {
+    if (typeof relativePath !== 'string' || !/\.(?:ts|tsx)$/.test(relativePath)) {
+      continue
+    }
+    const source = await readFile(new URL(relativePath.replaceAll('\\', '/'), sourceRoot), 'utf8')
+    if (source.includes('createPortal(')) portalFiles.push(relativePath.replaceAll('\\', '/'))
+  }
+  assert.deepEqual(portalFiles.sort(), ['components/TimetableGridDetailsPopover.tsx'])
+
+  const source = await readFile(
+    new URL('../src/components/TimetableGridDetailsPopover.tsx', import.meta.url),
+    'utf8',
+  )
+  for (const exportName of [
+    'TimetableGridDetailsPopover',
+    'TimetableGridRowActionsMenu',
+    'TimetableGridTooltip',
+  ]) {
+    const start = source.indexOf(`export function ${exportName}`)
+    assert.notEqual(start, -1)
+    const next = source.indexOf('\nexport function ', start + 1)
+    const componentSource = source.slice(start, next === -1 ? undefined : next)
+    assert.match(componentSource, /const active = useRetainedAppActivity\(\)/)
+    assert.match(componentSource, /if \(!active\) return null/)
+    assert.match(componentSource, /useLayoutEffect\(\(\) => \{\s*if \(!active\) return/)
+  }
 })
 
 test('通常Appの全native dialogは共通activity境界で休止・復帰する', async () => {
