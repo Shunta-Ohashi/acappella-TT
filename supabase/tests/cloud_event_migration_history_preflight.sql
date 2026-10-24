@@ -3011,22 +3011,30 @@ later_schema as (
         where pg_proc.oid = to_regprocedure(
           'public.list_live_timetable_operator_candidates(uuid)'
         ))) not like '%email%'
-      and not has_table_privilege(
-        'authenticated', 'public.live_timetables', 'SELECT'
-      )
-      and not has_any_column_privilege(
-        'authenticated', 'public.live_timetables', 'SELECT'
-      )
-      and has_function_privilege(
-        'authenticated',
-        'public.find_live_timetable_for_event_authorized(uuid,text)',
+      and coalesce((select not has_table_privilege(
+        authenticated_role.oid,
+        to_regclass('public.live_timetables'),
+        'SELECT'
+      ) from authenticated_role), false)
+      and coalesce((select not has_any_column_privilege(
+        authenticated_role.oid,
+        to_regclass('public.live_timetables'),
+        'SELECT'
+      ) from authenticated_role), false)
+      and coalesce((select has_function_privilege(
+        authenticated_role.oid,
+        to_regprocedure(
+          'public.find_live_timetable_for_event_authorized(uuid,text)'
+        ),
         'EXECUTE'
-      )
-      and has_function_privilege(
-        'authenticated',
-        'public.list_live_timetable_operator_candidates(uuid)',
+      ) from authenticated_role), false)
+      and coalesce((select has_function_privilege(
+        authenticated_role.oid,
+        to_regprocedure(
+          'public.list_live_timetable_operator_candidates(uuid)'
+        ),
         'EXECUTE'
-      )
+      ) from authenticated_role), false)
       and not exists (
         select 1
         from (values

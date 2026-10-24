@@ -1021,9 +1021,56 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   assert.match(preflightSql, /has_table_privilege\s*\(/i)
   assert.match(preflightSql, /has_any_column_privilege\s*\(/i)
   assert.match(preflightSql, /has_column_privilege\s*\(/i)
+  assert.doesNotMatch(
+    preflightSql,
+    /has_(?:table|any_column|function)_privilege\s*\(\s*'authenticated'\s*,\s*'public\.live_/i,
+  )
+  const liveOperatorContractStart = preflightSql.indexOf(
+    "'liveTimetableOperatorUiContract'",
+  )
+  const liveOperatorContractEnd = preflightSql.indexOf(
+    '\n  ) as value',
+    liveOperatorContractStart,
+  )
+  assert.ok(
+    liveOperatorContractStart >= 0 &&
+      liveOperatorContractEnd > liveOperatorContractStart,
+  )
+  const liveOperatorContractSql = preflightSql.slice(
+    liveOperatorContractStart,
+    liveOperatorContractEnd,
+  )
+  assert.match(
+    liveOperatorContractSql,
+    /coalesce\(\(select not has_table_privilege\(\s*authenticated_role\.oid,\s*to_regclass\(\s*'public\.live_timetables'\s*\),\s*'SELECT'\s*\) from authenticated_role\), false\)/i,
+  )
+  assert.match(
+    liveOperatorContractSql,
+    /coalesce\(\(select not has_any_column_privilege\(\s*authenticated_role\.oid,\s*to_regclass\(\s*'public\.live_timetables'\s*\),\s*'SELECT'\s*\) from authenticated_role\), false\)/i,
+  )
+  for (const functionSignature of [
+    'public.find_live_timetable_for_event_authorized\\(uuid,text\\)',
+    'public.list_live_timetable_operator_candidates\\(uuid\\)',
+  ]) {
+    assert.match(
+      liveOperatorContractSql,
+      new RegExp(
+        `coalesce\\(\\(select has_function_privilege\\(\\s*authenticated_role\\.oid,\\s*to_regprocedure\\(\\s*'${functionSignature}'\\s*\\),\\s*'EXECUTE'\\s*\\) from authenticated_role\\), false\\)`,
+        'i',
+      ),
+    )
+  }
   assert.match(preflightSql, /authorized_delete_function\.prosecdef/i)
   assert.match(preflightSql, /authorized_page_function\.prosecdef/i)
   assert.match(preflightSql, /authorized_save_function\.prosecdef/i)
+  assert.match(
+    guide,
+    /managed database administrator connection[\s\S]*SQLSTATE `42501`/i,
+  )
+  assert.match(
+    guide,
+    /to_regnamespace\('supabase_migrations'\)[\s\S]*to_regclass\('supabase_migrations\.schema_migrations'\)/i,
+  )
   assert.match(
     preflightSql,
     /workspace_master_mutation_function\.prosrc[\s\S]*errcode = ''pma01''/i,

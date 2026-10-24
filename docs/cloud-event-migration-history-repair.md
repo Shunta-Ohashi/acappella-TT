@@ -32,6 +32,33 @@ The helper requires `--db-url-env`; omitting the target fails closed. It always
 passes `--db-url` to both official CLI commands and never falls back to a linked
 project.
 
+Use a Supabase-managed database administrator connection that can read migration
+history. A short-lived CLI database role may connect successfully while lacking
+`USAGE` on `supabase_migrations` or `SELECT` on
+`supabase_migrations.schema_migrations`; in that case the preflight must stop
+with SQLSTATE `42501`. Do not grant that temporary role broader access just to
+make the inspection pass. Before running the helper, verify the connection
+without printing its URL or credentials:
+
+```sql
+select
+  current_user,
+  coalesce(has_schema_privilege(
+    current_user,
+    to_regnamespace('supabase_migrations'),
+    'USAGE'
+  ), false) as can_use_migration_schema,
+  coalesce(has_table_privilege(
+    current_user,
+    to_regclass('supabase_migrations.schema_migrations'),
+    'SELECT'
+  ), false) as can_read_migration_history;
+```
+
+Both privilege checks must be `true`. If a managed administrator connection
+cannot be obtained securely, leave the Hosted inspection unexecuted rather than
+substituting a less-trusted connection or changing catalog privileges.
+
 ## Read-only inspection and plan
 
 The default mode changes nothing. It runs `supabase migration list --db-url ...`
