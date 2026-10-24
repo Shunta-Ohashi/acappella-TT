@@ -1182,6 +1182,20 @@ test('Realtime通知は7列・現在scopeだけを再取得トリガーにする
   ), false)
 })
 
+test('Live discoveryは32bit上限を超える安全整数revisionを保持する', () => {
+  const revision = 2147483648
+  const result = parseLiveTimetableDiscovery({
+    status: 'ok',
+    workspaceId,
+    eventId: 'event-a',
+    eventName: 'Event A',
+    sourceRevision: revision,
+    liveId: null,
+  }, workspaceId, 'event-a')
+
+  assert.equal(result?.sourceRevision, revision)
+})
+
 test('discovery/candidate parserはexact responseとID一意性を要求する', () => {
   assert.deepEqual(parseLiveTimetableDiscovery({
     status: 'ok', workspaceId, eventId: 'event-a', eventName: 'Event A',
@@ -1337,6 +1351,8 @@ test('migration #16はviewer grant snapshot・public分離・RPC ACLを追加す
   assert.match(sql, /load_live_timetable_authorized_v15[\s\S]*'assignedAt', assignment\.created_at/i)
   assert.match(sql, /add column public_view_enabled boolean not null default false/i)
   assert.match(sql, /is_published[\s\S]*public_view_enabled/i)
+  assert.match(sql, /target_source_revision\s+bigint\s*;/i)
+  assert.doesNotMatch(sql, /target_source_revision\s+integer\s*;/i)
   assert.match(sql, /create function public\.find_live_timetable_for_event_authorized/i)
   assert.match(sql, /create function public\.list_live_timetable_operator_candidates/i)
   assert.match(sql, /workspace_members\.role in \('editor', 'viewer'\)/i)

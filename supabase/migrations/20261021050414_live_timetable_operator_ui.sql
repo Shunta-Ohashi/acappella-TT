@@ -660,7 +660,7 @@ declare
   membership_role text;
   target_live_id uuid;
   target_event_name text;
-  target_source_revision integer;
+  target_source_revision bigint;
 begin
   if caller_id is null then
     raise exception 'Live discovery requires authentication'
