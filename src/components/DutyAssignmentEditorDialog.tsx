@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import type {
   Event,
   EventBand,
@@ -23,6 +23,7 @@ import {
   type DutyTypeDraftItem,
 } from '../domain/dutyAssignments'
 import { AssignmentRangeFields } from './AssignmentRangeFields.tsx'
+import { useNativeDialogActivity } from '../ui/nativeDialogActivity'
 
 interface DutyAssignmentEditorDialogProps {
   event: Event
@@ -97,14 +98,7 @@ export function DutyAssignmentEditorDialog({
     eventMemberDays,
   })
 
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    dialog.showModal()
-    return () => {
-      if (dialog.open) dialog.close()
-    }
-  }, [])
+  useNativeDialogActivity(dialogRef)
 
   const getItemLabel = (calculatedItem: CalculatedScheduleItem) => {
     const scheduleItem = scheduleItemById.get(calculatedItem.scheduleItemId)

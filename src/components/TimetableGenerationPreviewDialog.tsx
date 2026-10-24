@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useRef } from 'react'
 import type { TimetableGenerationPreview } from '../ui/timetableGenerationPresentation'
 import type { TimetableGenerationUiOptions } from '../domain/timetableGenerationOptions'
+import { useNativeDialogActivity } from '../ui/nativeDialogActivity'
 
 export function TimetableGenerationPreviewDialog({ preview, options, onCancel, onApply }: {
   preview: TimetableGenerationPreview
@@ -9,11 +10,7 @@ export function TimetableGenerationPreviewDialog({ preview, options, onCancel, o
   onApply: () => void
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null)
-  useEffect(() => {
-    const dialog = dialogRef.current
-    dialog?.showModal()
-    return () => dialog?.close()
-  }, [])
+  useNativeDialogActivity(dialogRef)
   const { summary } = preview
   return (
     <dialog ref={dialogRef} className="generation-preview-dialog" aria-labelledby="generation-preview-title"

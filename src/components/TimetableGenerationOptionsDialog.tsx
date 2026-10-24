@@ -1,5 +1,9 @@
-import { useEffect, useRef } from 'react'
+import { useRef } from 'react'
 import type { TimetableGenerationUiOptions } from '../domain/timetableGenerationOptions'
+import {
+  consumeNativeDialogActivityClose,
+  useNativeDialogActivity,
+} from '../ui/nativeDialogActivity'
 
 export function TimetableGenerationOptionsDialog({ dayLabel, options, onChange, onCancel, onGenerate }: {
   dayLabel: string
@@ -9,16 +13,15 @@ export function TimetableGenerationOptionsDialog({ dayLabel, options, onChange, 
   onGenerate: () => void
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null)
-  useEffect(() => {
-    const dialog = dialogRef.current
-    dialog?.showModal()
-    return () => dialog?.close()
-  }, [])
+  useNativeDialogActivity(dialogRef, true)
   return (
     <dialog ref={dialogRef} className="generation-preview-dialog timetable-action-dialog"
       aria-labelledby="generation-options-title"
       onCancel={event => { event.preventDefault(); onCancel() }}
-      onClose={() => { if (dialogRef.current && !dialogRef.current.open) onCancel() }}>
+      onClose={(event) => {
+        if (!consumeNativeDialogActivityClose(event.currentTarget) &&
+          !event.currentTarget.open) onCancel()
+      }}>
       <h2 id="generation-options-title">自動生成設定</h2>
       <p>{dayLabel}</p>
       <p>選択中の開催日の全Stageを対象にタイムテーブルを自動生成します。

@@ -184,6 +184,24 @@ const scenarios = [
     !result.laterSchema.liveTimetableFoundationContract],
   ['live_timetable_realtime_columns_broadened', result =>
     !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_operator_granted_role_nullable', result =>
+    !result.laterSchema.liveTimetableOperatorUiContract],
+  ['live_timetable_operator_epoch_nullable', result =>
+    !result.laterSchema.liveTimetableOperatorUiContract],
+  ['live_timetable_membership_epoch_trigger_missing', result =>
+    !result.laterSchema.liveTimetableOperatorUiContract],
+  ['live_timetable_public_view_default_true', result =>
+    !result.laterSchema.liveTimetableOperatorUiContract],
+  ['live_timetable_operator_discovery_anon_execute', result =>
+    !result.laterSchema.liveTimetableOperatorUiContract],
+  ['live_timetable_operator_helper_authenticated_execute', result =>
+    !result.laterSchema.liveTimetableOperatorUiContract],
+  ['live_timetable_authorized_helper_authenticated_execute', result =>
+    !result.laterSchema.liveTimetableOperatorUiContract],
+  ['live_timetable_operator_stage_builder_authenticated_execute', result =>
+    !result.laterSchema.liveTimetableOperatorUiContract],
+  ['live_timetable_operator_stage_builder_inherited_execute', result =>
+    !result.laterSchema.liveTimetableOperatorUiContract],
   ['profiles_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_missing', result => !result.authWorkspaceChecks.profilesColumns],
   ['profiles_column_type', result => !result.authWorkspaceChecks.profilesColumns],
@@ -240,6 +258,10 @@ const inspectScenario = async (databaseUrl, scenario) => {
 
 export const hasSafeLiveTimetableFoundationBaseline = baseline =>
   baseline?.laterSchema?.liveTimetableFoundationContract === true
+
+export const hasSafeLiveTimetableBaseline = baseline =>
+  hasSafeLiveTimetableFoundationBaseline(baseline) &&
+  baseline?.laterSchema?.liveTimetableOperatorUiContract === true
 
 const main = async () => {
   let args
@@ -307,7 +329,7 @@ const main = async () => {
       !baseline.laterSchema.cloudEventV2PersistenceContract ||
       !baseline.laterSchema.cloudV2CutoverInspectionContract ||
       !baseline.laterSchema.cloudV2AtomicCutoverContract ||
-      !hasSafeLiveTimetableFoundationBaseline(baseline)
+      !hasSafeLiveTimetableBaseline(baseline)
     ) {
       throw new Error('baseline: expected known safe catalog')
     }
@@ -319,7 +341,7 @@ const main = async () => {
       }
     }
     const restoredBaseline = await inspectScenario(databaseUrl, 'baseline')
-    if (!hasSafeLiveTimetableFoundationBaseline(restoredBaseline)) {
+    if (!hasSafeLiveTimetableBaseline(restoredBaseline)) {
       throw new Error('baseline: Live Timetable catalog did not recover after rollback')
     }
     console.log(JSON.stringify({ ok: true, scenarios: scenarios.length + 1 }))

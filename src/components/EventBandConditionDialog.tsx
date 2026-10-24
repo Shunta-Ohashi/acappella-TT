@@ -1,6 +1,5 @@
 import {
   forwardRef,
-  useEffect,
   useImperativeHandle,
   useRef,
   useState,
@@ -30,6 +29,7 @@ import {
   hasSemanticDraftChanges,
   type EventEditorDraftHandle,
 } from '../ui/eventEditorDraftGuard'
+import { useNativeDialogActivity } from '../ui/nativeDialogActivity'
 
 interface EventBandConditionDialogProps {
   event: Event
@@ -126,14 +126,7 @@ EventBandConditionDialogProps
       })
     : undefined
 
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    dialog.showModal()
-    return () => {
-      if (dialog.open) dialog.close()
-    }
-  }, [])
+  useNativeDialogActivity(dialogRef)
 
   const clearConditionError = (
     field: keyof EventBandConditionItemErrors,

@@ -8,6 +8,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { getAnchoredOverlayPosition } from '../ui/timetableGridDetailsPresentation'
+import { useRetainedAppActivity } from '../ui/nativeDialogActivity'
 
 interface TimetableGridDetailsPopoverProps {
   anchor: HTMLElement
@@ -99,12 +100,14 @@ export function TimetableGridDetailsPopover({
   children,
   onClose,
 }: TimetableGridDetailsPopoverProps) {
+  const active = useRetainedAppActivity()
   const titleId = useId()
   const popoverRef = useRef<HTMLDivElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const [position, setPosition] = useState(initialPosition)
 
   useLayoutEffect(() => {
+    if (!active) return
     const updatePosition = () => {
       const popover = popoverRef.current
       if (!popover || !anchor.isConnected) {
@@ -126,13 +129,15 @@ export function TimetableGridDetailsPopover({
 
     updatePosition()
     return observeViewportChanges(updatePosition)
-  }, [anchor, children, onClose])
+  }, [active, anchor, children, onClose])
 
   useEffect(() => {
+    if (!active) return
     closeButtonRef.current?.focus()
-  }, [])
+  }, [active])
 
   useEffect(() => {
+    if (!active) return
     const handlePointerDown = (event: globalThis.PointerEvent) => {
       const target = event.target
       if (!(target instanceof Node)) return
@@ -152,7 +157,9 @@ export function TimetableGridDetailsPopover({
       document.removeEventListener('pointerdown', handlePointerDown, true)
       document.removeEventListener('keydown', handleKeyDown, true)
     }
-  }, [anchor, onClose])
+  }, [active, anchor, onClose])
+
+  if (!active) return null
 
   return createPortal(
     <div
@@ -200,10 +207,12 @@ export function TimetableGridRowActionsMenu({
   children,
   onClose,
 }: TimetableGridRowActionsMenuProps) {
+  const active = useRetainedAppActivity()
   const menuRef = useRef<HTMLDivElement>(null)
   const [position, setPosition] = useState(initialPosition)
 
   useLayoutEffect(() => {
+    if (!active) return
     const updatePosition = () => {
       const menu = menuRef.current
       if (!menu || !anchor.isConnected) {
@@ -234,18 +243,20 @@ export function TimetableGridRowActionsMenu({
       resizeObserver?.disconnect()
       stopObservingViewport()
     }
-  }, [anchor, children, onClose])
+  }, [active, anchor, children, onClose])
 
   useEffect(() => {
+    if (!active) return
     const menu = menuRef.current
     const firstControl = menu?.querySelector<HTMLElement>(
       'button:not(:disabled), select:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])',
     )
     const focusTarget = firstControl ?? menu
     focusTarget?.focus()
-  }, [])
+  }, [active])
 
   useEffect(() => {
+    if (!active) return
     const handlePointerDown = (event: globalThis.PointerEvent) => {
       const target = event.target
       if (!(target instanceof Node)) return
@@ -265,7 +276,9 @@ export function TimetableGridRowActionsMenu({
       document.removeEventListener('pointerdown', handlePointerDown, true)
       document.removeEventListener('keydown', handleKeyDown, true)
     }
-  }, [anchor, onClose])
+  }, [active, anchor, onClose])
+
+  if (!active) return null
 
   return createPortal(
     <div
@@ -303,10 +316,12 @@ export function TimetableGridTooltip({
   text,
   onDismiss,
 }: TimetableGridTooltipProps) {
+  const active = useRetainedAppActivity()
   const tooltipRef = useRef<HTMLDivElement>(null)
   const [position, setPosition] = useState(initialPosition)
 
   useLayoutEffect(() => {
+    if (!active) return
     const updatePosition = () => {
       const tooltip = tooltipRef.current
       if (!tooltip) return
@@ -330,7 +345,9 @@ export function TimetableGridTooltip({
 
     updatePosition()
     return observeViewportChanges(updatePosition)
-  }, [anchor, onDismiss, text])
+  }, [active, anchor, onDismiss, text])
+
+  if (!active) return null
 
   return createPortal(
     <div

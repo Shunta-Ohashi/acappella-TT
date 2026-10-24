@@ -1,7 +1,8 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
+import { useId, useRef, useState, type FormEvent } from 'react'
 import { formatMinuteAsLocalTime } from '../domain/timeline'
 import type { ResolvedTimetableGridRangeSelection } from '../ui/timetableGridSelection'
 import type { TimetableGridAssignmentCandidate } from '../ui/timetableGridAssignment'
+import { useNativeDialogActivity } from '../ui/nativeDialogActivity'
 
 interface TimetableGridAssignmentDialogProps {
   selection: ResolvedTimetableGridRangeSelection
@@ -30,14 +31,7 @@ export function TimetableGridAssignmentDialog({
     candidate.memberId === memberId,
   )
 
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    dialog.showModal()
-    return () => {
-      if (dialog.open) dialog.close()
-    }
-  }, [])
+  useNativeDialogActivity(dialogRef)
 
   const emptyMessage = selection.target.kind === 'pa'
     ? `この開催日に${targetLabel}を担当できるメンバーがいません。Step 3の参加状況・PA可否を確認してください。`

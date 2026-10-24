@@ -71,6 +71,8 @@ Keyを必須にします。不足やloopback URLがあればbuildを失敗させ
 local-only modeになることを防ぎます。ローカル開発ではこのflagを設定しなければ従来の
 local-only modeを利用できます。テスト環境の構築と公開確認は
 [Live TT deployment runbook](docs/live-tt-deployment.md)を参照してください。
+認証済み運営者向け画面・viewer担当割当・Realtime再取得の契約は
+[Live TT operator UI runbook](docs/live-tt-operator-ui.md)を参照してください。
 
 ## Data storage
 

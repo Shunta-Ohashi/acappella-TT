@@ -198,16 +198,23 @@ insert into public.live_timetable_entries (
    '78100000-0000-4000-8000-000000000021',
    'item-b', 'performance', 0, 'B', 660, 670);
 insert into public.live_timetable_stage_operators (
-  workspace_id, live_timetable_id, stage_id, user_id
+  workspace_id, live_timetable_id, stage_id, user_id, granted_role,
+  granted_authorization_epoch
 ) values
   ('78100000-0000-4000-8000-000000000001',
    '78100000-0000-4000-8000-000000000010',
    '78100000-0000-4000-8000-000000000020',
-   '00000000-0000-4000-8000-000000000092'),
+   '00000000-0000-4000-8000-000000000092', 'editor',
+   (select authorization_epoch from public.workspace_members
+      where workspace_id = '78100000-0000-4000-8000-000000000001'
+        and user_id = '00000000-0000-4000-8000-000000000092')),
   ('78100000-0000-4000-8000-000000000001',
    '78100000-0000-4000-8000-000000000010',
    '78100000-0000-4000-8000-000000000021',
-   '00000000-0000-4000-8000-000000000092');
+   '00000000-0000-4000-8000-000000000092', 'editor',
+   (select authorization_epoch from public.workspace_members
+      where workspace_id = '78100000-0000-4000-8000-000000000001'
+        and user_id = '00000000-0000-4000-8000-000000000092'));
 commit;
 
 select extensions.dblink_connect('live_writer_a', :'test_db_url');
@@ -626,12 +633,17 @@ update public.live_timetables
 set management_revision = 1
 where id = '78100000-0000-4000-8000-000000000010';
 insert into public.live_timetable_stage_operators (
-  workspace_id, live_timetable_id, stage_id, user_id
+  workspace_id, live_timetable_id, stage_id, user_id, granted_role,
+  granted_authorization_epoch
 ) values (
   '78100000-0000-4000-8000-000000000001',
   '78100000-0000-4000-8000-000000000010',
   '78100000-0000-4000-8000-000000000020',
-  '00000000-0000-4000-8000-000000000092'
+  '00000000-0000-4000-8000-000000000092',
+  'editor',
+  (select authorization_epoch from public.workspace_members
+    where workspace_id = '78100000-0000-4000-8000-000000000001'
+      and user_id = '00000000-0000-4000-8000-000000000092')
 ) on conflict do nothing;
 
 select extensions.dblink_exec('live_writer_a', $remote$
@@ -696,6 +708,96 @@ update public.workspace_members
 set role = 'editor'
 where workspace_id = '78100000-0000-4000-8000-000000000001'
   and user_id = '00000000-0000-4000-8000-000000000092';
+
+-- An explicit owner reassignment holds the same membership SHARE lock as a
+-- progress mutation. A concurrent role change must wait, then rotate the
+-- epoch so the just-committed grant is already stale for the new role.
+select extensions.dblink_exec('live_writer_a', $remote$
+  begin;
+  set local role authenticated;
+  do $operation$
+  begin
+    perform set_config(
+      'request.jwt.claim.sub',
+      '00000000-0000-4000-8000-000000000091', true
+    );
+    perform public.set_live_timetable_stage_operator(
+      '78100000-0000-4000-8000-000000000010',
+      'stage-a', '00000000-0000-4000-8000-000000000092',
+      true, '1', '1'
+    );
+  end
+  $operation$;
+$remote$);
+select extensions.dblink_send_query('live_writer_b', $remote$
+  update public.workspace_members
+  set role = 'viewer'
+  where workspace_id = '78100000-0000-4000-8000-000000000001'
+    and user_id = '00000000-0000-4000-8000-000000000092';
+$remote$);
+select pg_temp.assert_live_lock_wait(
+  'live-foundation-writer-b',
+  'membership role change did not wait for operator reassignment'
+);
+select extensions.dblink_exec('live_writer_a', 'commit');
+select * from extensions.dblink_get_result('live_writer_b') as result(status text);
+select count(*) from extensions.dblink_get_result('live_writer_b') as result(status text);
+
+do $reassigned_grant_invalidated$
+begin
+  if exists (
+    select 1
+    from public.live_timetable_stage_operators as assignment
+    join public.workspace_members as membership
+      on membership.workspace_id = assignment.workspace_id
+     and membership.user_id = assignment.user_id
+    where assignment.stage_id = '78100000-0000-4000-8000-000000000020'
+      and assignment.user_id = '00000000-0000-4000-8000-000000000092'
+      and assignment.granted_authorization_epoch =
+        membership.authorization_epoch
+  ) then
+    raise exception 'Concurrent role change preserved reassigned authorization epoch';
+  end if;
+end
+$reassigned_grant_invalidated$;
+
+set role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-4000-8000-000000000092', false
+);
+do $reassigned_grant_cannot_operate$
+declare
+  loaded jsonb;
+begin
+  loaded := public.load_live_timetable_authorized(
+    '78100000-0000-4000-8000-000000000010'
+  );
+  if (loaded #>> '{stages,0,canOperate}')::boolean is not false then
+    raise exception 'Concurrent role change left reassigned canOperate enabled';
+  end if;
+end
+$reassigned_grant_cannot_operate$;
+reset role;
+
+-- Restore the reusable fixture without weakening the assertion above.
+update public.workspace_members
+set role = 'editor'
+where workspace_id = '78100000-0000-4000-8000-000000000001'
+  and user_id = '00000000-0000-4000-8000-000000000092';
+update public.live_timetable_stage_operators
+set granted_role = 'editor',
+    granted_authorization_epoch = (
+      select authorization_epoch
+      from public.workspace_members
+      where workspace_id = '78100000-0000-4000-8000-000000000001'
+        and user_id = '00000000-0000-4000-8000-000000000092'
+    )
+where stage_id = '78100000-0000-4000-8000-000000000020'
+  and user_id = '00000000-0000-4000-8000-000000000092';
+update public.live_timetables
+set management_revision = 1
+where id = '78100000-0000-4000-8000-000000000010';
 
 -- A source read is only evidence for its observed revision/fingerprint. If the
 -- Event is updated before commit, the backend CAS must reject without leaving

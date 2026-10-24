@@ -581,10 +581,10 @@ test('Repositoryはmutation identityと状態を厳密に照合する', async ()
   })).ok, true)
   assert.equal((await repository.setPublication(liveId, '1', true)).ok, true)
   assert.equal((await repository.setStageOperator(
-    liveId, 'stage-main', actorId, true, '1', '1',
+    liveId, 'stage-main', publicId, actorId, true, '1', '1',
   )).ok, true)
   assert.equal((await repository.startEntry(
-    liveId, 'stage-main', 'item-a', '1', '1',
+    liveId, 'stage-main', publicId, 'item-a', 0, '1', '1',
   )).ok, true)
 
   const wrongIdentity = createLiveTimetableRepository({
@@ -622,10 +622,44 @@ test('Repositoryはmutation identityと状態を厳密に照合する', async ()
     },
   })
   assert.equal((await staleMutationResponse.setStageOperator(
-    liveId, 'stage-main', actorId, true, '1', '1',
+    liveId, 'stage-main', publicId, actorId, true, '1', '1',
   )).error.code, 'INVALID_RESPONSE')
   assert.equal((await staleMutationResponse.startEntry(
-    liveId, 'stage-main', 'item-a', '1', '1',
+    liveId, 'stage-main', publicId, 'item-a', 0, '1', '1',
+  )).error.code, 'INVALID_RESPONSE')
+
+  for (const managementRevision of ['1', '3']) {
+    const invalidReceipt = createLiveTimetableRepository({
+      ...baseGateway,
+      async setStageOperator(input) {
+        const value = await baseGateway.setStageOperator(input)
+        value.data.managementRevision = managementRevision
+        return value
+      },
+    })
+    assert.equal((await invalidReceipt.setStageOperator(
+      liveId, 'stage-main', publicId, actorId, true, '1', '1',
+    )).error.code, 'INVALID_RESPONSE')
+  }
+
+  const wrongMutationTarget = createLiveTimetableRepository({
+    ...baseGateway,
+    async setStageOperator(input) {
+      const value = await baseGateway.setStageOperator(input)
+      value.data.stageId = '78000000-0000-4000-8000-000000000099'
+      return value
+    },
+    async transitionEntry(input) {
+      const value = await baseGateway.transitionEntry(input)
+      value.data.entry.position = 1
+      return value
+    },
+  })
+  assert.equal((await wrongMutationTarget.setStageOperator(
+    liveId, 'stage-main', publicId, actorId, true, '1', '1',
+  )).error.code, 'INVALID_RESPONSE')
+  assert.equal((await wrongMutationTarget.startEntry(
+    liveId, 'stage-main', publicId, 'item-a', 0, '1', '1',
   )).error.code, 'INVALID_RESPONSE')
 })
 
@@ -641,7 +675,7 @@ test('Repositoryは不正CAS引数をRPC前に拒否し公開nullを未検証成
   }
   const repository = createLiveTimetableRepository(gateway)
   assert.equal((await repository.startEntry(
-    liveId, 'stage-main', 'item-a', '01', '1',
+    liveId, 'stage-main', publicId, 'item-a', 0, '01', '1',
   )).error.code, 'INVALID_ARGUMENT')
   assert.equal((await repository.setPublication(
     liveId, '9223372036854775808', true,
@@ -822,8 +856,22 @@ test('実DB fixtureはrollback境界とStage単位の並行契約を検証する
   assert.match(foundation, /same|first pending|Non-first pending entry/i)
   assert.match(foundation, /Viewer progress mutation was accepted/i)
   assert.match(foundation, /Unassigned editor progress was accepted/i)
+  assert.match(foundation, /Assigned viewer progress contract is inconsistent/i)
+  assert.match(foundation, /Assigned viewer operated an unassigned Stage/i)
+  assert.match(foundation, /Viewer grant became an editor grant after role change/i)
+  assert.match(foundation, /Same-role membership update rotated authorization epoch/i)
+  assert.match(foundation, /Role round trip revived a stale viewer grant/i)
+  assert.match(foundation, /Role round trip revived canOperate/i)
+  assert.match(foundation, /Deleted and re-added membership reused authorization epoch/i)
+  assert.match(foundation, /Removed viewer retained progress permission/i)
   assert.match(foundation, /Viewer with stale operator assignment was accepted/i)
+  assert.match(foundation, /Explicit changed-role reassignment is invalid/i)
+  assert.match(foundation, /Identical operator reassignment lacks a durable revision receipt/i)
+  assert.match(foundation, /Absent operator removal lacks a durable revision receipt/i)
+  assert.match(foundation, /Stale operator CAS was accepted/i)
+  assert.match(foundation, /Membership deletion left a Live operator assignment/i)
   assert.match(foundation, /Workspace outsider read was accepted/i)
+  assert.match(foundation, /Progress enablement unexpectedly enabled anonymous read/i)
   assert.match(foundation, /Anonymous public DTO allowlist is invalid/i)
   assert.match(foundation, /Referenced Event deletion was accepted/i)
   assert.match(foundation, /Event without Live state was not deleted/i)
@@ -843,6 +891,14 @@ test('実DB fixtureはrollback境界とStage単位の並行契約を検証する
   assert.match(concurrency, /operator removal did not wait for Live operation/i)
   assert.match(concurrency, /membership downgrade did not wait for progress/i)
   assert.match(concurrency, /viewer with stale assignment started Live entry/i)
+  assert.match(
+    concurrency,
+    /membership role change did not wait for operator reassignment/i,
+  )
+  assert.match(
+    concurrency,
+    /Concurrent role change left reassigned canOperate enabled/i,
+  )
   assert.match(concurrency, /updated source was committed as Live projection/i)
   assert.match(concurrency, /deleted source was committed as Live projection/i)
   assert.match(concurrency, /duplicate Live create did not wait/i)
@@ -870,7 +926,7 @@ test('実DB fixtureはrollback境界とStage単位の並行契約を検証する
   assert.match(concurrency, /pg_stat_clear_snapshot\(\)/i)
   assert.match(concurrency, /for attempt in 1\.\.200/i)
   assert.match(concurrency, /Live concurrency fixture cleanup is incomplete/i)
-  assert.equal((concurrency.match(/do \$operation\$/g) ?? []).length, 7)
+  assert.equal((concurrency.match(/do \$operation\$/g) ?? []).length, 8)
   assert.match(readme, /live_timetable_state_foundation\.sql/i)
   assert.match(readme, /live_timetable_state_foundation_concurrency\.sql/i)
 })
@@ -903,6 +959,12 @@ test('Live実HTTP・Realtime runnerは専用loopbackと厳密cleanupを要求す
   assert.match(runner, /const API_PORT = '56121'/)
   assert.match(runner, /const DATABASE_PORT = '56122'/)
   assert.match(runner, /createSupabaseLiveTimetableRepository/)
+  assert.match(runner, /assert\.equal\(migrationCheck, '16\|20261021050414'\)/)
+  assert.match(runner, /findForEvent\(workspaceId, eventId\)/)
+  assert.match(runner, /listOperatorCandidates\(liveId\)/)
+  assert.match(runner, /await repositories\.viewer\.startEntry/)
+  assert.match(runner, /await repositories\.editor\.startEntry[\s\S]*ACCESS_DENIED/i)
+  assert.match(runner, /set public_view_enabled\s*=\s*true/i)
   assert.match(runner, /postgres_changes/)
   assert.match(runner, /await client\.realtime\.setAuth\(data\.session\.access_token\)/)
   assert.match(runner, /select: EXPECTED_REALTIME_COLUMNS/)
@@ -921,8 +983,10 @@ test('Live実HTTP・Realtime runnerは専用loopbackと厳密cleanupを要求す
   assert.doesNotMatch(runner, /pg_catalog\.pg_replication_slots/)
   assert.ok(runner.indexOf('console.log(JSON.stringify(successReport))') >
     runner.indexOf('await deleteLiveSmokeAuthUsers(admin, createdUserIds)'))
+  assert.match(runner, /probe\.client\.realtime\.disconnect\(\)/)
   assert.doesNotMatch(runner, /console\.log\([^)]*(?:anonKey|serviceRoleKey|token)/)
   assert.match(setup, /Live HTTP fixture precondition failed/)
+  assert.match(setup, /insert into public\.profiles[\s\S]*Live HTTP Viewer/i)
   assert.match(cleanup, /cleanup target differs from its dedicated fixture/)
   assert.match(cleanup, /workspace_master_band_members/)
   assert.match(cleanup, /cloud_workspace_master_backfills/)
@@ -933,6 +997,14 @@ test('Live実HTTP・Realtime runnerは専用loopbackと厳密cleanupを要求す
   assert.match(
     preflight,
     /cloudV2AtomicCutoverContract[\s\S]*\) \|\| jsonb_build_object\([\s\S]*liveTimetableFoundationContract/,
+  )
+  assert.match(
+    preflight,
+    /liveTimetableFoundationContract[\s\S]*\) \|\| jsonb_build_object\([\s\S]*liveTimetableOperatorUiContract/,
+  )
+  assert.match(
+    preflight,
+    /liveTimetableOperatorUiContract[\s\S]*public_view_enabled[\s\S]*granted_role[\s\S]*authorization_epoch[\s\S]*find_live_timetable_for_event_authorized[\s\S]*list_live_timetable_operator_candidates/i,
   )
   assert.match(
     preflight,
@@ -958,6 +1030,12 @@ test('Live実HTTP・Realtime runnerは専用loopbackと厳密cleanupを要求す
     'live_timetable_public_select',
     'live_timetable_authenticated_inherited_select',
     'live_timetable_authenticated_column_select',
+    'live_timetable_operator_granted_role_nullable',
+    'live_timetable_operator_epoch_nullable',
+    'live_timetable_membership_epoch_trigger_missing',
+    'live_timetable_public_view_default_true',
+    'live_timetable_operator_discovery_anon_execute',
+    'live_timetable_operator_helper_authenticated_execute',
   ]) {
     assert.match(catalogRegression, new RegExp(`'${selectScenario}'`))
   }

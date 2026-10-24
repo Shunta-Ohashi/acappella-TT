@@ -1,0 +1,407 @@
+.live-operator-unavailable,
+.live-operator-loading {
+  max-width: 52rem;
+  margin: 3rem auto;
+  padding: 1.5rem;
+}
+
+.live-operator-page {
+  width: min(100%, 76rem);
+  margin: 0 auto;
+  padding: 0.75rem;
+  color: #172033;
+}
+
+.live-operator-header,
+.live-operator-empty,
+.live-operator-controls,
+.live-operator-permissions,
+.live-operator-stage,
+.live-operator-list,
+.live-operator-management {
+  border: 1px solid #d8dee9;
+  border-radius: 0.9rem;
+  background: #fff;
+  box-shadow: 0 0.15rem 0.6rem rgb(24 39 75 / 6%);
+}
+
+.live-operator-back {
+  min-height: 2.75rem;
+  border: 0;
+  background: transparent;
+  color: #2257a0;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.live-operator-header {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+}
+
+.live-operator-header h1,
+.live-operator-stage h2,
+.live-operator-list h2,
+.live-operator-management h2 {
+  margin: 0;
+}
+
+.live-operator-eyebrow {
+  margin: 0 0 0.15rem;
+  color: #5b6474;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.live-operator-connection {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.live-operator-connection div,
+.live-operator-permissions div {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+  padding: 0.55rem;
+  border-radius: 0.65rem;
+  background: #f5f7fb;
+}
+
+.live-operator-connection dt,
+.live-operator-permissions span {
+  color: #606a7c;
+  font-size: 0.72rem;
+}
+
+.live-operator-connection dd {
+  overflow: hidden;
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-operator-alert,
+.live-operator-feedback {
+  margin: 0.75rem 0;
+  padding: 0.8rem 1rem;
+  border-radius: 0.7rem;
+}
+
+.live-operator-alert {
+  border: 1px solid #dc6c6c;
+  background: #fff3f3;
+  color: #8c1b1b;
+}
+
+.live-operator-feedback {
+  border: 1px solid #88b49c;
+  background: #f0fbf5;
+  color: #1d613c;
+}
+
+.live-operator-controls,
+.live-operator-permissions {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  padding: 0.8rem;
+}
+
+.live-operator-controls label,
+.live-operator-management label {
+  display: grid;
+  gap: 0.25rem;
+  color: #4a5568;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.live-operator-controls select,
+.live-operator-management select {
+  min-height: 2.75rem;
+  max-width: 100%;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid #aeb8c8;
+  border-radius: 0.55rem;
+  background: #fff;
+  color: #172033;
+  font: inherit;
+}
+
+.live-operator-permissions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.live-operator-permissions button,
+.live-operator-permissions p {
+  grid-column: 1 / -1;
+}
+
+.live-operator-permissions p {
+  margin: 0;
+  color: #606a7c;
+  font-size: 0.78rem;
+}
+
+.live-operator-stage,
+.live-operator-list,
+.live-operator-management,
+.live-operator-empty {
+  margin-top: 0.75rem;
+  padding: 1rem;
+}
+
+.live-operator-empty {
+  max-width: 42rem;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.live-operator-source-warning {
+  padding: 0.75rem;
+  border-left: 0.3rem solid #d48b18;
+  background: #fff8e9;
+}
+
+.live-operator-primary-action {
+  width: 100%;
+  min-height: 3rem;
+}
+
+.live-operator-stage > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.live-operator-stage > header p,
+.live-operator-stage-time {
+  margin: 0;
+  color: #606a7c;
+}
+
+.live-operator-status {
+  flex: 0 0 auto;
+  padding: 0.3rem 0.6rem;
+  border-radius: 999px;
+  background: #edf1f7;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.live-operator-status--in_progress {
+  background: #ffe6cf;
+  color: #8b3e00;
+}
+
+.live-operator-status--completed {
+  background: #dff4e8;
+  color: #17613a;
+}
+
+.live-operator-stage-time {
+  padding-top: 0.4rem;
+}
+
+.live-operator-now-next {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+}
+
+.live-operator-entry-summary {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: 0.85rem;
+  border: 1px solid #dde3ec;
+  border-radius: 0.7rem;
+  background: #f9fafc;
+}
+
+.live-operator-entry-summary p,
+.live-operator-entry-summary span {
+  margin: 0;
+  color: #606a7c;
+  font-size: 0.78rem;
+}
+
+.live-operator-entry-summary strong {
+  overflow-wrap: anywhere;
+  font-size: 1.15rem;
+}
+
+.live-operator-actions {
+  margin-top: 0.9rem;
+}
+
+.live-operator-action {
+  width: 100%;
+  min-height: 3.5rem;
+  padding: 0.7rem 1rem;
+  border: 0;
+  border-radius: 0.75rem;
+  color: #fff;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 900;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.live-operator-action--start {
+  background: #087f5b;
+}
+
+.live-operator-action--end {
+  background: #b33a3a;
+}
+
+.live-operator-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.live-operator-list ol {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.live-operator-list li {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.65rem;
+  border: 1px solid #e0e5ed;
+  border-radius: 0.6rem;
+}
+
+.live-operator-list li[data-status='in_progress'] {
+  border-color: #d8762c;
+  background: #fff5ea;
+}
+
+.live-operator-list li[data-status='completed'] {
+  background: #f1f5f2;
+  color: #59665e;
+}
+
+.live-operator-list li > div {
+  display: grid;
+  min-width: 0;
+}
+
+.live-operator-list li strong {
+  overflow-wrap: anywhere;
+}
+
+.live-operator-list li span {
+  font-size: 0.78rem;
+}
+
+.live-operator-list__position {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: #edf1f7;
+  font-weight: 900;
+}
+
+.live-operator-list__actual {
+  grid-column: 2;
+  color: #606a7c;
+}
+
+.live-operator-management__stage {
+  margin-top: 0.75rem;
+  padding: 0.8rem;
+  border: 1px solid #dfe5ee;
+  border-radius: 0.7rem;
+}
+
+.live-operator-management__stage h3,
+.live-operator-management__stage p {
+  margin: 0 0 0.5rem;
+}
+
+.live-operator-management__stage ul {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0;
+  list-style: none;
+}
+
+.live-operator-management__stage li,
+.live-operator-management__assign {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.live-operator-management__stage button {
+  min-height: 2.5rem;
+}
+
+@media (min-width: 42rem) {
+  .live-operator-page {
+    padding: 1.25rem;
+  }
+
+  .live-operator-header {
+    grid-template-columns: auto minmax(0, 1fr) minmax(20rem, auto);
+    align-items: center;
+  }
+
+  .live-operator-controls {
+    grid-template-columns: minmax(12rem, 1fr) minmax(12rem, 1fr) auto;
+    align-items: end;
+  }
+
+  .live-operator-now-next {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .live-operator-list li {
+    grid-template-columns: 2rem minmax(0, 1fr) auto;
+  }
+
+  .live-operator-list__actual {
+    grid-column: auto;
+  }
+
+  .live-operator-management__stage li {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+  }
+
+  .live-operator-management__assign {
+    grid-template-columns: minmax(12rem, 1fr) auto;
+    align-items: end;
+  }
+}
+
+@media (max-width: 32rem) {
+  .live-operator-connection,
+  .live-operator-permissions {
+    grid-template-columns: 1fr;
+  }
+
+  .live-operator-connection dd {
+    white-space: normal;
+  }
+}
+
