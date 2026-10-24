@@ -1074,7 +1074,7 @@ function LiveTimetableOperatorWorkspace({
   const handleBeforeAccountAction = (
     action: RetainedEditorAccountAction,
   ): boolean => {
-    if (mutationPendingRef.current) return false
+    if (mutationPendingRef.current || mutationReconciliationRef.current) return false
     const decision = onBeforeAccountAction?.(action) ?? { allowed: true }
     if (!decision.allowed) {
       setFeedback({
@@ -1096,7 +1096,7 @@ function LiveTimetableOperatorWorkspace({
       <AppShell
         activeSection="events"
         onNavigate={() => closeLive()}
-        navigationDisabled={mutationPending}
+        navigationDisabled={mutationPending || mutationReconciliationPending}
         onBeforeSignOut={() => handleBeforeAccountAction('sign-out')}
         onBeforeWorkspaceChange={() =>
           handleBeforeAccountAction('workspace-switch')}
@@ -1160,7 +1160,7 @@ function LiveTimetableOperatorWorkspace({
     <AppShell
       activeSection="events"
       onNavigate={() => closeLive()}
-      navigationDisabled={mutationPending}
+      navigationDisabled={mutationPending || mutationReconciliationPending}
       onBeforeSignOut={() => handleBeforeAccountAction('sign-out')}
       onBeforeWorkspaceChange={() =>
         handleBeforeAccountAction('workspace-switch')}

@@ -1528,3 +1528,21 @@ test('通常Appの全native dialogは共通activity境界で休止・復帰す�
   }
 })
 
+test('Live account actions are blocked during mutation reconciliation', async () => {
+  const page = await readFile(
+    new URL('../src/components/LiveTimetableOperatorPage.tsx', import.meta.url),
+    'utf8',
+  )
+
+  assert.match(
+    page,
+    /if \(mutationPendingRef\.current \|\| mutationReconciliationRef\.current\) return false/,
+  )
+
+  assert.equal(
+    (page.match(
+      /navigationDisabled=\{mutationPending \|\| mutationReconciliationPending\}/g,
+    ) ?? []).length,
+    2,
+  )
+})
