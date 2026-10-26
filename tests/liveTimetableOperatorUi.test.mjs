@@ -693,10 +693,19 @@ test('結果不明mutationは同一scopeのauthorized readが期待revisionを�
   }), true)
 })
 
-test('operator結果不明は管理revision前進と対象Stage/Userの最新状態を両方要求する', () => {
+test('operator結果不明は後続管理操作があっても対象Stage/Userの到達状態で解消する', () => {
   const before = createLive({ managementRevision: '5' })
   const previousAssignedAt = '2026-10-21T00:00:00.000Z'
   const receiptAt = '2026-10-21T00:01:00.000Z'
+  const laterReceiptAt = '2026-10-21T00:02:00.000Z'
+  const otherUserId = '30000000-0000-0000-0000-000000000002'
+  const otherStage = {
+    ...before.stages[0],
+    stageId: '40000000-0000-0000-0000-000000000002',
+    sourceStageId: 'stage-b',
+    name: 'Sub',
+    position: 1,
+  }
   const target = {
     stageId: before.stages[0].stageId,
     operatorUserId: userId,
@@ -735,8 +744,46 @@ test('operator結果不明は管理revision前進と対象Stage/Userの最新状
     target,
   }), false, 'same-stage unrelated operator mutation')
   assert.equal(isLiveOperatorMutationReconciled({
-    current: { ...assigned, managementRevision: '7' }, target,
-  }), false, 'later management revision is not this command receipt')
+    current: {
+      ...assigned,
+      managementRevision: '7',
+      updatedAt: laterReceiptAt,
+      stages: [
+        { ...assigned.stages[0], updatedAt: receiptAt },
+        { ...otherStage, updatedAt: laterReceiptAt },
+      ],
+      operators: [
+        ...assigned.operators,
+        { stageId: otherStage.stageId, userId: otherUserId, assignedAt: laterReceiptAt },
+      ],
+    },
+    target,
+  }), true, 'a later different-stage command does not hide the target receipt')
+  assert.equal(isLiveOperatorMutationReconciled({
+    current: {
+      ...assigned,
+      managementRevision: '8',
+      updatedAt: laterReceiptAt,
+      stages: [{ ...assigned.stages[0], updatedAt: laterReceiptAt }],
+      operators: [
+        ...assigned.operators,
+        { stageId: target.stageId, userId: otherUserId, assignedAt: laterReceiptAt },
+      ],
+    },
+    target,
+  }), true, 'a later same-stage command for another user preserves target evidence')
+  assert.equal(isLiveOperatorMutationReconciled({
+    current: {
+      ...assigned,
+      managementRevision: '7',
+      updatedAt: laterReceiptAt,
+      stages: [{ ...assigned.stages[0], updatedAt: laterReceiptAt }],
+      operators: [{
+        stageId: target.stageId, userId, assignedAt: previousAssignedAt,
+      }],
+    },
+    target,
+  }), false, 'revision advancement alone is not target-row evidence')
   assert.equal(isLiveOperatorMutationReconciled({
     current: assigned,
     target: { ...target, stageId: '40000000-0000-0000-0000-000000000099' },
@@ -750,9 +797,95 @@ test('operator結果不明は管理revision前進と対象Stage/Userの最新状
     target: { ...target, assigned: false },
   }), true, 'observed assignment removal also requires a durable revision receipt')
   assert.equal(isLiveOperatorMutationReconciled({
+    current: {
+      ...assigned,
+      managementRevision: '9',
+      updatedAt: laterReceiptAt,
+      stages: [assigned.stages[0], otherStage],
+      operators: [{
+        stageId: otherStage.stageId, userId: otherUserId, assignedAt: laterReceiptAt,
+      }],
+    },
+    target: { ...target, assigned: false },
+  }), true, 'later different-stage changes do not hide an observed removal')
+  assert.equal(isLiveOperatorMutationReconciled({
     current: { ...assigned, operators: [] },
     target: { ...target, assigned: false, previousAssignedAt: undefined },
   }), false, 'an already-absent removal has no target-row receipt')
+  assert.equal(isLiveOperatorMutationReconciled({
+    current: {
+      ...assigned,
+      managementRevision: '7',
+      operators: [{ stageId: target.stageId, userId, assignedAt: receiptAt }],
+    },
+    target: { ...target, previousAssignedAt: receiptAt },
+  }), false, 'an unrelated revision cannot prove an unchanged no-op assignment')
+  assert.equal(isLiveOperatorMutationReconciled({
+    current: {
+      ...assigned,
+      managementRevision: '7',
+      operators: [{ stageId: target.stageId, userId, assignedAt: laterReceiptAt }],
+    },
+    target: { ...target, previousAssignedAt: receiptAt },
+  }), true, 'a no-op reassignment is proved by its refreshed assignedAt receipt')
+  assert.equal(isLiveOperatorMutationReconciled({
+    current: { ...assigned, managementRevision: '9223372036854775807' },
+    target: {
+      ...target,
+      previousManagementRevision: '9007199254740993',
+    },
+  }), true, 'PostgreSQL bigint revisions are compared without number coercion')
+  assert.equal(isLiveOperatorMutationReconciled({
+    current: { ...assigned, managementRevision: 'not-a-revision' }, target,
+  }), false, 'invalid current revision fails closed')
+  assert.equal(isLiveOperatorMutationReconciled({
+    current: assigned,
+    target: { ...target, previousManagementRevision: '01' },
+  }), false, 'invalid previous revision fails closed')
+})
+
+test('operator結果不明の解除は同一scope・Liveの新しいauthorized readだけが行う', () => {
+  const before = createLive({ managementRevision: '5' })
+  const receiptAt = '2026-10-21T00:01:00.000Z'
+  const target = {
+    stageId: before.stages[0].stageId,
+    operatorUserId: userId,
+    assigned: true,
+    previousManagementRevision: before.managementRevision,
+    previousAssignedAt: undefined,
+  }
+  const reconciliation = {
+    operationId: 10,
+    scopeKey: 'scope-a',
+    liveId,
+    confirms: current => isLiveOperatorMutationReconciled({ current, target }),
+  }
+  const reconciled = {
+    ...before,
+    managementRevision: '7',
+    operators: [{ stageId: target.stageId, userId, assignedAt: receiptAt }],
+  }
+
+  assert.equal(canResolveLiveMutationReconciliation({
+    reconciliation,
+    activeScopeKey: 'scope-a',
+    current: before,
+  }), false, 'an old authorized read keeps navigation and account actions blocked')
+  assert.equal(canResolveLiveMutationReconciliation({
+    reconciliation,
+    activeScopeKey: 'scope-b',
+    current: reconciled,
+  }), false, 'a different scope cannot clear the block')
+  assert.equal(canResolveLiveMutationReconciliation({
+    reconciliation,
+    activeScopeKey: 'scope-a',
+    current: { ...reconciled, liveId: '10000000-0000-0000-0000-000000000099' },
+  }), false, 'a different Live cannot clear the block')
+  assert.equal(canResolveLiveMutationReconciliation({
+    reconciliation,
+    activeScopeKey: 'scope-a',
+    current: reconciled,
+  }), true, 'matching authorized read clears the reconciliation block')
 })
 
 test('start結果不明は対象entryが別端末で終了済みでも開始記録とrevision前進で解消する', () => {

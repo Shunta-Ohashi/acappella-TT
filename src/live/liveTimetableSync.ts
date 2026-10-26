@@ -112,16 +112,22 @@ export const isLiveOperatorMutationReconciled = ({
   current: AuthorizedLiveTimetable
   target: LiveOperatorMutationReconciliationTarget
 }): boolean => {
-  if (BigInt(current.managementRevision) !==
-      BigInt(target.previousManagementRevision) + 1n) return false
+  if (
+    current.managementRevision === '0' ||
+    target.previousManagementRevision === '0' ||
+    !isPostgresBigintGeneration(current.managementRevision) ||
+    !isPostgresBigintGeneration(target.previousManagementRevision) ||
+    BigInt(current.managementRevision) <=
+      BigInt(target.previousManagementRevision)
+  ) return false
   const stage = current.stages.find(candidate =>
     candidate.stageId === target.stageId)
-  if (!stage || stage.updatedAt !== current.updatedAt) return false
+  if (!stage) return false
   const assignment = current.operators.find(operator =>
     operator.stageId === target.stageId &&
     operator.userId === target.operatorUserId)
   if (target.assigned) {
-    return assignment?.assignedAt === current.updatedAt &&
+    return assignment !== undefined &&
       assignment.assignedAt !== target.previousAssignedAt
   }
   // The UI only offers removal for an observed assignment. If it was already
