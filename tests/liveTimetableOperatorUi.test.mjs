@@ -72,7 +72,7 @@ const createLive = ({
   eventDays: [{
     sourceEventDayId: 'day-a', date: '2026-11-01', label: null, position: 0,
   }],
-  sourceRevision: 1,
+  sourceRevision: '1',
   sourceSnapshotFingerprint: 'a'.repeat(64),
   projectionVersion,
   managementRevision,
@@ -1233,7 +1233,7 @@ test('Realtime bigint列は正のnumberとPostgreSQL bigint文字列を通知と
   }
 })
 
-test('Live discoveryは32bit上限を超える安全整数revisionを保持する', () => {
+test('Live discoveryはsafe numberを文字列へ正規化しbigint最大値を保持する', () => {
   const revision = 2147483648
   const result = parseLiveTimetableDiscovery({
     status: 'ok',
@@ -1244,7 +1244,15 @@ test('Live discoveryは32bit上限を超える安全整数revisionを保持す�
     liveId: null,
   }, workspaceId, 'event-a')
 
-  assert.equal(result?.sourceRevision, revision)
+  assert.equal(result?.sourceRevision, String(revision))
+  const maxRevision = '9223372036854775807'
+  assert.equal(parseLiveTimetableDiscovery({
+    status: 'ok', workspaceId, eventId: 'event-a', eventName: 'Event A',
+    sourceRevision: maxRevision, liveId,
+  }, workspaceId, 'event-a')?.sourceRevision, maxRevision)
+  const authorized = createAuthorizedRpcValue({ role: 'owner' })
+  authorized.live.sourceRevision = maxRevision
+  assert.equal(parseAuthorizedLiveTimetable(authorized)?.sourceRevision, maxRevision)
 })
 
 test('discovery/candidate parserはexact responseとID一意性を要求する', () => {
@@ -1253,12 +1261,28 @@ test('discovery/candidate parserはexact responseとID一意性を要求する',
     sourceRevision: 3, liveId: null,
   }, workspaceId, 'event-a'), {
     workspaceId, eventId: 'event-a', eventName: 'Event A',
-    sourceRevision: 3, liveId: null,
+    sourceRevision: '3', liveId: null,
   })
   assert.equal(parseLiveTimetableDiscovery({
     status: 'ok', workspaceId, eventId: 'event-a', eventName: 'Event A',
     sourceRevision: 3, liveId, extra: true,
   }, workspaceId, 'event-a'), undefined)
+  for (const sourceRevision of [
+    Number.MAX_SAFE_INTEGER + 1,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    '',
+    '01',
+    '1e3',
+    '9223372036854775808',
+  ]) {
+    assert.equal(parseLiveTimetableDiscovery({
+      status: 'ok', workspaceId, eventId: 'event-a', eventName: 'Event A',
+      sourceRevision, liveId,
+    }, workspaceId, 'event-a'), undefined, String(sourceRevision))
+  }
   assert.equal(parseLiveTimetableDiscovery({
     status: 'ok', workspaceId, eventId: 'event-a', eventName: 'Event A',
     sourceRevision: 0, liveId,
@@ -1337,7 +1361,7 @@ test('repositoryはdiscovery/candidateのscopeとexact応答を維持する', as
     ok: true,
     value: {
       workspaceId, eventId: 'event-a', eventName: 'Event A',
-      sourceRevision: 7, liveId,
+      sourceRevision: '7', liveId,
     },
   })
   assert.deepEqual(await repository.listOperatorCandidates(liveId), {
@@ -1404,6 +1428,27 @@ test('migration #16はviewer grant snapshot・public分離・RPC ACLを追加す
   assert.match(sql, /is_published[\s\S]*public_view_enabled/i)
   assert.match(sql, /target_source_revision\s+bigint\s*;/i)
   assert.doesNotMatch(sql, /target_source_revision\s+integer\s*;/i)
+  assert.match(sql, /'sourceRevision', target_source_revision::text/i)
+  assert.match(sql,
+    /load_live_timetable_authorized_v15[\s\S]*jsonb_typeof\(response #> '\{live,sourceRevision\}'\)[\s\S]*jsonb_set\([\s\S]*to_jsonb\(response #>> '\{live,sourceRevision\}'\)/i)
+  for (const signature of [
+    'load_live_timetable_projection_source_serialized',
+    'create_or_replace_live_timetable_projection_serialized',
+  ]) {
+    assert.match(sql, new RegExp(`create function public\\.${signature}`, 'i'))
+    assert.match(sql, new RegExp(
+      `revoke all on function public\\.${signature}\\([\\s\\S]*from public, anon, authenticated, service_role`,
+      'i',
+    ))
+    assert.match(sql, new RegExp(
+      `grant execute on function public\\.${signature}\\([\\s\\S]*to service_role`,
+      'i',
+    ))
+  }
+  assert.match(sql,
+    /load_live_timetable_projection_source_serialized\([\s\S]*security invoker[\s\S]*load_live_timetable_projection_source\([\s\S]*to_jsonb\(response ->> 'revision'\)/i)
+  assert.match(sql,
+    /create_or_replace_live_timetable_projection_serialized\([\s\S]*security invoker[\s\S]*create_or_replace_live_timetable_projection\([\s\S]*to_jsonb\(response ->> 'sourceRevision'\)/i)
   assert.match(sql, /create function public\.find_live_timetable_for_event_authorized/i)
   assert.match(sql, /create function public\.list_live_timetable_operator_candidates/i)
   assert.match(sql, /workspace_members\.role in \('editor', 'viewer'\)/i)

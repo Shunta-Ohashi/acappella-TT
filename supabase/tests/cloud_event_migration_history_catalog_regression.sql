@@ -41,6 +41,7 @@ begin
     'live_timetable_authenticated_inherited_write',
     'live_timetable_authenticated_inherited_column_update',
     'live_timetable_authenticated_inherited_backend_execute',
+    'live_timetable_serialized_backend_authenticated_inherited_execute',
     'live_timetable_operator_stage_builder_inherited_execute'
   ) then
     if exists (
@@ -130,6 +131,11 @@ begin
       when scenario = 'live_timetable_authenticated_inherited_backend_execute' then
         execute format(
           'grant execute on function public.create_or_replace_live_timetable_projection(uuid,uuid,text,bigint,text,jsonb,text,text) to %I',
+          inherited_role_name
+        );
+      when scenario = 'live_timetable_serialized_backend_authenticated_inherited_execute' then
+        execute format(
+          'grant execute on function public.create_or_replace_live_timetable_projection_serialized(uuid,uuid,text,bigint,text,jsonb,text,text) to %I',
           inherited_role_name
         );
       when scenario = 'live_timetable_operator_stage_builder_inherited_execute' then
@@ -538,6 +544,11 @@ begin
       grant execute on function
         public.create_or_replace_live_timetable_projection(
           uuid, uuid, text, bigint, text, jsonb, text, text
+        ) to authenticated;
+    when 'live_timetable_serialized_source_authenticated_execute' then
+      grant execute on function
+        public.load_live_timetable_projection_source_serialized(
+          uuid, uuid, text, bigint
         ) to authenticated;
     when 'live_timetable_realtime_missing' then
       alter publication supabase_realtime

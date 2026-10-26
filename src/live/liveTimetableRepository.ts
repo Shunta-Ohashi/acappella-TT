@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { isRecord } from '../persistence/persistenceValidation.ts'
 import { isPostgresBigintGeneration } from '../cloud/cloudGeneration.ts'
+import { parseLiveTimetableSourceRevision } from './liveTimetableSourceRevision.ts'
 
 export type LiveTimetableProgressStatus =
   | 'empty'
@@ -65,7 +66,7 @@ export interface AuthorizedLiveTimetable {
     label: string | null
     position: number
   }>
-  sourceRevision: number
+  sourceRevision: string
   sourceSnapshotFingerprint: string
   projectionVersion: string
   managementRevision: string
@@ -92,7 +93,7 @@ export interface LiveTimetableDiscovery {
   workspaceId: string
   eventId: string
   eventName: string
-  sourceRevision: number
+  sourceRevision: string
   liveId: string | null
 }
 
@@ -142,7 +143,7 @@ export interface LiveTimetableDatabaseGateway {
   createProjection: (input: {
     workspaceId: string
     eventId: string
-    expectedSourceRevision: number
+    expectedSourceRevision: string
     mode: 'create' | 'replace'
     expectedManagementRevision: string | null
   }) => Promise<LiveTimetableDatabaseResult<unknown>>
@@ -535,6 +536,7 @@ export const parseAuthorizedLiveTimetable = (
   const live = value.live
   const permissions = value.permissions
   const stages = parseStages(value.stages, true)
+  const sourceRevision = parseLiveTimetableSourceRevision(live.sourceRevision)
   if (
     !stages ||
     !hasOnlyKeys(live, [
@@ -551,7 +553,7 @@ export const parseAuthorizedLiveTimetable = (
     !isNonEmptyString(live.eventName) ||
     !isNonEmptyString(live.timeZone) ||
     !Array.isArray(live.eventDays) ||
-    !Number.isSafeInteger(live.sourceRevision) || Number(live.sourceRevision) <= 0 ||
+    !sourceRevision ||
     typeof live.sourceSnapshotFingerprint !== 'string' ||
     !fingerprintPattern.test(live.sourceSnapshotFingerprint) ||
     !isPositiveRevision(live.projectionVersion) ||
@@ -630,7 +632,7 @@ export const parseAuthorizedLiveTimetable = (
     eventName: live.eventName,
     timeZone: live.timeZone,
     eventDays,
-    sourceRevision: Number(live.sourceRevision),
+    sourceRevision,
     sourceSnapshotFingerprint: live.sourceSnapshotFingerprint,
     projectionVersion: live.projectionVersion,
     managementRevision: live.managementRevision,
@@ -699,12 +701,14 @@ export const parseLiveTimetableDiscovery = (
   expectedWorkspaceId: string,
   expectedEventId: string,
 ): LiveTimetableDiscovery | undefined => {
+  const sourceRevision = isRecord(value)
+    ? parseLiveTimetableSourceRevision(value.sourceRevision)
+    : undefined
   if (!isRecord(value) || !hasOnlyKeys(value, [
     'status', 'workspaceId', 'eventId', 'eventName', 'sourceRevision', 'liveId',
   ]) || value.status !== 'ok' || value.workspaceId !== expectedWorkspaceId ||
     value.eventId !== expectedEventId || !isNonEmptyString(value.eventName) ||
-    typeof value.sourceRevision !== 'number' ||
-    !Number.isSafeInteger(value.sourceRevision) || value.sourceRevision < 1 ||
+    !sourceRevision ||
     (value.liveId !== null && normalizeUuid(value.liveId) === undefined)) {
     return undefined
   }
@@ -712,7 +716,7 @@ export const parseLiveTimetableDiscovery = (
     workspaceId: expectedWorkspaceId,
     eventId: expectedEventId,
     eventName: value.eventName,
-    sourceRevision: value.sourceRevision,
+    sourceRevision,
     liveId: value.liveId === null ? null : normalizeUuid(value.liveId) as string,
   }
 }
@@ -813,28 +817,30 @@ const parseProjectionMutationResponse = (
   expected: {
     workspaceId: string
     eventId: string
-    expectedSourceRevision: number
+    expectedSourceRevision: string
     mode: 'create' | 'replace'
   },
-): unknown | undefined => isRecord(value) &&
-  hasOnlyKeys(value, [
+): unknown | undefined => {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
     'status', 'workspaceId', 'eventId', 'liveId', 'publicId',
     'sourceRevision', 'sourceSnapshotFingerprint', 'projectionVersion',
     'managementRevision', 'isPublished',
-  ]) &&
-  value.status === (expected.mode === 'create' ? 'created' : 'replaced') &&
-  value.workspaceId === expected.workspaceId &&
-  value.eventId === expected.eventId &&
-  normalizeUuid(value.liveId) !== undefined &&
-  normalizeUuid(value.publicId) !== undefined &&
-  value.sourceRevision === expected.expectedSourceRevision &&
-  typeof value.sourceSnapshotFingerprint === 'string' &&
-  fingerprintPattern.test(value.sourceSnapshotFingerprint) &&
-  isPositiveRevision(value.projectionVersion) &&
-  isPositiveRevision(value.managementRevision) &&
-  value.isPublished === false
-  ? value
-  : undefined
+  ])) return undefined
+  const sourceRevision = parseLiveTimetableSourceRevision(value.sourceRevision)
+  return value.status === (expected.mode === 'create' ? 'created' : 'replaced') &&
+    value.workspaceId === expected.workspaceId &&
+    value.eventId === expected.eventId &&
+    normalizeUuid(value.liveId) !== undefined &&
+    normalizeUuid(value.publicId) !== undefined &&
+    sourceRevision === expected.expectedSourceRevision &&
+    typeof value.sourceSnapshotFingerprint === 'string' &&
+    fingerprintPattern.test(value.sourceSnapshotFingerprint) &&
+    isPositiveRevision(value.projectionVersion) &&
+    isPositiveRevision(value.managementRevision) &&
+    value.isPublished === false
+    ? { ...value, sourceRevision }
+    : undefined
+}
 
 const parsePublicationMutationResponse = (
   value: unknown,
@@ -926,9 +932,11 @@ export const createLiveTimetableRepository = (
   gateway: LiveTimetableDatabaseGateway,
 ): LiveTimetableRepository => ({
   async createProjection(input) {
+    const expectedSourceRevision = parseLiveTimetableSourceRevision(
+      input.expectedSourceRevision,
+    )
     if (!normalizeUuid(input.workspaceId) || !isNonEmptyString(input.eventId) ||
-      !Number.isSafeInteger(input.expectedSourceRevision) ||
-      input.expectedSourceRevision <= 0 ||
+      !expectedSourceRevision ||
       (input.mode !== 'create' && input.mode !== 'replace') ||
       (input.mode === 'create' && input.expectedManagementRevision !== null) ||
       (input.mode === 'replace' &&
@@ -939,12 +947,13 @@ export const createLiveTimetableRepository = (
       const result = await gateway.createProjection({
         ...input,
         workspaceId: normalizeUuid(input.workspaceId) as string,
+        expectedSourceRevision,
       })
       if (result.error) return databaseFailure(result.error)
       const parsed = parseProjectionMutationResponse(result.data, {
         workspaceId: normalizeUuid(input.workspaceId) as string,
         eventId: input.eventId,
-        expectedSourceRevision: input.expectedSourceRevision,
+        expectedSourceRevision,
         mode: input.mode,
       })
       return parsed

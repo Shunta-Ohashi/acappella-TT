@@ -175,7 +175,7 @@ function LiveTimetableOperatorWorkspace({
   const [liveId, setLiveId] = useState<string>()
   const [savedEvent, setSavedEvent] = useState<{
     name: string
-    revision: number
+    revision: string
   }>()
   const [live, setLive] = useState<AuthorizedLiveTimetable>()
   const liveRef = useRef<AuthorizedLiveTimetable | undefined>(undefined)

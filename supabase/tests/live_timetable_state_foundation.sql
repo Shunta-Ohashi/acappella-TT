@@ -210,6 +210,16 @@ insert into public.cloud_events (
   pg_temp.live_v1_snapshot()
 );
 
+-- Test-only setup for the exact PostgreSQL bigint boundary. The production
+-- insert/update triggers remain unchanged; only this rollback-scoped fixture
+-- row is moved to the maximum revision while replication triggers are paused.
+set local session_replication_role = replica;
+update public.cloud_events
+set revision = 9223372036854775807
+where workspace_id = '78000000-0000-4000-8000-000000000001'
+  and event_id = 'live-foundation-event';
+set local session_replication_role = origin;
+
 do $catalog_contract$
 declare
   table_name text;
@@ -269,16 +279,20 @@ declare
   replacement jsonb;
   target_live_id uuid;
 begin
-  source_value := public.load_live_timetable_projection_source(
+  source_value := public.load_live_timetable_projection_source_serialized(
     '00000000-0000-4000-8000-000000000081',
     '78000000-0000-4000-8000-000000000001',
-    'live-foundation-event', 1
+    'live-foundation-event', 9223372036854775807
   );
+  if jsonb_typeof(source_value -> 'revision') is distinct from 'string'
+    or source_value ->> 'revision' <> '9223372036854775807' then
+    raise exception 'Serialized Live source revision lost bigint precision';
+  end if;
   begin
-    perform public.create_or_replace_live_timetable_projection(
+    perform public.create_or_replace_live_timetable_projection_serialized(
       '00000000-0000-4000-8000-000000000081',
       '78000000-0000-4000-8000-000000000001',
-      'live-foundation-event', 1,
+      'live-foundation-event', 9223372036854775807,
       source_value ->> 'snapshot_fingerprint',
       pg_temp.live_projection(), 'replace', '1'
     );
@@ -286,16 +300,18 @@ begin
       using errcode = 'P0004';
   exception when sqlstate 'P0003' then null;
   end;
-  mutation := public.create_or_replace_live_timetable_projection(
+  mutation := public.create_or_replace_live_timetable_projection_serialized(
     '00000000-0000-4000-8000-000000000081',
     '78000000-0000-4000-8000-000000000001',
-    'live-foundation-event', 1,
+    'live-foundation-event', 9223372036854775807,
     source_value ->> 'snapshot_fingerprint',
     pg_temp.live_projection(), 'create', null
   );
   target_live_id := (mutation ->> 'liveId')::uuid;
   if mutation ->> 'projectionVersion' <> '1'
     or mutation ->> 'managementRevision' <> '1'
+    or jsonb_typeof(mutation -> 'sourceRevision') is distinct from 'string'
+    or mutation ->> 'sourceRevision' <> '9223372036854775807'
     or (mutation ->> 'isPublished')::boolean then
     raise exception 'Initial Live projection metadata is invalid';
   end if;
@@ -333,10 +349,10 @@ begin
     where live_timetable_id = target_live_id
       and source_stage_id = 'live-stage-a';
 
-  replacement := public.create_or_replace_live_timetable_projection(
+  replacement := public.create_or_replace_live_timetable_projection_serialized(
     '00000000-0000-4000-8000-000000000081',
     '78000000-0000-4000-8000-000000000001',
-    'live-foundation-event', 1,
+    'live-foundation-event', 9223372036854775807,
     source_value ->> 'snapshot_fingerprint',
     pg_temp.live_projection(), 'replace', '1'
   );
@@ -348,10 +364,10 @@ begin
   end if;
 
   begin
-    perform public.create_or_replace_live_timetable_projection(
+    perform public.create_or_replace_live_timetable_projection_serialized(
       '00000000-0000-4000-8000-000000000081',
       '78000000-0000-4000-8000-000000000001',
-      'live-foundation-event', 1,
+      'live-foundation-event', 9223372036854775807,
       source_value ->> 'snapshot_fingerprint',
       pg_temp.live_projection(), 'replace', '1'
     );
@@ -463,7 +479,8 @@ begin
   candidates := public.list_live_timetable_operator_candidates(target_live_id);
   if discovery ->> 'liveId' <> target_live_id::text
     or discovery ->> 'eventName' <> 'Live Foundation Event'
-    or discovery ->> 'sourceRevision' <> '1'
+    or jsonb_typeof(discovery -> 'sourceRevision') is distinct from 'string'
+    or discovery ->> 'sourceRevision' <> '9223372036854775807'
     or jsonb_array_length(candidates -> 'candidates') <> 2
     or (candidates -> 'candidates')::text like '%email%' then
     raise exception 'Live discovery or candidate contract is invalid';
@@ -483,6 +500,9 @@ begin
   );
   owner_read := public.load_live_timetable_authorized(target_live_id);
   if viewer_assignment_result ->> 'managementRevision' <> '5'
+    or jsonb_typeof(owner_read #> '{live,sourceRevision}')
+      is distinct from 'string'
+    or owner_read #>> '{live,sourceRevision}' <> '9223372036854775807'
     or not exists (
       select 1
       from jsonb_array_elements(owner_read -> 'operators') as assignment

@@ -2967,6 +2967,19 @@ later_schema as (
           to_regprocedure('public.find_live_timetable_for_event_authorized(uuid,text)'),
           to_regprocedure('public.list_live_timetable_operator_candidates(uuid)')
         ]))
+      and (select count(*) = 2 and bool_and(
+          not pg_proc.prosecdef
+          and pg_proc.provolatile = 'v'
+          and pg_proc.prorettype = 'jsonb'::regtype
+          and array_to_string(pg_proc.proconfig, ',') in (
+            'search_path=""', 'search_path='
+          )
+        )
+        from pg_catalog.pg_proc
+        where pg_proc.oid = any(array[
+          to_regprocedure('public.load_live_timetable_projection_source_serialized(uuid,uuid,text,bigint)'),
+          to_regprocedure('public.create_or_replace_live_timetable_projection_serialized(uuid,uuid,text,bigint,text,jsonb,text,text)')
+        ]))
       and lower((select pg_proc.prosrc from pg_catalog.pg_proc
         where pg_proc.oid = to_regprocedure(
           'public.build_live_timetable_stages_json(uuid,uuid,text,boolean)'
@@ -2978,7 +2991,19 @@ later_schema as (
       and lower((select pg_proc.prosrc from pg_catalog.pg_proc
         where pg_proc.oid = to_regprocedure(
           'public.load_live_timetable_authorized(uuid)'
-        ))) like '%load_live_timetable_authorized_v15%assignedat%assignment.created_at%'
+        ))) like '%load_live_timetable_authorized_v15%jsonb_set%{live,sourcerevision}%assignedat%assignment.created_at%'
+      and lower((select pg_proc.prosrc from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+          'public.find_live_timetable_for_event_authorized(uuid,text)'
+        ))) like '%sourcerevision%target_source_revision::text%'
+      and lower((select pg_proc.prosrc from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+          'public.load_live_timetable_projection_source_serialized(uuid,uuid,text,bigint)'
+        ))) like '%load_live_timetable_projection_source%jsonb_set%revision%'
+      and lower((select pg_proc.prosrc from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+          'public.create_or_replace_live_timetable_projection_serialized(uuid,uuid,text,bigint,text,jsonb,text,text)'
+        ))) like '%create_or_replace_live_timetable_projection%jsonb_set%sourcerevision%'
       and lower((select pg_proc.prosrc from pg_catalog.pg_proc
         where pg_proc.oid = to_regprocedure(
           'public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)'
@@ -3029,6 +3054,35 @@ later_schema as (
         'EXECUTE'
       ) from authenticated_role), false)
       and coalesce((select has_function_privilege(
+        service_role.oid,
+        to_regprocedure(
+          'public.load_live_timetable_projection_source_serialized(uuid,uuid,text,bigint)'
+        ),
+        'EXECUTE'
+      ) from service_role), false)
+      and coalesce((select has_function_privilege(
+        service_role.oid,
+        to_regprocedure(
+          'public.create_or_replace_live_timetable_projection_serialized(uuid,uuid,text,bigint,text,jsonb,text,text)'
+        ),
+        'EXECUTE'
+      ) from service_role), false)
+      and not exists (
+        select 1
+        from (values
+          (to_regprocedure('public.load_live_timetable_projection_source_serialized(uuid,uuid,text,bigint)')),
+          (to_regprocedure('public.create_or_replace_live_timetable_projection_serialized(uuid,uuid,text,bigint,text,jsonb,text,text)'))
+        ) as backend_function(oid)
+        cross join (
+          select authenticated_role.oid from authenticated_role
+          union all select anon_role.oid from anon_role
+        ) as browser_role
+        where backend_function.oid is null
+          or has_function_privilege(
+            browser_role.oid, backend_function.oid, 'EXECUTE'
+          )
+      )
+      and coalesce((select has_function_privilege(
         authenticated_role.oid,
         to_regprocedure(
           'public.list_live_timetable_operator_candidates(uuid)'
@@ -3055,6 +3109,8 @@ later_schema as (
         from (values
           (to_regprocedure('public.find_live_timetable_for_event_authorized(uuid,text)')),
           (to_regprocedure('public.list_live_timetable_operator_candidates(uuid)')),
+          (to_regprocedure('public.load_live_timetable_projection_source_serialized(uuid,uuid,text,bigint)')),
+          (to_regprocedure('public.create_or_replace_live_timetable_projection_serialized(uuid,uuid,text,bigint,text,jsonb,text,text)')),
           (to_regprocedure('public.build_live_timetable_stages_json(uuid,uuid,text,boolean)')),
           (to_regprocedure('public.build_live_timetable_stages_json_v15(uuid,uuid,text,boolean)')),
           (to_regprocedure('public.load_live_timetable_authorized_v15(uuid)')),

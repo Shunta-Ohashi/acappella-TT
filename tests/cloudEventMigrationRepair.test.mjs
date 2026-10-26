@@ -1430,6 +1430,8 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'live_timetable_authorized_helper_authenticated_execute',
     'live_timetable_operator_stage_builder_authenticated_execute',
     'live_timetable_operator_stage_builder_inherited_execute',
+    'live_timetable_serialized_source_authenticated_execute',
+    'live_timetable_serialized_backend_authenticated_inherited_execute',
   ]) {
     assert.match(catalogRegressionSql, new RegExp(`'${scenario}'`), scenario)
     assert.match(catalogRegressionRunner, new RegExp(`'${scenario}'`), scenario)
@@ -1438,7 +1440,7 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     catalogRegressionRunner.indexOf('const scenarios = ['),
     catalogRegressionRunner.indexOf('const parseArguments ='),
   )
-  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 128)
+  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 130)
   assert.match(catalogRegressionRunner,
     /JSON\.stringify\(\{ ok: true, scenarios: scenarios\.length \+ 1 \}\)/)
   for (const removedScenario of [

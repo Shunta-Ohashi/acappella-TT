@@ -180,6 +180,10 @@ const scenarios = [
     !result.laterSchema.liveTimetableFoundationContract],
   ['live_timetable_authenticated_inherited_backend_execute', result =>
     !result.laterSchema.liveTimetableFoundationContract],
+  ['live_timetable_serialized_source_authenticated_execute', result =>
+    !result.laterSchema.liveTimetableOperatorUiContract],
+  ['live_timetable_serialized_backend_authenticated_inherited_execute', result =>
+    !result.laterSchema.liveTimetableOperatorUiContract],
   ['live_timetable_realtime_missing', result =>
     !result.laterSchema.liveTimetableFoundationContract],
   ['live_timetable_realtime_columns_broadened', result =>

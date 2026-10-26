@@ -46,7 +46,7 @@ runtime.serve(request => handleLiveTimetableProjectionRequest(request, {
   }) {
     if (!backendClient) return configurationError()
     const result = await backendClient.rpc(
-      'load_live_timetable_projection_source',
+      'load_live_timetable_projection_source_serialized',
       {
         p_actor_id: actorId,
         p_workspace_id: workspaceId,
@@ -69,7 +69,7 @@ runtime.serve(request => handleLiveTimetableProjectionRequest(request, {
   }) {
     if (!backendClient) return configurationError()
     const result = await backendClient.rpc(
-      'create_or_replace_live_timetable_projection',
+      'create_or_replace_live_timetable_projection_serialized',
       {
         p_actor_id: actorId,
         p_workspace_id: workspaceId,

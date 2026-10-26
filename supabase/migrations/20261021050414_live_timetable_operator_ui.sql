@@ -152,6 +152,17 @@ declare
   operators_json jsonb;
 begin
   response := public.load_live_timetable_authorized_v15(p_live_id);
+  if jsonb_typeof(response #> '{live,sourceRevision}')
+      is distinct from 'number' then
+    raise exception 'Live source revision response is invalid'
+      using errcode = '55000';
+  end if;
+  response := jsonb_set(
+    response,
+    '{live,sourceRevision}',
+    to_jsonb(response #>> '{live,sourceRevision}'),
+    false
+  );
   if response #>> '{permissions,canManage}' = 'true' then
     select coalesce(jsonb_agg(jsonb_build_object(
       'stageId', assignment.stage_id,
@@ -172,6 +183,99 @@ revoke all on function public.load_live_timetable_authorized(uuid)
   from public, anon, authenticated, service_role;
 grant execute on function public.load_live_timetable_authorized(uuid)
   to authenticated;
+
+-- PostgreSQL bigint values must become JSON strings before PostgREST sends
+-- them to JavaScript. These invoker wrappers preserve the v15 CAS functions
+-- and expose only an exact serialized response to the server-side Edge client.
+create function public.load_live_timetable_projection_source_serialized(
+  p_actor_id uuid,
+  p_workspace_id uuid,
+  p_event_id text,
+  p_expected_source_revision bigint
+)
+returns jsonb
+language plpgsql
+volatile
+security invoker
+set search_path = ''
+as $$
+declare
+  response jsonb;
+begin
+  response := public.load_live_timetable_projection_source(
+    p_actor_id,
+    p_workspace_id,
+    p_event_id,
+    p_expected_source_revision
+  );
+  if jsonb_typeof(response -> 'revision') is distinct from 'number' then
+    raise exception 'Live projection source revision response is invalid'
+      using errcode = '55000';
+  end if;
+  return jsonb_set(
+    response,
+    '{revision}',
+    to_jsonb(response ->> 'revision'),
+    false
+  );
+end;
+$$;
+
+revoke all on function public.load_live_timetable_projection_source_serialized(
+  uuid, uuid, text, bigint
+) from public, anon, authenticated, service_role;
+grant execute on function public.load_live_timetable_projection_source_serialized(
+  uuid, uuid, text, bigint
+) to service_role;
+
+create function public.create_or_replace_live_timetable_projection_serialized(
+  p_actor_id uuid,
+  p_workspace_id uuid,
+  p_event_id text,
+  p_expected_source_revision bigint,
+  p_source_snapshot_fingerprint text,
+  p_projection jsonb,
+  p_mode text,
+  p_expected_management_revision text
+)
+returns jsonb
+language plpgsql
+volatile
+security invoker
+set search_path = ''
+as $$
+declare
+  response jsonb;
+begin
+  response := public.create_or_replace_live_timetable_projection(
+    p_actor_id,
+    p_workspace_id,
+    p_event_id,
+    p_expected_source_revision,
+    p_source_snapshot_fingerprint,
+    p_projection,
+    p_mode,
+    p_expected_management_revision
+  );
+  if jsonb_typeof(response -> 'sourceRevision') is distinct from 'number' then
+    raise exception 'Live projection mutation revision response is invalid'
+      using errcode = '55000';
+  end if;
+  return jsonb_set(
+    response,
+    '{sourceRevision}',
+    to_jsonb(response ->> 'sourceRevision'),
+    false
+  );
+end;
+$$;
+
+revoke all on function public.create_or_replace_live_timetable_projection_serialized(
+  uuid, uuid, text, bigint, text, jsonb, text, text
+) from public, anon, authenticated, service_role;
+grant execute on function public.create_or_replace_live_timetable_projection_serialized(
+  uuid, uuid, text, bigint, text, jsonb, text, text
+) to service_role;
 
 -- Preserve the original public DTO builder but put an additional, locked,
 -- opt-in gate in front of it. The renamed helper is never browser executable.
@@ -706,7 +810,7 @@ begin
     'workspaceId', p_workspace_id,
     'eventId', p_event_id,
     'eventName', target_event_name,
-    'sourceRevision', target_source_revision,
+    'sourceRevision', target_source_revision::text,
     'liveId', target_live_id
   );
 end;
@@ -870,6 +974,52 @@ begin
     foreach role_name in array array['anon', 'authenticated', 'service_role'] loop
       if has_function_privilege(role_name, function_oid, 'EXECUTE')
         is distinct from (role_name = 'authenticated') then
+        raise exception '% has unexpected EXECUTE on %', role_name, signature
+          using errcode = '42501';
+      end if;
+    end loop;
+    if exists (
+      select 1
+      from pg_catalog.pg_proc
+      cross join lateral pg_catalog.aclexplode(coalesce(
+        pg_proc.proacl,
+        pg_catalog.acldefault('f', pg_proc.proowner)
+      )) as function_acl
+      where pg_proc.oid = function_oid
+        and function_acl.grantee = 0
+        and function_acl.privilege_type = 'EXECUTE'
+    ) then
+      raise exception 'PUBLIC retains EXECUTE on %', signature
+        using errcode = '42501';
+    end if;
+  end loop;
+
+  foreach signature in array array[
+    'public.load_live_timetable_projection_source_serialized(uuid,uuid,text,bigint)',
+    'public.create_or_replace_live_timetable_projection_serialized(uuid,uuid,text,bigint,text,jsonb,text,text)'
+  ] loop
+    function_oid := to_regprocedure(signature);
+    if function_oid is null then
+      raise exception 'Live serialized backend function is missing: %', signature
+        using errcode = '55000';
+    end if;
+    if not exists (
+      select 1
+      from pg_catalog.pg_proc
+      where pg_proc.oid = function_oid
+        and not pg_proc.prosecdef
+        and pg_proc.provolatile = 'v'
+        and pg_proc.prorettype = 'jsonb'::regtype
+        and array_to_string(pg_proc.proconfig, ',') in (
+          'search_path=""', 'search_path='
+        )
+    ) then
+      raise exception 'Live serialized backend function is unsafe: %', signature
+        using errcode = '55000';
+    end if;
+    foreach role_name in array array['anon', 'authenticated', 'service_role'] loop
+      if has_function_privilege(role_name, function_oid, 'EXECUTE')
+        is distinct from (role_name = 'service_role') then
         raise exception '% has unexpected EXECUTE on %', role_name, signature
           using errcode = '42501';
       end if;

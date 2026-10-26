@@ -17,6 +17,9 @@ import {
 import {
   deleteLiveSmokeAuthUsers,
 } from '../scripts/liveTimetableFoundationSmokeCleanup.mjs'
+import {
+  parseLiveTimetableSourceRevision,
+} from '../src/live/liveTimetableSourceRevision.ts'
 
 const workspaceId = '78000000-0000-4000-8000-000000000001'
 const liveId = '78000000-0000-4000-8000-000000000002'
@@ -213,7 +216,7 @@ const jsonRequest = body => new Request('https://example.invalid/live', {
 const projectionRequest = (overrides = {}) => ({
   workspaceId,
   eventId: 'event-live',
-  expectedSourceRevision: 3,
+  expectedSourceRevision: '3',
   mode: 'create',
   expectedManagementRevision: null,
   ...overrides,
@@ -225,7 +228,7 @@ const sourceValue = (snapshot = createSnapshot()) => ({
   event_id: 'event-live',
   event_name: 'Live Event',
   event_snapshot: snapshot,
-  revision: 3,
+  revision: '3',
   snapshot_fingerprint: 'a'.repeat(64),
 })
 
@@ -235,7 +238,7 @@ const mutationValue = (overrides = {}) => ({
   eventId: 'event-live',
   liveId,
   publicId,
-  sourceRevision: 3,
+  sourceRevision: '3',
   sourceSnapshotFingerprint: 'a'.repeat(64),
   projectionVersion: '1',
   managementRevision: '1',
@@ -243,11 +246,41 @@ const mutationValue = (overrides = {}) => ({
   ...overrides,
 })
 
+test('Live source revisionはPostgreSQL bigint文字列へ精度安全に正規化する', () => {
+  for (const value of ['1', '9007199254740992', '9223372036854775807']) {
+    assert.equal(parseLiveTimetableSourceRevision(value), value)
+  }
+  assert.equal(parseLiveTimetableSourceRevision(3), '3')
+  assert.equal(
+    parseLiveTimetableSourceRevision(Number.MAX_SAFE_INTEGER),
+    String(Number.MAX_SAFE_INTEGER),
+  )
+  for (const value of [
+    Number.MAX_SAFE_INTEGER + 1,
+    0,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    '',
+    '0',
+    '-1',
+    '01',
+    '1.0',
+    '1e3',
+    '9223372036854775808',
+    null,
+    undefined,
+  ]) {
+    assert.equal(parseLiveTimetableSourceRevision(value), undefined, String(value))
+  }
+})
+
 test('投影Endpointは認証済みDB sourceだけから投影しTOCTOUをRPCへ引き継ぐ', async () => {
   let loaded
   let persisted
   const response = await handleLiveTimetableProjectionRequest(
-    jsonRequest(projectionRequest()),
+    jsonRequest(projectionRequest({ expectedSourceRevision: 3 })),
     {
       async authenticate(token) {
         assert.equal(token, 'valid-token')
@@ -268,12 +301,42 @@ test('投影Endpointは認証済みDB sourceだけから投影しTOCTOUをRPCへ
     actorId,
     workspaceId,
     eventId: 'event-live',
-    expectedSourceRevision: 3,
+    expectedSourceRevision: '3',
   })
   assert.equal(persisted.actorId, actorId)
   assert.equal(persisted.sourceSnapshotFingerprint, 'a'.repeat(64))
   assert.deepEqual(persisted.projection, createProjection())
   assert.equal(Object.hasOwn(projectionRequest(), 'snapshot'), false)
+})
+
+test('投影Endpointはbigint最大値を文字列のままsource・persistへ渡す', async () => {
+  const maxRevision = '9223372036854775807'
+  let loaded
+  let persisted
+  const successful = await handleLiveTimetableProjectionRequest(
+    jsonRequest(projectionRequest({ expectedSourceRevision: maxRevision })),
+    {
+      async authenticate() { return { id: actorId } },
+      async loadProjectionSource(input) {
+        loaded = input
+        return {
+          data: { ...sourceValue(), revision: maxRevision },
+          error: null,
+        }
+      },
+      async persistProjection(input) {
+        persisted = input
+        return {
+          data: mutationValue({ sourceRevision: maxRevision }),
+          error: null,
+        }
+      },
+    },
+  )
+  assert.equal(successful.status, 200)
+  assert.equal(loaded.expectedSourceRevision, maxRevision)
+  assert.equal(persisted.expectedSourceRevision, maxRevision)
+  assert.equal((await successful.json()).sourceRevision, maxRevision)
 })
 
 test('投影Endpointは認証・source・revision/response不整合をfail closedにする', async () => {
@@ -393,6 +456,16 @@ test('投影Endpointは認証・source・revision/response不整合をfail close
     },
   )
   assert.equal(wrongIdentity.status, 502)
+  const wrongRevision = await handleLiveTimetableProjectionRequest(
+    jsonRequest(projectionRequest()),
+    {
+      ...baseDependencies,
+      async persistProjection() {
+        return { data: mutationValue({ sourceRevision: '4' }), error: null }
+      },
+    },
+  )
+  assert.equal(wrongRevision.status, 502)
   assert.equal(persistCalls, 0)
 
   const extraSourceField = sourceValue()
@@ -538,7 +611,7 @@ test('Repositoryはmutation identityと状態を厳密に照合する', async ()
     async createProjection() {
       return { data: {
         status: 'created', workspaceId, eventId: 'event-live', liveId, publicId,
-        sourceRevision: 3, sourceSnapshotFingerprint: 'a'.repeat(64),
+        sourceRevision: '3', sourceSnapshotFingerprint: 'a'.repeat(64),
         projectionVersion: '1', managementRevision: '1', isPublished: false,
       }, error: null }
     },
@@ -576,7 +649,7 @@ test('Repositoryはmutation identityと状態を厳密に照合する', async ()
   }
   const repository = createLiveTimetableRepository(baseGateway)
   assert.equal((await repository.createProjection({
-    workspaceId, eventId: 'event-live', expectedSourceRevision: 3,
+    workspaceId, eventId: 'event-live', expectedSourceRevision: '3',
     mode: 'create', expectedManagementRevision: null,
   })).ok, true)
   assert.equal((await repository.setPublication(liveId, '1', true)).ok, true)
@@ -601,7 +674,7 @@ test('Repositoryはmutation identityと状態を厳密に照合する', async ()
     },
   })
   assert.equal((await wrongIdentity.createProjection({
-    workspaceId, eventId: 'event-live', expectedSourceRevision: 3,
+    workspaceId, eventId: 'event-live', expectedSourceRevision: '3',
     mode: 'create', expectedManagementRevision: null,
   })).error.code, 'INVALID_RESPONSE')
   assert.equal((await wrongIdentity.setPublication(
@@ -699,7 +772,7 @@ test('Repositoryは既知のEdge error codeだけを保持し未知・壊れた�
   const create = repository => repository.createProjection({
     workspaceId,
     eventId: 'event-live',
-    expectedSourceRevision: 3,
+    expectedSourceRevision: '3',
     mode: 'create',
     expectedManagementRevision: null,
   })
@@ -820,10 +893,11 @@ test('Live foundation migrationは原子的・分離・fail-closed契約を保�
 })
 
 test('Live Edge FunctionとCIは固定Deno設定を使用する', async () => {
-  const [config, workflow, packageJson] = await Promise.all([
+  const [config, workflow, packageJson, edgeFunction] = await Promise.all([
     readFile(new URL('../supabase/functions/create-live-timetable/deno.json', import.meta.url), 'utf8'),
     readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'),
     readFile(new URL('../package.json', import.meta.url), 'utf8'),
+    readFile(new URL('../supabase/functions/create-live-timetable/index.ts', import.meta.url), 'utf8'),
   ])
   assert.deepEqual(JSON.parse(config), {
     nodeModulesDir: 'auto',
@@ -836,6 +910,12 @@ test('Live Edge FunctionとCIは固定Deno設定を使用する', async () => {
     JSON.parse(packageJson).scripts['test:live-timetable-http-realtime-smoke'],
     'node scripts/liveTimetableFoundationHttpRealtimeSmoke.mjs --confirm-disposable',
   )
+  assert.match(edgeFunction, /load_live_timetable_projection_source_serialized/)
+  assert.match(edgeFunction, /create_or_replace_live_timetable_projection_serialized/)
+  assert.doesNotMatch(edgeFunction,
+    /rpc\(\s*['"]load_live_timetable_projection_source['"]/)
+  assert.doesNotMatch(edgeFunction,
+    /rpc\(\s*['"]create_or_replace_live_timetable_projection['"]/)
 })
 
 test('実DB fixtureはrollback境界とStage単位の並行契約を検証する', async () => {
@@ -877,6 +957,12 @@ test('実DB fixtureはrollback境界とStage単位の並行契約を検証する
   assert.match(foundation, /Event without Live state was not deleted/i)
   assert.match(foundation, /Live progress changed Cloud Event persistence state/i)
   assert.match(foundation, /Private break title/i)
+  assert.match(foundation, /set local session_replication_role = replica/i)
+  assert.match(foundation,
+    /load_live_timetable_projection_source_serialized[\s\S]*9223372036854775807/i)
+  assert.match(foundation, /Serialized Live source revision lost bigint precision/i)
+  assert.match(foundation,
+    /create_or_replace_live_timetable_projection_serialized[\s\S]*9223372036854775807/i)
 
   assert.match(concurrency, /fixture already exists; inspect it manually/i)
   assert.doesNotMatch(

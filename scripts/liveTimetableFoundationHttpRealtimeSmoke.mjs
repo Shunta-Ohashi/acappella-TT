@@ -333,16 +333,16 @@ const run = async () => {
     for (const badBody of [
       {},
       {
-        workspaceId, eventId, expectedSourceRevision: 1,
+        workspaceId, eventId, expectedSourceRevision: '1',
         mode: 'create', expectedManagementRevision: null, unknown: true,
       },
       {
-        workspaceId, eventId, expectedSourceRevision: 1,
+        workspaceId, eventId, expectedSourceRevision: '1',
         mode: 'create', expectedManagementRevision: null,
         actorId: users.owner.id,
       },
       {
-        workspaceId, eventId, expectedSourceRevision: 1,
+        workspaceId, eventId, expectedSourceRevision: '1',
         mode: 'create', expectedManagementRevision: null,
         snapshot: snapshotResult.snapshot,
       },
@@ -353,14 +353,14 @@ const run = async () => {
     }
 
     const staleSource = await rawInvoke(sessions.owner.token, {
-      workspaceId, eventId, expectedSourceRevision: 2,
+      workspaceId, eventId, expectedSourceRevision: '2',
       mode: 'create', expectedManagementRevision: null,
     })
     assert.equal(staleSource.status, 409)
     assert.equal(staleSource.value?.error?.code, 'REVISION_CONFLICT')
 
     const missingEvent = await rawInvoke(sessions.owner.token, {
-      workspaceId, eventId: `missing-${suffix}`, expectedSourceRevision: 1,
+      workspaceId, eventId: `missing-${suffix}`, expectedSourceRevision: '1',
       mode: 'create', expectedManagementRevision: null,
     })
     assert.equal(missingEvent.status, 409)
@@ -377,7 +377,7 @@ const run = async () => {
     assert.equal(missingAuthorizedLive.error.code, 'LIVE_NOT_FOUND')
 
     const missingLive = await rawInvoke(sessions.owner.token, {
-      workspaceId, eventId, expectedSourceRevision: 1,
+      workspaceId, eventId, expectedSourceRevision: '1',
       mode: 'replace', expectedManagementRevision: '1',
     })
     assert.equal(missingLive.status, 409)
@@ -385,7 +385,7 @@ const run = async () => {
 
     for (const role of ['editor', 'viewer', 'outsider']) {
       const denied = await repositories[role].createProjection({
-        workspaceId, eventId, expectedSourceRevision: 1,
+        workspaceId, eventId, expectedSourceRevision: '1',
         mode: 'create', expectedManagementRevision: null,
       })
       assert.equal(denied.ok, false)
@@ -393,32 +393,32 @@ const run = async () => {
     }
 
     const backendDirect = await sessions.owner.client.rpc(
-      'load_live_timetable_projection_source',
+      'load_live_timetable_projection_source_serialized',
       {
         p_actor_id: users.owner.id,
         p_workspace_id: workspaceId,
         p_event_id: eventId,
-        p_expected_source_revision: 1,
+        p_expected_source_revision: '1',
       },
     )
     assert.notEqual(backendDirect.error, null)
 
     const created = await repositories.owner.createProjection({
-      workspaceId, eventId, expectedSourceRevision: 1,
+      workspaceId, eventId, expectedSourceRevision: '1',
       mode: 'create', expectedManagementRevision: null,
     })
     assert.equal(created.ok, true)
     const createdValue = created.value
     const liveId = createdValue.liveId
     const publicId = createdValue.publicId
-    assert.equal(createdValue.sourceRevision, 1)
+    assert.equal(createdValue.sourceRevision, '1')
     assert.match(createdValue.sourceSnapshotFingerprint, /^[0-9a-f]{64}$/u)
 
     const discovery = await repositories.viewer.findForEvent(workspaceId, eventId)
     assert.equal(discovery.ok, true)
     assert.equal(discovery.value.liveId, liveId)
     assert.equal(discovery.value.eventName, 'Live HTTP Realtime fixture')
-    assert.equal(discovery.value.sourceRevision, 1)
+    assert.equal(discovery.value.sourceRevision, '1')
     const candidates = await repositories.owner.listOperatorCandidates(liveId)
     assert.equal(candidates.ok, true)
     assert.deepEqual(
@@ -434,7 +434,7 @@ const run = async () => {
     assert.equal(deniedCandidates.error.code, 'ACCESS_DENIED')
 
     const duplicate = await repositories.owner.createProjection({
-      workspaceId, eventId, expectedSourceRevision: 1,
+      workspaceId, eventId, expectedSourceRevision: '1',
       mode: 'create', expectedManagementRevision: null,
     })
     assert.equal(duplicate.ok, false)
