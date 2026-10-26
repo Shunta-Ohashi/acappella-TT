@@ -1067,7 +1067,7 @@ function LiveTimetableOperatorWorkspace({
   }
 
   const closeLive = () => {
-    if (mutationPendingRef.current) return
+    if (mutationPendingRef.current || mutationReconciliationRef.current) return
     window.location.hash = ''
   }
 
@@ -1102,7 +1102,12 @@ function LiveTimetableOperatorWorkspace({
           handleBeforeAccountAction('workspace-switch')}
       >
         <main className="live-operator-page">
-          <button type="button" className="live-operator-back" onClick={closeLive}>
+          <button
+            type="button"
+            className="live-operator-back"
+            disabled={mutationPending || mutationReconciliationPending}
+            onClick={closeLive}
+          >
             ← イベント一覧へ
           </button>
           <section className="live-operator-empty" aria-labelledby="live-empty-title">
@@ -1167,7 +1172,12 @@ function LiveTimetableOperatorWorkspace({
     >
       <main className="live-operator-page" aria-labelledby="live-operator-title">
         <header className="live-operator-header">
-          <button type="button" className="live-operator-back" onClick={closeLive}>
+          <button
+            type="button"
+            className="live-operator-back"
+            disabled={mutationPending || mutationReconciliationPending}
+            onClick={closeLive}
+          >
             ← イベント一覧へ
           </button>
           <div>

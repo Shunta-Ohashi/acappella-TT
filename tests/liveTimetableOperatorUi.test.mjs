@@ -1406,7 +1406,7 @@ test('Live UIは独立route・再read・確認・非永続scopeを維持する',
   assert.match(page, /post-mutation/)
   assert.match(page, /createPostMutationReadBarrier/)
   assert.match(page, /minimumRequiredSequence: freshnessRequiredSequenceRef\.current/)
-  assert.match(page, /if \(mutationPendingRef\.current\) return/)
+  assert.match(page, /if \(mutationPendingRef\.current \|\| mutationReconciliationRef\.current\) return/)
   assert.match(page, /mutationPendingRef\.current = true/)
   assert.match(page, /mutationPendingRef\.current = false/)
   assert.match(page, /navigator\.onLine/)
@@ -1542,6 +1542,25 @@ test('Live account actions are blocked during mutation reconciliation', async ()
   assert.equal(
     (page.match(
       /navigationDisabled=\{mutationPending \|\| mutationReconciliationPending\}/g,
+    ) ?? []).length,
+    2,
+  )
+})
+
+test('Live exit remains blocked during mutation reconciliation', async () => {
+  const page = await readFile(
+    new URL('../src/components/LiveTimetableOperatorPage.tsx', import.meta.url),
+    'utf8',
+  )
+
+  assert.match(
+    page,
+    /const closeLive = \(\) => \{\s*if \(mutationPendingRef\.current \|\| mutationReconciliationRef\.current\) return/,
+  )
+
+  assert.equal(
+    (page.match(
+      /className="live-operator-back"\s+disabled=\{mutationPending \|\| mutationReconciliationPending\}\s+onClick=\{closeLive\}/g,
     ) ?? []).length,
     2,
   )
