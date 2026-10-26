@@ -1176,10 +1176,61 @@ test('Realtime通知は7列・現在scopeだけを再取得トリガーにする
   ), false)
   assert.equal(isMatchingLiveRealtimePayload(
     { ...row, revision: Number.MAX_SAFE_INTEGER + 1 }, workspaceId, liveId,
+  ), true)
+  assert.equal(isMatchingLiveRealtimePayload(
+    { ...row, live_timetable_id: 'other' }, workspaceId, liveId,
   ), false)
   assert.equal(isMatchingLiveRealtimePayload(
     { ...row, progress_status: 'unknown' }, workspaceId, liveId,
   ), false)
+})
+
+test('Realtime bigint列は正のnumberとPostgreSQL bigint文字列を通知として受理する', () => {
+  const row = {
+    id: '40000000-0000-0000-0000-000000000001',
+    workspace_id: workspaceId,
+    live_timetable_id: liveId,
+    projection_version: 1,
+    revision: 2,
+    progress_status: 'in_progress',
+    updated_at: '2026-10-21T00:00:00.000Z',
+  }
+  const acceptedValues = [
+    1,
+    Number.MAX_SAFE_INTEGER + 1,
+    '1',
+    '9007199254740992',
+    '9223372036854775807',
+  ]
+  for (const value of acceptedValues) {
+    assert.equal(isMatchingLiveRealtimePayload(
+      { ...row, projection_version: value, revision: value }, workspaceId, liveId,
+    ), true, `expected accepted Realtime bigint signal: ${String(value)}`)
+  }
+
+  const rejectedValues = [
+    0,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.MAX_VALUE,
+    '',
+    '0',
+    '-1',
+    '01',
+    '1.0',
+    '1e3',
+    '9223372036854775808',
+  ]
+  for (const value of rejectedValues) {
+    assert.equal(isMatchingLiveRealtimePayload(
+      { ...row, projection_version: value }, workspaceId, liveId,
+    ), false, `expected rejected projection_version: ${String(value)}`)
+    assert.equal(isMatchingLiveRealtimePayload(
+      { ...row, revision: value }, workspaceId, liveId,
+    ), false, `expected rejected revision: ${String(value)}`)
+  }
 })
 
 test('Live discoveryは32bit上限を超える安全整数revisionを保持する', () => {

@@ -2,6 +2,10 @@ import type {
   AuthorizedLiveTimetable,
   LiveTimetableStageView,
 } from './liveTimetableRepository.ts'
+import {
+  isPostgresBigintGeneration,
+  POSTGRES_BIGINT_MAX_GENERATION,
+} from '../cloud/cloudGeneration.ts'
 
 export const LIVE_TIMETABLE_REALTIME_COLUMNS = [
   'id',
@@ -486,6 +490,21 @@ export const resolveLiveOperatorCandidateSelection = (
   ? selectedUserId as string
   : candidates[0]?.userId ?? ''
 
+const isPositiveLiveRealtimeBigintSignal = (value: unknown): boolean => {
+  if (typeof value === 'string') {
+    return value !== '0' && isPostgresBigintGeneration(value)
+  }
+
+  // Realtime is only a wake-up signal for an authorized read. Some SDK paths
+  // decode PostgreSQL bigint as an imprecise number, so a positive finite
+  // integer remains a valid signal even outside the safe-integer range. The
+  // rounded numeric bigint boundary is only a coarse payload sanity check.
+  // Never use this number as an exact revision, for CAS, or to update state.
+  return typeof value === 'number' && Number.isFinite(value) &&
+    Number.isInteger(value) && value > 0 &&
+    value <= Number(POSTGRES_BIGINT_MAX_GENERATION)
+}
+
 export const isMatchingLiveRealtimePayload = (
   value: unknown,
   workspaceId: string,
@@ -500,10 +519,8 @@ export const isMatchingLiveRealtimePayload = (
     Object.keys(row).some(key => !expectedKeys.has(key))) return false
   return typeof row.id === 'string' && row.id.length > 0 &&
     row.workspace_id === workspaceId && row.live_timetable_id === liveId &&
-    typeof row.projection_version === 'number' &&
-    Number.isSafeInteger(row.projection_version) && row.projection_version > 0 &&
-    typeof row.revision === 'number' &&
-    Number.isSafeInteger(row.revision) && row.revision > 0 &&
+    isPositiveLiveRealtimeBigintSignal(row.projection_version) &&
+    isPositiveLiveRealtimeBigintSignal(row.revision) &&
     typeof row.progress_status === 'string' &&
     ['empty', 'not_started', 'waiting', 'in_progress', 'completed']
       .includes(row.progress_status) &&
