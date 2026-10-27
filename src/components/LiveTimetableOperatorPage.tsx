@@ -1371,37 +1371,49 @@ function LiveTimetableOperatorWorkspace({
                 {orderedManagementStages.map(stage => {
                   const assignments = live.operators.filter(operator =>
                     operator.stageId === stage.stageId)
+                  const stageTargetLabel = describeLiveStageManagementTarget(
+                    stage,
+                    live.eventDays,
+                  )
                   const selectedCandidate = resolveLiveOperatorCandidateSelection(
                     selectedCandidateByStage[stage.stageId ?? ''],
                     currentCandidates,
                   )
                   return (
                     <article key={stage.stageId} className="live-operator-management__stage">
-                      <h3>{describeLiveStageManagementTarget(stage, live.eventDays)}</h3>
+                      <h3>{stageTargetLabel}</h3>
                       {assignments.length > 0 ? (
                         <ul>
                           {assignments.map(assignment => {
                             const candidate = currentCandidates.find(item =>
                               item.userId === assignment.userId)
+                            const operatorDisplayName = candidate?.displayName ??
+                              `現在の候補外 (${assignment.userId.slice(0, 8)}…)`
                             return (
                               <li key={assignment.userId}>
-                                <span>{candidate?.displayName ?? `現在の候補外 (${assignment.userId.slice(0, 8)}…)`}</span>
-                                {candidate && (
+                                <span className="live-operator-management__assignment-name">
+                                  {operatorDisplayName}
+                                </span>
+                                <div className="live-operator-management__assignment-actions">
+                                  {candidate && (
+                                    <button
+                                      type="button"
+                                      aria-label={`${stageTargetLabel}の担当者${operatorDisplayName}を現在の権限で再割当`}
+                                      disabled={mutationBlocked || stale}
+                                      onClick={() => void changeOperator(stage, assignment.userId, true)}
+                                    >
+                                      再割当
+                                    </button>
+                                  )}
                                   <button
                                     type="button"
+                                    aria-label={`${stageTargetLabel}の担当者${operatorDisplayName}を解除`}
                                     disabled={mutationBlocked || stale}
-                                    onClick={() => void changeOperator(stage, assignment.userId, true)}
+                                    onClick={() => void changeOperator(stage, assignment.userId, false)}
                                   >
-                                    現在の権限で再割当
+                                    解除
                                   </button>
-                                )}
-                                <button
-                                  type="button"
-                                  disabled={mutationBlocked || stale}
-                                  onClick={() => void changeOperator(stage, assignment.userId, false)}
-                                >
-                                  解除
-                                </button>
+                                </div>
                               </li>
                             )
                           })}

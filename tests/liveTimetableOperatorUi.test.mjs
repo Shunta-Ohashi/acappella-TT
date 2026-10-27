@@ -1768,6 +1768,44 @@ test('Live UIは独立route・再read・確認・非永続scopeを維持する',
   assert.doesNotMatch(page, /localStorage|sessionStorage/)
 })
 
+test('Live担当者管理は狭い画面でselectと操作ボタンを横にはみ出させない', async () => {
+  const [page, css] = await Promise.all([
+    readFile(new URL('../src/components/LiveTimetableOperatorPage.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/components/LiveTimetableOperatorPage.css', import.meta.url), 'utf8'),
+  ])
+
+  assert.match(
+    css,
+    /\.live-operator-controls select,\s*\.live-operator-management select\s*\{[\s\S]*?box-sizing:\s*border-box;[\s\S]*?width:\s*100%;[\s\S]*?min-width:\s*0;[\s\S]*?max-width:\s*100%;/,
+  )
+  assert.match(
+    css,
+    /\.live-operator-controls label,\s*\.live-operator-management label\s*\{[\s\S]*?min-width:\s*0;/,
+  )
+  assert.match(
+    css,
+    /\.live-operator-management__assignment-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);[\s\S]*?width:\s*100%;/,
+  )
+  assert.match(
+    css,
+    /\.live-operator-management__assignment-name\s*\{[\s\S]*?overflow-wrap:\s*anywhere;/,
+  )
+  assert.match(css, /\.live-operator-management__stage button\s*\{\s*min-height:\s*2\.75rem;/)
+  assert.doesNotMatch(css, /\.live-operator-management[^{}]*\{[^}]*overflow:\s*hidden;/)
+
+  assert.match(page, /className="live-operator-management__assignment-actions"/)
+  assert.match(page, />\s*再割当\s*<\/button>/)
+  assert.match(page, />\s*解除\s*<\/button>/)
+  assert.match(
+    page,
+    /aria-label=\{`\$\{stageTargetLabel\}の担当者\$\{operatorDisplayName\}を現在の権限で再割当`\}/,
+  )
+  assert.match(
+    page,
+    /aria-label=\{`\$\{stageTargetLabel\}の担当者\$\{operatorDisplayName\}を解除`\}/,
+  )
+})
+
 test('retained App外へ出るPortalはactivity境界に参加する3種だけである', async () => {
   const sourceRoot = new URL('../src/', import.meta.url)
   const paths = await readdir(sourceRoot, { recursive: true })

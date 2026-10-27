@@ -7,6 +7,7 @@
 
 .live-operator-page {
   width: min(100%, 76rem);
+  min-width: 0;
   margin: 0 auto;
   padding: 0.75rem;
   color: #172033;
@@ -119,6 +120,7 @@
 .live-operator-management label {
   display: grid;
   gap: 0.25rem;
+  min-width: 0;
   color: #4a5568;
   font-size: 0.78rem;
   font-weight: 700;
@@ -126,6 +128,9 @@
 
 .live-operator-controls select,
 .live-operator-management select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   min-height: 2.75rem;
   max-width: 100%;
   padding: 0.45rem 0.55rem;
@@ -328,6 +333,7 @@
 }
 
 .live-operator-management__stage {
+  min-width: 0;
   margin-top: 0.75rem;
   padding: 0.8rem;
   border: 1px solid #dfe5ee;
@@ -350,10 +356,35 @@
 .live-operator-management__assign {
   display: grid;
   gap: 0.5rem;
+  min-width: 0;
 }
 
 .live-operator-management__stage button {
-  min-height: 2.5rem;
+  min-height: 2.75rem;
+}
+
+.live-operator-management__assignment-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.live-operator-management__assignment-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  min-width: 0;
+  width: 100%;
+}
+
+.live-operator-management__assignment-actions button {
+  min-width: 0;
+  width: 100%;
+  padding-right: 0.65rem;
+  padding-left: 0.65rem;
+}
+
+.live-operator-management__assignment-actions button:only-child {
+  grid-column: 1 / -1;
 }
 
 @media (min-width: 42rem) {
@@ -384,8 +415,17 @@
   }
 
   .live-operator-management__stage li {
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
+  }
+
+  .live-operator-management__assignment-actions {
+    grid-template-columns: repeat(2, max-content);
+    width: auto;
+  }
+
+  .live-operator-management__assignment-actions button:only-child {
+    grid-column: auto;
   }
 
   .live-operator-management__assign {
