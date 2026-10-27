@@ -1079,6 +1079,57 @@ test('discoveryと担当候補readもSupabase adapterへAbortSignalを渡す', a
   ])
 })
 
+test('Supabase adapterはmutation対象の期待identityをRPCへ渡す', async () => {
+  const calls = []
+  const expectedStageId = '10000000-0000-0000-0000-000000000003'
+  const client = {
+    rpc(name, params) {
+      calls.push([name, params])
+      return Promise.resolve({ data: null, error: null })
+    },
+  }
+  const gateway = createSupabaseLiveTimetableGateway(client)
+  await gateway.setStageOperator({
+    liveId,
+    sourceStageId: 'stage-main',
+    expectedStageId,
+    operatorUserId: userId,
+    assign: true,
+    expectedManagementRevision: '4',
+    expectedProjectionVersion: '2',
+  })
+  await gateway.transitionEntry({
+    operation: 'start',
+    liveId,
+    sourceStageId: 'stage-main',
+    expectedStageId,
+    sourceScheduleItemId: 'item-main',
+    expectedEntryPosition: 7,
+    expectedStageRevision: '8',
+    expectedProjectionVersion: '2',
+  })
+  assert.deepEqual(calls, [
+    ['set_live_timetable_stage_operator', {
+      p_live_id: liveId,
+      p_source_stage_id: 'stage-main',
+      p_expected_stage_id: expectedStageId,
+      p_operator_user_id: userId,
+      p_assign: true,
+      p_expected_management_revision: '4',
+      p_expected_projection_version: '2',
+    }],
+    ['start_live_timetable_entry', {
+      p_live_id: liveId,
+      p_source_stage_id: 'stage-main',
+      p_expected_stage_id: expectedStageId,
+      p_source_schedule_item_id: 'item-main',
+      p_expected_entry_position: 7,
+      p_expected_stage_revision: '8',
+      p_expected_projection_version: '2',
+    }],
+  ])
+})
+
 test('担当候補readは最新sequence・現在scope・現在Liveだけを反映する', () => {
   const token = { liveId, scopeKey: 'scope-a', sequence: 3 }
   assert.equal(canApplyLiveOperatorCandidateRead({
@@ -1590,6 +1641,41 @@ test('migration #16はviewer grant snapshot・public分離・RPC ACLを追加す
   assert.match(sql,
     /foreach signature in array array\[[\s\S]*public\.build_live_timetable_stages_json\(uuid,uuid,text,boolean\)[\s\S]*public\.load_live_timetable_authorized_v15\(uuid\)[\s\S]*has_function_privilege\(role_name, function_oid, 'EXECUTE'\)/i)
   assert.match(sql, /PUBLIC can execute internal helper/i)
+
+  assert.match(sql,
+    /drop function public\.set_live_timetable_stage_operator\(\s*uuid, text, uuid, boolean, text, text\s*\)/i)
+  assert.match(sql,
+    /create function public\.set_live_timetable_stage_operator\([\s\S]*p_expected_stage_id uuid/i)
+  assert.match(sql,
+    /create function public\.transition_live_timetable_entry\([\s\S]*p_expected_stage_id uuid[\s\S]*p_expected_entry_position integer/i)
+  assert.match(sql,
+    /create function public\.start_live_timetable_entry\([\s\S]*p_expected_stage_id uuid[\s\S]*p_expected_entry_position integer/i)
+  assert.match(sql,
+    /create function public\.end_live_timetable_entry\([\s\S]*p_expected_stage_id uuid[\s\S]*p_expected_entry_position integer/i)
+  const operatorFunction = sql.slice(
+    sql.indexOf('create function public.set_live_timetable_stage_operator'),
+    sql.indexOf('revoke all on function public.set_live_timetable_stage_operator'),
+  )
+  assert.ok(operatorFunction.indexOf(
+    'target_stage_id is distinct from p_expected_stage_id',
+  ) < operatorFunction.indexOf(
+    'insert into public.live_timetable_stage_operators',
+  ))
+  const transitionFunction = sql.slice(
+    sql.indexOf('create function public.transition_live_timetable_entry'),
+    sql.indexOf('revoke all on function public.transition_live_timetable_entry'),
+  )
+  assert.ok(transitionFunction.indexOf(
+    'stage_row.id is distinct from p_expected_stage_id',
+  ) < transitionFunction.indexOf(
+    'update public.live_timetable_entries',
+  ))
+  assert.ok(transitionFunction.indexOf(
+    'entry_row.position is distinct from p_expected_entry_position',
+  ) < transitionFunction.indexOf(
+    'update public.live_timetable_entries',
+  ))
+  assert.match(sql, /Legacy Live mutation overload remains/i)
 })
 
 test('Live UIは独立route・再read・確認・非永続scopeを維持する', async () => {

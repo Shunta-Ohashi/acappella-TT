@@ -174,6 +174,53 @@ as $$
   )
 $$;
 
+create or replace function pg_temp.live_stage_id(
+  p_live_id uuid,
+  p_source_stage_id text
+)
+returns uuid
+language sql
+stable
+as $$
+  select id
+  from public.live_timetable_stages
+  where live_timetable_id = p_live_id
+    and source_stage_id = p_source_stage_id
+$$;
+
+create or replace function pg_temp.live_state(p_live_id uuid)
+returns jsonb
+language sql
+stable
+as $$
+  select jsonb_build_object(
+    'live', (
+      select to_jsonb(live_row)
+      from public.live_timetables as live_row
+      where live_row.id = p_live_id
+    ),
+    'stages', (
+      select coalesce(jsonb_agg(to_jsonb(stage_row) order by stage_row.id), '[]')
+      from public.live_timetable_stages as stage_row
+      where stage_row.live_timetable_id = p_live_id
+    ),
+    'entries', (
+      select coalesce(jsonb_agg(to_jsonb(entry_row) order by entry_row.id), '[]')
+      from public.live_timetable_entries as entry_row
+      where entry_row.live_timetable_id = p_live_id
+    ),
+    'operators', (
+      select coalesce(
+        jsonb_agg(to_jsonb(operator_row) order by operator_row.stage_id,
+          operator_row.user_id),
+        '[]'
+      )
+      from public.live_timetable_stage_operators as operator_row
+      where operator_row.live_timetable_id = p_live_id
+    )
+  )
+$$;
+
 insert into auth.users (
   id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data, created_at, updated_at
@@ -362,6 +409,20 @@ begin
       where live_timetable_id = target_live_id) then
     raise exception 'Projection replacement contract is invalid';
   end if;
+  perform set_config(
+    'test.stage_a_id',
+    (select id::text from public.live_timetable_stages
+      where live_timetable_id = target_live_id
+        and source_stage_id = 'live-stage-a'),
+    true
+  );
+  perform set_config(
+    'test.stage_b_id',
+    (select id::text from public.live_timetable_stages
+      where live_timetable_id = target_live_id
+        and source_stage_id = 'live-stage-b'),
+    true
+  );
 
   begin
     perform public.create_or_replace_live_timetable_projection_serialized(
@@ -395,7 +456,9 @@ begin
   end;
   begin
     perform public.start_live_timetable_entry(
-      target_live_id, 'live-stage-a', 'live-item-a', '1', '2'
+      target_live_id, 'live-stage-a',
+      pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+      'live-item-a', 0, '1', '2'
     );
     raise exception 'Viewer progress mutation was accepted' using errcode = 'P0004';
   exception when insufficient_privilege then null;
@@ -450,7 +513,9 @@ begin
   target_live_id := current_setting('test.live_id')::uuid;
   begin
     perform public.start_live_timetable_entry(
-      target_live_id, 'live-stage-a', 'live-item-a', '1', '2'
+      target_live_id, 'live-stage-a',
+      pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+      'live-item-a', 0, '1', '2'
     );
     raise exception 'Unassigned editor progress was accepted' using errcode = 'P0004';
   exception when insufficient_privilege then null;
@@ -487,6 +552,7 @@ begin
   end if;
   assignment_result := public.set_live_timetable_stage_operator(
     target_live_id, 'live-stage-a',
+    pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
     '00000000-0000-4000-8000-000000000082', true,
     '3', '2'
   );
@@ -495,6 +561,7 @@ begin
   end if;
   viewer_assignment_result := public.set_live_timetable_stage_operator(
     target_live_id, 'live-stage-a',
+    pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
     '00000000-0000-4000-8000-000000000083', true,
     '4', '2'
   );
@@ -513,6 +580,79 @@ begin
   end if;
 end
 $owner_assigns$;
+
+reset role;
+do $mutation_identity_guards$
+declare
+  target_live_id uuid := current_setting('test.live_id')::uuid;
+  stage_a_id uuid;
+  stage_b_id uuid;
+  before_state jsonb;
+begin
+  stage_a_id := pg_temp.live_stage_id(target_live_id, 'live-stage-a');
+  stage_b_id := pg_temp.live_stage_id(target_live_id, 'live-stage-b');
+  before_state := pg_temp.live_state(target_live_id);
+
+  begin
+    perform public.set_live_timetable_stage_operator(
+      target_live_id, 'live-stage-a', stage_b_id,
+      '00000000-0000-4000-8000-000000000082', true, '5', '2'
+    );
+    raise exception 'Operator assignment accepted a mismatched Stage identity'
+      using errcode = 'P0004';
+  exception when sqlstate '40001' then null;
+  end;
+  begin
+    perform public.set_live_timetable_stage_operator(
+      target_live_id, 'live-stage-a', stage_b_id,
+      '00000000-0000-4000-8000-000000000083', false, '5', '2'
+    );
+    raise exception 'Operator removal accepted a mismatched Stage identity'
+      using errcode = 'P0004';
+  exception when sqlstate '40001' then null;
+  end;
+  begin
+    perform public.start_live_timetable_entry(
+      target_live_id, 'live-stage-a', stage_b_id,
+      'live-item-a', 0, '1', '2'
+    );
+    raise exception 'Start accepted a mismatched Stage identity'
+      using errcode = 'P0004';
+  exception when sqlstate '40001' then null;
+  end;
+  begin
+    perform public.start_live_timetable_entry(
+      target_live_id, 'live-stage-a', stage_a_id,
+      'live-item-a', 99, '1', '2'
+    );
+    raise exception 'Start accepted a mismatched entry position'
+      using errcode = 'P0004';
+  exception when sqlstate '40001' then null;
+  end;
+  begin
+    perform public.end_live_timetable_entry(
+      target_live_id, 'live-stage-a', stage_b_id,
+      'live-item-a', 0, '1', '2'
+    );
+    raise exception 'End accepted a mismatched Stage identity'
+      using errcode = 'P0004';
+  exception when sqlstate '40001' then null;
+  end;
+  begin
+    perform public.end_live_timetable_entry(
+      target_live_id, 'live-stage-a', stage_a_id,
+      'live-item-a', 99, '1', '2'
+    );
+    raise exception 'End accepted a mismatched entry position'
+      using errcode = 'P0004';
+  exception when sqlstate '40001' then null;
+  end;
+
+  if pg_temp.live_state(target_live_id) is distinct from before_state then
+    raise exception 'Rejected mutation identity mismatch changed Live state';
+  end if;
+end
+$mutation_identity_guards$;
 
 reset role;
 do $same_role_update_preserves_epoch$
@@ -552,7 +692,11 @@ begin
   begin
     perform public.start_live_timetable_entry(
       current_setting('test.live_id')::uuid,
-      'live-stage-a', 'live-item-a', '1', '2'
+      'live-stage-a',
+      pg_temp.live_stage_id(
+        current_setting('test.live_id')::uuid, 'live-stage-a'
+      ),
+      'live-item-a', 0, '1', '2'
     );
     raise exception 'Viewer grant became an editor grant after role change'
       using errcode = 'P0004';
@@ -588,7 +732,11 @@ begin
   begin
     perform public.start_live_timetable_entry(
       current_setting('test.live_id')::uuid,
-      'live-stage-a', 'live-item-a', '1', '2'
+      'live-stage-a',
+      pg_temp.live_stage_id(
+        current_setting('test.live_id')::uuid, 'live-stage-a'
+      ),
+      'live-item-a', 0, '1', '2'
     );
     raise exception 'Role round trip revived a stale viewer grant'
       using errcode = 'P0004';
@@ -608,6 +756,9 @@ begin
   result := public.set_live_timetable_stage_operator(
     current_setting('test.live_id')::uuid,
     'live-stage-a',
+    pg_temp.live_stage_id(
+      current_setting('test.live_id')::uuid, 'live-stage-a'
+    ),
     '00000000-0000-4000-8000-000000000083',
     true,
     '5',
@@ -631,10 +782,14 @@ declare
 begin
   target_live_id := current_setting('test.live_id')::uuid;
   start_result := public.start_live_timetable_entry(
-    target_live_id, 'live-stage-a', 'live-item-a', '1', '2'
+    target_live_id, 'live-stage-a',
+    pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+    'live-item-a', 0, '1', '2'
   );
   end_result := public.end_live_timetable_entry(
-    target_live_id, 'live-stage-a', 'live-item-a', '2', '2'
+    target_live_id, 'live-stage-a',
+    pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+    'live-item-a', 0, '2', '2'
   );
   if start_result ->> 'stageRevision' <> '2'
     or end_result ->> 'stageRevision' <> '3'
@@ -643,7 +798,9 @@ begin
   end if;
   begin
     perform public.start_live_timetable_entry(
-      target_live_id, 'live-stage-b', 'live-item-a', '1', '2'
+      target_live_id, 'live-stage-b',
+      pg_temp.live_stage_id(target_live_id, 'live-stage-b'),
+      'live-item-a', 0, '1', '2'
     );
     raise exception 'Assigned viewer operated an unassigned Stage'
       using errcode = 'P0004';
@@ -663,6 +820,9 @@ begin
   result := public.set_live_timetable_stage_operator(
     current_setting('test.live_id')::uuid,
     'live-stage-a',
+    pg_temp.live_stage_id(
+      current_setting('test.live_id')::uuid, 'live-stage-a'
+    ),
     '00000000-0000-4000-8000-000000000083',
     false,
     '6',
@@ -683,7 +843,11 @@ begin
   begin
     perform public.start_live_timetable_entry(
       current_setting('test.live_id')::uuid,
-      'live-stage-a', 'live-break', '3', '2'
+      'live-stage-a',
+      pg_temp.live_stage_id(
+        current_setting('test.live_id')::uuid, 'live-stage-a'
+      ),
+      'live-break', 1, '3', '2'
     );
     raise exception 'Removed viewer retained progress permission'
       using errcode = 'P0004';
@@ -706,14 +870,18 @@ begin
 
   begin
     perform public.start_live_timetable_entry(
-      target_live_id, 'live-stage-a', 'live-item-b', '3', '2'
+      target_live_id, 'live-stage-a',
+      pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+      'live-item-b', 2, '3', '2'
     );
     raise exception 'Non-first pending entry was accepted' using errcode = 'P0004';
   exception when sqlstate '55000' then null;
   end;
 
   break_start_result := public.start_live_timetable_entry(
-    target_live_id, 'live-stage-a', 'live-break', '3', '2'
+    target_live_id, 'live-stage-a',
+    pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+    'live-break', 1, '3', '2'
   );
   if break_start_result ->> 'progressStatus' <> 'in_progress'
     or break_start_result ->> 'stageRevision' <> '4'
@@ -723,7 +891,9 @@ begin
     raise exception 'Break start result is inconsistent';
   end if;
   break_end_result := public.end_live_timetable_entry(
-    target_live_id, 'live-stage-a', 'live-break', '4', '2'
+    target_live_id, 'live-stage-a',
+    pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+    'live-break', 1, '4', '2'
   );
   if break_end_result ->> 'progressStatus' <> 'waiting'
     or break_end_result ->> 'stageRevision' <> '5'
@@ -733,7 +903,9 @@ begin
   end if;
   begin
     perform public.end_live_timetable_entry(
-      target_live_id, 'live-stage-a', 'live-break', '5', '2'
+      target_live_id, 'live-stage-a',
+      pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+      'live-break', 1, '5', '2'
     );
     raise exception 'Repeated Break end was accepted' using errcode = 'P0004';
   exception when sqlstate '55000' then null;
@@ -784,7 +956,9 @@ begin
   target_live_id := current_setting('test.live_id')::uuid;
   begin
     perform public.start_live_timetable_entry(
-      target_live_id, 'live-stage-a', 'live-item-b', '5', '2'
+      target_live_id, 'live-stage-a',
+      pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+      'live-item-b', 2, '5', '2'
     );
     raise exception 'Viewer with stale operator assignment was accepted'
       using errcode = 'P0004';
@@ -805,6 +979,9 @@ begin
   result := public.set_live_timetable_stage_operator(
     current_setting('test.live_id')::uuid,
     'live-stage-a',
+    pg_temp.live_stage_id(
+      current_setting('test.live_id')::uuid, 'live-stage-a'
+    ),
     '00000000-0000-4000-8000-000000000082',
     true,
     '7',
@@ -852,6 +1029,9 @@ begin
   result := public.set_live_timetable_stage_operator(
     current_setting('test.live_id')::uuid,
     'live-stage-a',
+    pg_temp.live_stage_id(
+      current_setting('test.live_id')::uuid, 'live-stage-a'
+    ),
     '00000000-0000-4000-8000-000000000082',
     true,
     '8',
@@ -904,6 +1084,9 @@ begin
   result := public.set_live_timetable_stage_operator(
     current_setting('test.live_id')::uuid,
     'live-stage-a',
+    pg_temp.live_stage_id(
+      current_setting('test.live_id')::uuid, 'live-stage-a'
+    ),
     '00000000-0000-4000-8000-000000000083',
     false,
     '9',
@@ -930,6 +1113,9 @@ begin
     perform public.set_live_timetable_stage_operator(
       current_setting('test.live_id')::uuid,
       'live-stage-a',
+      pg_temp.live_stage_id(
+        current_setting('test.live_id')::uuid, 'live-stage-a'
+      ),
       '00000000-0000-4000-8000-000000000082',
       true,
       '9',
@@ -1003,7 +1189,9 @@ begin
   begin
     perform public.start_live_timetable_entry(
       current_setting('test.live_id')::uuid,
-      'live-stage-a', 'live-item-b', '5', '2'
+      'live-stage-a',
+      current_setting('test.stage_a_id')::uuid,
+      'live-item-b', 2, '5', '2'
     );
     raise exception 'Removed member retained Live progress permission'
       using errcode = 'P0004';
@@ -1042,10 +1230,14 @@ declare
 begin
   target_live_id := current_setting('test.live_id')::uuid;
   start_result := public.start_live_timetable_entry(
-    target_live_id, 'live-stage-a', 'live-item-b', '5', '2'
+    target_live_id, 'live-stage-a',
+    pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+    'live-item-b', 2, '5', '2'
   );
   end_result := public.end_live_timetable_entry(
-    target_live_id, 'live-stage-a', 'live-item-b', '6', '2'
+    target_live_id, 'live-stage-a',
+    pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+    'live-item-b', 2, '6', '2'
   );
   if start_result ->> 'stageRevision' <> '6'
     or end_result ->> 'stageRevision' <> '7'

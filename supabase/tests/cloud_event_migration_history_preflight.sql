@@ -2523,9 +2523,18 @@ later_schema as (
           to_regprocedure('public.load_live_timetable_authorized(uuid)'),
           to_regprocedure('public.load_live_timetable_public(uuid)'),
           to_regprocedure('public.set_live_timetable_publication(uuid,text,boolean)'),
-          to_regprocedure('public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)'),
-          to_regprocedure('public.start_live_timetable_entry(uuid,text,text,text,text)'),
-          to_regprocedure('public.end_live_timetable_entry(uuid,text,text,text,text)')
+          coalesce(
+            to_regprocedure('public.set_live_timetable_stage_operator(uuid,text,uuid,uuid,boolean,text,text)'),
+            to_regprocedure('public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)')
+          ),
+          coalesce(
+            to_regprocedure('public.start_live_timetable_entry(uuid,text,uuid,text,integer,text,text)'),
+            to_regprocedure('public.start_live_timetable_entry(uuid,text,text,text,text)')
+          ),
+          coalesce(
+            to_regprocedure('public.end_live_timetable_entry(uuid,text,uuid,text,integer,text,text)'),
+            to_regprocedure('public.end_live_timetable_entry(uuid,text,text,text,text)')
+          )
         ]))
       and coalesce((select has_function_privilege(
         service_role.oid,
@@ -2559,17 +2568,26 @@ later_schema as (
       ) from authenticated_role), false)
       and coalesce((select has_function_privilege(
         authenticated_role.oid,
-        to_regprocedure('public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)'),
+        coalesce(
+          to_regprocedure('public.set_live_timetable_stage_operator(uuid,text,uuid,uuid,boolean,text,text)'),
+          to_regprocedure('public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)')
+        ),
         'EXECUTE'
       ) from authenticated_role), false)
       and coalesce((select has_function_privilege(
         authenticated_role.oid,
-        to_regprocedure('public.start_live_timetable_entry(uuid,text,text,text,text)'),
+        coalesce(
+          to_regprocedure('public.start_live_timetable_entry(uuid,text,uuid,text,integer,text,text)'),
+          to_regprocedure('public.start_live_timetable_entry(uuid,text,text,text,text)')
+        ),
         'EXECUTE'
       ) from authenticated_role), false)
       and coalesce((select has_function_privilege(
         authenticated_role.oid,
-        to_regprocedure('public.end_live_timetable_entry(uuid,text,text,text,text)'),
+        coalesce(
+          to_regprocedure('public.end_live_timetable_entry(uuid,text,uuid,text,integer,text,text)'),
+          to_regprocedure('public.end_live_timetable_entry(uuid,text,text,text,text)')
+        ),
         'EXECUTE'
       ) from authenticated_role), false)
       and not coalesce((select has_function_privilege(
@@ -2600,9 +2618,18 @@ later_schema as (
           (to_regprocedure('public.load_live_timetable_authorized(uuid)')),
           (to_regprocedure('public.load_live_timetable_public(uuid)')),
           (to_regprocedure('public.set_live_timetable_publication(uuid,text,boolean)')),
-          (to_regprocedure('public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)')),
-          (to_regprocedure('public.start_live_timetable_entry(uuid,text,text,text,text)')),
-          (to_regprocedure('public.end_live_timetable_entry(uuid,text,text,text,text)'))
+          (coalesce(
+            to_regprocedure('public.set_live_timetable_stage_operator(uuid,text,uuid,uuid,boolean,text,text)'),
+            to_regprocedure('public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)')
+          )),
+          (coalesce(
+            to_regprocedure('public.start_live_timetable_entry(uuid,text,uuid,text,integer,text,text)'),
+            to_regprocedure('public.start_live_timetable_entry(uuid,text,text,text,text)')
+          )),
+          (coalesce(
+            to_regprocedure('public.end_live_timetable_entry(uuid,text,uuid,text,integer,text,text)'),
+            to_regprocedure('public.end_live_timetable_entry(uuid,text,text,text,text)')
+          ))
         ) as exposed_function(oid)
         cross join lateral pg_catalog.aclexplode(coalesce(
           (select pg_proc.proacl from pg_catalog.pg_proc
@@ -2628,7 +2655,10 @@ later_schema as (
           (to_regprocedure('public.populate_live_timetable_projection(uuid,uuid,jsonb,bigint)')),
           (to_regprocedure('public.build_live_timetable_stages_json(uuid,uuid,text,boolean)')),
           (to_regprocedure('public.is_live_timetable_revision_text(text)')),
-          (to_regprocedure('public.transition_live_timetable_entry(text,uuid,text,text,text,text)'))
+          (coalesce(
+            to_regprocedure('public.transition_live_timetable_entry(text,uuid,text,uuid,text,integer,text,text)'),
+            to_regprocedure('public.transition_live_timetable_entry(text,uuid,text,text,text,text)')
+          ))
         ) as internal_function(oid)
         cross join (
           select authenticated_role.oid from authenticated_role
@@ -2645,9 +2675,18 @@ later_schema as (
         from (values
           (to_regprocedure('public.load_live_timetable_authorized(uuid)')),
           (to_regprocedure('public.set_live_timetable_publication(uuid,text,boolean)')),
-          (to_regprocedure('public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)')),
-          (to_regprocedure('public.start_live_timetable_entry(uuid,text,text,text,text)')),
-          (to_regprocedure('public.end_live_timetable_entry(uuid,text,text,text,text)'))
+          (coalesce(
+            to_regprocedure('public.set_live_timetable_stage_operator(uuid,text,uuid,uuid,boolean,text,text)'),
+            to_regprocedure('public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)')
+          )),
+          (coalesce(
+            to_regprocedure('public.start_live_timetable_entry(uuid,text,uuid,text,integer,text,text)'),
+            to_regprocedure('public.start_live_timetable_entry(uuid,text,text,text,text)')
+          )),
+          (coalesce(
+            to_regprocedure('public.end_live_timetable_entry(uuid,text,uuid,text,integer,text,text)'),
+            to_regprocedure('public.end_live_timetable_entry(uuid,text,text,text,text)')
+          ))
         ) as authenticated_function(oid)
         cross join (
           select anon_role.oid from anon_role
@@ -2962,8 +3001,8 @@ later_schema as (
         where pg_proc.oid = any(array[
           to_regprocedure('public.build_live_timetable_stages_json(uuid,uuid,text,boolean)'),
           to_regprocedure('public.load_live_timetable_public(uuid)'),
-          to_regprocedure('public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)'),
-          to_regprocedure('public.transition_live_timetable_entry(text,uuid,text,text,text,text)'),
+          to_regprocedure('public.set_live_timetable_stage_operator(uuid,text,uuid,uuid,boolean,text,text)'),
+          to_regprocedure('public.transition_live_timetable_entry(text,uuid,text,uuid,text,integer,text,text)'),
           to_regprocedure('public.find_live_timetable_for_event_authorized(uuid,text)'),
           to_regprocedure('public.list_live_timetable_operator_candidates(uuid)')
         ]))
@@ -3006,20 +3045,40 @@ later_schema as (
         ))) like '%create_or_replace_live_timetable_projection%jsonb_set%sourcerevision%'
       and lower((select pg_proc.prosrc from pg_catalog.pg_proc
         where pg_proc.oid = to_regprocedure(
-          'public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)'
+          'public.set_live_timetable_stage_operator(uuid,text,uuid,uuid,boolean,text,text)'
         ))) like '%operator_role not in (''editor'', ''viewer'')%'
       and lower((select pg_proc.prosrc from pg_catalog.pg_proc
         where pg_proc.oid = to_regprocedure(
-          'public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)'
+          'public.set_live_timetable_stage_operator(uuid,text,uuid,uuid,boolean,text,text)'
         ))) like '%set granted_role = excluded.granted_role%granted_authorization_epoch =%excluded.granted_authorization_epoch%'
       and lower((select pg_proc.prosrc from pg_catalog.pg_proc
         where pg_proc.oid = to_regprocedure(
-          'public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)'
+          'public.set_live_timetable_stage_operator(uuid,text,uuid,uuid,boolean,text,text)'
         ))) like '%created_at = excluded.created_at%management_revision = management_revision + 1%'
       and lower((select pg_proc.prosrc from pg_catalog.pg_proc
         where pg_proc.oid = to_regprocedure(
-          'public.transition_live_timetable_entry(text,uuid,text,text,text,text)'
+          'public.transition_live_timetable_entry(text,uuid,text,uuid,text,integer,text,text)'
         ))) like '%assignment.granted_role = membership_role%assignment.granted_authorization_epoch =%membership_authorization_epoch%'
+      and lower((select pg_proc.prosrc from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+          'public.set_live_timetable_stage_operator(uuid,text,uuid,uuid,boolean,text,text)'
+        ))) like '%target_stage_id is distinct from p_expected_stage_id%'
+      and lower((select pg_proc.prosrc from pg_catalog.pg_proc
+        where pg_proc.oid = to_regprocedure(
+          'public.transition_live_timetable_entry(text,uuid,text,uuid,text,integer,text,text)'
+        ))) like '%stage_row.id is distinct from p_expected_stage_id%entry_row.position is distinct from p_expected_entry_position%'
+      and to_regprocedure(
+        'public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)'
+      ) is null
+      and to_regprocedure(
+        'public.start_live_timetable_entry(uuid,text,text,text,text)'
+      ) is null
+      and to_regprocedure(
+        'public.end_live_timetable_entry(uuid,text,text,text,text)'
+      ) is null
+      and to_regprocedure(
+        'public.transition_live_timetable_entry(text,uuid,text,text,text,text)'
+      ) is null
       and lower((select pg_proc.prosrc from pg_catalog.pg_proc
         where pg_proc.oid = to_regprocedure(
           'public.find_live_timetable_for_event_authorized(uuid,text)'

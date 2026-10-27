@@ -321,9 +321,14 @@ grant execute on function public.load_live_timetable_public(uuid)
 -- command whose desired row state already exists. The revision is the durable
 -- receipt used by the UI after an HTTP response is lost; authorization and CAS
 -- checks still run before this receipt is written.
-create or replace function public.set_live_timetable_stage_operator(
+drop function public.set_live_timetable_stage_operator(
+  uuid, text, uuid, boolean, text, text
+);
+
+create function public.set_live_timetable_stage_operator(
   p_live_id uuid,
   p_source_stage_id text,
+  p_expected_stage_id uuid,
   p_operator_user_id uuid,
   p_assign boolean,
   p_expected_management_revision text,
@@ -353,6 +358,7 @@ begin
   if p_live_id is null
     or p_source_stage_id is null
     or btrim(p_source_stage_id) = ''
+    or p_expected_stage_id is null
     or p_operator_user_id is null
     or p_assign is null
     or not public.is_live_timetable_revision_text(
@@ -429,6 +435,10 @@ begin
     raise exception 'Live Stage was not found'
       using errcode = 'P0002';
   end if;
+  if target_stage_id is distinct from p_expected_stage_id then
+    raise exception 'Live Stage identity changed during operator mutation'
+      using errcode = '40001';
+  end if;
 
   if p_assign then
     select live_timetable_stage_operators.created_at
@@ -493,20 +503,32 @@ end;
 $$;
 
 revoke all on function public.set_live_timetable_stage_operator(
-  uuid, text, uuid, boolean, text, text
+  uuid, text, uuid, uuid, boolean, text, text
 ) from public, anon, authenticated, service_role;
 grant execute on function public.set_live_timetable_stage_operator(
-  uuid, text, uuid, boolean, text, text
+  uuid, text, uuid, uuid, boolean, text, text
 ) to authenticated;
 
 -- Progress mutations admit owner unconditionally and exact-role assignments
 -- for editor/viewer. Membership and assignment rows are held through commit,
 -- so concurrent downgrade/removal cannot pass the authorization check.
-create or replace function public.transition_live_timetable_entry(
+drop function public.start_live_timetable_entry(
+  uuid, text, text, text, text
+);
+drop function public.end_live_timetable_entry(
+  uuid, text, text, text, text
+);
+drop function public.transition_live_timetable_entry(
+  text, uuid, text, text, text, text
+);
+
+create function public.transition_live_timetable_entry(
   p_operation text,
   p_live_id uuid,
   p_source_stage_id text,
+  p_expected_stage_id uuid,
   p_source_schedule_item_id text,
+  p_expected_entry_position integer,
   p_expected_stage_revision text,
   p_expected_projection_version text
 )
@@ -540,8 +562,11 @@ begin
     or p_live_id is null
     or p_source_stage_id is null
     or btrim(p_source_stage_id) = ''
+    or p_expected_stage_id is null
     or p_source_schedule_item_id is null
     or btrim(p_source_schedule_item_id) = ''
+    or p_expected_entry_position is null
+    or p_expected_entry_position < 0
     or not public.is_live_timetable_revision_text(p_expected_stage_revision)
     or not public.is_live_timetable_revision_text(
       p_expected_projection_version
@@ -621,6 +646,10 @@ begin
     raise exception 'Live Stage was not found'
       using errcode = 'P0002';
   end if;
+  if stage_row.id is distinct from p_expected_stage_id then
+    raise exception 'Live Stage identity changed during progress mutation'
+      using errcode = '40001';
+  end if;
   if stage_row.projection_version <> live_row.projection_version
     or stage_row.revision <> p_expected_stage_revision::bigint then
     raise exception 'Live Stage revision changed'
@@ -636,6 +665,10 @@ begin
   if not found then
     raise exception 'Live entry was not found'
       using errcode = 'P0002';
+  end if;
+  if entry_row.position is distinct from p_expected_entry_position then
+    raise exception 'Live entry identity changed during progress mutation'
+      using errcode = '40001';
   end if;
 
   if p_operation = 'start' then
@@ -743,8 +776,75 @@ end;
 $$;
 
 revoke all on function public.transition_live_timetable_entry(
-  text, uuid, text, text, text, text
+  text, uuid, text, uuid, text, integer, text, text
 ) from public, anon, authenticated, service_role;
+
+create function public.start_live_timetable_entry(
+  p_live_id uuid,
+  p_source_stage_id text,
+  p_expected_stage_id uuid,
+  p_source_schedule_item_id text,
+  p_expected_entry_position integer,
+  p_expected_stage_revision text,
+  p_expected_projection_version text
+)
+returns jsonb
+language sql
+volatile
+security definer
+set search_path = ''
+as $$
+  select public.transition_live_timetable_entry(
+    'start',
+    p_live_id,
+    p_source_stage_id,
+    p_expected_stage_id,
+    p_source_schedule_item_id,
+    p_expected_entry_position,
+    p_expected_stage_revision,
+    p_expected_projection_version
+  );
+$$;
+
+create function public.end_live_timetable_entry(
+  p_live_id uuid,
+  p_source_stage_id text,
+  p_expected_stage_id uuid,
+  p_source_schedule_item_id text,
+  p_expected_entry_position integer,
+  p_expected_stage_revision text,
+  p_expected_projection_version text
+)
+returns jsonb
+language sql
+volatile
+security definer
+set search_path = ''
+as $$
+  select public.transition_live_timetable_entry(
+    'end',
+    p_live_id,
+    p_source_stage_id,
+    p_expected_stage_id,
+    p_source_schedule_item_id,
+    p_expected_entry_position,
+    p_expected_stage_revision,
+    p_expected_projection_version
+  );
+$$;
+
+revoke all on function public.start_live_timetable_entry(
+  uuid, text, uuid, text, integer, text, text
+) from public, anon, authenticated, service_role;
+revoke all on function public.end_live_timetable_entry(
+  uuid, text, uuid, text, integer, text, text
+) from public, anon, authenticated, service_role;
+grant execute on function public.start_live_timetable_entry(
+  uuid, text, uuid, text, integer, text, text
+) to authenticated;
+grant execute on function public.end_live_timetable_entry(
+  uuid, text, uuid, text, integer, text, text
+) to authenticated;
 
 -- Member-only discovery avoids exposing either table to direct browser
 -- SELECT. It returns only the saved Event metadata needed to offer creation;
@@ -964,7 +1064,10 @@ begin
 
   foreach signature in array array[
     'public.find_live_timetable_for_event_authorized(uuid,text)',
-    'public.list_live_timetable_operator_candidates(uuid)'
+    'public.list_live_timetable_operator_candidates(uuid)',
+    'public.set_live_timetable_stage_operator(uuid,text,uuid,uuid,boolean,text,text)',
+    'public.start_live_timetable_entry(uuid,text,uuid,text,integer,text,text)',
+    'public.end_live_timetable_entry(uuid,text,uuid,text,integer,text,text)'
   ] loop
     function_oid := to_regprocedure(signature);
     if function_oid is null then
@@ -1044,7 +1147,8 @@ begin
     'public.build_live_timetable_stages_json(uuid,uuid,text,boolean)',
     'public.build_live_timetable_stages_json_v15(uuid,uuid,text,boolean)',
     'public.load_live_timetable_authorized_v15(uuid)',
-    'public.load_live_timetable_public_v15(uuid)'
+    'public.load_live_timetable_public_v15(uuid)',
+    'public.transition_live_timetable_entry(text,uuid,text,uuid,text,integer,text,text)'
   ] loop
     function_oid := to_regprocedure(signature);
     if function_oid is null then
@@ -1072,6 +1176,38 @@ begin
         using errcode = '42501';
     end if;
   end loop;
+
+  foreach signature in array array[
+    'public.set_live_timetable_stage_operator(uuid,text,uuid,boolean,text,text)',
+    'public.start_live_timetable_entry(uuid,text,text,text,text)',
+    'public.end_live_timetable_entry(uuid,text,text,text,text)',
+    'public.transition_live_timetable_entry(text,uuid,text,text,text,text)'
+  ] loop
+    if to_regprocedure(signature) is not null then
+      raise exception 'Legacy Live mutation overload remains: %', signature
+        using errcode = '55000';
+    end if;
+  end loop;
+
+  if not exists (
+    select 1
+    from pg_catalog.pg_proc
+    where pg_proc.oid = to_regprocedure(
+      'public.set_live_timetable_stage_operator(uuid,text,uuid,uuid,boolean,text,text)'
+    )
+      and pg_proc.prosrc like '%target_stage_id is distinct from p_expected_stage_id%'
+  ) or not exists (
+    select 1
+    from pg_catalog.pg_proc
+    where pg_proc.oid = to_regprocedure(
+      'public.transition_live_timetable_entry(text,uuid,text,uuid,text,integer,text,text)'
+    )
+      and pg_proc.prosrc like '%stage_row.id is distinct from p_expected_stage_id%'
+      and pg_proc.prosrc like '%entry_row.position is distinct from p_expected_entry_position%'
+  ) then
+    raise exception 'Live mutation identity guards are incomplete'
+      using errcode = '55000';
+  end if;
 
   if has_table_privilege(
     'authenticated',

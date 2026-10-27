@@ -284,7 +284,8 @@ select extensions.dblink_exec('live_writer_a', $remote$
     );
     perform public.start_live_timetable_entry(
       '78100000-0000-4000-8000-000000000010',
-      'stage-a', 'item-a', '1', '1'
+      'stage-a', '78100000-0000-4000-8000-000000000020',
+      'item-a', 0, '1', '1'
     );
   end
   $operation$;
@@ -301,7 +302,8 @@ begin
       begin
         perform public.start_live_timetable_entry(
           '78100000-0000-4000-8000-000000000010',
-          'stage-a', 'item-a', '1', '1'
+          'stage-a', '78100000-0000-4000-8000-000000000020',
+          'item-a', 0, '1', '1'
         );
         raise exception 'same-Stage stale start succeeded' using errcode = 'P0004';
       exception when sqlstate '40001' then null;
@@ -344,7 +346,8 @@ select extensions.dblink_exec('live_writer_a', $remote$
     );
     perform public.end_live_timetable_entry(
       '78100000-0000-4000-8000-000000000010',
-      'stage-a', 'item-a', '2', '1'
+      'stage-a', '78100000-0000-4000-8000-000000000020',
+      'item-a', 0, '2', '1'
     );
   end
   $operation$;
@@ -361,7 +364,8 @@ begin
       begin
         perform public.end_live_timetable_entry(
           '78100000-0000-4000-8000-000000000010',
-          'stage-a', 'item-a', '2', '1'
+          'stage-a', '78100000-0000-4000-8000-000000000020',
+          'item-a', 0, '2', '1'
         );
         raise exception 'same-Stage stale end succeeded' using errcode = 'P0004';
       exception when sqlstate '40001' then null;
@@ -414,7 +418,8 @@ select extensions.dblink_exec('live_writer_a', $remote$
     );
     perform public.start_live_timetable_entry(
       '78100000-0000-4000-8000-000000000010',
-      'stage-a', 'item-a', '1', '1'
+      'stage-a', '78100000-0000-4000-8000-000000000020',
+      'item-a', 0, '1', '1'
     );
   end
   $operation$;
@@ -426,7 +431,8 @@ select extensions.dblink_send_query('live_writer_b', $remote$
   );
   select public.start_live_timetable_entry(
     '78100000-0000-4000-8000-000000000010',
-    'stage-b', 'item-b', '1', '1'
+    'stage-b', '78100000-0000-4000-8000-000000000021',
+    'item-b', 0, '1', '1'
   );
 $remote$);
 select pg_temp.assert_live_async_finishes(
@@ -476,7 +482,8 @@ begin
       begin
         perform public.start_live_timetable_entry(
           '78100000-0000-4000-8000-000000000010',
-          'stage-a', 'item-a', '1', '1'
+          'stage-a', '78100000-0000-4000-8000-000000000020',
+          'item-a', 0, '1', '1'
         );
         raise exception 'start succeeded after unpublish' using errcode = 'P0004';
       exception when sqlstate '55000' then null;
@@ -514,7 +521,8 @@ select extensions.dblink_exec('live_writer_a', $remote$
     );
     perform public.start_live_timetable_entry(
       '78100000-0000-4000-8000-000000000010',
-      'stage-a', 'item-a', '1', '1'
+      'stage-a', '78100000-0000-4000-8000-000000000020',
+      'item-a', 0, '1', '1'
     );
   end
   $operation$;
@@ -577,7 +585,8 @@ select extensions.dblink_exec('live_writer_a', $remote$
     );
     perform public.start_live_timetable_entry(
       '78100000-0000-4000-8000-000000000010',
-      'stage-a', 'item-a', '1', '1'
+      'stage-a', '78100000-0000-4000-8000-000000000020',
+      'item-a', 0, '1', '1'
     );
   end
   $operation$;
@@ -589,7 +598,8 @@ select extensions.dblink_send_query('live_writer_b', $remote$
   );
   select public.set_live_timetable_stage_operator(
     '78100000-0000-4000-8000-000000000010',
-    'stage-a', '00000000-0000-4000-8000-000000000092',
+    'stage-a', '78100000-0000-4000-8000-000000000020',
+    '00000000-0000-4000-8000-000000000092',
     false, '1', '1'
   );
 $remote$);
@@ -657,7 +667,8 @@ select extensions.dblink_exec('live_writer_a', $remote$
     );
     perform public.start_live_timetable_entry(
       '78100000-0000-4000-8000-000000000010',
-      'stage-a', 'item-a', '1', '1'
+      'stage-a', '78100000-0000-4000-8000-000000000020',
+      'item-a', 0, '1', '1'
     );
   end
   $operation$;
@@ -695,7 +706,8 @@ begin
   begin
     perform public.start_live_timetable_entry(
       '78100000-0000-4000-8000-000000000010',
-      'stage-a', 'item-a', '1', '1'
+      'stage-a', '78100000-0000-4000-8000-000000000020',
+      'item-a', 0, '1', '1'
     );
     raise exception 'viewer with stale assignment started Live entry'
       using errcode = 'P0004';
@@ -723,7 +735,8 @@ select extensions.dblink_exec('live_writer_a', $remote$
     );
     perform public.set_live_timetable_stage_operator(
       '78100000-0000-4000-8000-000000000010',
-      'stage-a', '00000000-0000-4000-8000-000000000092',
+      'stage-a', '78100000-0000-4000-8000-000000000020',
+      '00000000-0000-4000-8000-000000000092',
       true, '1', '1'
     );
   end

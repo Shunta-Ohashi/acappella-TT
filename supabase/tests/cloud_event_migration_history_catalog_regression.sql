@@ -574,6 +574,23 @@ begin
       grant execute on function
         public.find_live_timetable_for_event_authorized(uuid, text)
         to anon;
+    when 'live_timetable_legacy_mutation_overload' then
+      execute $ddl$
+        create function public.set_live_timetable_stage_operator(
+          uuid, text, uuid, boolean, text, text
+        ) returns jsonb
+        language sql
+        volatile
+        security definer
+        set search_path = ''
+        as 'select null::jsonb'
+      $ddl$;
+      revoke all on function public.set_live_timetable_stage_operator(
+        uuid, text, uuid, boolean, text, text
+      ) from public, anon, authenticated, service_role;
+      grant execute on function public.set_live_timetable_stage_operator(
+        uuid, text, uuid, boolean, text, text
+      ) to authenticated;
     when 'live_timetable_operator_helper_authenticated_execute' then
       grant execute on function
         public.build_live_timetable_stages_json_v15(uuid, uuid, text, boolean)

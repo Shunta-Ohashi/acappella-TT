@@ -168,6 +168,7 @@ export interface LiveTimetableDatabaseGateway {
   setStageOperator: (input: {
     liveId: string
     sourceStageId: string
+    expectedStageId: string
     operatorUserId: string
     assign: boolean
     expectedManagementRevision: string
@@ -177,7 +178,9 @@ export interface LiveTimetableDatabaseGateway {
     operation: 'start' | 'end'
     liveId: string
     sourceStageId: string
+    expectedStageId: string
     sourceScheduleItemId: string
+    expectedEntryPosition: number
     expectedStageRevision: string
     expectedProjectionVersion: string
   }) => Promise<LiveTimetableDatabaseResult<unknown>>
@@ -1086,6 +1089,7 @@ export const createLiveTimetableRepository = (
       const result = await gateway.setStageOperator({
         liveId: normalizeUuid(liveId) as string,
         sourceStageId,
+        expectedStageId: normalizeUuid(expectedStageId) as string,
         operatorUserId: normalizeUuid(operatorUserId) as string,
         assign,
         expectedManagementRevision,
@@ -1157,7 +1161,9 @@ const transition = async (
       operation,
       liveId: normalizeUuid(liveId) as string,
       sourceStageId,
+      expectedStageId: normalizeUuid(expectedStageId) as string,
       sourceScheduleItemId,
+      expectedEntryPosition,
       expectedStageRevision,
       expectedProjectionVersion,
     })
@@ -1253,6 +1259,7 @@ export const createSupabaseLiveTimetableGateway = (
     const result = await client.rpc('set_live_timetable_stage_operator', {
       p_live_id: input.liveId,
       p_source_stage_id: input.sourceStageId,
+      p_expected_stage_id: input.expectedStageId,
       p_operator_user_id: input.operatorUserId,
       p_assign: input.assign,
       p_expected_management_revision: input.expectedManagementRevision,
@@ -1267,7 +1274,9 @@ export const createSupabaseLiveTimetableGateway = (
     const result = await client.rpc(functionName, {
       p_live_id: input.liveId,
       p_source_stage_id: input.sourceStageId,
+      p_expected_stage_id: input.expectedStageId,
       p_source_schedule_item_id: input.sourceScheduleItemId,
+      p_expected_entry_position: input.expectedEntryPosition,
       p_expected_stage_revision: input.expectedStageRevision,
       p_expected_projection_version: input.expectedProjectionVersion,
     })

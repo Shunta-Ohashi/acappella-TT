@@ -1094,6 +1094,18 @@ test('Live実HTTP・Realtime runnerは専用loopbackと厳密cleanupを要求す
   )
   assert.match(
     preflight,
+    /liveTimetableOperatorUiContract[\s\S]*set_live_timetable_stage_operator\(uuid,text,uuid,uuid,boolean,text,text\)[\s\S]*target_stage_id is distinct from p_expected_stage_id/i,
+  )
+  assert.match(
+    preflight,
+    /liveTimetableOperatorUiContract[\s\S]*transition_live_timetable_entry\(text,uuid,text,uuid,text,integer,text,text\)[\s\S]*entry_row\.position is distinct from p_expected_entry_position/i,
+  )
+  assert.match(
+    preflight,
+    /set_live_timetable_stage_operator\(uuid,text,uuid,boolean,text,text\)'\s*\) is null[\s\S]*start_live_timetable_entry\(uuid,text,text,text,text\)'\s*\) is null/i,
+  )
+  assert.match(
+    preflight,
     /liveTimetableFoundationContract[\s\S]*has_any_column_privilege\([\s\S]*'INSERT,UPDATE,REFERENCES'/i,
   )
   assert.match(
@@ -1121,6 +1133,7 @@ test('Live実HTTP・Realtime runnerは専用loopbackと厳密cleanupを要求す
     'live_timetable_membership_epoch_trigger_missing',
     'live_timetable_public_view_default_true',
     'live_timetable_operator_discovery_anon_execute',
+    'live_timetable_legacy_mutation_overload',
     'live_timetable_operator_helper_authenticated_execute',
   ]) {
     assert.match(catalogRegression, new RegExp(`'${selectScenario}'`))
