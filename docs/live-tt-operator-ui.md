@@ -88,6 +88,34 @@ PASSには、全16 migration、member-only discovery、owner-only候補、未割
 開始・終了、匿名公開分離、7列Realtime、取消後read拒否、Cloud Event非変更、Auth/DB fixtureの
 厳密cleanupが含まれます。Node静的テストだけを実PostgreSQL・実HTTPの成功と読み替えません。
 
+未割当viewerについては、最新の認可readから取得したLive / Stage / Entry IDとrevision、
+projection versionで開始・終了RPCへ直接HTTP要求します。開始は未開始Entry、終了はownerが
+実際に開始した別Stageの`in_progress` Entryを使用し、`ACCESS_DENIED`だけを合格とします。
+拒否前後のowner認可read全体を比較し、進行状態・実時刻・revision・担当情報の不変を確認します。
+終了拒否試験後はownerがそのEntryを終了し、既存の割当viewer正常系と通知を混同しません。
+
+2026-10-28、本テスト追加後のワークツリーで、別Project ID・別volumeの使い捨て環境を
+2つ順次作成し、PostgreSQL 17.11へ全16 migrationをfresh適用してsmokeが両方PASSしました。
+両ケースで未割当viewerの開始・終了は`ACCESS_DENIED`、拒否前後の状態は不変でした。
+既存の認可・割当viewer正常系・Realtime・Cloud Event非変更・cleanupもPASSし、各実行後に
+関連16テーブルとAuth users / identities / sessionsの残存0件を直接確認しました。
+前回の補助psql処理失敗はこの2環境では再発しておらず、原因は引き続き未確定です。
+
+## Hosted検証記録（2026-10-28）
+
+専用Project `sqrbioyjhxoehbmacujf`で、以下をユーザーが確認しました。
+検証専用Eventは本番データではありません。
+
+- 全16 migration適用、`save-cloud-event` / `create-live-timetable`の2 Function配備
+- 個人用owner・学校用viewerのHostedログイン、Cloud Event保存、Live作成・進行有効化
+- Stage担当者の割当・解除・再割当、開始・終了、複数ブラウザ間のRealtime同期
+- 競合時の状態再取得、Offline / Online復帰、バックグラウンド復帰
+- リロード後の進行状態維持、ログアウト後の認証要求、匿名公開OFFの維持
+
+未実施は、実機スマートフォンのタッチ操作、学内Wi-Fi、Vercel Hosted Previewの実機検証です。
+この記録は上記の手動検証範囲を示すもので、すべての負荷・通信条件の保証ではありません。
+PR #79のマージ可否とProduction公開可否は、それぞれ別に判断します。
+
 ## ブラウザ確認
 
 1. owner / editor / viewerでEvent一覧から同じLive画面を開く。

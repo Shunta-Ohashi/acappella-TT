@@ -8,8 +8,8 @@ foundation単体では、認証済み運営者向け画面やRealtime同期UIを
 
 PR #79では、認証済み運営者向けLive TT画面、Realtime購読、認可付きreadによる状態取得、
 通信障害時の再取得・bounded retryを実装しています。一方、サークル員向けのログイン不要な
-閲覧専用UI、一般向け公開UI、Hosted環境でのAuth / HTTP / Realtime検証、実機・学内Wi-Fiでの
-運用検証は未実装または未検証です。UI・同期の詳細な契約は
+閲覧専用UI、一般向け公開UIは未実装で、実機・学内Wi-Fiでの運用検証は未実施です。
+Hosted環境でのAuth / HTTP / Realtimeの限定的な検証結果と、UI・同期の詳細な契約は
 [Live TT operator UI](./live-tt-operator-ui.md)を参照してください。
 
 `20261021050414_live_timetable_operator_ui.sql`適用後は、viewerもownerから明示割当を
@@ -206,7 +206,7 @@ read-only preflightがfail closedになり、rollback後のbaselineが復帰す�
 - skip/cancel/実時間訂正と監査履歴
 - Live記録の削除・保存期間・export
 - 公開IDのrotate/revoke
-- Hosted Auth/HTTP/Realtimeのend-to-end検証
+- Hosted Auth/HTTP/Realtimeの検証拡充（実施済み範囲はoperator UI runbookを参照）
 - 実機・学内Wi-Fiでの長時間接続、再接続、background動作の運用検証
 - 障害時の現場手順、誤操作時の復旧手順
 

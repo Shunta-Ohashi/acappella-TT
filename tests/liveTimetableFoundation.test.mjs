@@ -18,6 +18,9 @@ import {
   deleteLiveSmokeAuthUsers,
 } from '../scripts/liveTimetableFoundationSmokeCleanup.mjs'
 import {
+  assertUnassignedViewerTransitionDenied,
+} from '../scripts/liveTimetableFoundationSmokeAuthorization.mjs'
+import {
   parseLiveTimetableSourceRevision,
 } from '../src/live/liveTimetableSourceRevision.ts'
 
@@ -26,6 +29,116 @@ const liveId = '78000000-0000-4000-8000-000000000002'
 const publicId = '78000000-0000-4000-8000-000000000003'
 const actorId = '00000000-0000-4000-8000-000000000078'
 const now = '2026-10-20T00:00:00.000Z'
+
+const createViewerDenialFixture = (operation, {
+  result = { ok: false, error: { code: 'ACCESS_DENIED' } },
+  mutateAfter = () => {},
+} = {}) => {
+  const stage = {
+    stageId: '78000000-0000-4000-8000-000000000004',
+    sourceStageId: 'stage-sub', revision: '9007199254740993',
+    progressStatus: operation === 'start' ? 'not_started' : 'in_progress',
+    currentEntryPosition: operation === 'start' ? null : 0,
+    nextEntryPosition: operation === 'start' ? 0 : null,
+    entries: [{
+      sourceScheduleItemId: 'item-sub', position: 0,
+      status: operation === 'start' ? 'pending' : 'in_progress',
+      actualStartedAt: operation === 'start' ? null : now,
+      actualEndedAt: null,
+    }],
+  }
+  const state = {
+    liveId, role: 'owner', isPublished: true, operators: [],
+    projectionVersion: '9007199254740994', managementRevision: '7',
+    stages: [stage],
+  }
+  const calls = []
+  let reads = 0
+  const request = async (...args) => { calls.push([operation, ...args]); return result }
+  return {
+    state, calls,
+    input: {
+      liveId, viewerId: actorId, sourceStageId: 'stage-sub',
+      sourceScheduleItemId: 'item-sub', operation,
+      ownerRepository: {
+        async loadAuthorized() {
+          const value = structuredClone(state)
+          if (reads++ > 0) mutateAfter(value)
+          return { ok: true, value }
+        },
+      },
+      viewerRepository: {
+        async loadAuthorized() {
+          const value = structuredClone(state)
+          value.role = 'viewer'
+          value.stages[0].canOperate = false
+          return { ok: true, value }
+        },
+        startEntry: request, endEntry: request,
+      },
+    },
+  }
+}
+
+test('viewer拒否smokeは最新の正確な対象・bigint CASでstart/endを直接要求する', async () => {
+  for (const operation of ['start', 'end']) {
+    const fixture = createViewerDenialFixture(operation)
+    await assertUnassignedViewerTransitionDenied(fixture.input)
+    assert.deepEqual(fixture.calls, [[
+      operation, liveId, 'stage-sub', fixture.state.stages[0].stageId,
+      'item-sub', 0, '9007199254740993', '9007199254740994',
+    ]])
+  }
+})
+
+test('viewer拒否smokeは認可以外の拒否や予期しない成功をPASSにしない', async () => {
+  for (const operation of ['start', 'end']) {
+    for (const result of [
+      { ok: true, value: {} },
+      ...['INVALID_STATE', 'INVALID_ARGUMENT', 'REVISION_CONFLICT', 'DATABASE_ERROR']
+        .map(code => ({ ok: false, error: { code } })),
+    ]) {
+      const fixture = createViewerDenialFixture(operation, { result })
+      await assert.rejects(() => assertUnassignedViewerTransitionDenied(fixture.input))
+      assert.equal(fixture.calls.length, 1)
+    }
+  }
+})
+
+test('viewer拒否smokeはStage/Entry・実時刻・revision・管理情報の変更を検出する', async () => {
+  for (const operation of ['start', 'end']) {
+    for (const mutateAfter of [
+      value => { value.stages[0].revision = '9007199254740995' },
+      value => { value.stages[0].progressStatus = 'completed' },
+      value => { value.stages[0].currentEntryPosition = 99 },
+      value => { value.stages[0].entries[0].status = 'completed' },
+      value => { value.stages[0].entries[0].actualStartedAt = '2026-10-20T01:00:00Z' },
+      value => { value.stages[0].entries[0].actualEndedAt = now },
+      value => { value.managementRevision = '8' },
+      value => { value.operators.push({ userId: actorId }) },
+    ]) {
+      const fixture = createViewerDenialFixture(operation, { mutateAfter })
+      await assert.rejects(() => assertUnassignedViewerTransitionDenied(fixture.input),
+        /changed Live state/)
+    }
+  }
+})
+
+test('viewer拒否smokeは未開始Entryの終了や割当済みviewerを認可試験に使わない', async () => {
+  for (const invalidate of [
+    fixture => { fixture.state.stages[0].entries[0].status = 'pending' },
+    fixture => { fixture.state.stages[0].entries[0].actualStartedAt = null },
+    fixture => { fixture.state.operators.push({
+      stageId: fixture.state.stages[0].stageId, userId: actorId,
+    }) },
+    fixture => { fixture.state.isPublished = false },
+  ]) {
+    const fixture = createViewerDenialFixture('end')
+    invalidate(fixture)
+    await assert.rejects(() => assertUnassignedViewerTransitionDenied(fixture.input))
+    assert.equal(fixture.calls.length, 0)
+  }
+})
 
 const createDomainState = () => ({
   members: [],

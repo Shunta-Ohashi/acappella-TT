@@ -11,6 +11,9 @@ import {
   createSupabaseLiveTimetableRepository,
 } from '../src/live/liveTimetableRepository.ts'
 import { deleteLiveSmokeAuthUsers } from './liveTimetableFoundationSmokeCleanup.mjs'
+import {
+  assertUnassignedViewerTransitionDenied,
+} from './liveTimetableFoundationSmokeAuthorization.mjs'
 
 const execFileAsync = promisify(execFile)
 const API_PORT = '56121'
@@ -599,6 +602,59 @@ const run = async () => {
     assert.equal(deniedStart.ok, false)
     assert.equal(deniedStart.error.code, 'ACCESS_DENIED')
 
+    // Use the independent Sub Stage so these negative HTTP tests do not consume
+    // the Main Stage entries used by the assigned-viewer positive controls.
+    const viewerDenialFixture = {
+      ownerRepository: repositories.owner,
+      viewerRepository: repositories.viewer,
+      viewerId: users.viewer.id,
+      liveId,
+      sourceStageId: `${eventId}-stage-b`,
+      sourceScheduleItemId: `${eventId}-item-b`,
+    }
+    await assertUnassignedViewerTransitionDenied({
+      ...viewerDenialFixture, operation: 'start',
+    })
+    const beforeOwnerStart = await repositories.owner.loadAuthorized(liveId)
+    assert.equal(beforeOwnerStart.ok, true)
+    const subStage = beforeOwnerStart.value.stages.find(
+      stage => stage.sourceStageId === viewerDenialFixture.sourceStageId,
+    )
+    const subEntry = subStage.entries.find(entry =>
+      entry.sourceScheduleItemId === viewerDenialFixture.sourceScheduleItemId)
+    const ownerStarted = await repositories.owner.startEntry(
+      liveId, subStage.sourceStageId, subStage.stageId,
+      subEntry.sourceScheduleItemId, subEntry.position,
+      subStage.revision, beforeOwnerStart.value.projectionVersion,
+    )
+    assert.equal(ownerStarted.ok, true)
+    await assertUnassignedViewerTransitionDenied({
+      ...viewerDenialFixture, operation: 'end',
+    })
+    const beforeOwnerEnd = await repositories.owner.loadAuthorized(liveId)
+    assert.equal(beforeOwnerEnd.ok, true)
+    const runningSubStage = beforeOwnerEnd.value.stages.find(
+      stage => stage.stageId === subStage.stageId,
+    )
+    const ownerEnded = await repositories.owner.endEntry(
+      liveId, subStage.sourceStageId, subStage.stageId,
+      subEntry.sourceScheduleItemId, subEntry.position,
+      runningSubStage.revision, beforeOwnerEnd.value.projectionVersion,
+    )
+    assert.equal(ownerEnded.ok, true)
+    // Drain the distinct Sub Stage updates before the existing Main Stage
+    // Realtime assertions, so an earlier control cannot satisfy them.
+    await waitFor(
+      () => probes.slice(0, 3).every(probe => probe.events.some(event =>
+        event.eventType === 'UPDATE' && event.new.id === subStage.stageId &&
+        String(event.new.revision) === ownerEnded.value.stageRevision)),
+      'Workspace members did not receive the owner end control update.',
+    )
+    assert.equal(probes[3].events.length, 0)
+    assert.equal(probes[4].events.length, 0)
+    probes.slice(0, 3).forEach(probe => probe.events.forEach(assertRealtimePayload))
+    probes.forEach(probe => { probe.events.length = 0 })
+
     const assigned = await repositories.owner.setStageOperator(
       liveId,
       `${eventId}-stage-a`,
@@ -791,6 +847,9 @@ const run = async () => {
     successReport = {
       ok: true,
       authHttp: 'passed',
+      unassignedViewerStartAuthorization: 'passed',
+      unassignedViewerEndAuthorization: 'passed',
+      deniedViewerTransitionsUnchanged: 'passed',
       repositoryParser: 'passed',
       realtimeUpdateAuthorization: 'passed',
       realtimeRevokedViewerAuthorization: 'passed',
