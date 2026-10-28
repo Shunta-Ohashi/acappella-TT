@@ -11,6 +11,9 @@ import {
   createSupabaseLiveTimetableRepository,
 } from '../src/live/liveTimetableRepository.ts'
 import { deleteLiveSmokeAuthUsers } from './liveTimetableFoundationSmokeCleanup.mjs'
+import {
+  assertUnassignedViewerTransitionDenied,
+} from './liveTimetableFoundationSmokeAuthorization.mjs'
 
 const execFileAsync = promisify(execFile)
 const API_PORT = '56121'
@@ -149,7 +152,7 @@ const createRealtimeProbe = (client, label, workspaceId) => {
       }
     })
   })
-  return { label, channel, events, statuses, ready }
+  return { label, client, channel, events, statuses, ready }
 }
 
 const assertRealtimePayload = payload => {
@@ -264,7 +267,7 @@ const run = async () => {
     const migrationCheck = await runPsqlCommand(
       "select count(*) || '|' || max(version) from supabase_migrations.schema_migrations",
     )
-    assert.equal(migrationCheck, '15|20261019154519')
+    assert.equal(migrationCheck, '16|20261021050414')
     const publicationColumns = (await runPsqlCommand(
       "select array_to_string(attnames, ',') from pg_catalog.pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='live_timetable_stages'",
     )).split(',').sort()
@@ -333,16 +336,16 @@ const run = async () => {
     for (const badBody of [
       {},
       {
-        workspaceId, eventId, expectedSourceRevision: 1,
+        workspaceId, eventId, expectedSourceRevision: '1',
         mode: 'create', expectedManagementRevision: null, unknown: true,
       },
       {
-        workspaceId, eventId, expectedSourceRevision: 1,
+        workspaceId, eventId, expectedSourceRevision: '1',
         mode: 'create', expectedManagementRevision: null,
         actorId: users.owner.id,
       },
       {
-        workspaceId, eventId, expectedSourceRevision: 1,
+        workspaceId, eventId, expectedSourceRevision: '1',
         mode: 'create', expectedManagementRevision: null,
         snapshot: snapshotResult.snapshot,
       },
@@ -353,21 +356,31 @@ const run = async () => {
     }
 
     const staleSource = await rawInvoke(sessions.owner.token, {
-      workspaceId, eventId, expectedSourceRevision: 2,
+      workspaceId, eventId, expectedSourceRevision: '2',
       mode: 'create', expectedManagementRevision: null,
     })
     assert.equal(staleSource.status, 409)
     assert.equal(staleSource.value?.error?.code, 'REVISION_CONFLICT')
 
     const missingEvent = await rawInvoke(sessions.owner.token, {
-      workspaceId, eventId: `missing-${suffix}`, expectedSourceRevision: 1,
+      workspaceId, eventId: `missing-${suffix}`, expectedSourceRevision: '1',
       mode: 'create', expectedManagementRevision: null,
     })
     assert.equal(missingEvent.status, 409)
     assert.equal(missingEvent.value?.error?.code, 'EVENT_NOT_FOUND')
 
+    const missingDiscovery = await repositories.owner.findForEvent(
+      workspaceId,
+      `missing-${suffix}`,
+    )
+    assert.equal(missingDiscovery.ok, false)
+    assert.equal(missingDiscovery.error.code, 'EVENT_NOT_FOUND')
+    const missingAuthorizedLive = await repositories.owner.loadAuthorized(randomUUID())
+    assert.equal(missingAuthorizedLive.ok, false)
+    assert.equal(missingAuthorizedLive.error.code, 'LIVE_NOT_FOUND')
+
     const missingLive = await rawInvoke(sessions.owner.token, {
-      workspaceId, eventId, expectedSourceRevision: 1,
+      workspaceId, eventId, expectedSourceRevision: '1',
       mode: 'replace', expectedManagementRevision: '1',
     })
     assert.equal(missingLive.status, 409)
@@ -375,7 +388,7 @@ const run = async () => {
 
     for (const role of ['editor', 'viewer', 'outsider']) {
       const denied = await repositories[role].createProjection({
-        workspaceId, eventId, expectedSourceRevision: 1,
+        workspaceId, eventId, expectedSourceRevision: '1',
         mode: 'create', expectedManagementRevision: null,
       })
       assert.equal(denied.ok, false)
@@ -383,29 +396,48 @@ const run = async () => {
     }
 
     const backendDirect = await sessions.owner.client.rpc(
-      'load_live_timetable_projection_source',
+      'load_live_timetable_projection_source_serialized',
       {
         p_actor_id: users.owner.id,
         p_workspace_id: workspaceId,
         p_event_id: eventId,
-        p_expected_source_revision: 1,
+        p_expected_source_revision: '1',
       },
     )
     assert.notEqual(backendDirect.error, null)
 
     const created = await repositories.owner.createProjection({
-      workspaceId, eventId, expectedSourceRevision: 1,
+      workspaceId, eventId, expectedSourceRevision: '1',
       mode: 'create', expectedManagementRevision: null,
     })
     assert.equal(created.ok, true)
     const createdValue = created.value
     const liveId = createdValue.liveId
     const publicId = createdValue.publicId
-    assert.equal(createdValue.sourceRevision, 1)
+    assert.equal(createdValue.sourceRevision, '1')
     assert.match(createdValue.sourceSnapshotFingerprint, /^[0-9a-f]{64}$/u)
 
+    const discovery = await repositories.viewer.findForEvent(workspaceId, eventId)
+    assert.equal(discovery.ok, true)
+    assert.equal(discovery.value.liveId, liveId)
+    assert.equal(discovery.value.eventName, 'Live HTTP Realtime fixture')
+    assert.equal(discovery.value.sourceRevision, '1')
+    const candidates = await repositories.owner.listOperatorCandidates(liveId)
+    assert.equal(candidates.ok, true)
+    assert.deepEqual(
+      new Set(candidates.value.map(candidate => candidate.userId)),
+      new Set([users.editor.id, users.viewer.id]),
+    )
+    assert.equal(
+      JSON.stringify(candidates.value).includes('@'),
+      false,
+    )
+    const deniedCandidates = await repositories.viewer.listOperatorCandidates(liveId)
+    assert.equal(deniedCandidates.ok, false)
+    assert.equal(deniedCandidates.error.code, 'ACCESS_DENIED')
+
     const duplicate = await repositories.owner.createProjection({
-      workspaceId, eventId, expectedSourceRevision: 1,
+      workspaceId, eventId, expectedSourceRevision: '1',
       mode: 'create', expectedManagementRevision: null,
     })
     assert.equal(duplicate.ok, false)
@@ -560,17 +592,74 @@ const run = async () => {
     const deniedStart = await repositories.editor.startEntry(
       liveId,
       `${eventId}-stage-a`,
+      unassignedStage.stageId,
       `${eventId}-item-a`,
+      unassignedStage.entries.find(entry =>
+        entry.sourceScheduleItemId === `${eventId}-item-a`).position,
       unassignedStage.revision,
       bigintRead.value.projectionVersion,
     )
     assert.equal(deniedStart.ok, false)
     assert.equal(deniedStart.error.code, 'ACCESS_DENIED')
 
+    // Use the independent Sub Stage so these negative HTTP tests do not consume
+    // the Main Stage entries used by the assigned-viewer positive controls.
+    const viewerDenialFixture = {
+      ownerRepository: repositories.owner,
+      viewerRepository: repositories.viewer,
+      viewerId: users.viewer.id,
+      liveId,
+      sourceStageId: `${eventId}-stage-b`,
+      sourceScheduleItemId: `${eventId}-item-b`,
+    }
+    await assertUnassignedViewerTransitionDenied({
+      ...viewerDenialFixture, operation: 'start',
+    })
+    const beforeOwnerStart = await repositories.owner.loadAuthorized(liveId)
+    assert.equal(beforeOwnerStart.ok, true)
+    const subStage = beforeOwnerStart.value.stages.find(
+      stage => stage.sourceStageId === viewerDenialFixture.sourceStageId,
+    )
+    const subEntry = subStage.entries.find(entry =>
+      entry.sourceScheduleItemId === viewerDenialFixture.sourceScheduleItemId)
+    const ownerStarted = await repositories.owner.startEntry(
+      liveId, subStage.sourceStageId, subStage.stageId,
+      subEntry.sourceScheduleItemId, subEntry.position,
+      subStage.revision, beforeOwnerStart.value.projectionVersion,
+    )
+    assert.equal(ownerStarted.ok, true)
+    await assertUnassignedViewerTransitionDenied({
+      ...viewerDenialFixture, operation: 'end',
+    })
+    const beforeOwnerEnd = await repositories.owner.loadAuthorized(liveId)
+    assert.equal(beforeOwnerEnd.ok, true)
+    const runningSubStage = beforeOwnerEnd.value.stages.find(
+      stage => stage.stageId === subStage.stageId,
+    )
+    const ownerEnded = await repositories.owner.endEntry(
+      liveId, subStage.sourceStageId, subStage.stageId,
+      subEntry.sourceScheduleItemId, subEntry.position,
+      runningSubStage.revision, beforeOwnerEnd.value.projectionVersion,
+    )
+    assert.equal(ownerEnded.ok, true)
+    // Drain the distinct Sub Stage updates before the existing Main Stage
+    // Realtime assertions, so an earlier control cannot satisfy them.
+    await waitFor(
+      () => probes.slice(0, 3).every(probe => probe.events.some(event =>
+        event.eventType === 'UPDATE' && event.new.id === subStage.stageId &&
+        String(event.new.revision) === ownerEnded.value.stageRevision)),
+      'Workspace members did not receive the owner end control update.',
+    )
+    assert.equal(probes[3].events.length, 0)
+    assert.equal(probes[4].events.length, 0)
+    probes.slice(0, 3).forEach(probe => probe.events.forEach(assertRealtimePayload))
+    probes.forEach(probe => { probe.events.length = 0 })
+
     const assigned = await repositories.owner.setStageOperator(
       liveId,
       `${eventId}-stage-a`,
-      users.editor.id,
+      unassignedStage.stageId,
+      users.viewer.id,
       true,
       '9007199254740994',
       bigintRead.value.projectionVersion,
@@ -585,15 +674,78 @@ const run = async () => {
     assert.equal(probes[4].events.length, 0)
     probes.forEach(probe => { probe.events.length = 0 })
 
+    const repeatedAssignment = await repositories.owner.setStageOperator(
+      liveId,
+      `${eventId}-stage-a`,
+      unassignedStage.stageId,
+      users.viewer.id,
+      true,
+      assigned.value.managementRevision,
+      bigintRead.value.projectionVersion,
+    )
+    assert.equal(repeatedAssignment.ok, true)
+    assert.equal(
+      repeatedAssignment.value.managementRevision,
+      (BigInt(assigned.value.managementRevision) + 1n).toString(),
+    )
+    await waitFor(
+      () => probes.slice(0, 3).every(probe => probe.events.length >= 1),
+      'Workspace members did not receive repeated operator receipt update.',
+    )
+    probes.forEach(probe => { probe.events.length = 0 })
+
+    const absentRemoval = await repositories.owner.setStageOperator(
+      liveId,
+      `${eventId}-stage-a`,
+      unassignedStage.stageId,
+      users.editor.id,
+      false,
+      repeatedAssignment.value.managementRevision,
+      bigintRead.value.projectionVersion,
+    )
+    assert.equal(absentRemoval.ok, true)
+    assert.equal(
+      absentRemoval.value.managementRevision,
+      (BigInt(repeatedAssignment.value.managementRevision) + 1n).toString(),
+    )
+    await waitFor(
+      () => probes.slice(0, 3).every(probe => probe.events.length >= 1),
+      'Workspace members did not receive absent operator removal receipt update.',
+    )
+    probes.forEach(probe => { probe.events.length = 0 })
+    const staleOperatorCas = await repositories.owner.setStageOperator(
+      liveId,
+      `${eventId}-stage-a`,
+      unassignedStage.stageId,
+      users.viewer.id,
+      true,
+      repeatedAssignment.value.managementRevision,
+      bigintRead.value.projectionVersion,
+    )
+    assert.equal(staleOperatorCas.ok, false)
+    assert.equal(staleOperatorCas.error.code, 'REVISION_CONFLICT')
+    const afterOperatorReceipts = await repositories.owner.loadAuthorized(liveId)
+    assert.equal(afterOperatorReceipts.ok, true)
+    assert.equal(
+      afterOperatorReceipts.value.managementRevision,
+      absentRemoval.value.managementRevision,
+    )
+    assert.equal(afterOperatorReceipts.value.operators.some(operator =>
+      operator.stageId === assigned.value.stageId &&
+      operator.userId === users.viewer.id), true)
+
     const beforeStart = await repositories.owner.loadAuthorized(liveId)
     assert.equal(beforeStart.ok, true)
     const stageBeforeStart = beforeStart.value.stages.find(
       stage => stage.sourceStageId === `${eventId}-stage-a`,
     )
-    const started = await repositories.editor.startEntry(
+    const started = await repositories.viewer.startEntry(
       liveId,
       `${eventId}-stage-a`,
+      stageBeforeStart.stageId,
       `${eventId}-item-a`,
+      stageBeforeStart.entries.find(entry =>
+        entry.sourceScheduleItemId === `${eventId}-item-a`).position,
       stageBeforeStart.revision,
       beforeStart.value.projectionVersion,
     )
@@ -614,10 +766,13 @@ const run = async () => {
       stage => stage.sourceStageId === `${eventId}-stage-a`,
     )
     assert.equal(stageAfterStart.progressStatus, 'in_progress')
-    const ended = await repositories.editor.endEntry(
+    const ended = await repositories.viewer.endEntry(
       liveId,
       `${eventId}-stage-a`,
+      stageAfterStart.stageId,
       `${eventId}-item-a`,
+      stageAfterStart.entries.find(entry =>
+        entry.sourceScheduleItemId === `${eventId}-item-a`).position,
       stageAfterStart.revision,
       afterStart.value.projectionVersion,
     )
@@ -630,6 +785,12 @@ const run = async () => {
     assert.equal(probes[3].events.length, 0)
     assert.equal(probes[4].events.length, 0)
 
+    assert.equal((await repositories.owner.loadPublic(publicId)).ok, false)
+    await runPsqlCommand(
+      "update public.live_timetables set public_view_enabled=true where id=current_setting('live_smoke.live_id')::uuid and workspace_id=current_setting('live_smoke.workspace_id')::uuid",
+      { live_id: liveId, workspace_id: workspaceId },
+      'enable disposable public-view fixture',
+    )
     const publicAnon = await createSupabaseLiveTimetableRepository(
       createClient(supabaseUrl, anonKey, {
         auth: { persistSession: false, autoRefreshToken: false },
@@ -642,6 +803,7 @@ const run = async () => {
     const publicJson = JSON.stringify(publicAnon.value)
     for (const forbidden of [
       workspaceId, liveId, eventId, users.owner.id, users.editor.id,
+      users.viewer.id,
       createdValue.sourceSnapshotFingerprint, 'Private break title',
       'sourceStageId', 'sourceScheduleItemId', 'startedBy', 'endedBy',
     ]) assert.equal(publicJson.includes(forbidden), false)
@@ -661,7 +823,7 @@ const run = async () => {
     assert.deepEqual(pageAfter.data.rows[0].event_snapshot, cloudBefore.snapshot)
 
     const unpublished = await repositories.owner.setPublication(
-      liveId, assigned.value.managementRevision, false,
+      liveId, absentRemoval.value.managementRevision, false,
     )
     assert.equal(unpublished.ok, true)
     assert.equal((await repositories.owner.loadPublic(publicId)).ok, false)
@@ -685,6 +847,9 @@ const run = async () => {
     successReport = {
       ok: true,
       authHttp: 'passed',
+      unassignedViewerStartAuthorization: 'passed',
+      unassignedViewerEndAuthorization: 'passed',
+      deniedViewerTransitionsUnchanged: 'passed',
       repositoryParser: 'passed',
       realtimeUpdateAuthorization: 'passed',
       realtimeRevokedViewerAuthorization: 'passed',
@@ -695,7 +860,11 @@ const run = async () => {
       },
     }
   } finally {
-    await Promise.allSettled(probes.map(probe => probe.channel.unsubscribe()))
+    await Promise.allSettled(probes.map(async (probe) => {
+      await probe.channel.unsubscribe()
+      await probe.client.removeAllChannels()
+      probe.client.realtime.disconnect()
+    }))
     let databaseCleaned = !fixtureCreated
     if (fixtureCreated) {
       try {

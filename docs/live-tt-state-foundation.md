@@ -1,9 +1,22 @@
 # Live TT state foundation runbook
 
 この文書は`20261019154519_live_timetable_state_foundation.sql`で追加する
-backend foundationの契約と、使い捨て環境での検証境界を記録します。通常Appの
-画面、公開route、Realtime購読loopはまだ実装しません。この段階を本番運用可能な
-Live TTとみなしてはいけません。
+backend foundationの契約と、使い捨て環境での検証境界を記録します。PR #78のbackend
+foundation単体では、認証済み運営者向け画面やRealtime同期UIを実装していませんでした。
+使い捨て環境でbackend契約を検証できたことを、本番環境での運用準備完了とみなしては
+いけません。
+
+PR #79では、認証済み運営者向けLive TT画面、Realtime購読、認可付きreadによる状態取得、
+通信障害時の再取得・bounded retryを実装しています。一方、サークル員向けのログイン不要な
+閲覧専用UI、一般向け公開UIは未実装で、実機・学内Wi-Fiでの運用検証は未実施です。
+Hosted環境でのAuth / HTTP / Realtimeの限定的な検証結果と、UI・同期の詳細な契約は
+[Live TT operator UI](./live-tt-operator-ui.md)を参照してください。
+
+`20261021050414_live_timetable_operator_ui.sql`適用後は、viewerもownerから明示割当を
+受けたStageを操作できます。割当時の`granted_role`と現在のWorkspace roleが一致する
+ことに加え、割当時と現在の認可epochが一致する場合だけ有効です。roleを元へ戻しても
+古い割当は復活せず、role変更後はownerの明示再割当が必要です。また`is_published`はLive進行
+の有効化、`public_view_enabled`は匿名公開のopt-inとして分離されます。
 
 ## データ境界
 
@@ -31,9 +44,9 @@ SHA-256 fingerprintを再照合します。置換は未公開・未開始に限�
 
 - owner: 投影作成/置換、公開切替、operator割当、全Stageの開始/終了
 - editor: 明示的に割り当てられたStageの開始/終了だけ
-- viewer: 認証済みreadだけ。過去にoperatorだったとしても現在のmembershipがviewerなら更新不可
+- viewer: 認証済みreadと、viewerとして明示割当されたStageの進行操作。割当時roleと現在roleの不一致は拒否
 - outsider/anon: Workspace内部read/write不可
-- 公開閲覧: 推測困難な`public_id`を知り、かつ`is_published=true`の場合だけ、allowlist DTOをread可能
+- 公開閲覧: 推測困難な`public_id`を知り、`is_published=true`かつ`public_view_enabled=true`の場合だけ、allowlist DTOをread可能
 
 RPC契約は次のとおりです。すべて`SECURITY DEFINER`かつ空の`search_path`を使用し、
 PUBLIC EXECUTEを明示的に取り消します。tableへのbrowser直接writeは許可しません。
@@ -45,8 +58,10 @@ PUBLIC EXECUTEを明示的に取り消します。tableへのbrowser直接write�
 | `load_live_timetable_authorized` | `authenticated` | `auth.uid()` | 現在のowner/editor/viewerだけ。operator一覧はownerだけ |
 | `load_live_timetable_public` | `anon`, `authenticated` | actorなし | 公開UUID 1件、公開中、allowlist DTOのみ |
 | `set_live_timetable_publication` | `authenticated` | `auth.uid()` | ownerだけ、management revision CAS |
-| `set_live_timetable_stage_operator` | `authenticated` | `auth.uid()` | ownerだけ。割当先は現在のeditor、management/projection CAS |
-| `start_live_timetable_entry`, `end_live_timetable_entry` | `authenticated` | `auth.uid()` | owner、または現在もeditorで対象Stageへ割当済みのuser |
+| `set_live_timetable_stage_operator` | `authenticated` | `auth.uid()` | ownerだけ。割当先は現在のeditor/viewer、割当時role・認可epoch snapshot、management/projection CAS |
+| `start_live_timetable_entry`, `end_live_timetable_entry` | `authenticated` | `auth.uid()` | owner、または現在role・認可epochが割当時と一致する対象Stageのeditor/viewer |
+| `find_live_timetable_for_event_authorized` | `authenticated` | `auth.uid()` | member-only。Event名・保存revision・Live IDだけを返しSnapshot本文を返さない |
+| `list_live_timetable_operator_candidates` | `authenticated` | `auth.uid()` | owner-only。現在のeditor/viewerのUUID・表示名だけを返す |
 
 内部helperと共通transition関数は`anon`、`authenticated`、`service_role`のいずれにも
 EXECUTEを与えません。権限はrole membership経由の実効権限とcolumn ACLを含めてmigration
@@ -84,19 +99,21 @@ Realtime対象は`live_timetable_stages`だけです。publicationのcolumn list
 Workspace/Live識別子、projection/Stage revision、進行状態、更新時刻の7列に限定し、
 Section・予定時刻等の投影本文を通知へ含めません。`authenticated`へSELECTを与え、RLSで
 現在のWorkspace memberに限定します。通知は再取得のきっかけにすぎず、payloadを正式状態
-として適用しません。anon公開画面へPostgres Changesの購読権限は与えません。後続UIは
-通知後に公開read RPCを再取得し、切断中はbounded polling、再接続時は即時再取得を行う
-設計にします。Broadcast/PresenceはこのPRでは使用しません。
+として適用しません。anon公開画面へPostgres Changesの購読権限は与えません。PR #79の
+認証済み運営者向け画面は、通知後に認可付きread RPCを再取得し、切断中はbounded polling、
+再接続時は即時再取得を行います。一般向け公開UIの同期処理は未実装です。
+Broadcast/Presenceは使用しません。
 
 固定依存`@supabase/supabase-js@2.117.2`での検証購読は、`postgres_changes`の`select`へ
 7列を**文字列配列**で渡します。publicationの列指定やclient側の`select`は漏えいを減らす
 補助であり、認可境界はtable SELECTとRLSです。2026-10-20のローカル実配信では、明示的な
 `select`を省くとpublicationの列指定より広いrow payloadが届く互換性差を観測したため、
-後続UIでも省略しません。DELETEはPostgres ChangesのRLS filteringに制限があり、同じ検証で
+PR #79の購読でも省略しません。DELETEはPostgres ChangesのRLS filteringに制限があり、
+同じ検証で
 許可済みmemberにもDELETE通知が0件でした。Stage削除を含め、DELETE通知だけで画面状態を
 確定せず、再接続・投影差替え・visibility復帰時の認可付き再取得を必須にします。
 
-後続UIでは、初回購読成立・再接続・タブ復帰のたびに専用read RPCを再取得します。通知と
+同画面では、初回購読成立・再接続・タブ復帰のたびに専用read RPCを再取得します。通知と
 readが交差した場合は、取得開始時のrevisionより新しい通知を記録して追加取得し、古い応答で
 画面を巻き戻しません。Workspace scope/visit変更後の完了は破棄し、membershipまたは操作権限
 喪失時は操作を停止して権限状態を再取得します。通信断中のmutation queueは作りません。
@@ -153,7 +170,7 @@ ownerへの同一UPDATEのpositive deliveryを確認した場合だけ認可証�
 
 ## 使い捨てPostgreSQL検証
 
-既存DBをresetせず、新規のSupabase互換PostgreSQL 17へ全15 migrationをfresh適用します。
+既存DBをresetせず、新規のSupabase互換PostgreSQL 17へ全16 migrationをfresh適用します。
 接続先、port、database名を目視確認し、共有・staging・productionには実行しません。
 
 ```powershell
@@ -184,12 +201,13 @@ read-only preflightがfail closedになり、rollback後のbaselineが復帰す�
 
 ## 後続PRへ残すもの
 
-- operator/public viewer UIとroute
-- Realtime再取得loop、再接続、bounded polling
+- サークル員向けのログイン不要な閲覧専用UI
+- 一般向け公開Live TT routeと、`public_view_enabled`を運用上有効化する手順
 - skip/cancel/実時間訂正と監査履歴
 - Live記録の削除・保存期間・export
 - 公開IDのrotate/revoke
-- Hosted Auth/HTTP/Realtimeのend-to-end検証
+- Hosted Auth/HTTP/Realtimeの検証拡充（実施済み範囲はoperator UI runbookを参照）
+- 実機・学内Wi-Fiでの長時間接続、再接続、background動作の運用検証
 - 障害時の現場手順、誤操作時の復旧手順
 
 Cloud V2 backfill/Atomic CutoverはLive TTとは独立です。このrunbookから実行しません。

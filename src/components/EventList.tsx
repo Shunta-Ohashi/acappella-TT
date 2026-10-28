@@ -16,6 +16,7 @@ interface EventListProps {
   stages: Stage[]
   eventBands: EventBand[]
   onOpenEvent: (eventId: EventId) => void
+  onOpenLive?: (eventId: EventId) => void
   onCreateEvent: () => void
   readOnly?: boolean
 }
@@ -23,10 +24,11 @@ interface EventListProps {
 interface EventCardProps {
   event: EventListItem
   onOpen: () => void
+  onOpenLive?: () => void
   readOnly: boolean
 }
 
-function EventCard({ event, onOpen, readOnly }: EventCardProps) {
+function EventCard({ event, onOpen, onOpenLive, readOnly }: EventCardProps) {
   return (
     <article className="event-card">
       <header className="event-card__header">
@@ -65,6 +67,16 @@ function EventCard({ event, onOpen, readOnly }: EventCardProps) {
         >
           {readOnly ? '内容を見る' : '編集を続ける'} <span aria-hidden="true">→</span>
         </button>
+        {onOpenLive && (
+          <button
+            type="button"
+            className="event-card__live"
+            aria-label={`${event.name}の運営向けLive TTを開く`}
+            onClick={onOpenLive}
+          >
+            Live TT <span aria-hidden="true">↗</span>
+          </button>
+        )}
       </footer>
     </article>
   )
@@ -76,6 +88,7 @@ export function EventList({
   stages,
   eventBands,
   onOpenEvent,
+  onOpenLive,
   onCreateEvent,
   readOnly = false,
 }: EventListProps) {
@@ -118,6 +131,9 @@ export function EventList({
               event={event}
               readOnly={readOnly}
               onOpen={() => onOpenEvent(event.eventId)}
+              onOpenLive={onOpenLive
+                ? () => onOpenLive(event.eventId)
+                : undefined}
             />
           ))}
         </div>

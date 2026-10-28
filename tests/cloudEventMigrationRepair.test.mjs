@@ -14,6 +14,7 @@ import {
 } from '../scripts/cloudEventMigrationRepair.mjs'
 import {
   hasSafeLiveTimetableFoundationBaseline,
+  hasSafeLiveTimetableBaseline,
 } from '../scripts/cloudEventMigrationCatalogRegression.mjs'
 
 const AUTH_VERSION = '20261007'
@@ -31,6 +32,7 @@ const LATER_VERSIONS = {
   cloudV2CutoverInspection: '20261014100000',
   cloudV2AtomicCutover: '20261015100000',
   liveTimetableFoundation: '20261019154519',
+  liveTimetableOperatorUi: '20261021050414',
 }
 
 const createInspection = ({
@@ -124,6 +126,8 @@ const createInspection = ({
         applied.has(LATER_VERSIONS.cloudV2AtomicCutover),
       liveTimetableFoundationContract:
         applied.has(LATER_VERSIONS.liveTimetableFoundation),
+      liveTimetableOperatorUiContract:
+        applied.has(LATER_VERSIONS.liveTimetableOperatorUi),
     },
     cloudData: {
       rowCount: cloudEventsExists ? 1 : 0,
@@ -432,6 +436,30 @@ test('Live TT foundation契約はmigration historyとcatalogの不一致をfail 
 
   const prematureContract = createInspection({ versions: beforeLive })
   prematureContract.laterSchema.liveTimetableFoundationContract = true
+  assert.equal(analyzeCloudEventMigrationInspection(prematureContract).kind, 'unknown')
+})
+
+test('Live TT operator UI契約はmigration historyとcatalogの不一致をfail closedする', () => {
+  const versions = createKnownVersions(NEW_CLOUD_EVENT_MIGRATION_VERSION)
+  const missingContract = createInspection({ versions })
+  missingContract.laterSchema.liveTimetableOperatorUiContract = false
+  const missingResult = analyzeCloudEventMigrationInspection(missingContract)
+  assert.equal(missingResult.kind, 'unknown')
+  assert.match(
+    missingResult.mismatches.join('\n'),
+    /liveTimetableOperatorUiContract/i,
+  )
+
+  const beforeOperatorUi = versions.slice(
+    0,
+    versions.indexOf(LATER_VERSIONS.liveTimetableOperatorUi),
+  )
+  assert.equal(analyzeCloudEventMigrationInspection(createInspection({
+    versions: beforeOperatorUi,
+  })).kind, 'new-only')
+
+  const prematureContract = createInspection({ versions: beforeOperatorUi })
+  prematureContract.laterSchema.liveTimetableOperatorUiContract = true
   assert.equal(analyzeCloudEventMigrationInspection(prematureContract).kind, 'unknown')
 })
 
@@ -993,9 +1021,56 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   assert.match(preflightSql, /has_table_privilege\s*\(/i)
   assert.match(preflightSql, /has_any_column_privilege\s*\(/i)
   assert.match(preflightSql, /has_column_privilege\s*\(/i)
+  assert.doesNotMatch(
+    preflightSql,
+    /has_(?:table|any_column|function)_privilege\s*\(\s*'authenticated'\s*,\s*'public\.live_/i,
+  )
+  const liveOperatorContractStart = preflightSql.indexOf(
+    "'liveTimetableOperatorUiContract'",
+  )
+  const liveOperatorContractEnd = preflightSql.indexOf(
+    '\n  ) as value',
+    liveOperatorContractStart,
+  )
+  assert.ok(
+    liveOperatorContractStart >= 0 &&
+      liveOperatorContractEnd > liveOperatorContractStart,
+  )
+  const liveOperatorContractSql = preflightSql.slice(
+    liveOperatorContractStart,
+    liveOperatorContractEnd,
+  )
+  assert.match(
+    liveOperatorContractSql,
+    /coalesce\(\(select not has_table_privilege\(\s*authenticated_role\.oid,\s*to_regclass\(\s*'public\.live_timetables'\s*\),\s*'SELECT'\s*\) from authenticated_role\), false\)/i,
+  )
+  assert.match(
+    liveOperatorContractSql,
+    /coalesce\(\(select not has_any_column_privilege\(\s*authenticated_role\.oid,\s*to_regclass\(\s*'public\.live_timetables'\s*\),\s*'SELECT'\s*\) from authenticated_role\), false\)/i,
+  )
+  for (const functionSignature of [
+    'public.find_live_timetable_for_event_authorized\\(uuid,text\\)',
+    'public.list_live_timetable_operator_candidates\\(uuid\\)',
+  ]) {
+    assert.match(
+      liveOperatorContractSql,
+      new RegExp(
+        `coalesce\\(\\(select has_function_privilege\\(\\s*authenticated_role\\.oid,\\s*to_regprocedure\\(\\s*'${functionSignature}'\\s*\\),\\s*'EXECUTE'\\s*\\) from authenticated_role\\), false\\)`,
+        'i',
+      ),
+    )
+  }
   assert.match(preflightSql, /authorized_delete_function\.prosecdef/i)
   assert.match(preflightSql, /authorized_page_function\.prosecdef/i)
   assert.match(preflightSql, /authorized_save_function\.prosecdef/i)
+  assert.match(
+    guide,
+    /managed database administrator connection[\s\S]*SQLSTATE `42501`/i,
+  )
+  assert.match(
+    guide,
+    /to_regnamespace\('supabase_migrations'\)[\s\S]*to_regclass\('supabase_migrations\.schema_migrations'\)/i,
+  )
   assert.match(
     preflightSql,
     /workspace_master_mutation_function\.prosrc[\s\S]*errcode = ''pma01''/i,
@@ -1032,6 +1107,10 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   const authWorkspaceChecksSql = preflightSql.slice(
     authWorkspaceChecksStart,
     authWorkspaceChecksEnd,
+  )
+  assert.match(
+    authWorkspaceChecksSql,
+    /case when :'applied_versions'::jsonb \? '20261021050414'[\s\S]*count\(\*\) = 4[\s\S]*authorization_epoch[\s\S]*else \([\s\S]*count\(\*\) = 3/i,
   )
   assert.match(
     authWorkspaceChecksSql,
@@ -1342,6 +1421,18 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     'live_timetable_authenticated_inherited_backend_execute',
     'live_timetable_realtime_missing',
     'live_timetable_realtime_columns_broadened',
+    'live_timetable_operator_granted_role_nullable',
+    'live_timetable_operator_epoch_nullable',
+    'live_timetable_membership_epoch_trigger_missing',
+    'live_timetable_public_view_default_true',
+    'live_timetable_operator_discovery_anon_execute',
+    'live_timetable_legacy_mutation_overload',
+    'live_timetable_operator_helper_authenticated_execute',
+    'live_timetable_authorized_helper_authenticated_execute',
+    'live_timetable_operator_stage_builder_authenticated_execute',
+    'live_timetable_operator_stage_builder_inherited_execute',
+    'live_timetable_serialized_source_authenticated_execute',
+    'live_timetable_serialized_backend_authenticated_inherited_execute',
   ]) {
     assert.match(catalogRegressionSql, new RegExp(`'${scenario}'`), scenario)
     assert.match(catalogRegressionRunner, new RegExp(`'${scenario}'`), scenario)
@@ -1350,7 +1441,7 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
     catalogRegressionRunner.indexOf('const scenarios = ['),
     catalogRegressionRunner.indexOf('const parseArguments ='),
   )
-  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 119)
+  assert.equal([...scenarioRegistry.matchAll(/^\s*\['[^']+'/gmu)].length, 131)
   assert.match(catalogRegressionRunner,
     /JSON\.stringify\(\{ ok: true, scenarios: scenarios\.length \+ 1 \}\)/)
   for (const removedScenario of [
@@ -1417,11 +1508,11 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   assert.match(catalogRegressionRunner, /--confirm-disposable/)
   assert.match(
     baselineGuard,
-    /hasSafeLiveTimetableFoundationBaseline\(baseline\)/,
+    /hasSafeLiveTimetableBaseline\(baseline\)/,
   )
   assert.match(
     catalogRegressionRunner,
-    /restoredBaseline[\s\S]*hasSafeLiveTimetableFoundationBaseline\(restoredBaseline\)/,
+    /restoredBaseline[\s\S]*hasSafeLiveTimetableBaseline\(restoredBaseline\)/,
   )
   assert.equal(hasSafeLiveTimetableFoundationBaseline({
     laterSchema: { liveTimetableFoundationContract: true },
@@ -1432,6 +1523,21 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   assert.equal(hasSafeLiveTimetableFoundationBaseline({ laterSchema: {} }), false)
   assert.equal(hasSafeLiveTimetableFoundationBaseline({}), false)
   assert.equal(hasSafeLiveTimetableFoundationBaseline(undefined), false)
+  assert.equal(hasSafeLiveTimetableBaseline({
+    laterSchema: {
+      liveTimetableFoundationContract: true,
+      liveTimetableOperatorUiContract: true,
+    },
+  }), true)
+  assert.equal(hasSafeLiveTimetableBaseline({
+    laterSchema: {
+      liveTimetableFoundationContract: true,
+      liveTimetableOperatorUiContract: false,
+    },
+  }), false)
+  assert.equal(hasSafeLiveTimetableBaseline({
+    laterSchema: { liveTimetableFoundationContract: true },
+  }), false)
   assert.match(guide, /20261008110000[\s\S]*--status applied/)
   assert.match(guide, /20261007120000[\s\S]*--status reverted/)
   assert.match(guide, /--db-url/)
@@ -1445,7 +1551,7 @@ test('履歴移行成果物はread-only preflight・明示CLI repair・fixture�
   assert.match(guide, /where version = '20261008130000'/i)
   assert.match(guide, /where version = '20261008160000'/i)
   assert.match(guide, /ports `54322`, `54422`,\s+`54522`, or `54622`/i)
-  assert.match(guide, /All fourteen repository migrations have one explicit `BEGIN` \/ `COMMIT` boundary/i)
+  assert.match(guide, /All sixteen repository migrations have one explicit `BEGIN` \/ `COMMIT` boundary/i)
   assert.match(guide,
     /migration-history write is a separate runner responsibility[\s\S]*PostgreSQL catalog[\s\S]*supabase_migrations\.schema_migrations/i)
   const fullTransactionExercise = guide.slice(
