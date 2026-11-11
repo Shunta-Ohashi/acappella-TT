@@ -183,6 +183,10 @@ A・Bの終了記録を保持して試験を終了しています。匿名公開
 
 ### C. 今回のPreview実機テストに含めていない項目
 
+以下はPC検証時点の範囲です。その後のスマホViewerの閲覧・短時間復帰・学内Wi-Fi基本確認は、
+[後続のスマートフォン検証記録](#スマートフォンviewer学内wi-fi基本検証記録2026-11-11)に分けて
+記録します。スマホの開始・終了タッチ操作まで確認済みという意味ではありません。
+
 - スマートフォン実機のタッチ操作・画面復帰。
 - 学内Wi-Fi（meijo / eduroam）での実アプリ確認。
 - 同時操作によるCAS競合。
@@ -201,6 +205,96 @@ A・Bの終了記録を保持して試験を終了しています。匿名公開
 2026-11-11のGitHub確認時点でPR #79はOpen・Draft・未マージ、インラインレビュー18件は
 すべてResolvedですが、正式なレビュー承認ではありません。本記録はProductionの運用準備完了を
 示すものではなく、PRのマージ可否とProduction公開可否は別判断です。Draftを維持します。
+
+## スマートフォンViewer・学内Wi-Fi基本検証記録（2026-11-11）
+
+この節は、ユーザーによるスマートフォンViewerの実機報告と、ChatGPTによる既存の最終
+read-only SQL確認結果を引き継いだ記録です。今回の文書整備でCodexが実機試験・Hosted試験・
+SQLを再実行した結果ではありません。10/28のHosted / 使い捨てDB試験と、上記11/11のPC検証は
+別の時点・範囲の記録として保持し、今回のPASSへ合算しません。
+
+### 検証環境
+
+- 検証日：2026-11-11 JST
+- 実機検証対象commit：`05e315286f8f9b85f1e9ddb6c32bba19d4b7f915`
+  （`ddde585`および今回の文書更新commitは、実機検証済みcommitではありません）
+- Preview：<https://acappella-tt-live-test-qe21663mv-shunta-ohashi.vercel.app>
+- Supabase検証専用Project：`sqrbioyjhxoehbmacujf`
+- Workspace：学祭2026 Live TT Hosted検証
+- Event：【検証用】Vercel実機テスト（本番データではありません）
+- 開催日：2026-11-03、Stage：Vercel検証Stage
+- スマートフォン：Pixel 11、Chromeのシークレット（機種・ブラウザはユーザー確認済み）
+- OSとChromeのバージョン：未確認。推測では補完しません。
+- スマホ：検証アカウント（学校用）、Workspace role=`viewer`
+- 操作側PC：Chromeシークレット、検証Owner（個人用）、Workspace role=`owner`
+- 通信：大学のWi-Fi。ユーザーからeduroam・meijoの両方で成功したとの報告あり。
+
+### A. ユーザーによる実機操作・表示確認：PASS
+
+- Vercel認証とアプリへのログインに成功し、同じWorkspace・Event・開催日・Stageを表示。
+- Workspace権限はviewer、選択Stageの操作は「閲覧のみ」。初期表示・スクロールと、
+  既存のテストバンドA・Bの終了記録を確認し、ユーザーは表示上の問題なしと報告。
+- Live画面をスマホで前面表示中、PC OwnerによるLive進行の有効化・無効化が、
+  手動更新なしで自動反映。ユーザーは「瞬時に自動反映された」と報告。
+- Liveタブを閉じずに画面をロックし、その間にPC OwnerがLive進行を有効化。
+  約1分後のロック解除で同じ画面へ戻ると、手動更新なしで有効状態・最新表示へ復帰し、
+  最後の無効化も自動反映。
+- 機内モードON・Wi-Fi OFFで通信を切り、その間にPC OwnerがLive進行を有効化。
+  約1分の通信断確認後、元の通信状態へ戻すと、手動更新なしで有効状態・最新表示へ追随。
+  ユーザーは案内した確認手順の成功を報告。
+- 学内Wi-Fiのeduroam・meijoの両方で成功したとのユーザー報告あり。
+
+「瞬時」はユーザーの体感報告であり、ミリ秒単位の計測や遅延保証ではありません。画面の
+自動反映を確認したもので、Realtime通知経路だけを分離して計測していません。両SSIDの成功報告は
+記録しますが、個別の実施記録がない「全試験項目×両SSID」の網羅表は作りません。スマホはViewerの
+閲覧側として使用し、演奏の開始・終了は操作していません。
+
+### B. ChatGPTによる既存の最終read-only SQL確認結果
+
+終了時の確認でLive進行ONが残っていたため、ユーザーがOwner UIでOFFへ戻しました。
+その後の2026-11-11 14:21:26 JSTのread-only SQLで、次の保存状態を確認しています。
+これは引き継いだ既存結果であり、今回CodexがSQLを実行した結果ではありません。
+
+| 項目 | 確認値 |
+| --- | --- |
+| source event revision | 2 |
+| Live source revision | 2 |
+| projection version | 2 |
+| management revision | 28 |
+| Stage revision | 5 |
+| Stage progress status | `completed` |
+| current entry / next entry / next performanceの位置 | すべて`null` |
+| Stage / Entry件数 | 1 / 2 |
+| Live進行 | OFF（`is_published=false`） |
+| 匿名公開設定 | OFF（`public_view_enabled=false`） |
+| Stage担当割当 | 0件 |
+
+- A・Bとも`completed`で実開始・終了時刻があり、時刻の前後関係に問題なし。
+  Aの開始・終了者はOwner、Bの開始・終了者はViewer。
+- Entry全行と元Cloud Event Snapshotの比較用ハッシュは、それぞれPC検証終了時と一致。
+- Workspace roleはOwner / Viewerを維持。
+
+PC検証終了時のmanagement revision=16と、今回の最終確認時の28は異なる時点の値です。
+A・Bの終了記録はPC検証で作成したものであり、今回スマホから開始・終了した記録ではありません。
+終了記録を保持して終了しており、検証データを削除・初期化したという意味ではありません。
+匿名公開設定OFFの保存状態確認も、匿名アクセス拒否の実測とは区別します。
+
+### C. 今回のスマホ検証に含めていない項目
+
+- スマホのOwner / 明示割当Viewerによる演奏開始・終了のタッチ操作。
+- 演奏開始・終了ボタンのOffline時抑止。
+- 未割当 / 解除済みViewerなどによる直接RPCの権限拒否。
+- 同時操作によるCAS競合。
+- mutation送信途中の切断、結果不明、重複送信・再送の実測。
+- EditorやWorkspace外ユーザーの今回の実機確認。
+- 長時間接続・長時間ロック、タブ破棄、負荷試験。
+- Wi-Fi間のローミング。
+- 匿名アクセスを実際に試した拒否確認。
+
+過去の使い捨てDBや10/28 Hostedの検証実績は、各日付・環境の証拠として保持します。
+今回の成果は「スマホViewerの閲覧・自動反映・短時間の復帰と学内Wi-Fiでの基本確認」であり、
+「スマホ全機能PASS」「全環境で安全」「Production公開準備完了」とは扱いません。
+PRのマージ可否とProduction公開可否は別判断で、PR #79はOpen・Draft・未マージを維持します。
 
 ## ブラウザ確認
 
