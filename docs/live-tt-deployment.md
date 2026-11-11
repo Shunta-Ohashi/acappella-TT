@@ -74,7 +74,7 @@ supabase db push --linked
 supabase migration list --linked
 ```
 
-適用後はremote側に15 versionが順番どおり存在し、未適用・未知versionがないことを確認
+適用後はremote側に16 versionが順番どおり存在し、未適用・未知versionがないことを確認
 します。migrationが失敗した場合は公開へ進まず、schema catalogと
 `supabase_migrations.schema_migrations`を確認します。既存migrationを手動再実行したり、
 履歴だけを成功扱いにしたりしません。履歴不一致の調査方法は
@@ -88,6 +88,10 @@ backfill RPCや`cutover_cloud_v2_validated()`を呼び出さず、現行Snapshot
 15・16番目のLive TT migrationも既存Eventから投影を自動作成せず、Live進行や匿名公開を自動で有効に
 しません。`create-live-timetable` FunctionとLive UIはこのV1公開手順の必須要素ではなく、
 使い捨て環境での専用検証を完了するまでHostedへ配備しません。
+
+専用Hosted ProjectとVercel PreviewでのLive検証実績は
+[operator UI runbook](./live-tt-operator-ui.md)に別記します。このV1配備手順やPC検証の成功を、
+ProductionのLive配備済み・公開承認済みという意味には読み替えません。
 
 Catalog regressionは一時的なcatalog変更をtransaction内で行うため、共有オンラインProject
 では実行しません。必要なら同じ16 migrationを適用した別の使い捨てDBで実行します。

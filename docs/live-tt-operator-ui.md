@@ -112,9 +112,95 @@ projection versionで開始・終了RPCへ直接HTTP要求します。開始は�
 - 競合時の状態再取得、Offline / Online復帰、バックグラウンド復帰
 - リロード後の進行状態維持、ログアウト後の認証要求、匿名公開OFFの維持
 
-未実施は、実機スマートフォンのタッチ操作、学内Wi-Fi、Vercel Hosted Previewの実機検証です。
+10/28時点の未実施は、実機スマートフォンのタッチ操作、学内Wi-Fi、Vercel Hosted Previewの
+実機検証でした。後日のPCでのPreview確認は、下記の
+[11/11の検証記録](#vercel-hosted-preview-pc基本検証記録2026-11-11)を参照してください。
 この記録は上記の手動検証範囲を示すもので、すべての負荷・通信条件の保証ではありません。
 PR #79のマージ可否とProduction公開可否は、それぞれ別に判断します。
+
+## Vercel Hosted Preview PC基本検証記録（2026-11-11）
+
+この節は、ユーザーから引き継いだ実機操作・表示の確認と、ChatGPTによる最終read-only SQLの
+確認結果を記録します。今回の文書整備でCodexが再実行した試験ではありません。10/28のHosted
+試験、使い捨てDBのHTTP / Realtime smoke、過去の競合試験とは別の記録です。
+
+### 検証環境
+
+- 検証日：2026-11-11 JST
+- 実機検証対象commit：`05e315286f8f9b85f1e9ddb6c32bba19d4b7f915`
+  （この記録を追記した文書更新commitは、実機検証済みcommitではありません）
+- Preview：<https://acappella-tt-live-test-qe21663mv-shunta-ohashi.vercel.app>
+- Supabase検証専用Project：`sqrbioyjhxoehbmacujf`
+- Workspace：学祭2026 Live TT Hosted検証
+- Event：【検証用】Vercel実機テスト（本番データではありません）
+- 開催日：2026-11-03、Stage：Vercel検証Stage
+- Chromeシークレット：検証Owner（個人用）、Workspace role=`owner`
+- Edge InPrivate：検証アカウント（学校用）、Workspace role=`viewer`
+
+### A. ユーザーによる実機操作・表示の確認：PASS
+
+- Owner / Viewerのログインと、同じWorkspace・Event・Stageの表示。
+- OwnerによるLive進行の有効化・無効化、テストバンドAの開始・終了。
+- ViewerをStage担当に明示割当すると操作可能になり、ViewerがテストバンドBを開始。
+- B進行中に担当を解除するとViewerは閲覧のみに戻り、終了操作が無効化。
+  Bの進行記録は保持され、再割当後にViewerがBを終了。
+- 両ブラウザへの自動反映と、再読み込み後の進行記録・権限保持。
+- ChromeのDevTools Offline設定で管理ボタンの操作停止・未同期警告を確認。
+  オンライン復帰後は自動再取得し、操作可能状態へ復帰。
+- EdgeがOfflineの間にOwnerがLive進行を有効化し、Edgeのオンライン復帰後、
+  手動更新なしで有効状態へ追随。
+- EdgeのLiveタブを閉じずに別タブへ約1分移動し、Ownerが変更した状態を、
+  Liveタブ復帰後に手動更新なしで表示。
+- 各確認後、OwnerがLive進行を無効へ戻し、Viewer側にも自動反映。
+
+Offline時の操作停止を実測したのは管理ボタンです。終了済みの演奏の開始・終了ボタンについて、
+Offline時の抑止まで実測した記録ではありません。自動反映は画面上の結果であり、Realtime通知
+経路だけの計測や遅延保証ではありません。約1分のタブ復帰も、長時間放置・スリープ・タブ破棄の
+検証とは区別します。
+
+### B. ChatGPTの最終read-only SQLで確認した保存状態
+
+| 項目 | 確認値 |
+| --- | --- |
+| source event revision | 2 |
+| Live source revision | 2 |
+| projection version | 2 |
+| management revision | 16 |
+| Stage revision | 5 |
+| Stage progress status | `completed` |
+| 現在 / 次のEntry位置 | いずれも`null` |
+
+- A・Bとも`completed`で、実際の開始・終了時刻あり。
+  Aの開始・終了者はOwner、Bの開始・終了者はViewer。
+- 通信断・タブ復帰試験前後でEntry全行の比較用ハッシュが一致し、開始・終了時刻を含む
+  演奏記録に変更なし。元Cloud EventのSnapshotも比較用ハッシュが一致し、変更なし。
+- 終了時はLive進行OFF、匿名公開設定OFF、Stage担当割当0件。
+  Workspace roleはOwner / Viewerのまま。
+
+担当割当0件・Live進行OFFは、検証記録を削除したという意味ではありません。
+A・Bの終了記録を保持して試験を終了しています。匿名公開設定OFFの保存状態確認と、
+匿名アクセスを実際に試した拒否確認は別です。
+
+### C. 今回のPreview実機テストに含めていない項目
+
+- スマートフォン実機のタッチ操作・画面復帰。
+- 学内Wi-Fi（meijo / eduroam）での実アプリ確認。
+- 同時操作によるCAS競合。
+- 演奏の開始・終了ボタンのOffline時抑止。
+- 送信途中の切断、結果不明、重複送信・再送の実測。
+- 未割当 / 解除済みViewerなどによる直接RPCの権限拒否。
+- EditorやWorkspace外ユーザーの今回の実機確認。
+- 長時間接続、スリープ、タブ破棄、負荷試験。
+- 匿名アクセスを実際に試した拒否確認。
+
+過去の使い捨てDB試験や10/28のHosted試験で確認済みの項目は、各日付・環境の証拠として
+上記の別記録に保持します。Cの項目を全環境で未検証としたり、過去の結果を今回のPreview
+実機テストのPASSへ合算したりしません。
+
+`05e3152`に対する既存のGitHub Actions CI #57とVercelチェックは成功しています。
+2026-11-11のGitHub確認時点でPR #79はOpen・Draft・未マージ、インラインレビュー18件は
+すべてResolvedですが、正式なレビュー承認ではありません。本記録はProductionの運用準備完了を
+示すものではなく、PRのマージ可否とProduction公開可否は別判断です。Draftを維持します。
 
 ## ブラウザ確認
 
