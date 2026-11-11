@@ -186,6 +186,8 @@ A・Bの終了記録を保持して試験を終了しています。匿名公開
 以下はPC検証時点の範囲です。その後のスマホViewerの閲覧・短時間復帰・学内Wi-Fi基本確認は、
 [後続のスマートフォン検証記録](#スマートフォンviewer学内wi-fi基本検証記録2026-11-11)に分けて
 記録します。スマホの開始・終了タッチ操作まで確認済みという意味ではありません。
+その後に別Eventで実施した明示割当Viewerの演奏操作については、
+[スマートフォンViewer操作検証記録](#スマートフォンviewer操作検証記録2026-11-11)を参照してください。
 
 - スマートフォン実機のタッチ操作・画面復帰。
 - 学内Wi-Fi（meijo / eduroam）での実アプリ確認。
@@ -281,6 +283,10 @@ A・Bの終了記録はPC検証で作成したものであり、今回スマホ�
 
 ### C. 今回のスマホ検証に含めていない項目
 
+以下はスマホ閲覧試験時点の範囲です。その後に別Eventで確認した明示割当Viewerの開始・終了、
+B開始前のOffline抑止などは、[後続の操作検証記録](#スマートフォンviewer操作検証記録2026-11-11)に
+分けて記録します。スマホOwnerの操作や進行中の終了ボタンのOffline抑止は未実施のままです。
+
 - スマホのOwner / 明示割当Viewerによる演奏開始・終了のタッチ操作。
 - 演奏開始・終了ボタンのOffline時抑止。
 - 未割当 / 解除済みViewerなどによる直接RPCの権限拒否。
@@ -295,6 +301,109 @@ A・Bの終了記録はPC検証で作成したものであり、今回スマホ�
 今回の成果は「スマホViewerの閲覧・自動反映・短時間の復帰と学内Wi-Fiでの基本確認」であり、
 「スマホ全機能PASS」「全環境で安全」「Production公開準備完了」とは扱いません。
 PRのマージ可否とProduction公開可否は別判断で、PR #79はOpen・Draft・未マージを維持します。
+
+## スマートフォンViewer操作検証記録（2026-11-11）
+
+この節は、新Eventでユーザーが行ったスマートフォン操作検証と、ChatGPTの最終read-only SQL
+確認結果を引き継ぐ記録です。今回の文書整備でCodexがブラウザ試験・SQL・Hosted試験を再実行した
+結果ではありません。10/28、11/11 PC、旧Eventでのスマホ閲覧試験とは分離します。
+
+### 検証環境
+
+- 検証日：2026-11-11 JST
+- 実機検証対象commit：`05e315286f8f9b85f1e9ddb6c32bba19d4b7f915`
+  （`ddde585`・`98402e2`および今回の文書更新commitは、実機検証済みcommitではありません）
+- Preview：<https://acappella-tt-live-test-qe21663mv-shunta-ohashi.vercel.app>
+- Supabase検証専用Project：`sqrbioyjhxoehbmacujf`
+- Workspace：学祭2026 Live TT Hosted検証
+- 新Event：【検証用】スマホ操作テスト
+- Event ID：`event-256f6c71-d9d2-434d-acc7-e99343015c8c`
+- 開催日：2026-11-11、Stage：スマホ検証Stage
+- Live ID：`f937ff74-e8dc-4b74-b217-e6e67ef1ef52`
+- スマホ：Pixel 11 / Chromeシークレット / 学校用検証アカウント（Workspace role=`viewer`）
+- 管理側PC：Chromeシークレット / 個人用検証Owner
+- OS・Chromeのバージョンと、今回の操作試験で使用した回線・SSID：未確認。
+  前回の閲覧試験でのeduroam・meijo成功報告は保持しますが、今回の操作試験を両SSIDで行ったとは
+  扱いません。
+
+### A. ユーザーによる実機操作・表示確認：PASS
+
+ユーザーは、案内した次の①〜⑦がすべて成功したと報告しました。
+
+1. 新Event内にStage・Sectionと、別々の検証用メンバーを持つ7分枠の
+   「【検証用】スマホA」「【検証用】スマホB」を作成。A→Bの順に配置し、Cloud保存後に初めて
+   Live TTを作成。
+2. 未割当Viewerは閲覧のみ。OwnerがLive進行を有効化し、学校用ViewerをStageへ明示割当すると、
+   スマホで操作可能になった。Workspace roleはviewerのまま。
+3. スマホでAを開始・終了し、PCにも手動更新なしで自動反映。
+4. B開始前にスマホを機内モードON・Wi-Fi OFFとして約1分確認。開始操作は抑止され、PC上でも
+   Bは未開始を維持。通信復帰後は手動更新なしで最新状態へ戻り、Bが勝手に開始されることなく、
+   開始操作が再び可能になった。
+5. スマホでBを開始。PC OwnerがStage担当を解除すると、スマホは閲覧のみとなり終了操作不可。
+   Bの進行中表示と開始記録は保持された。
+6. Ownerが再割当するとスマホの操作権限が戻り、スマホでBを終了。PCにも自動反映。
+7. 最後にOwnerが担当を解除してLive進行を無効化。スマホにも反映され、PC・スマホの
+   再読み込み後もA・Bの終了記録が保持された。
+
+タッチ操作・画面遷移・自動反映・通信断時のボタン状態は、このユーザー報告を根拠とします。
+以下のSQL結果だけで、端末操作や通信経路まで確認できたとは扱いません。
+
+### B. ChatGPTによる最終read-only SQL確認結果
+
+確認日時は2026-11-11 15:15:12 JSTです。検証専用Projectに対して
+`transaction_read_only=on`で確認済みの結果を引き継ぎます。今回CodexはSQLを再実行していません。
+
+| 新Eventの項目 | 確認値 |
+| --- | --- |
+| source event revision | 1 |
+| Live source revision | 1 |
+| projection version | 1 |
+| management revision | 7 |
+| Stage revision | 5 |
+| Stage | 1件、`progress_status=completed` |
+| Entry | 2件、A・Bとも`completed` |
+| current entry / next entry / next performanceの位置 | すべて`null` |
+| Live進行 | OFF（`is_published=false`） |
+| 匿名公開設定 | OFF（`public_view_enabled=false`） |
+| Stage担当割当 | 0件 |
+
+| 演奏 | 実開始（JST） | 実終了（JST） | 開始者 / 終了者 |
+| --- | --- | --- | --- |
+| 【検証用】スマホA | 15:10:22.003349 | 15:10:32.361839 | 学校用Viewer / 学校用Viewer |
+| 【検証用】スマホB | 15:11:41.167976 | 15:12:03.577770 | 学校用Viewer / 学校用Viewer |
+
+実開始・終了時刻の前後関係は正常で、Workspace roleはOwner / Viewerを維持しています。
+SQLは保存状態と操作アカウントの確認であり、スマホのタッチ操作・画面遷移・自動反映・通信断時の
+ボタン状態の証拠はAのユーザー報告と区別します。
+
+旧Event「【検証用】Vercel実機テスト」の保全も同じ最終確認で確認済みです。
+
+- management revision=28、Stage revision=5を維持。
+- Live進行OFF、匿名公開設定OFF、Stage担当0件。
+- 元Cloud Event SnapshotとEntry全行の比較用ハッシュは、それぞれ前回の最終確認結果と一致。
+  旧Eventの演奏記録は保持。
+
+PC終了時のmanagement revision=16、旧Eventのスマホ閲覧試験終了時の28（14:21:26 JST）、
+新Eventの7（15:15:12 JST）は別時点・別Eventの記録です。終了記録を保持して終了しており、
+検証データの削除・初期化は行っていません。
+
+### C. 今回未実施の項目・証拠の限界
+
+- 確認したスマホ操作は明示割当Viewerによるもの。スマホOwnerによる開始・終了は未実施。
+- Offline試験はB開始前の開始ボタンの抑止。進行中の終了ボタンのOffline抑止は未実施。
+- 担当解除後の終了不可はUI確認であり、直接RPCを送信した認可拒否試験ではない。
+- 自動反映は画面上の確認であり、Realtime経路だけの分離計測や遅延保証ではない。
+- 復帰時にBが自動開始しなかったことを、mutation送信途中の切断・結果不明・重複送信・再送への
+  耐性確認へ拡張しない。これらは今回未実施。
+- 同時操作CAS競合、未割当 / 解除済みViewerなどの直接RPC拒否、Editor / Workspace外ユーザーの
+  今回の実機確認は未実施。
+- 長時間接続・長時間ロック・タブ破棄・負荷、Wi-Fiローミング、匿名アクセス拒否の今回の実機確認は
+  未実施。匿名公開設定OFFの保存状態確認と匿名アクセス拒否の実測は区別する。
+- 今回の操作試験の回線・SSIDは未確認。前回の閲覧試験の両SSID成功報告を流用しない。
+
+過去の使い捨てDB・Hosted試験は各日付・環境の証拠として保持し、今回の実機PASSへ合算しません。
+この結果は「スマホ全機能PASS」「Production公開準備完了」ではありません。PRのマージ可否と
+Production公開可否は別判断であり、PR #79はOpen・Draft・未マージを維持します。
 
 ## ブラウザ確認
 
