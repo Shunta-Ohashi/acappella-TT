@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { isRecord } from '../persistence/persistenceValidation.ts'
 import { isPostgresBigintGeneration } from '../cloud/cloudGeneration.ts'
+import { parseLiveTimetableSourceRevision } from './liveTimetableSourceRevision.ts'
 
 export type LiveTimetableProgressStatus =
   | 'empty'
@@ -65,7 +66,7 @@ export interface AuthorizedLiveTimetable {
     label: string | null
     position: number
   }>
-  sourceRevision: number
+  sourceRevision: string
   sourceSnapshotFingerprint: string
   projectionVersion: string
   managementRevision: string
@@ -74,7 +75,7 @@ export interface AuthorizedLiveTimetable {
   updatedAt: string
   role: 'owner' | 'editor' | 'viewer'
   canManage: boolean
-  operators: Array<{ stageId: string; userId: string }>
+  operators: Array<{ stageId: string; userId: string; assignedAt: string }>
   stages: LiveTimetableStageView[]
 }
 
@@ -86,6 +87,19 @@ export interface PublicLiveTimetable {
   managementRevision: string
   eventDays: Array<{ date: string; position: number }>
   stages: LiveTimetableStageView[]
+}
+
+export interface LiveTimetableDiscovery {
+  workspaceId: string
+  eventId: string
+  eventName: string
+  sourceRevision: string
+  liveId: string | null
+}
+
+export interface LiveTimetableOperatorCandidate {
+  userId: string
+  displayName: string
 }
 
 export type LiveTimetableRepositoryErrorCode =
@@ -100,6 +114,7 @@ export type LiveTimetableRepositoryErrorCode =
   | 'LIVE_NOT_FOUND'
   | 'NOT_FOUND'
   | 'OPERATOR_NOT_EDITOR'
+  | 'OPERATOR_NOT_ELIGIBLE'
   | 'PROJECTION_REPLACEMENT_FORBIDDEN'
   | 'REVISION_CONFLICT'
   | 'STATE_CONFLICT'
@@ -128,12 +143,23 @@ export interface LiveTimetableDatabaseGateway {
   createProjection: (input: {
     workspaceId: string
     eventId: string
-    expectedSourceRevision: number
+    expectedSourceRevision: string
     mode: 'create' | 'replace'
     expectedManagementRevision: string | null
   }) => Promise<LiveTimetableDatabaseResult<unknown>>
-  loadAuthorized: (liveId: string) => Promise<LiveTimetableDatabaseResult<unknown>>
+  loadAuthorized: (
+    liveId: string,
+    signal?: AbortSignal,
+  ) => Promise<LiveTimetableDatabaseResult<unknown>>
   loadPublic: (publicId: string) => Promise<LiveTimetableDatabaseResult<unknown>>
+  findForEvent: (input: {
+    workspaceId: string
+    eventId: string
+  }, signal?: AbortSignal) => Promise<LiveTimetableDatabaseResult<unknown>>
+  listOperatorCandidates: (
+    liveId: string,
+    signal?: AbortSignal,
+  ) => Promise<LiveTimetableDatabaseResult<unknown>>
   setPublication: (input: {
     liveId: string
     expectedManagementRevision: string
@@ -142,6 +168,7 @@ export interface LiveTimetableDatabaseGateway {
   setStageOperator: (input: {
     liveId: string
     sourceStageId: string
+    expectedStageId: string
     operatorUserId: string
     assign: boolean
     expectedManagementRevision: string
@@ -151,7 +178,9 @@ export interface LiveTimetableDatabaseGateway {
     operation: 'start' | 'end'
     liveId: string
     sourceStageId: string
+    expectedStageId: string
     sourceScheduleItemId: string
+    expectedEntryPosition: number
     expectedStageRevision: string
     expectedProjectionVersion: string
   }) => Promise<LiveTimetableDatabaseResult<unknown>>
@@ -164,10 +193,20 @@ export interface LiveTimetableRepository {
     : never
   loadAuthorized: (
     liveId: string,
+    signal?: AbortSignal,
   ) => Promise<LiveTimetableRepositoryResult<AuthorizedLiveTimetable>>
   loadPublic: (
     publicId: string,
   ) => Promise<LiveTimetableRepositoryResult<PublicLiveTimetable>>
+  findForEvent: (
+    workspaceId: string,
+    eventId: string,
+    signal?: AbortSignal,
+  ) => Promise<LiveTimetableRepositoryResult<LiveTimetableDiscovery>>
+  listOperatorCandidates: (
+    liveId: string,
+    signal?: AbortSignal,
+  ) => Promise<LiveTimetableRepositoryResult<LiveTimetableOperatorCandidate[]>>
   setPublication: (
     liveId: string,
     expectedManagementRevision: string,
@@ -176,6 +215,7 @@ export interface LiveTimetableRepository {
   setStageOperator: (
     liveId: string,
     sourceStageId: string,
+    expectedStageId: string,
     operatorUserId: string,
     assign: boolean,
     expectedManagementRevision: string,
@@ -184,14 +224,18 @@ export interface LiveTimetableRepository {
   startEntry: (
     liveId: string,
     sourceStageId: string,
+    expectedStageId: string,
     sourceScheduleItemId: string,
+    expectedEntryPosition: number,
     expectedStageRevision: string,
     expectedProjectionVersion: string,
   ) => Promise<LiveTimetableRepositoryResult<unknown>>
   endEntry: (
     liveId: string,
     sourceStageId: string,
+    expectedStageId: string,
     sourceScheduleItemId: string,
+    expectedEntryPosition: number,
     expectedStageRevision: string,
     expectedProjectionVersion: string,
   ) => Promise<LiveTimetableRepositoryResult<unknown>>
@@ -200,6 +244,8 @@ export interface LiveTimetableRepository {
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu
 const fingerprintPattern = /^[0-9a-f]{64}$/u
+const localDatePattern = /^\d{4}-\d{2}-\d{2}$/u
+const localTimePattern = /^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/u
 
 const normalizeUuid = (value: unknown): string | undefined =>
   typeof value === 'string' && uuidPattern.test(value)
@@ -230,11 +276,22 @@ const isNullablePosition = (value: unknown): value is number | null =>
 const isNullableString = (value: unknown): value is string | null =>
   value === null || typeof value === 'string'
 
+const isNullableNonEmptyString = (value: unknown): value is string | null =>
+  value === null || isNonEmptyString(value)
+
 const isNullableUuid = (value: unknown): value is string | null =>
   value === null || normalizeUuid(value) !== undefined
 
+const isLocalTime = (value: unknown): value is string =>
+  typeof value === 'string' && localTimePattern.test(value)
+
 const isLocalTimeOrNull = (value: unknown): value is string | null =>
-  value === null || (typeof value === 'string' && /^\d{2}:\d{2}$/u.test(value))
+  value === null || isLocalTime(value)
+
+const hasUniqueBoundedPositions = (
+  positions: readonly number[],
+): boolean => new Set(positions).size === positions.length &&
+  positions.every(position => position < positions.length)
 
 const parseSections = (
   value: unknown,
@@ -300,12 +357,29 @@ const parseEntries = (
       !isNullableString(item.actualEndedAt) ||
       (item.actualStartedAt !== null && !isTimestamp(item.actualStartedAt)) ||
       (item.actualEndedAt !== null && !isTimestamp(item.actualEndedAt)) ||
+      (item.status === 'pending' && (
+        item.actualStartedAt !== null || item.actualEndedAt !== null
+      )) ||
+      (item.status === 'in_progress' && (
+        item.actualStartedAt === null || item.actualEndedAt !== null
+      )) ||
+      (item.status === 'completed' && (
+        item.actualStartedAt === null || item.actualEndedAt === null ||
+        Date.parse(item.actualEndedAt) < Date.parse(item.actualStartedAt)
+      )) ||
+      (item.kind === 'break' && item.displayName !== '休憩') ||
       (internal && (
         !isNonEmptyString(item.sourceScheduleItemId) ||
-        !isNullableString(item.sourceSectionId) ||
-        !isNullableString(item.afterSectionId) ||
+        !isNullableNonEmptyString(item.sourceSectionId) ||
+        !isNullableNonEmptyString(item.afterSectionId) ||
         !isNullableUuid(item.startedBy) ||
-        !isNullableUuid(item.endedBy)
+        !isNullableUuid(item.endedBy) ||
+        (item.status === 'pending' &&
+          (item.startedBy !== null || item.endedBy !== null)) ||
+        (item.status === 'in_progress' &&
+          (item.startedBy === null || item.endedBy !== null)) ||
+        (item.status === 'completed' &&
+          (item.startedBy === null || item.endedBy === null))
       ))
     ) return undefined
     entries.push({
@@ -364,7 +438,7 @@ const parseStages = (
       !isNonEmptyString(item.name) ||
       !isPosition(item.eventDayPosition) ||
       !isPosition(item.position) ||
-      typeof item.plannedStartTime !== 'string' ||
+      !isLocalTime(item.plannedStartTime) ||
       !isLocalTimeOrNull(item.plannedEndTime) ||
       !isPositiveRevision(item.revision) ||
       !isPositiveRevision(item.projectionVersion) ||
@@ -396,8 +470,8 @@ const parseStages = (
       ? Math.min(...pendingPerformances.map(entry => entry.position))
       : null
     if (
-      new Set(sectionPositions).size !== sectionPositions.length ||
-      new Set(entryPositions).size !== entryPositions.length ||
+      !hasUniqueBoundedPositions(sectionPositions) ||
+      !hasUniqueBoundedPositions(entryPositions) ||
       item.nextEntryPosition !== nextEntryPosition ||
       item.nextPerformancePosition !== nextPerformancePosition ||
       (item.progressStatus === 'empty' && entries.length !== 0) ||
@@ -417,6 +491,19 @@ const parseStages = (
       (item.progressStatus === 'completed' &&
         entries.some(entry => entry.status !== 'completed'))
     ) return undefined
+    if (internal) {
+      const sourceSectionIds = sections.map(section => section.sourceSectionId as string)
+      if (new Set(sourceSectionIds).size !== sourceSectionIds.length ||
+        entries.some(entry =>
+          (entry.sourceSectionId !== null &&
+            !sourceSectionIds.includes(entry.sourceSectionId ?? '')) ||
+          (entry.afterSectionId !== null && (
+            entry.kind !== 'break' ||
+            !sourceSectionIds.includes(entry.afterSectionId ?? '')
+          )) ||
+          (entry.sourceSectionId !== null && entry.afterSectionId !== null)
+        )) return undefined
+    }
     stages.push({
       ...(internal ? {
         stageId: normalizeUuid(item.stageId) as string,
@@ -452,6 +539,7 @@ export const parseAuthorizedLiveTimetable = (
   const live = value.live
   const permissions = value.permissions
   const stages = parseStages(value.stages, true)
+  const sourceRevision = parseLiveTimetableSourceRevision(live.sourceRevision)
   if (
     !stages ||
     !hasOnlyKeys(live, [
@@ -468,7 +556,7 @@ export const parseAuthorizedLiveTimetable = (
     !isNonEmptyString(live.eventName) ||
     !isNonEmptyString(live.timeZone) ||
     !Array.isArray(live.eventDays) ||
-    !Number.isSafeInteger(live.sourceRevision) || Number(live.sourceRevision) <= 0 ||
+    !sourceRevision ||
     typeof live.sourceSnapshotFingerprint !== 'string' ||
     !fingerprintPattern.test(live.sourceSnapshotFingerprint) ||
     !isPositiveRevision(live.projectionVersion) ||
@@ -485,7 +573,8 @@ export const parseAuthorizedLiveTimetable = (
     if (!isRecord(day) || !hasOnlyKeys(day, [
       'sourceEventDayId', 'date', 'label', 'position',
     ]) || !isNonEmptyString(day.sourceEventDayId) ||
-      !isNonEmptyString(day.date) || !isNullableString(day.label) ||
+      typeof day.date !== 'string' || !localDatePattern.test(day.date) ||
+      (day.label !== null && !isNonEmptyString(day.label)) ||
       !isPosition(day.position)) return undefined
     eventDays.push({
       sourceEventDayId: day.sourceEventDayId,
@@ -494,14 +583,47 @@ export const parseAuthorizedLiveTimetable = (
       position: day.position,
     })
   }
+  const eventDayPositions = eventDays.map(day => day.position)
+  const eventDayIds = eventDays.map(day => day.sourceEventDayId)
+  const stageIds = stages.map(stage => stage.stageId as string)
+  const sourceStageIds = stages.map(stage => stage.sourceStageId as string)
+  const stagePositions = stages.map(stage => stage.position)
+  const sourceSectionIds = stages.flatMap(stage =>
+    stage.sections.map(section => section.sourceSectionId as string))
+  const sourceScheduleItemIds = stages.flatMap(stage =>
+    stage.entries.map(entry => entry.sourceScheduleItemId as string))
+  if (!hasUniqueBoundedPositions(eventDayPositions) ||
+    new Set(eventDayIds).size !== eventDayIds.length ||
+    !hasUniqueBoundedPositions(stagePositions) ||
+    new Set(stageIds).size !== stageIds.length ||
+    new Set(sourceStageIds).size !== sourceStageIds.length ||
+    new Set(sourceSectionIds).size !== sourceSectionIds.length ||
+    new Set(sourceScheduleItemIds).size !== sourceScheduleItemIds.length ||
+    stages.some(stage => {
+      const day = eventDays.find(candidate =>
+        candidate.sourceEventDayId === stage.sourceEventDayId)
+      return !day || day.position !== stage.eventDayPosition ||
+        stage.projectionVersion !== live.projectionVersion
+    })) return undefined
   const operators: AuthorizedLiveTimetable['operators'] = []
+  const validStageIds = new Set(stageIds)
+  const operatorKeys = new Set<string>()
+  if (!permissions.canManage && value.operators.length !== 0) return undefined
   for (const operator of value.operators) {
-    if (!isRecord(operator) || !hasOnlyKeys(operator, ['stageId', 'userId']) ||
+    if (!isRecord(operator) ||
+      !hasOnlyKeys(operator, ['stageId', 'userId', 'assignedAt']) ||
       normalizeUuid(operator.stageId) === undefined ||
-      normalizeUuid(operator.userId) === undefined) return undefined
+      normalizeUuid(operator.userId) === undefined ||
+      !isTimestamp(operator.assignedAt)) return undefined
+    const stageId = normalizeUuid(operator.stageId) as string
+    const userId = normalizeUuid(operator.userId) as string
+    const operatorKey = `${stageId}:${userId}`
+    if (!validStageIds.has(stageId) || operatorKeys.has(operatorKey)) return undefined
+    operatorKeys.add(operatorKey)
     operators.push({
-      stageId: normalizeUuid(operator.stageId) as string,
-      userId: normalizeUuid(operator.userId) as string,
+      stageId,
+      userId,
+      assignedAt: operator.assignedAt,
     })
   }
 
@@ -513,7 +635,7 @@ export const parseAuthorizedLiveTimetable = (
     eventName: live.eventName,
     timeZone: live.timeZone,
     eventDays,
-    sourceRevision: Number(live.sourceRevision),
+    sourceRevision,
     sourceSnapshotFingerprint: live.sourceSnapshotFingerprint,
     projectionVersion: live.projectionVersion,
     managementRevision: live.managementRevision,
@@ -553,11 +675,19 @@ export const parsePublicLiveTimetable = (
   const eventDays: PublicLiveTimetable['eventDays'] = []
   for (const day of live.eventDays) {
     if (!isRecord(day) || !hasOnlyKeys(day, ['date', 'position']) ||
-      !isNonEmptyString(day.date) || !isPosition(day.position)) {
+      typeof day.date !== 'string' || !localDatePattern.test(day.date) ||
+      !isPosition(day.position)) {
       return undefined
     }
     eventDays.push({ date: day.date, position: day.position })
   }
+  const eventDayPositions = eventDays.map(day => day.position)
+  const stagePositions = stages.map(stage => stage.position)
+  if (!hasUniqueBoundedPositions(eventDayPositions) ||
+    !hasUniqueBoundedPositions(stagePositions) ||
+    stages.some(stage =>
+      !eventDayPositions.includes(stage.eventDayPosition) ||
+      stage.projectionVersion !== live.projectionVersion)) return undefined
   return {
     publicId: normalizeUuid(live.publicId) as string,
     eventName: live.eventName,
@@ -567,6 +697,55 @@ export const parsePublicLiveTimetable = (
     eventDays,
     stages,
   }
+}
+
+export const parseLiveTimetableDiscovery = (
+  value: unknown,
+  expectedWorkspaceId: string,
+  expectedEventId: string,
+): LiveTimetableDiscovery | undefined => {
+  const sourceRevision = isRecord(value)
+    ? parseLiveTimetableSourceRevision(value.sourceRevision)
+    : undefined
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    'status', 'workspaceId', 'eventId', 'eventName', 'sourceRevision', 'liveId',
+  ]) || value.status !== 'ok' || value.workspaceId !== expectedWorkspaceId ||
+    value.eventId !== expectedEventId || !isNonEmptyString(value.eventName) ||
+    !sourceRevision ||
+    (value.liveId !== null && normalizeUuid(value.liveId) === undefined)) {
+    return undefined
+  }
+  return {
+    workspaceId: expectedWorkspaceId,
+    eventId: expectedEventId,
+    eventName: value.eventName,
+    sourceRevision,
+    liveId: value.liveId === null ? null : normalizeUuid(value.liveId) as string,
+  }
+}
+
+export const parseLiveTimetableOperatorCandidates = (
+  value: unknown,
+  expectedLiveId: string,
+): LiveTimetableOperatorCandidate[] | undefined => {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    'status', 'liveId', 'candidates',
+  ]) || value.status !== 'ok' || normalizeUuid(value.liveId) !== expectedLiveId ||
+    !Array.isArray(value.candidates)) return undefined
+
+  const candidates: LiveTimetableOperatorCandidate[] = []
+  const userIds = new Set<string>()
+  for (const candidate of value.candidates) {
+    if (!isRecord(candidate) || !hasOnlyKeys(candidate, [
+      'userId', 'displayName',
+    ])) return undefined
+    const userId = normalizeUuid(candidate.userId)
+    if (!userId || !isNonEmptyString(candidate.displayName) ||
+      userIds.has(userId)) return undefined
+    userIds.add(userId)
+    candidates.push({ userId, displayName: candidate.displayName })
+  }
+  return candidates
 }
 
 const errorResult = (
@@ -610,13 +789,26 @@ const databaseFailure = (
       return errorResult('STATE_CONFLICT', 'Live TTの現在状態ではこの操作を実行できません。')
     case 'LTT01':
     case 'OPERATOR_NOT_EDITOR':
-      return errorResult('OPERATOR_NOT_EDITOR', '割当先は現在のeditorである必要があります。')
+    case 'OPERATOR_NOT_ELIGIBLE':
+      return errorResult(
+        'OPERATOR_NOT_ELIGIBLE',
+        '割当先は現在のeditorまたはviewerである必要があります。',
+      )
     case '22023':
       return errorResult('INVALID_ARGUMENT', 'Live TTの引数が正しくありません。')
     default:
       return errorResult('SUPABASE_ERROR', 'Live TTと通信できませんでした。')
   }
 }
+
+const discoveryDatabaseFailure = (
+  error: LiveTimetableDatabaseError,
+): LiveTimetableRepositoryResult<never> => error.code === 'P0002'
+  ? errorResult(
+    'EVENT_NOT_FOUND',
+    'Cloudに保存されたEventが見つかりません。通常のイベント編集画面でCloudへ保存してから、Live TTを開いてください。',
+  )
+  : databaseFailure(error)
 
 const isValidIdAndRevisions = (
   liveId: string,
@@ -628,28 +820,30 @@ const parseProjectionMutationResponse = (
   expected: {
     workspaceId: string
     eventId: string
-    expectedSourceRevision: number
+    expectedSourceRevision: string
     mode: 'create' | 'replace'
   },
-): unknown | undefined => isRecord(value) &&
-  hasOnlyKeys(value, [
+): unknown | undefined => {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
     'status', 'workspaceId', 'eventId', 'liveId', 'publicId',
     'sourceRevision', 'sourceSnapshotFingerprint', 'projectionVersion',
     'managementRevision', 'isPublished',
-  ]) &&
-  value.status === (expected.mode === 'create' ? 'created' : 'replaced') &&
-  value.workspaceId === expected.workspaceId &&
-  value.eventId === expected.eventId &&
-  normalizeUuid(value.liveId) !== undefined &&
-  normalizeUuid(value.publicId) !== undefined &&
-  value.sourceRevision === expected.expectedSourceRevision &&
-  typeof value.sourceSnapshotFingerprint === 'string' &&
-  fingerprintPattern.test(value.sourceSnapshotFingerprint) &&
-  isPositiveRevision(value.projectionVersion) &&
-  isPositiveRevision(value.managementRevision) &&
-  value.isPublished === false
-  ? value
-  : undefined
+  ])) return undefined
+  const sourceRevision = parseLiveTimetableSourceRevision(value.sourceRevision)
+  return value.status === (expected.mode === 'create' ? 'created' : 'replaced') &&
+    value.workspaceId === expected.workspaceId &&
+    value.eventId === expected.eventId &&
+    normalizeUuid(value.liveId) !== undefined &&
+    normalizeUuid(value.publicId) !== undefined &&
+    sourceRevision === expected.expectedSourceRevision &&
+    typeof value.sourceSnapshotFingerprint === 'string' &&
+    fingerprintPattern.test(value.sourceSnapshotFingerprint) &&
+    isPositiveRevision(value.projectionVersion) &&
+    isPositiveRevision(value.managementRevision) &&
+    value.isPublished === false
+    ? { ...value, sourceRevision }
+    : undefined
+}
 
 const parsePublicationMutationResponse = (
   value: unknown,
@@ -670,8 +864,10 @@ const parsePublicationMutationResponse = (
 const parseOperatorMutationResponse = (
   value: unknown,
   liveId: string,
+  expectedStageId: string,
   operatorUserId: string,
   assigned: boolean,
+  expectedManagementRevision: string,
   expectedProjectionVersion: string,
 ): unknown | undefined => isRecord(value) &&
   hasOnlyKeys(value, [
@@ -679,11 +875,12 @@ const parseOperatorMutationResponse = (
     'projectionVersion', 'managementRevision',
   ]) &&
   value.status === 'ok' && normalizeUuid(value.liveId) === liveId &&
-  normalizeUuid(value.stageId) !== undefined &&
+  normalizeUuid(value.stageId) === expectedStageId &&
   normalizeUuid(value.operatorUserId) === operatorUserId &&
   value.assigned === assigned &&
   value.projectionVersion === expectedProjectionVersion &&
-  isPositiveRevision(value.managementRevision)
+  value.managementRevision ===
+    (BigInt(expectedManagementRevision) + 1n).toString()
   ? value
   : undefined
 
@@ -691,6 +888,8 @@ const parseTransitionMutationResponse = (
   value: unknown,
   operation: 'start' | 'end',
   liveId: string,
+  expectedStageId: string,
+  expectedEntryPosition: number,
   expectedStageRevision: string,
   expectedProjectionVersion: string,
 ): unknown | undefined => {
@@ -700,7 +899,7 @@ const parseTransitionMutationResponse = (
     'nextEntryPosition', 'nextPerformancePosition', 'entry',
   ]) || value.status !== 'ok' || value.operation !== operation ||
     normalizeUuid(value.liveId) !== liveId ||
-    normalizeUuid(value.stageId) === undefined ||
+    normalizeUuid(value.stageId) !== expectedStageId ||
     value.projectionVersion !== expectedProjectionVersion ||
     value.stageRevision !== (BigInt(expectedStageRevision) + 1n).toString() ||
     !progressStatuses.has(value.progressStatus as LiveTimetableProgressStatus) ||
@@ -709,7 +908,7 @@ const parseTransitionMutationResponse = (
     !isNullablePosition(value.nextPerformancePosition) ||
     !isRecord(value.entry) || !hasOnlyKeys(value.entry, [
       'position', 'status', 'actualStartedAt', 'actualEndedAt',
-    ]) || !isPosition(value.entry.position) ||
+    ]) || value.entry.position !== expectedEntryPosition ||
     !['in_progress', 'completed'].includes(String(value.entry.status)) ||
     !isNullableString(value.entry.actualStartedAt) ||
     !isNullableString(value.entry.actualEndedAt) ||
@@ -736,9 +935,11 @@ export const createLiveTimetableRepository = (
   gateway: LiveTimetableDatabaseGateway,
 ): LiveTimetableRepository => ({
   async createProjection(input) {
+    const expectedSourceRevision = parseLiveTimetableSourceRevision(
+      input.expectedSourceRevision,
+    )
     if (!normalizeUuid(input.workspaceId) || !isNonEmptyString(input.eventId) ||
-      !Number.isSafeInteger(input.expectedSourceRevision) ||
-      input.expectedSourceRevision <= 0 ||
+      !expectedSourceRevision ||
       (input.mode !== 'create' && input.mode !== 'replace') ||
       (input.mode === 'create' && input.expectedManagementRevision !== null) ||
       (input.mode === 'replace' &&
@@ -749,12 +950,13 @@ export const createLiveTimetableRepository = (
       const result = await gateway.createProjection({
         ...input,
         workspaceId: normalizeUuid(input.workspaceId) as string,
+        expectedSourceRevision,
       })
       if (result.error) return databaseFailure(result.error)
       const parsed = parseProjectionMutationResponse(result.data, {
         workspaceId: normalizeUuid(input.workspaceId) as string,
         eventId: input.eventId,
-        expectedSourceRevision: input.expectedSourceRevision,
+        expectedSourceRevision,
         mode: input.mode,
       })
       return parsed
@@ -765,14 +967,14 @@ export const createLiveTimetableRepository = (
     }
   },
 
-  async loadAuthorized(liveId) {
+  async loadAuthorized(liveId, signal) {
     const normalized = normalizeUuid(liveId)
     if (!normalized) return errorResult('INVALID_ARGUMENT', 'Live IDが正しくありません。')
     try {
-      const result = await gateway.loadAuthorized(normalized)
+      const result = await gateway.loadAuthorized(normalized, signal)
       if (result.error) return databaseFailure(result.error)
       const parsed = parseAuthorizedLiveTimetable(result.data)
-      return parsed
+      return parsed?.liveId === normalized
         ? { ok: true, value: parsed }
         : errorResult('INVALID_RESPONSE', 'Live TT応答を検証できません。')
     } catch {
@@ -790,9 +992,53 @@ export const createLiveTimetableRepository = (
         return errorResult('NOT_FOUND', '公開中のLive TTが見つかりません。')
       }
       const parsed = parsePublicLiveTimetable(result.data)
-      return parsed
+      return parsed?.publicId === normalized
         ? { ok: true, value: parsed }
         : errorResult('INVALID_RESPONSE', '公開Live TT応答を検証できません。')
+    } catch {
+      return databaseFailure({})
+    }
+  },
+
+  async findForEvent(workspaceId, eventId, signal) {
+    const normalizedWorkspaceId = normalizeUuid(workspaceId)
+    if (!normalizedWorkspaceId || !isNonEmptyString(eventId)) {
+      return errorResult('INVALID_ARGUMENT', 'Workspace IDとEvent IDが必要です。')
+    }
+    try {
+      const result = await gateway.findForEvent({
+        workspaceId: normalizedWorkspaceId,
+        eventId,
+      }, signal)
+      if (result.error) return discoveryDatabaseFailure(result.error)
+      const parsed = parseLiveTimetableDiscovery(
+        result.data,
+        normalizedWorkspaceId,
+        eventId,
+      )
+      return parsed
+        ? { ok: true, value: parsed }
+        : errorResult('INVALID_RESPONSE', 'Live TT discovery応答を検証できません。')
+    } catch {
+      return databaseFailure({})
+    }
+  },
+
+  async listOperatorCandidates(liveId, signal) {
+    const normalizedLiveId = normalizeUuid(liveId)
+    if (!normalizedLiveId) {
+      return errorResult('INVALID_ARGUMENT', 'Live IDが正しくありません。')
+    }
+    try {
+      const result = await gateway.listOperatorCandidates(normalizedLiveId, signal)
+      if (result.error) return databaseFailure(result.error)
+      const parsed = parseLiveTimetableOperatorCandidates(
+        result.data,
+        normalizedLiveId,
+      )
+      return parsed
+        ? { ok: true, value: parsed }
+        : errorResult('INVALID_RESPONSE', 'operator候補応答を検証できません。')
     } catch {
       return databaseFailure({})
     }
@@ -826,6 +1072,7 @@ export const createLiveTimetableRepository = (
   async setStageOperator(
     liveId,
     sourceStageId,
+    expectedStageId,
     operatorUserId,
     assign,
     expectedManagementRevision,
@@ -833,7 +1080,8 @@ export const createLiveTimetableRepository = (
   ) {
     if (!isValidIdAndRevisions(
       liveId, expectedManagementRevision, expectedProjectionVersion,
-    ) || !isNonEmptyString(sourceStageId) || !normalizeUuid(operatorUserId) ||
+    ) || !isNonEmptyString(sourceStageId) || !normalizeUuid(expectedStageId) ||
+      !normalizeUuid(operatorUserId) ||
       typeof assign !== 'boolean') {
       return errorResult('INVALID_ARGUMENT', 'operator割当の引数が正しくありません。')
     }
@@ -841,6 +1089,7 @@ export const createLiveTimetableRepository = (
       const result = await gateway.setStageOperator({
         liveId: normalizeUuid(liveId) as string,
         sourceStageId,
+        expectedStageId: normalizeUuid(expectedStageId) as string,
         operatorUserId: normalizeUuid(operatorUserId) as string,
         assign,
         expectedManagementRevision,
@@ -850,8 +1099,10 @@ export const createLiveTimetableRepository = (
       const parsed = parseOperatorMutationResponse(
         result.data,
         normalizeUuid(liveId) as string,
+        normalizeUuid(expectedStageId) as string,
         normalizeUuid(operatorUserId) as string,
         assign,
+        expectedManagementRevision,
         expectedProjectionVersion,
       )
       return parsed
@@ -863,21 +1114,25 @@ export const createLiveTimetableRepository = (
   },
 
   async startEntry(
-    liveId, sourceStageId, sourceScheduleItemId,
+    liveId, sourceStageId, expectedStageId, sourceScheduleItemId,
+    expectedEntryPosition,
     expectedStageRevision, expectedProjectionVersion,
   ) {
     return transition(
-      gateway, 'start', liveId, sourceStageId, sourceScheduleItemId,
+      gateway, 'start', liveId, sourceStageId, expectedStageId,
+      sourceScheduleItemId, expectedEntryPosition,
       expectedStageRevision, expectedProjectionVersion,
     )
   },
 
   async endEntry(
-    liveId, sourceStageId, sourceScheduleItemId,
+    liveId, sourceStageId, expectedStageId, sourceScheduleItemId,
+    expectedEntryPosition,
     expectedStageRevision, expectedProjectionVersion,
   ) {
     return transition(
-      gateway, 'end', liveId, sourceStageId, sourceScheduleItemId,
+      gateway, 'end', liveId, sourceStageId, expectedStageId,
+      sourceScheduleItemId, expectedEntryPosition,
       expectedStageRevision, expectedProjectionVersion,
     )
   },
@@ -888,13 +1143,16 @@ const transition = async (
   operation: 'start' | 'end',
   liveId: string,
   sourceStageId: string,
+  expectedStageId: string,
   sourceScheduleItemId: string,
+  expectedEntryPosition: number,
   expectedStageRevision: string,
   expectedProjectionVersion: string,
 ): Promise<LiveTimetableRepositoryResult<unknown>> => {
   if (!isValidIdAndRevisions(
     liveId, expectedStageRevision, expectedProjectionVersion,
-  ) || !isNonEmptyString(sourceStageId) ||
+  ) || !isNonEmptyString(sourceStageId) || !normalizeUuid(expectedStageId) ||
+    !isPosition(expectedEntryPosition) ||
     !isNonEmptyString(sourceScheduleItemId)) {
     return errorResult('INVALID_ARGUMENT', '進行操作の引数が正しくありません。')
   }
@@ -903,7 +1161,9 @@ const transition = async (
       operation,
       liveId: normalizeUuid(liveId) as string,
       sourceStageId,
+      expectedStageId: normalizeUuid(expectedStageId) as string,
       sourceScheduleItemId,
+      expectedEntryPosition,
       expectedStageRevision,
       expectedProjectionVersion,
     })
@@ -912,6 +1172,8 @@ const transition = async (
       result.data,
       operation,
       normalizeUuid(liveId) as string,
+      normalizeUuid(expectedStageId) as string,
+      expectedEntryPosition,
       expectedStageRevision,
       expectedProjectionVersion,
     )
@@ -951,16 +1213,38 @@ export const createSupabaseLiveTimetableGateway = (
       ? { data: null, error: await parseFunctionError(result.error) }
       : { data: result.data, error: null }
   },
-  async loadAuthorized(liveId) {
-    const result = await client.rpc('load_live_timetable_authorized', {
+  async loadAuthorized(liveId, signal) {
+    const request = client.rpc('load_live_timetable_authorized', {
       p_live_id: liveId,
     })
+    const result = signal
+      ? await request.abortSignal(signal)
+      : await request
     return { data: result.data, error: result.error }
   },
   async loadPublic(publicId) {
     const result = await client.rpc('load_live_timetable_public', {
       p_public_id: publicId,
     })
+    return { data: result.data, error: result.error }
+  },
+  async findForEvent(input, signal) {
+    const request = client.rpc('find_live_timetable_for_event_authorized', {
+      p_workspace_id: input.workspaceId,
+      p_event_id: input.eventId,
+    })
+    const result = signal
+      ? await request.abortSignal(signal)
+      : await request
+    return { data: result.data, error: result.error }
+  },
+  async listOperatorCandidates(liveId, signal) {
+    const request = client.rpc('list_live_timetable_operator_candidates', {
+      p_live_id: liveId,
+    })
+    const result = signal
+      ? await request.abortSignal(signal)
+      : await request
     return { data: result.data, error: result.error }
   },
   async setPublication(input) {
@@ -975,6 +1259,7 @@ export const createSupabaseLiveTimetableGateway = (
     const result = await client.rpc('set_live_timetable_stage_operator', {
       p_live_id: input.liveId,
       p_source_stage_id: input.sourceStageId,
+      p_expected_stage_id: input.expectedStageId,
       p_operator_user_id: input.operatorUserId,
       p_assign: input.assign,
       p_expected_management_revision: input.expectedManagementRevision,
@@ -989,7 +1274,9 @@ export const createSupabaseLiveTimetableGateway = (
     const result = await client.rpc(functionName, {
       p_live_id: input.liveId,
       p_source_stage_id: input.sourceStageId,
+      p_expected_stage_id: input.expectedStageId,
       p_source_schedule_item_id: input.sourceScheduleItemId,
+      p_expected_entry_position: input.expectedEntryPosition,
       p_expected_stage_revision: input.expectedStageRevision,
       p_expected_projection_version: input.expectedProjectionVersion,
     })

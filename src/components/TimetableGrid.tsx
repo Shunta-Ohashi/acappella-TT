@@ -103,6 +103,7 @@ import {
   TimetableGridRowActionsMenu,
   TimetableGridTooltip,
 } from './TimetableGridDetailsPopover'
+import { useRetainedAppActivity } from '../ui/nativeDialogActivity'
 
 interface TimetableGridProps {
   stage: Stage
@@ -1109,6 +1110,7 @@ export function TimetableGrid({
   onClearMemberColors,
   readOnly = false,
 }: TimetableGridProps) {
+  const active = useRetainedAppActivity()
   const tooltipId = 'timetable-grid-row-detail-tooltip'
   const [activeDetails, setActiveDetails] = useState<
     TimetableGridActiveDetails | null
@@ -1229,6 +1231,10 @@ export function TimetableGrid({
   )
 
   useEffect(() => {
+    if (!active) {
+      pointerSelectionRef.current = null
+      return
+    }
     const finishPointerSelection = () => {
       pointerSelectionRef.current = null
     }
@@ -1238,7 +1244,7 @@ export function TimetableGrid({
       window.removeEventListener('pointerup', finishPointerSelection)
       window.removeEventListener('pointercancel', finishPointerSelection)
     }
-  }, [])
+  }, [active])
 
   useEffect(() => {
     if (hasInvalidSelection) onSelectionChange(null)

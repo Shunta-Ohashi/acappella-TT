@@ -174,6 +174,53 @@ as $$
   )
 $$;
 
+create or replace function pg_temp.live_stage_id(
+  p_live_id uuid,
+  p_source_stage_id text
+)
+returns uuid
+language sql
+stable
+as $$
+  select id
+  from public.live_timetable_stages
+  where live_timetable_id = p_live_id
+    and source_stage_id = p_source_stage_id
+$$;
+
+create or replace function pg_temp.live_state(p_live_id uuid)
+returns jsonb
+language sql
+stable
+as $$
+  select jsonb_build_object(
+    'live', (
+      select to_jsonb(live_row)
+      from public.live_timetables as live_row
+      where live_row.id = p_live_id
+    ),
+    'stages', (
+      select coalesce(jsonb_agg(to_jsonb(stage_row) order by stage_row.id), '[]')
+      from public.live_timetable_stages as stage_row
+      where stage_row.live_timetable_id = p_live_id
+    ),
+    'entries', (
+      select coalesce(jsonb_agg(to_jsonb(entry_row) order by entry_row.id), '[]')
+      from public.live_timetable_entries as entry_row
+      where entry_row.live_timetable_id = p_live_id
+    ),
+    'operators', (
+      select coalesce(
+        jsonb_agg(to_jsonb(operator_row) order by operator_row.stage_id,
+          operator_row.user_id),
+        '[]'
+      )
+      from public.live_timetable_stage_operators as operator_row
+      where operator_row.live_timetable_id = p_live_id
+    )
+  )
+$$;
+
 insert into auth.users (
   id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data, created_at, updated_at
@@ -186,6 +233,12 @@ insert into auth.users (
    'live-viewer@example.invalid', '', now(), '{}'::jsonb, '{}'::jsonb, now(), now()),
   ('00000000-0000-4000-8000-000000000084', 'authenticated', 'authenticated',
    'live-outsider@example.invalid', '', now(), '{}'::jsonb, '{}'::jsonb, now(), now());
+
+insert into public.profiles (user_id, display_name) values
+  ('00000000-0000-4000-8000-000000000081', 'Live Owner'),
+  ('00000000-0000-4000-8000-000000000082', 'Live Editor'),
+  ('00000000-0000-4000-8000-000000000083', 'Live Viewer'),
+  ('00000000-0000-4000-8000-000000000084', 'Live Outsider');
 
 insert into public.workspaces (id, name) values
   ('78000000-0000-4000-8000-000000000001', 'Live foundation fixture');
@@ -203,6 +256,16 @@ insert into public.cloud_events (
   'live-foundation-event', 'Live Foundation Event',
   pg_temp.live_v1_snapshot()
 );
+
+-- Test-only setup for the exact PostgreSQL bigint boundary. The production
+-- insert/update triggers remain unchanged; only this rollback-scoped fixture
+-- row is moved to the maximum revision while replication triggers are paused.
+set local session_replication_role = replica;
+update public.cloud_events
+set revision = 9223372036854775807
+where workspace_id = '78000000-0000-4000-8000-000000000001'
+  and event_id = 'live-foundation-event';
+set local session_replication_role = origin;
 
 do $catalog_contract$
 declare
@@ -263,16 +326,20 @@ declare
   replacement jsonb;
   target_live_id uuid;
 begin
-  source_value := public.load_live_timetable_projection_source(
+  source_value := public.load_live_timetable_projection_source_serialized(
     '00000000-0000-4000-8000-000000000081',
     '78000000-0000-4000-8000-000000000001',
-    'live-foundation-event', 1
+    'live-foundation-event', 9223372036854775807
   );
+  if jsonb_typeof(source_value -> 'revision') is distinct from 'string'
+    or source_value ->> 'revision' <> '9223372036854775807' then
+    raise exception 'Serialized Live source revision lost bigint precision';
+  end if;
   begin
-    perform public.create_or_replace_live_timetable_projection(
+    perform public.create_or_replace_live_timetable_projection_serialized(
       '00000000-0000-4000-8000-000000000081',
       '78000000-0000-4000-8000-000000000001',
-      'live-foundation-event', 1,
+      'live-foundation-event', 9223372036854775807,
       source_value ->> 'snapshot_fingerprint',
       pg_temp.live_projection(), 'replace', '1'
     );
@@ -280,16 +347,18 @@ begin
       using errcode = 'P0004';
   exception when sqlstate 'P0003' then null;
   end;
-  mutation := public.create_or_replace_live_timetable_projection(
+  mutation := public.create_or_replace_live_timetable_projection_serialized(
     '00000000-0000-4000-8000-000000000081',
     '78000000-0000-4000-8000-000000000001',
-    'live-foundation-event', 1,
+    'live-foundation-event', 9223372036854775807,
     source_value ->> 'snapshot_fingerprint',
     pg_temp.live_projection(), 'create', null
   );
   target_live_id := (mutation ->> 'liveId')::uuid;
   if mutation ->> 'projectionVersion' <> '1'
     or mutation ->> 'managementRevision' <> '1'
+    or jsonb_typeof(mutation -> 'sourceRevision') is distinct from 'string'
+    or mutation ->> 'sourceRevision' <> '9223372036854775807'
     or (mutation ->> 'isPublished')::boolean then
     raise exception 'Initial Live projection metadata is invalid';
   end if;
@@ -316,17 +385,21 @@ begin
   );
 
   insert into public.live_timetable_stage_operators (
-    workspace_id, live_timetable_id, stage_id, user_id
+    workspace_id, live_timetable_id, stage_id, user_id, granted_role,
+    granted_authorization_epoch
   ) select workspace_id, live_timetable_id, id,
-      '00000000-0000-4000-8000-000000000082'
+      '00000000-0000-4000-8000-000000000082', 'editor',
+      (select authorization_epoch from public.workspace_members
+        where workspace_id = '78000000-0000-4000-8000-000000000001'
+          and user_id = '00000000-0000-4000-8000-000000000082')
     from public.live_timetable_stages
     where live_timetable_id = target_live_id
       and source_stage_id = 'live-stage-a';
 
-  replacement := public.create_or_replace_live_timetable_projection(
+  replacement := public.create_or_replace_live_timetable_projection_serialized(
     '00000000-0000-4000-8000-000000000081',
     '78000000-0000-4000-8000-000000000001',
-    'live-foundation-event', 1,
+    'live-foundation-event', 9223372036854775807,
     source_value ->> 'snapshot_fingerprint',
     pg_temp.live_projection(), 'replace', '1'
   );
@@ -336,12 +409,26 @@ begin
       where live_timetable_id = target_live_id) then
     raise exception 'Projection replacement contract is invalid';
   end if;
+  perform set_config(
+    'test.stage_a_id',
+    (select id::text from public.live_timetable_stages
+      where live_timetable_id = target_live_id
+        and source_stage_id = 'live-stage-a'),
+    true
+  );
+  perform set_config(
+    'test.stage_b_id',
+    (select id::text from public.live_timetable_stages
+      where live_timetable_id = target_live_id
+        and source_stage_id = 'live-stage-b'),
+    true
+  );
 
   begin
-    perform public.create_or_replace_live_timetable_projection(
+    perform public.create_or_replace_live_timetable_projection_serialized(
       '00000000-0000-4000-8000-000000000081',
       '78000000-0000-4000-8000-000000000001',
-      'live-foundation-event', 1,
+      'live-foundation-event', 9223372036854775807,
       source_value ->> 'snapshot_fingerprint',
       pg_temp.live_projection(), 'replace', '1'
     );
@@ -369,7 +456,9 @@ begin
   end;
   begin
     perform public.start_live_timetable_entry(
-      target_live_id, 'live-stage-a', 'live-item-a', '1', '2'
+      target_live_id, 'live-stage-a',
+      pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+      'live-item-a', 0, '1', '2'
     );
     raise exception 'Viewer progress mutation was accepted' using errcode = 'P0004';
   exception when insufficient_privilege then null;
@@ -424,7 +513,9 @@ begin
   target_live_id := current_setting('test.live_id')::uuid;
   begin
     perform public.start_live_timetable_entry(
-      target_live_id, 'live-stage-a', 'live-item-a', '1', '2'
+      target_live_id, 'live-stage-a',
+      pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+      'live-item-a', 0, '1', '2'
     );
     raise exception 'Unassigned editor progress was accepted' using errcode = 'P0004';
   exception when insufficient_privilege then null;
@@ -440,18 +531,330 @@ do $owner_assigns$
 declare
   target_live_id uuid;
   assignment_result jsonb;
+  viewer_assignment_result jsonb;
+  discovery jsonb;
+  candidates jsonb;
+  owner_read jsonb;
 begin
   target_live_id := current_setting('test.live_id')::uuid;
+  discovery := public.find_live_timetable_for_event_authorized(
+    '78000000-0000-4000-8000-000000000001',
+    'live-foundation-event'
+  );
+  candidates := public.list_live_timetable_operator_candidates(target_live_id);
+  if discovery ->> 'liveId' <> target_live_id::text
+    or discovery ->> 'eventName' <> 'Live Foundation Event'
+    or jsonb_typeof(discovery -> 'sourceRevision') is distinct from 'string'
+    or discovery ->> 'sourceRevision' <> '9223372036854775807'
+    or jsonb_array_length(candidates -> 'candidates') <> 2
+    or (candidates -> 'candidates')::text like '%email%' then
+    raise exception 'Live discovery or candidate contract is invalid';
+  end if;
   assignment_result := public.set_live_timetable_stage_operator(
     target_live_id, 'live-stage-a',
+    pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
     '00000000-0000-4000-8000-000000000082', true,
     '3', '2'
   );
   if assignment_result ->> 'managementRevision' <> '4' then
     raise exception 'Operator assignment did not advance management revision';
   end if;
+  viewer_assignment_result := public.set_live_timetable_stage_operator(
+    target_live_id, 'live-stage-a',
+    pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+    '00000000-0000-4000-8000-000000000083', true,
+    '4', '2'
+  );
+  owner_read := public.load_live_timetable_authorized(target_live_id);
+  if viewer_assignment_result ->> 'managementRevision' <> '5'
+    or jsonb_typeof(owner_read #> '{live,sourceRevision}')
+      is distinct from 'string'
+    or owner_read #>> '{live,sourceRevision}' <> '9223372036854775807'
+    or not exists (
+      select 1
+      from jsonb_array_elements(owner_read -> 'operators') as assignment
+      where assignment ->> 'userId' =
+        '00000000-0000-4000-8000-000000000083'
+    ) then
+    raise exception 'Viewer operator assignment is invalid';
+  end if;
 end
 $owner_assigns$;
+
+reset role;
+do $mutation_identity_guards$
+declare
+  target_live_id uuid := current_setting('test.live_id')::uuid;
+  stage_a_id uuid;
+  stage_b_id uuid;
+  before_state jsonb;
+begin
+  stage_a_id := pg_temp.live_stage_id(target_live_id, 'live-stage-a');
+  stage_b_id := pg_temp.live_stage_id(target_live_id, 'live-stage-b');
+  before_state := pg_temp.live_state(target_live_id);
+
+  begin
+    perform public.set_live_timetable_stage_operator(
+      target_live_id, 'live-stage-a', stage_b_id,
+      '00000000-0000-4000-8000-000000000082', true, '5', '2'
+    );
+    raise exception 'Operator assignment accepted a mismatched Stage identity'
+      using errcode = 'P0004';
+  exception when sqlstate '40001' then null;
+  end;
+  begin
+    perform public.set_live_timetable_stage_operator(
+      target_live_id, 'live-stage-a', stage_b_id,
+      '00000000-0000-4000-8000-000000000083', false, '5', '2'
+    );
+    raise exception 'Operator removal accepted a mismatched Stage identity'
+      using errcode = 'P0004';
+  exception when sqlstate '40001' then null;
+  end;
+  begin
+    perform public.start_live_timetable_entry(
+      target_live_id, 'live-stage-a', stage_b_id,
+      'live-item-a', 0, '1', '2'
+    );
+    raise exception 'Start accepted a mismatched Stage identity'
+      using errcode = 'P0004';
+  exception when sqlstate '40001' then null;
+  end;
+  begin
+    perform public.start_live_timetable_entry(
+      target_live_id, 'live-stage-a', stage_a_id,
+      'live-item-a', 99, '1', '2'
+    );
+    raise exception 'Start accepted a mismatched entry position'
+      using errcode = 'P0004';
+  exception when sqlstate '40001' then null;
+  end;
+  begin
+    perform public.end_live_timetable_entry(
+      target_live_id, 'live-stage-a', stage_b_id,
+      'live-item-a', 0, '1', '2'
+    );
+    raise exception 'End accepted a mismatched Stage identity'
+      using errcode = 'P0004';
+  exception when sqlstate '40001' then null;
+  end;
+  begin
+    perform public.end_live_timetable_entry(
+      target_live_id, 'live-stage-a', stage_a_id,
+      'live-item-a', 99, '1', '2'
+    );
+    raise exception 'End accepted a mismatched entry position'
+      using errcode = 'P0004';
+  exception when sqlstate '40001' then null;
+  end;
+
+  if pg_temp.live_state(target_live_id) is distinct from before_state then
+    raise exception 'Rejected mutation identity mismatch changed Live state';
+  end if;
+end
+$mutation_identity_guards$;
+
+reset role;
+do $same_role_update_preserves_epoch$
+declare
+  epoch_before uuid;
+  epoch_after uuid;
+begin
+  select authorization_epoch into epoch_before
+  from public.workspace_members
+  where workspace_id = '78000000-0000-4000-8000-000000000001'
+    and user_id = '00000000-0000-4000-8000-000000000082';
+  update public.workspace_members
+  set role = 'editor'
+  where workspace_id = '78000000-0000-4000-8000-000000000001'
+    and user_id = '00000000-0000-4000-8000-000000000082';
+  select authorization_epoch into epoch_after
+  from public.workspace_members
+  where workspace_id = '78000000-0000-4000-8000-000000000001'
+    and user_id = '00000000-0000-4000-8000-000000000082';
+  if epoch_after is distinct from epoch_before then
+    raise exception 'Same-role membership update rotated authorization epoch';
+  end if;
+end
+$same_role_update_preserves_epoch$;
+
+update public.workspace_members
+set role = 'editor'
+where workspace_id = '78000000-0000-4000-8000-000000000001'
+  and user_id = '00000000-0000-4000-8000-000000000083';
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-4000-8000-000000000083', true
+);
+do $viewer_to_editor_stale_assignment$
+begin
+  begin
+    perform public.start_live_timetable_entry(
+      current_setting('test.live_id')::uuid,
+      'live-stage-a',
+      pg_temp.live_stage_id(
+        current_setting('test.live_id')::uuid, 'live-stage-a'
+      ),
+      'live-item-a', 0, '1', '2'
+    );
+    raise exception 'Viewer grant became an editor grant after role change'
+      using errcode = 'P0004';
+  exception when insufficient_privilege then null;
+  end;
+end
+$viewer_to_editor_stale_assignment$;
+
+reset role;
+update public.workspace_members
+set role = 'viewer'
+where workspace_id = '78000000-0000-4000-8000-000000000001'
+  and user_id = '00000000-0000-4000-8000-000000000083';
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-4000-8000-000000000083', true
+);
+do $viewer_role_round_trip_stays_stale$
+declare
+  authorized_value jsonb;
+begin
+  authorized_value := public.load_live_timetable_authorized(
+    current_setting('test.live_id')::uuid
+  );
+  if exists (
+    select 1 from jsonb_array_elements(authorized_value -> 'stages') as stage
+    where stage ->> 'sourceStageId' = 'live-stage-a'
+      and (stage ->> 'canOperate')::boolean
+  ) then
+    raise exception 'Role round trip revived canOperate';
+  end if;
+  begin
+    perform public.start_live_timetable_entry(
+      current_setting('test.live_id')::uuid,
+      'live-stage-a',
+      pg_temp.live_stage_id(
+        current_setting('test.live_id')::uuid, 'live-stage-a'
+      ),
+      'live-item-a', 0, '1', '2'
+    );
+    raise exception 'Role round trip revived a stale viewer grant'
+      using errcode = 'P0004';
+  exception when insufficient_privilege then null;
+  end;
+end
+$viewer_role_round_trip_stays_stale$;
+
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-4000-8000-000000000081', true
+);
+do $owner_reassigns_round_trip_viewer$
+declare
+  result jsonb;
+begin
+  result := public.set_live_timetable_stage_operator(
+    current_setting('test.live_id')::uuid,
+    'live-stage-a',
+    pg_temp.live_stage_id(
+      current_setting('test.live_id')::uuid, 'live-stage-a'
+    ),
+    '00000000-0000-4000-8000-000000000083',
+    true,
+    '5',
+    '2'
+  );
+  if result ->> 'managementRevision' <> '6' then
+    raise exception 'Explicit epoch reassignment did not advance revision';
+  end if;
+end
+$owner_reassigns_round_trip_viewer$;
+
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-4000-8000-000000000083', true
+);
+do $viewer_progress$
+declare
+  target_live_id uuid;
+  start_result jsonb;
+  end_result jsonb;
+begin
+  target_live_id := current_setting('test.live_id')::uuid;
+  start_result := public.start_live_timetable_entry(
+    target_live_id, 'live-stage-a',
+    pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+    'live-item-a', 0, '1', '2'
+  );
+  end_result := public.end_live_timetable_entry(
+    target_live_id, 'live-stage-a',
+    pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+    'live-item-a', 0, '2', '2'
+  );
+  if start_result ->> 'stageRevision' <> '2'
+    or end_result ->> 'stageRevision' <> '3'
+    or end_result ->> 'progressStatus' <> 'waiting' then
+    raise exception 'Assigned viewer progress contract is inconsistent';
+  end if;
+  begin
+    perform public.start_live_timetable_entry(
+      target_live_id, 'live-stage-b',
+      pg_temp.live_stage_id(target_live_id, 'live-stage-b'),
+      'live-item-a', 0, '1', '2'
+    );
+    raise exception 'Assigned viewer operated an unassigned Stage'
+      using errcode = 'P0004';
+  exception when insufficient_privilege then null;
+  end;
+end
+$viewer_progress$;
+
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-4000-8000-000000000081', true
+);
+do $owner_removes_viewer$
+declare
+  result jsonb;
+begin
+  result := public.set_live_timetable_stage_operator(
+    current_setting('test.live_id')::uuid,
+    'live-stage-a',
+    pg_temp.live_stage_id(
+      current_setting('test.live_id')::uuid, 'live-stage-a'
+    ),
+    '00000000-0000-4000-8000-000000000083',
+    false,
+    '6',
+    '2'
+  );
+  if result ->> 'managementRevision' <> '7' then
+    raise exception 'Viewer removal did not advance management revision';
+  end if;
+end
+$owner_removes_viewer$;
+
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-4000-8000-000000000083', true
+);
+do $removed_viewer_contract$
+begin
+  begin
+    perform public.start_live_timetable_entry(
+      current_setting('test.live_id')::uuid,
+      'live-stage-a',
+      pg_temp.live_stage_id(
+        current_setting('test.live_id')::uuid, 'live-stage-a'
+      ),
+      'live-break', 1, '3', '2'
+    );
+    raise exception 'Removed viewer retained progress permission'
+      using errcode = 'P0004';
+  exception when insufficient_privilege then null;
+  end;
+end
+$removed_viewer_contract$;
 
 select set_config(
   'request.jwt.claim.sub',
@@ -460,8 +863,6 @@ select set_config(
 do $editor_progress$
 declare
   target_live_id uuid;
-  start_result jsonb;
-  end_result jsonb;
   break_start_result jsonb;
   break_end_result jsonb;
 begin
@@ -469,40 +870,18 @@ begin
 
   begin
     perform public.start_live_timetable_entry(
-      target_live_id, 'live-stage-a', 'live-item-b', '1', '2'
+      target_live_id, 'live-stage-a',
+      pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+      'live-item-b', 2, '3', '2'
     );
     raise exception 'Non-first pending entry was accepted' using errcode = 'P0004';
   exception when sqlstate '55000' then null;
   end;
 
-  start_result := public.start_live_timetable_entry(
-    target_live_id, 'live-stage-a', 'live-item-a', '1', '2'
-  );
-  if start_result ->> 'progressStatus' <> 'in_progress'
-    or start_result ->> 'stageRevision' <> '2'
-    or start_result ->> 'nextEntryPosition' <> '1'
-    or start_result ->> 'nextPerformancePosition' <> '2' then
-    raise exception 'Start result is inconsistent';
-  end if;
-  begin
-    perform public.end_live_timetable_entry(
-      target_live_id, 'live-stage-a', 'live-item-a', '1', '2'
-    );
-    raise exception 'Stale Stage CAS was accepted' using errcode = 'P0004';
-  exception when sqlstate '40001' then null;
-  end;
-  end_result := public.end_live_timetable_entry(
-    target_live_id, 'live-stage-a', 'live-item-a', '2', '2'
-  );
-  if end_result ->> 'progressStatus' <> 'waiting'
-    or end_result ->> 'stageRevision' <> '3'
-    or end_result ->> 'nextEntryPosition' <> '1'
-    or end_result ->> 'nextPerformancePosition' <> '2' then
-    raise exception 'End result is inconsistent';
-  end if;
-
   break_start_result := public.start_live_timetable_entry(
-    target_live_id, 'live-stage-a', 'live-break', '3', '2'
+    target_live_id, 'live-stage-a',
+    pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+    'live-break', 1, '3', '2'
   );
   if break_start_result ->> 'progressStatus' <> 'in_progress'
     or break_start_result ->> 'stageRevision' <> '4'
@@ -512,7 +891,9 @@ begin
     raise exception 'Break start result is inconsistent';
   end if;
   break_end_result := public.end_live_timetable_entry(
-    target_live_id, 'live-stage-a', 'live-break', '4', '2'
+    target_live_id, 'live-stage-a',
+    pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+    'live-break', 1, '4', '2'
   );
   if break_end_result ->> 'progressStatus' <> 'waiting'
     or break_end_result ->> 'stageRevision' <> '5'
@@ -522,7 +903,9 @@ begin
   end if;
   begin
     perform public.end_live_timetable_entry(
-      target_live_id, 'live-stage-a', 'live-break', '5', '2'
+      target_live_id, 'live-stage-a',
+      pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+      'live-break', 1, '5', '2'
     );
     raise exception 'Repeated Break end was accepted' using errcode = 'P0004';
   exception when sqlstate '55000' then null;
@@ -573,7 +956,9 @@ begin
   target_live_id := current_setting('test.live_id')::uuid;
   begin
     perform public.start_live_timetable_entry(
-      target_live_id, 'live-stage-a', 'live-item-b', '5', '2'
+      target_live_id, 'live-stage-a',
+      pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+      'live-item-b', 2, '5', '2'
     );
     raise exception 'Viewer with stale operator assignment was accepted'
       using errcode = 'P0004';
@@ -586,6 +971,257 @@ select set_config(
   'request.jwt.claim.sub',
   '00000000-0000-4000-8000-000000000081', true
 );
+do $owner_reassigns_changed_role$
+declare
+  result jsonb;
+  owner_read jsonb;
+begin
+  result := public.set_live_timetable_stage_operator(
+    current_setting('test.live_id')::uuid,
+    'live-stage-a',
+    pg_temp.live_stage_id(
+      current_setting('test.live_id')::uuid, 'live-stage-a'
+    ),
+    '00000000-0000-4000-8000-000000000082',
+    true,
+    '7',
+    '2'
+  );
+  owner_read := public.load_live_timetable_authorized(
+    current_setting('test.live_id')::uuid
+  );
+  if result ->> 'managementRevision' <> '8'
+    or not exists (
+      select 1
+      from jsonb_array_elements(owner_read -> 'operators') as assignment
+      where assignment ->> 'userId' =
+        '00000000-0000-4000-8000-000000000082'
+    ) then
+    raise exception 'Explicit changed-role reassignment is invalid';
+  end if;
+end
+$owner_reassigns_changed_role$;
+
+reset role;
+do $owner_repeats_operator_commands$
+declare
+  result jsonb;
+  authorized_value jsonb;
+  assignment_created_at_before timestamptz;
+  assignment_created_at_after timestamptz;
+  stage_a_updated_at_after timestamptz;
+  live_updated_at_after timestamptz;
+  stage_b_updated_at_before timestamptz;
+  projection_version_before bigint;
+begin
+  select created_at into assignment_created_at_before
+  from public.live_timetable_stage_operators
+  where live_timetable_id = current_setting('test.live_id')::uuid
+    and user_id = '00000000-0000-4000-8000-000000000082';
+  select updated_at into stage_b_updated_at_before
+  from public.live_timetable_stages
+  where live_timetable_id = current_setting('test.live_id')::uuid
+    and source_stage_id = 'live-stage-b';
+  select projection_version into projection_version_before
+  from public.live_timetables
+  where id = current_setting('test.live_id')::uuid;
+
+  result := public.set_live_timetable_stage_operator(
+    current_setting('test.live_id')::uuid,
+    'live-stage-a',
+    pg_temp.live_stage_id(
+      current_setting('test.live_id')::uuid, 'live-stage-a'
+    ),
+    '00000000-0000-4000-8000-000000000082',
+    true,
+    '8',
+    '2'
+  );
+  select created_at into assignment_created_at_after
+  from public.live_timetable_stage_operators
+  where live_timetable_id = current_setting('test.live_id')::uuid
+    and user_id = '00000000-0000-4000-8000-000000000082';
+  select updated_at into stage_a_updated_at_after
+  from public.live_timetable_stages
+  where live_timetable_id = current_setting('test.live_id')::uuid
+    and source_stage_id = 'live-stage-a';
+  select updated_at into live_updated_at_after
+  from public.live_timetables
+  where id = current_setting('test.live_id')::uuid;
+  authorized_value := public.load_live_timetable_authorized(
+    current_setting('test.live_id')::uuid
+  );
+  if result ->> 'managementRevision' <> '9'
+    or (select count(*) from public.live_timetable_stage_operators
+      where live_timetable_id = current_setting('test.live_id')::uuid
+        and user_id = '00000000-0000-4000-8000-000000000082') <> 1
+    or (select projection_version from public.live_timetables
+      where id = current_setting('test.live_id')::uuid)
+        is distinct from projection_version_before
+    or (select updated_at from public.live_timetable_stages
+      where live_timetable_id = current_setting('test.live_id')::uuid
+        and source_stage_id = 'live-stage-b')
+        is distinct from stage_b_updated_at_before
+    or assignment_created_at_after <= assignment_created_at_before
+    or assignment_created_at_after is distinct from stage_a_updated_at_after
+    or assignment_created_at_after is distinct from live_updated_at_after
+    or not exists (
+      select 1
+      from jsonb_array_elements(authorized_value -> 'operators') as assignment
+      where assignment ->> 'stageId' = (
+        select id::text from public.live_timetable_stages
+        where live_timetable_id = current_setting('test.live_id')::uuid
+          and source_stage_id = 'live-stage-a'
+      )
+        and assignment ->> 'userId' =
+          '00000000-0000-4000-8000-000000000082'
+        and (assignment ->> 'assignedAt')::timestamptz
+          is not distinct from assignment_created_at_after
+    ) then
+    raise exception 'Identical operator reassignment lacks a durable revision receipt';
+  end if;
+
+  result := public.set_live_timetable_stage_operator(
+    current_setting('test.live_id')::uuid,
+    'live-stage-a',
+    pg_temp.live_stage_id(
+      current_setting('test.live_id')::uuid, 'live-stage-a'
+    ),
+    '00000000-0000-4000-8000-000000000083',
+    false,
+    '9',
+    '2'
+  );
+  select updated_at into stage_a_updated_at_after
+  from public.live_timetable_stages
+  where live_timetable_id = current_setting('test.live_id')::uuid
+    and source_stage_id = 'live-stage-a';
+  select updated_at into live_updated_at_after
+  from public.live_timetables
+  where id = current_setting('test.live_id')::uuid;
+  if result ->> 'managementRevision' <> '10'
+    or exists (
+      select 1 from public.live_timetable_stage_operators
+      where live_timetable_id = current_setting('test.live_id')::uuid
+        and user_id = '00000000-0000-4000-8000-000000000083'
+    )
+    or stage_a_updated_at_after is distinct from live_updated_at_after then
+    raise exception 'Absent operator removal lacks a durable revision receipt';
+  end if;
+
+  begin
+    perform public.set_live_timetable_stage_operator(
+      current_setting('test.live_id')::uuid,
+      'live-stage-a',
+      pg_temp.live_stage_id(
+        current_setting('test.live_id')::uuid, 'live-stage-a'
+      ),
+      '00000000-0000-4000-8000-000000000082',
+      true,
+      '9',
+      '2'
+    );
+    raise exception 'Stale operator CAS was accepted' using errcode = 'P0004';
+  exception when sqlstate '40001' then null;
+  end;
+  if (select management_revision from public.live_timetables
+      where id = current_setting('test.live_id')::uuid) <> 10
+    or (select count(*) from public.live_timetable_stage_operators
+      where live_timetable_id = current_setting('test.live_id')::uuid
+        and user_id = '00000000-0000-4000-8000-000000000082') <> 1 then
+    raise exception 'Rejected stale operator CAS changed Live state';
+  end if;
+end
+$owner_repeats_operator_commands$;
+set local role authenticated;
+
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-4000-8000-000000000082', true
+);
+do $reassigned_viewer_read_contract$
+declare
+  authorized_value jsonb;
+begin
+  authorized_value := public.load_live_timetable_authorized(
+    current_setting('test.live_id')::uuid
+  );
+  if not exists (
+    select 1 from jsonb_array_elements(authorized_value -> 'stages') as stage
+    where stage ->> 'sourceStageId' = 'live-stage-a'
+      and (stage ->> 'canOperate')::boolean
+  ) then
+    raise exception 'Reassigned current viewer cannot operate the Stage';
+  end if;
+end
+$reassigned_viewer_read_contract$;
+
+reset role;
+select set_config(
+  'test.removed_editor_epoch',
+  (select authorization_epoch::text
+    from public.workspace_members
+    where workspace_id = '78000000-0000-4000-8000-000000000001'
+      and user_id = '00000000-0000-4000-8000-000000000082'),
+  true
+);
+delete from public.workspace_members
+where workspace_id = '78000000-0000-4000-8000-000000000001'
+  and user_id = '00000000-0000-4000-8000-000000000082';
+do $removed_membership_assignment_cleanup$
+begin
+  if exists (
+    select 1 from public.live_timetable_stage_operators
+    where live_timetable_id = current_setting('test.live_id')::uuid
+      and user_id = '00000000-0000-4000-8000-000000000082'
+  ) then
+    raise exception 'Membership deletion left a Live operator assignment';
+  end if;
+end
+$removed_membership_assignment_cleanup$;
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-4000-8000-000000000082', true
+);
+do $removed_membership_contract$
+begin
+  begin
+    perform public.start_live_timetable_entry(
+      current_setting('test.live_id')::uuid,
+      'live-stage-a',
+      current_setting('test.stage_a_id')::uuid,
+      'live-item-b', 2, '5', '2'
+    );
+    raise exception 'Removed member retained Live progress permission'
+      using errcode = 'P0004';
+  exception when insufficient_privilege then null;
+  end;
+end
+$removed_membership_contract$;
+
+reset role;
+insert into public.workspace_members (workspace_id, user_id, role) values (
+  '78000000-0000-4000-8000-000000000001',
+  '00000000-0000-4000-8000-000000000082',
+  'viewer'
+);
+do $readded_membership_has_new_epoch$
+begin
+  if (select authorization_epoch::text
+      from public.workspace_members
+      where workspace_id = '78000000-0000-4000-8000-000000000001'
+        and user_id = '00000000-0000-4000-8000-000000000082')
+      is not distinct from current_setting('test.removed_editor_epoch') then
+    raise exception 'Deleted and re-added membership reused authorization epoch';
+  end if;
+end
+$readded_membership_has_new_epoch$;
+set local role authenticated;
+select set_config(
+  'request.jwt.claim.sub',
+  '00000000-0000-4000-8000-000000000081', true
+);
 do $owner_progress_without_assignment$
 declare
   target_live_id uuid;
@@ -594,10 +1230,14 @@ declare
 begin
   target_live_id := current_setting('test.live_id')::uuid;
   start_result := public.start_live_timetable_entry(
-    target_live_id, 'live-stage-a', 'live-item-b', '5', '2'
+    target_live_id, 'live-stage-a',
+    pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+    'live-item-b', 2, '5', '2'
   );
   end_result := public.end_live_timetable_entry(
-    target_live_id, 'live-stage-a', 'live-item-b', '6', '2'
+    target_live_id, 'live-stage-a',
+    pg_temp.live_stage_id(target_live_id, 'live-stage-a'),
+    'live-item-b', 2, '6', '2'
   );
   if start_result ->> 'stageRevision' <> '6'
     or end_result ->> 'stageRevision' <> '7'
@@ -610,6 +1250,22 @@ end
 $owner_progress_without_assignment$;
 
 reset role;
+set local role anon;
+do $progress_enablement_is_not_publication$
+begin
+  if public.load_live_timetable_public(
+      current_setting('test.live_public_id')::uuid
+    ) is not null then
+    raise exception 'Progress enablement unexpectedly enabled anonymous read';
+  end if;
+end
+$progress_enablement_is_not_publication$;
+
+reset role;
+update public.live_timetables
+set public_view_enabled = true
+where id = current_setting('test.live_id')::uuid;
+
 set local role anon;
 do $anonymous_public_read_contract$
 declare
@@ -637,7 +1293,7 @@ select set_config(
 );
 select public.set_live_timetable_publication(
   current_setting('test.live_id')::uuid,
-  '4', false
+  '10', false
 );
 
 reset role;
@@ -660,7 +1316,7 @@ select set_config(
 );
 select public.set_live_timetable_publication(
   current_setting('test.live_id')::uuid,
-  '5', true
+  '11', true
 );
 
 reset role;

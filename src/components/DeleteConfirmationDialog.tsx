@@ -1,5 +1,6 @@
-import { useEffect, useId, useRef } from 'react'
+import { useId, useRef } from 'react'
 import { canDismissDeleteConfirmation } from '../ui/deleteConfirmation'
+import { useNativeDialogActivity } from '../ui/nativeDialogActivity'
 
 interface DeleteConfirmationDialogProps {
   title: string
@@ -32,14 +33,7 @@ export function DeleteConfirmationDialog({
   const descriptionId = `${id}-description`
   const warningId = `${id}-warning`
 
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (dialog && !dialog.open) dialog.showModal()
-
-    return () => {
-      if (dialog?.open) dialog.close()
-    }
-  }, [])
+  useNativeDialogActivity(dialogRef)
 
   return (
     <dialog

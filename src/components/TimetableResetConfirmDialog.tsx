@@ -1,4 +1,8 @@
-import { useEffect, useRef } from 'react'
+import { useRef } from 'react'
+import {
+  consumeNativeDialogActivityClose,
+  useNativeDialogActivity,
+} from '../ui/nativeDialogActivity'
 
 export function TimetableResetConfirmDialog({ dayLabel, onCancel, onReset }: {
   dayLabel: string
@@ -6,16 +10,15 @@ export function TimetableResetConfirmDialog({ dayLabel, onCancel, onReset }: {
   onReset: () => void
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null)
-  useEffect(() => {
-    const dialog = dialogRef.current
-    dialog?.showModal()
-    return () => dialog?.close()
-  }, [])
+  useNativeDialogActivity(dialogRef, true)
   return (
     <dialog ref={dialogRef} className="generation-preview-dialog timetable-action-dialog"
       aria-labelledby="timetable-reset-title"
       onCancel={event => { event.preventDefault(); onCancel() }}
-      onClose={() => { if (dialogRef.current && !dialogRef.current.open) onCancel() }}>
+      onClose={(event) => {
+        if (!consumeNativeDialogActivityClose(event.currentTarget) &&
+          !event.currentTarget.open) onCancel()
+      }}>
       <h2 id="timetable-reset-title">この開催日のTTを初期化しますか？</h2>
       <p>{dayLabel}の全Stageが対象です。</p>
       <p>この開催日の出演バンド配置とPA担当を削除し、すべての出演バンドを未配置へ戻します。</p>

@@ -176,7 +176,7 @@ test('temporary Cloud lockはviewer readOnlyと区別しmodal delete dialogをin
     readFile(new URL('../src/components/DeleteConfirmationDialog.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/EventBasicInfo.tsx', import.meta.url), 'utf8'),
   ])
-  assert.match(dialogSource, /dialog\.showModal\(\)/)
+  assert.match(dialogSource, /useNativeDialogActivity\(dialogRef\)/)
   assert.match(dialogSource,
     /onCancel=\{\(event\) => \{[\s\S]*event\.preventDefault\(\)[\s\S]*canDismissDeleteConfirmation\(isPending\)/)
   assert.equal(dialogSource.match(/disabled=\{isPending\}/g)?.length, 2)

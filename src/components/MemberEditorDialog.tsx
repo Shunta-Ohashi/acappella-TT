@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import type { Member } from '../domain/models'
 import {
   createCommonMemberDraft,
@@ -7,6 +7,7 @@ import {
   type CommonMemberUpdateResult,
   type CommonMemberValidationErrors,
 } from '../domain/commonMembers'
+import { useNativeDialogActivity } from '../ui/nativeDialogActivity'
 
 interface MemberEditorDialogProps {
   member?: Member
@@ -24,15 +25,7 @@ export function MemberEditorDialog({
   const [errors, setErrors] = useState<CommonMemberValidationErrors>({})
   const isEditing = member !== undefined
 
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-
-    dialog.showModal()
-    return () => {
-      if (dialog.open) dialog.close()
-    }
-  }, [])
+  useNativeDialogActivity(dialogRef)
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()

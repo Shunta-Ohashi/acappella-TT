@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import type { Band, Member, MemberId } from '../domain/models'
 import { filterCommonMembers } from '../domain/commonMembers'
 import {
@@ -8,6 +8,7 @@ import {
   type CommonBandUpdateResult,
   type CommonBandValidationErrors,
 } from '../domain/commonBands'
+import { useNativeDialogActivity } from '../ui/nativeDialogActivity'
 
 interface BandEditorDialogProps {
   band?: Band
@@ -38,15 +39,7 @@ export function BandEditorDialog({
   )
   const selectedMemberCount = new Set(draft.defaultMemberIds).size
 
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-
-    dialog.showModal()
-    return () => {
-      if (dialog.open) dialog.close()
-    }
-  }, [])
+  useNativeDialogActivity(dialogRef)
 
   const handleToggleMember = (memberId: MemberId) => {
     setDraft((previous) => ({

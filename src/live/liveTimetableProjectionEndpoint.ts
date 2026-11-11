@@ -1,6 +1,7 @@
 import { isRecord } from '../persistence/persistenceValidation.ts'
 import { parseCloudEventSnapshot } from '../cloud/cloudEventSnapshot.ts'
 import { isPostgresBigintGeneration } from '../cloud/cloudGeneration.ts'
+import { parseLiveTimetableSourceRevision } from './liveTimetableSourceRevision.ts'
 import {
   createLiveTimetableProjection,
   type LiveTimetableProjection,
@@ -19,7 +20,7 @@ export interface LiveTimetableProjectionEndpointDependencies {
     actorId: string
     workspaceId: string
     eventId: string
-    expectedSourceRevision: number
+    expectedSourceRevision: string
   }) => Promise<{
     data: unknown | null
     error: LiveTimetableProjectionDatabaseError | null
@@ -28,7 +29,7 @@ export interface LiveTimetableProjectionEndpointDependencies {
     actorId: string
     workspaceId: string
     eventId: string
-    expectedSourceRevision: number
+    expectedSourceRevision: string
     sourceSnapshotFingerprint: string
     projection: LiveTimetableProjection
     mode: 'create' | 'replace'
@@ -132,9 +133,6 @@ const hasOnlyKeys = (value: Record<string, unknown>, keys: string[]): boolean =>
     Object.keys(value).every(key => allowed.has(key))
 }
 
-const isPositiveSafeInteger = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isSafeInteger(value) && value > 0
-
 const getBearerToken = (request: Request): string | undefined => {
   const match = request.headers.get('authorization')?.match(/^Bearer\s+(.+)$/iu)
   return match?.[1]?.trim() || undefined
@@ -186,7 +184,7 @@ const databaseErrorResponse = (
 interface ProjectionRequest {
   workspaceId: string
   eventId: string
-  expectedSourceRevision: number
+  expectedSourceRevision: string
   mode: 'create' | 'replace'
   expectedManagementRevision: string | null
 }
@@ -204,10 +202,13 @@ const parseRequest = (value: unknown): ProjectionRequest | undefined => {
   ) return undefined
 
   const workspaceId = normalizeUuid(value.workspaceId)
+  const expectedSourceRevision = parseLiveTimetableSourceRevision(
+    value.expectedSourceRevision,
+  )
   if (
     !workspaceId ||
     !isNonEmptyString(value.eventId) ||
-    !isPositiveSafeInteger(value.expectedSourceRevision) ||
+    !expectedSourceRevision ||
     (value.mode !== 'create' && value.mode !== 'replace') ||
     (value.mode === 'create' && value.expectedManagementRevision !== null) ||
     (value.mode === 'replace' &&
@@ -218,7 +219,7 @@ const parseRequest = (value: unknown): ProjectionRequest | undefined => {
   return {
     workspaceId,
     eventId: value.eventId,
-    expectedSourceRevision: value.expectedSourceRevision,
+    expectedSourceRevision,
     mode: value.mode,
     expectedManagementRevision: value.expectedManagementRevision as string | null,
   }
@@ -228,6 +229,9 @@ const parseSource = (
   value: unknown,
   request: ProjectionRequest,
 ): { snapshot: unknown; fingerprint: string } | undefined => {
+  const sourceRevision = isRecord(value)
+    ? parseLiveTimetableSourceRevision(value.revision)
+    : undefined
   if (
     !isRecord(value) ||
     !hasOnlyKeys(value, [
@@ -238,7 +242,7 @@ const parseSource = (
     value.workspace_id !== request.workspaceId ||
     value.event_id !== request.eventId ||
     !isNonEmptyString(value.event_name) ||
-    value.revision !== request.expectedSourceRevision ||
+    sourceRevision !== request.expectedSourceRevision ||
     typeof value.snapshot_fingerprint !== 'string' ||
     !fingerprintPattern.test(value.snapshot_fingerprint)
   ) return undefined
@@ -251,29 +255,32 @@ const parseSource = (
   }
 }
 
-const isValidMutationResponse = (
+const parseMutationResponse = (
   value: unknown,
   request: ProjectionRequest,
   fingerprint: string,
-): boolean => {
+): Record<string, unknown> | undefined => {
   if (!isRecord(value) || !hasOnlyKeys(value, [
     'status', 'workspaceId', 'eventId', 'liveId', 'publicId',
     'sourceRevision', 'sourceSnapshotFingerprint', 'projectionVersion',
     'managementRevision', 'isPublished',
-  ])) return false
+  ])) return undefined
   const expectedStatus = request.mode === 'create' ? 'created' : 'replaced'
+  const sourceRevision = parseLiveTimetableSourceRevision(value.sourceRevision)
   return value.status === expectedStatus &&
     value.workspaceId === request.workspaceId &&
     value.eventId === request.eventId &&
     normalizeUuid(value.liveId) !== undefined &&
     normalizeUuid(value.publicId) !== undefined &&
-    value.sourceRevision === request.expectedSourceRevision &&
+    sourceRevision === request.expectedSourceRevision &&
     value.sourceSnapshotFingerprint === fingerprint &&
     isPostgresBigintGeneration(value.projectionVersion) &&
     value.projectionVersion !== '0' &&
     isPostgresBigintGeneration(value.managementRevision) &&
     value.managementRevision !== '0' &&
     value.isPublished === false
+    ? { ...value, sourceRevision }
+    : undefined
 }
 
 export const handleLiveTimetableProjectionRequest = async (
@@ -362,14 +369,15 @@ export const handleLiveTimetableProjectionRequest = async (
     if (persisted.error) {
       return databaseErrorResponse(persisted.error, 'persist')
     }
-    if (!isValidMutationResponse(
+    const mutationResponse = parseMutationResponse(
       persisted.data,
       parsedRequest,
       source.fingerprint,
-    )) {
+    )
+    if (!mutationResponse) {
       return errorResponse(502, 'INVALID_RESPONSE', 'Live TT投影の保存結果を検証できませんでした。')
     }
-    return successResponse(persisted.data)
+    return successResponse(mutationResponse)
   } catch (error) {
     return getThrownCode(error) === 'CONFIGURATION_ERROR'
       ? errorResponse(500, 'CONFIGURATION_ERROR', 'Live TTのserver設定が不足しています。')

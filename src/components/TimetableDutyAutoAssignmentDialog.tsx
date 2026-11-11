@@ -1,7 +1,8 @@
-import { useEffect, useId, useRef, type FormEvent } from 'react'
+import { useId, useRef, type FormEvent } from 'react'
 import type { Member } from '../domain/models'
 import type { DutyAutoAssignmentPlanResult } from '../domain/dutyAutoAssignment'
 import { formatMinuteAsLocalTime } from '../domain/timeline'
+import { useNativeDialogActivity } from '../ui/nativeDialogActivity'
 import type { ResolvedTimetableGridRangeSelection } from '../ui/timetableGridSelection'
 
 interface TimetableDutyAutoAssignmentDialogProps {
@@ -39,14 +40,7 @@ export function TimetableDutyAutoAssignmentDialog({
       )
     : []
 
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    dialog.showModal()
-    return () => {
-      if (dialog.open) dialog.close()
-    }
-  }, [])
+  useNativeDialogActivity(dialogRef)
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()

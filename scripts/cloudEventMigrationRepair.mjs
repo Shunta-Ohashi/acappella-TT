@@ -21,6 +21,7 @@ const LATER_MIGRATIONS = {
   cloudV2CutoverInspection: '20261014100000',
   cloudV2AtomicCutover: '20261015100000',
   liveTimetableFoundation: '20261019154519',
+  liveTimetableOperatorUi: '20261021050414',
 }
 
 const LATER_MIGRATION_VERSIONS = Object.values(LATER_MIGRATIONS)
@@ -128,6 +129,7 @@ export const REQUIRED_LATER_SCHEMA_CHECKS = [
   'cloudV2CutoverInspectionContract',
   'cloudV2AtomicCutoverContract',
   'liveTimetableFoundationContract',
+  'liveTimetableOperatorUiContract',
 ]
 
 const isRecord = value =>
@@ -391,6 +393,12 @@ export const analyzeCloudEventMigrationInspection = inspection => {
       inspection.laterSchema.liveTimetableFoundationContract,
       laterApplied.liveTimetableFoundation,
       'liveTimetableFoundationContract/history',
+    )
+    compareExpected(
+      mismatches,
+      inspection.laterSchema.liveTimetableOperatorUiContract,
+      laterApplied.liveTimetableOperatorUi,
+      'liveTimetableOperatorUiContract/history',
     )
     compareExpected(
       mismatches,

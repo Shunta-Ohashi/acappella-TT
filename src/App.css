@@ -788,9 +788,23 @@
 
 .event-card__footer {
   display: flex;
+  gap: 0.75rem;
+  align-items: center;
   justify-content: flex-end;
   margin-top: auto;
   padding-top: 24px;
+}
+
+.event-card__live {
+  min-height: 2.5rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid #2d6a4f;
+  border-radius: 0.55rem;
+  background: #eef8f2;
+  color: #17593b;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
 }
 
 .event-card__open {

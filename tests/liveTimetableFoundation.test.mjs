@@ -17,12 +17,128 @@ import {
 import {
   deleteLiveSmokeAuthUsers,
 } from '../scripts/liveTimetableFoundationSmokeCleanup.mjs'
+import {
+  assertUnassignedViewerTransitionDenied,
+} from '../scripts/liveTimetableFoundationSmokeAuthorization.mjs'
+import {
+  parseLiveTimetableSourceRevision,
+} from '../src/live/liveTimetableSourceRevision.ts'
 
 const workspaceId = '78000000-0000-4000-8000-000000000001'
 const liveId = '78000000-0000-4000-8000-000000000002'
 const publicId = '78000000-0000-4000-8000-000000000003'
 const actorId = '00000000-0000-4000-8000-000000000078'
 const now = '2026-10-20T00:00:00.000Z'
+
+const createViewerDenialFixture = (operation, {
+  result = { ok: false, error: { code: 'ACCESS_DENIED' } },
+  mutateAfter = () => {},
+} = {}) => {
+  const stage = {
+    stageId: '78000000-0000-4000-8000-000000000004',
+    sourceStageId: 'stage-sub', revision: '9007199254740993',
+    progressStatus: operation === 'start' ? 'not_started' : 'in_progress',
+    currentEntryPosition: operation === 'start' ? null : 0,
+    nextEntryPosition: operation === 'start' ? 0 : null,
+    entries: [{
+      sourceScheduleItemId: 'item-sub', position: 0,
+      status: operation === 'start' ? 'pending' : 'in_progress',
+      actualStartedAt: operation === 'start' ? null : now,
+      actualEndedAt: null,
+    }],
+  }
+  const state = {
+    liveId, role: 'owner', isPublished: true, operators: [],
+    projectionVersion: '9007199254740994', managementRevision: '7',
+    stages: [stage],
+  }
+  const calls = []
+  let reads = 0
+  const request = async (...args) => { calls.push([operation, ...args]); return result }
+  return {
+    state, calls,
+    input: {
+      liveId, viewerId: actorId, sourceStageId: 'stage-sub',
+      sourceScheduleItemId: 'item-sub', operation,
+      ownerRepository: {
+        async loadAuthorized() {
+          const value = structuredClone(state)
+          if (reads++ > 0) mutateAfter(value)
+          return { ok: true, value }
+        },
+      },
+      viewerRepository: {
+        async loadAuthorized() {
+          const value = structuredClone(state)
+          value.role = 'viewer'
+          value.stages[0].canOperate = false
+          return { ok: true, value }
+        },
+        startEntry: request, endEntry: request,
+      },
+    },
+  }
+}
+
+test('viewer拒否smokeは最新の正確な対象・bigint CASでstart/endを直接要求する', async () => {
+  for (const operation of ['start', 'end']) {
+    const fixture = createViewerDenialFixture(operation)
+    await assertUnassignedViewerTransitionDenied(fixture.input)
+    assert.deepEqual(fixture.calls, [[
+      operation, liveId, 'stage-sub', fixture.state.stages[0].stageId,
+      'item-sub', 0, '9007199254740993', '9007199254740994',
+    ]])
+  }
+})
+
+test('viewer拒否smokeは認可以外の拒否や予期しない成功をPASSにしない', async () => {
+  for (const operation of ['start', 'end']) {
+    for (const result of [
+      { ok: true, value: {} },
+      ...['INVALID_STATE', 'INVALID_ARGUMENT', 'REVISION_CONFLICT', 'DATABASE_ERROR']
+        .map(code => ({ ok: false, error: { code } })),
+    ]) {
+      const fixture = createViewerDenialFixture(operation, { result })
+      await assert.rejects(() => assertUnassignedViewerTransitionDenied(fixture.input))
+      assert.equal(fixture.calls.length, 1)
+    }
+  }
+})
+
+test('viewer拒否smokeはStage/Entry・実時刻・revision・管理情報の変更を検出する', async () => {
+  for (const operation of ['start', 'end']) {
+    for (const mutateAfter of [
+      value => { value.stages[0].revision = '9007199254740995' },
+      value => { value.stages[0].progressStatus = 'completed' },
+      value => { value.stages[0].currentEntryPosition = 99 },
+      value => { value.stages[0].entries[0].status = 'completed' },
+      value => { value.stages[0].entries[0].actualStartedAt = '2026-10-20T01:00:00Z' },
+      value => { value.stages[0].entries[0].actualEndedAt = now },
+      value => { value.managementRevision = '8' },
+      value => { value.operators.push({ userId: actorId }) },
+    ]) {
+      const fixture = createViewerDenialFixture(operation, { mutateAfter })
+      await assert.rejects(() => assertUnassignedViewerTransitionDenied(fixture.input),
+        /changed Live state/)
+    }
+  }
+})
+
+test('viewer拒否smokeは未開始Entryの終了や割当済みviewerを認可試験に使わない', async () => {
+  for (const invalidate of [
+    fixture => { fixture.state.stages[0].entries[0].status = 'pending' },
+    fixture => { fixture.state.stages[0].entries[0].actualStartedAt = null },
+    fixture => { fixture.state.operators.push({
+      stageId: fixture.state.stages[0].stageId, userId: actorId,
+    }) },
+    fixture => { fixture.state.isPublished = false },
+  ]) {
+    const fixture = createViewerDenialFixture('end')
+    invalidate(fixture)
+    await assert.rejects(() => assertUnassignedViewerTransitionDenied(fixture.input))
+    assert.equal(fixture.calls.length, 0)
+  }
+})
 
 const createDomainState = () => ({
   members: [],
@@ -213,7 +329,7 @@ const jsonRequest = body => new Request('https://example.invalid/live', {
 const projectionRequest = (overrides = {}) => ({
   workspaceId,
   eventId: 'event-live',
-  expectedSourceRevision: 3,
+  expectedSourceRevision: '3',
   mode: 'create',
   expectedManagementRevision: null,
   ...overrides,
@@ -225,7 +341,7 @@ const sourceValue = (snapshot = createSnapshot()) => ({
   event_id: 'event-live',
   event_name: 'Live Event',
   event_snapshot: snapshot,
-  revision: 3,
+  revision: '3',
   snapshot_fingerprint: 'a'.repeat(64),
 })
 
@@ -235,7 +351,7 @@ const mutationValue = (overrides = {}) => ({
   eventId: 'event-live',
   liveId,
   publicId,
-  sourceRevision: 3,
+  sourceRevision: '3',
   sourceSnapshotFingerprint: 'a'.repeat(64),
   projectionVersion: '1',
   managementRevision: '1',
@@ -243,11 +359,41 @@ const mutationValue = (overrides = {}) => ({
   ...overrides,
 })
 
+test('Live source revisionはPostgreSQL bigint文字列へ精度安全に正規化する', () => {
+  for (const value of ['1', '9007199254740992', '9223372036854775807']) {
+    assert.equal(parseLiveTimetableSourceRevision(value), value)
+  }
+  assert.equal(parseLiveTimetableSourceRevision(3), '3')
+  assert.equal(
+    parseLiveTimetableSourceRevision(Number.MAX_SAFE_INTEGER),
+    String(Number.MAX_SAFE_INTEGER),
+  )
+  for (const value of [
+    Number.MAX_SAFE_INTEGER + 1,
+    0,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    '',
+    '0',
+    '-1',
+    '01',
+    '1.0',
+    '1e3',
+    '9223372036854775808',
+    null,
+    undefined,
+  ]) {
+    assert.equal(parseLiveTimetableSourceRevision(value), undefined, String(value))
+  }
+})
+
 test('投影Endpointは認証済みDB sourceだけから投影しTOCTOUをRPCへ引き継ぐ', async () => {
   let loaded
   let persisted
   const response = await handleLiveTimetableProjectionRequest(
-    jsonRequest(projectionRequest()),
+    jsonRequest(projectionRequest({ expectedSourceRevision: 3 })),
     {
       async authenticate(token) {
         assert.equal(token, 'valid-token')
@@ -268,12 +414,42 @@ test('投影Endpointは認証済みDB sourceだけから投影しTOCTOUをRPCへ
     actorId,
     workspaceId,
     eventId: 'event-live',
-    expectedSourceRevision: 3,
+    expectedSourceRevision: '3',
   })
   assert.equal(persisted.actorId, actorId)
   assert.equal(persisted.sourceSnapshotFingerprint, 'a'.repeat(64))
   assert.deepEqual(persisted.projection, createProjection())
   assert.equal(Object.hasOwn(projectionRequest(), 'snapshot'), false)
+})
+
+test('投影Endpointはbigint最大値を文字列のままsource・persistへ渡す', async () => {
+  const maxRevision = '9223372036854775807'
+  let loaded
+  let persisted
+  const successful = await handleLiveTimetableProjectionRequest(
+    jsonRequest(projectionRequest({ expectedSourceRevision: maxRevision })),
+    {
+      async authenticate() { return { id: actorId } },
+      async loadProjectionSource(input) {
+        loaded = input
+        return {
+          data: { ...sourceValue(), revision: maxRevision },
+          error: null,
+        }
+      },
+      async persistProjection(input) {
+        persisted = input
+        return {
+          data: mutationValue({ sourceRevision: maxRevision }),
+          error: null,
+        }
+      },
+    },
+  )
+  assert.equal(successful.status, 200)
+  assert.equal(loaded.expectedSourceRevision, maxRevision)
+  assert.equal(persisted.expectedSourceRevision, maxRevision)
+  assert.equal((await successful.json()).sourceRevision, maxRevision)
 })
 
 test('投影Endpointは認証・source・revision/response不整合をfail closedにする', async () => {
@@ -393,6 +569,16 @@ test('投影Endpointは認証・source・revision/response不整合をfail close
     },
   )
   assert.equal(wrongIdentity.status, 502)
+  const wrongRevision = await handleLiveTimetableProjectionRequest(
+    jsonRequest(projectionRequest()),
+    {
+      ...baseDependencies,
+      async persistProjection() {
+        return { data: mutationValue({ sourceRevision: '4' }), error: null }
+      },
+    },
+  )
+  assert.equal(wrongRevision.status, 502)
   assert.equal(persistCalls, 0)
 
   const extraSourceField = sourceValue()
@@ -538,7 +724,7 @@ test('Repositoryはmutation identityと状態を厳密に照合する', async ()
     async createProjection() {
       return { data: {
         status: 'created', workspaceId, eventId: 'event-live', liveId, publicId,
-        sourceRevision: 3, sourceSnapshotFingerprint: 'a'.repeat(64),
+        sourceRevision: '3', sourceSnapshotFingerprint: 'a'.repeat(64),
         projectionVersion: '1', managementRevision: '1', isPublished: false,
       }, error: null }
     },
@@ -576,15 +762,15 @@ test('Repositoryはmutation identityと状態を厳密に照合する', async ()
   }
   const repository = createLiveTimetableRepository(baseGateway)
   assert.equal((await repository.createProjection({
-    workspaceId, eventId: 'event-live', expectedSourceRevision: 3,
+    workspaceId, eventId: 'event-live', expectedSourceRevision: '3',
     mode: 'create', expectedManagementRevision: null,
   })).ok, true)
   assert.equal((await repository.setPublication(liveId, '1', true)).ok, true)
   assert.equal((await repository.setStageOperator(
-    liveId, 'stage-main', actorId, true, '1', '1',
+    liveId, 'stage-main', publicId, actorId, true, '1', '1',
   )).ok, true)
   assert.equal((await repository.startEntry(
-    liveId, 'stage-main', 'item-a', '1', '1',
+    liveId, 'stage-main', publicId, 'item-a', 0, '1', '1',
   )).ok, true)
 
   const wrongIdentity = createLiveTimetableRepository({
@@ -601,7 +787,7 @@ test('Repositoryはmutation identityと状態を厳密に照合する', async ()
     },
   })
   assert.equal((await wrongIdentity.createProjection({
-    workspaceId, eventId: 'event-live', expectedSourceRevision: 3,
+    workspaceId, eventId: 'event-live', expectedSourceRevision: '3',
     mode: 'create', expectedManagementRevision: null,
   })).error.code, 'INVALID_RESPONSE')
   assert.equal((await wrongIdentity.setPublication(
@@ -622,10 +808,44 @@ test('Repositoryはmutation identityと状態を厳密に照合する', async ()
     },
   })
   assert.equal((await staleMutationResponse.setStageOperator(
-    liveId, 'stage-main', actorId, true, '1', '1',
+    liveId, 'stage-main', publicId, actorId, true, '1', '1',
   )).error.code, 'INVALID_RESPONSE')
   assert.equal((await staleMutationResponse.startEntry(
-    liveId, 'stage-main', 'item-a', '1', '1',
+    liveId, 'stage-main', publicId, 'item-a', 0, '1', '1',
+  )).error.code, 'INVALID_RESPONSE')
+
+  for (const managementRevision of ['1', '3']) {
+    const invalidReceipt = createLiveTimetableRepository({
+      ...baseGateway,
+      async setStageOperator(input) {
+        const value = await baseGateway.setStageOperator(input)
+        value.data.managementRevision = managementRevision
+        return value
+      },
+    })
+    assert.equal((await invalidReceipt.setStageOperator(
+      liveId, 'stage-main', publicId, actorId, true, '1', '1',
+    )).error.code, 'INVALID_RESPONSE')
+  }
+
+  const wrongMutationTarget = createLiveTimetableRepository({
+    ...baseGateway,
+    async setStageOperator(input) {
+      const value = await baseGateway.setStageOperator(input)
+      value.data.stageId = '78000000-0000-4000-8000-000000000099'
+      return value
+    },
+    async transitionEntry(input) {
+      const value = await baseGateway.transitionEntry(input)
+      value.data.entry.position = 1
+      return value
+    },
+  })
+  assert.equal((await wrongMutationTarget.setStageOperator(
+    liveId, 'stage-main', publicId, actorId, true, '1', '1',
+  )).error.code, 'INVALID_RESPONSE')
+  assert.equal((await wrongMutationTarget.startEntry(
+    liveId, 'stage-main', publicId, 'item-a', 0, '1', '1',
   )).error.code, 'INVALID_RESPONSE')
 })
 
@@ -641,7 +861,7 @@ test('Repositoryは不正CAS引数をRPC前に拒否し公開nullを未検証成
   }
   const repository = createLiveTimetableRepository(gateway)
   assert.equal((await repository.startEntry(
-    liveId, 'stage-main', 'item-a', '01', '1',
+    liveId, 'stage-main', publicId, 'item-a', 0, '01', '1',
   )).error.code, 'INVALID_ARGUMENT')
   assert.equal((await repository.setPublication(
     liveId, '9223372036854775808', true,
@@ -665,7 +885,7 @@ test('Repositoryは既知のEdge error codeだけを保持し未知・壊れた�
   const create = repository => repository.createProjection({
     workspaceId,
     eventId: 'event-live',
-    expectedSourceRevision: 3,
+    expectedSourceRevision: '3',
     mode: 'create',
     expectedManagementRevision: null,
   })
@@ -786,10 +1006,11 @@ test('Live foundation migrationは原子的・分離・fail-closed契約を保�
 })
 
 test('Live Edge FunctionとCIは固定Deno設定を使用する', async () => {
-  const [config, workflow, packageJson] = await Promise.all([
+  const [config, workflow, packageJson, edgeFunction] = await Promise.all([
     readFile(new URL('../supabase/functions/create-live-timetable/deno.json', import.meta.url), 'utf8'),
     readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'),
     readFile(new URL('../package.json', import.meta.url), 'utf8'),
+    readFile(new URL('../supabase/functions/create-live-timetable/index.ts', import.meta.url), 'utf8'),
   ])
   assert.deepEqual(JSON.parse(config), {
     nodeModulesDir: 'auto',
@@ -802,6 +1023,12 @@ test('Live Edge FunctionとCIは固定Deno設定を使用する', async () => {
     JSON.parse(packageJson).scripts['test:live-timetable-http-realtime-smoke'],
     'node scripts/liveTimetableFoundationHttpRealtimeSmoke.mjs --confirm-disposable',
   )
+  assert.match(edgeFunction, /load_live_timetable_projection_source_serialized/)
+  assert.match(edgeFunction, /create_or_replace_live_timetable_projection_serialized/)
+  assert.doesNotMatch(edgeFunction,
+    /rpc\(\s*['"]load_live_timetable_projection_source['"]/)
+  assert.doesNotMatch(edgeFunction,
+    /rpc\(\s*['"]create_or_replace_live_timetable_projection['"]/)
 })
 
 test('実DB fixtureはrollback境界とStage単位の並行契約を検証する', async () => {
@@ -822,13 +1049,33 @@ test('実DB fixtureはrollback境界とStage単位の並行契約を検証する
   assert.match(foundation, /same|first pending|Non-first pending entry/i)
   assert.match(foundation, /Viewer progress mutation was accepted/i)
   assert.match(foundation, /Unassigned editor progress was accepted/i)
+  assert.match(foundation, /Assigned viewer progress contract is inconsistent/i)
+  assert.match(foundation, /Assigned viewer operated an unassigned Stage/i)
+  assert.match(foundation, /Viewer grant became an editor grant after role change/i)
+  assert.match(foundation, /Same-role membership update rotated authorization epoch/i)
+  assert.match(foundation, /Role round trip revived a stale viewer grant/i)
+  assert.match(foundation, /Role round trip revived canOperate/i)
+  assert.match(foundation, /Deleted and re-added membership reused authorization epoch/i)
+  assert.match(foundation, /Removed viewer retained progress permission/i)
   assert.match(foundation, /Viewer with stale operator assignment was accepted/i)
+  assert.match(foundation, /Explicit changed-role reassignment is invalid/i)
+  assert.match(foundation, /Identical operator reassignment lacks a durable revision receipt/i)
+  assert.match(foundation, /Absent operator removal lacks a durable revision receipt/i)
+  assert.match(foundation, /Stale operator CAS was accepted/i)
+  assert.match(foundation, /Membership deletion left a Live operator assignment/i)
   assert.match(foundation, /Workspace outsider read was accepted/i)
+  assert.match(foundation, /Progress enablement unexpectedly enabled anonymous read/i)
   assert.match(foundation, /Anonymous public DTO allowlist is invalid/i)
   assert.match(foundation, /Referenced Event deletion was accepted/i)
   assert.match(foundation, /Event without Live state was not deleted/i)
   assert.match(foundation, /Live progress changed Cloud Event persistence state/i)
   assert.match(foundation, /Private break title/i)
+  assert.match(foundation, /set local session_replication_role = replica/i)
+  assert.match(foundation,
+    /load_live_timetable_projection_source_serialized[\s\S]*9223372036854775807/i)
+  assert.match(foundation, /Serialized Live source revision lost bigint precision/i)
+  assert.match(foundation,
+    /create_or_replace_live_timetable_projection_serialized[\s\S]*9223372036854775807/i)
 
   assert.match(concurrency, /fixture already exists; inspect it manually/i)
   assert.doesNotMatch(
@@ -843,6 +1090,14 @@ test('実DB fixtureはrollback境界とStage単位の並行契約を検証する
   assert.match(concurrency, /operator removal did not wait for Live operation/i)
   assert.match(concurrency, /membership downgrade did not wait for progress/i)
   assert.match(concurrency, /viewer with stale assignment started Live entry/i)
+  assert.match(
+    concurrency,
+    /membership role change did not wait for operator reassignment/i,
+  )
+  assert.match(
+    concurrency,
+    /Concurrent role change left reassigned canOperate enabled/i,
+  )
   assert.match(concurrency, /updated source was committed as Live projection/i)
   assert.match(concurrency, /deleted source was committed as Live projection/i)
   assert.match(concurrency, /duplicate Live create did not wait/i)
@@ -870,7 +1125,7 @@ test('実DB fixtureはrollback境界とStage単位の並行契約を検証する
   assert.match(concurrency, /pg_stat_clear_snapshot\(\)/i)
   assert.match(concurrency, /for attempt in 1\.\.200/i)
   assert.match(concurrency, /Live concurrency fixture cleanup is incomplete/i)
-  assert.equal((concurrency.match(/do \$operation\$/g) ?? []).length, 7)
+  assert.equal((concurrency.match(/do \$operation\$/g) ?? []).length, 8)
   assert.match(readme, /live_timetable_state_foundation\.sql/i)
   assert.match(readme, /live_timetable_state_foundation_concurrency\.sql/i)
 })
@@ -903,6 +1158,12 @@ test('Live実HTTP・Realtime runnerは専用loopbackと厳密cleanupを要求す
   assert.match(runner, /const API_PORT = '56121'/)
   assert.match(runner, /const DATABASE_PORT = '56122'/)
   assert.match(runner, /createSupabaseLiveTimetableRepository/)
+  assert.match(runner, /assert\.equal\(migrationCheck, '16\|20261021050414'\)/)
+  assert.match(runner, /findForEvent\(workspaceId, eventId\)/)
+  assert.match(runner, /listOperatorCandidates\(liveId\)/)
+  assert.match(runner, /await repositories\.viewer\.startEntry/)
+  assert.match(runner, /await repositories\.editor\.startEntry[\s\S]*ACCESS_DENIED/i)
+  assert.match(runner, /set public_view_enabled\s*=\s*true/i)
   assert.match(runner, /postgres_changes/)
   assert.match(runner, /await client\.realtime\.setAuth\(data\.session\.access_token\)/)
   assert.match(runner, /select: EXPECTED_REALTIME_COLUMNS/)
@@ -921,8 +1182,10 @@ test('Live実HTTP・Realtime runnerは専用loopbackと厳密cleanupを要求す
   assert.doesNotMatch(runner, /pg_catalog\.pg_replication_slots/)
   assert.ok(runner.indexOf('console.log(JSON.stringify(successReport))') >
     runner.indexOf('await deleteLiveSmokeAuthUsers(admin, createdUserIds)'))
+  assert.match(runner, /probe\.client\.realtime\.disconnect\(\)/)
   assert.doesNotMatch(runner, /console\.log\([^)]*(?:anonKey|serviceRoleKey|token)/)
   assert.match(setup, /Live HTTP fixture precondition failed/)
+  assert.match(setup, /insert into public\.profiles[\s\S]*Live HTTP Viewer/i)
   assert.match(cleanup, /cleanup target differs from its dedicated fixture/)
   assert.match(cleanup, /workspace_master_band_members/)
   assert.match(cleanup, /cloud_workspace_master_backfills/)
@@ -933,6 +1196,26 @@ test('Live実HTTP・Realtime runnerは専用loopbackと厳密cleanupを要求す
   assert.match(
     preflight,
     /cloudV2AtomicCutoverContract[\s\S]*\) \|\| jsonb_build_object\([\s\S]*liveTimetableFoundationContract/,
+  )
+  assert.match(
+    preflight,
+    /liveTimetableFoundationContract[\s\S]*\) \|\| jsonb_build_object\([\s\S]*liveTimetableOperatorUiContract/,
+  )
+  assert.match(
+    preflight,
+    /liveTimetableOperatorUiContract[\s\S]*public_view_enabled[\s\S]*granted_role[\s\S]*authorization_epoch[\s\S]*find_live_timetable_for_event_authorized[\s\S]*list_live_timetable_operator_candidates/i,
+  )
+  assert.match(
+    preflight,
+    /liveTimetableOperatorUiContract[\s\S]*set_live_timetable_stage_operator\(uuid,text,uuid,uuid,boolean,text,text\)[\s\S]*target_stage_id is distinct from p_expected_stage_id/i,
+  )
+  assert.match(
+    preflight,
+    /liveTimetableOperatorUiContract[\s\S]*transition_live_timetable_entry\(text,uuid,text,uuid,text,integer,text,text\)[\s\S]*entry_row\.position is distinct from p_expected_entry_position/i,
+  )
+  assert.match(
+    preflight,
+    /set_live_timetable_stage_operator\(uuid,text,uuid,boolean,text,text\)'\s*\) is null[\s\S]*start_live_timetable_entry\(uuid,text,text,text,text\)'\s*\) is null/i,
   )
   assert.match(
     preflight,
@@ -958,6 +1241,13 @@ test('Live実HTTP・Realtime runnerは専用loopbackと厳密cleanupを要求す
     'live_timetable_public_select',
     'live_timetable_authenticated_inherited_select',
     'live_timetable_authenticated_column_select',
+    'live_timetable_operator_granted_role_nullable',
+    'live_timetable_operator_epoch_nullable',
+    'live_timetable_membership_epoch_trigger_missing',
+    'live_timetable_public_view_default_true',
+    'live_timetable_operator_discovery_anon_execute',
+    'live_timetable_legacy_mutation_overload',
+    'live_timetable_operator_helper_authenticated_execute',
   ]) {
     assert.match(catalogRegression, new RegExp(`'${selectScenario}'`))
   }

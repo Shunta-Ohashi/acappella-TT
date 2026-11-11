@@ -327,6 +327,16 @@ test('ポップオーバーはPortal・Esc・外側click・Stage切替のclose�
     popoverSource.indexOf('interface TimetableGridTooltipProps'),
   )
   assert.match(popoverSource, /createPortal\(/)
+  assert.equal(
+    (popoverSource.match(/const active = useRetainedAppActivity\(\)/g) ?? []).length,
+    3,
+    'Portal 3種がretained App activityを共有する',
+  )
+  assert.equal(
+    (popoverSource.match(/if \(!active\) return null/g) ?? []).length,
+    3,
+    'inactive時はPortalをDOMへ描画しない',
+  )
   assert.match(popoverSource, /TimetableGridRowActionsMenu/)
   assert.match(rowActionsPortalSource, /createPortal\(/)
   assert.match(rowActionsPortalSource, /horizontalAlignment:\s*'end'/)
@@ -347,6 +357,15 @@ test('ポップオーバーはPortal・Esc・外側click・Stage切替のclose�
     /maxHeight:\s*position\.maxHeight/,
   )
   assert.match(popoverSource, /document\.addEventListener\('pointerdown'/)
+  assert.match(
+    popoverSource,
+    /useEffect\(\(\) => \{\s*if \(!active\) return[\s\S]*document\.addEventListener\('pointerdown'/,
+  )
+  assert.equal(
+    (popoverSource.match(/document\.removeEventListener\('pointerdown'/g) ?? []).length,
+    2,
+    'Popover/Menuのdocument listenerはeffect cleanupで解除する',
+  )
   assert.match(popoverSource, /event\.key !== 'Escape'/)
   assert.match(popoverSource, /window\.addEventListener\('scroll', updatePosition, true\)/)
   assert.match(gridSource, /detailsDataRevision/)
