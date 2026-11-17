@@ -188,6 +188,8 @@ A・Bの終了記録を保持して試験を終了しています。匿名公開
 記録します。スマホの開始・終了タッチ操作まで確認済みという意味ではありません。
 その後に別Eventで実施した明示割当Viewerの演奏操作については、
 [スマートフォンViewer操作検証記録](#スマートフォンviewer操作検証記録2026-11-11)を参照してください。
+スマホOwnerの開始・終了と進行中の終了ボタンのOffline抑止については、
+[11/17のOwner操作記録](#スマートフォンowner操作終了offline検証記録2026-11-17)に分けて記録します。
 
 - スマートフォン実機のタッチ操作・画面復帰。
 - 学内Wi-Fi（meijo / eduroam）での実アプリ確認。
@@ -285,7 +287,8 @@ A・Bの終了記録はPC検証で作成したものであり、今回スマホ�
 
 以下はスマホ閲覧試験時点の範囲です。その後に別Eventで確認した明示割当Viewerの開始・終了、
 B開始前のOffline抑止などは、[後続の操作検証記録](#スマートフォンviewer操作検証記録2026-11-11)に
-分けて記録します。スマホOwnerの操作や進行中の終了ボタンのOffline抑止は未実施のままです。
+分けて記録します。11/11時点で未実施だったスマホOwnerの操作と進行中の終了ボタンのOffline抑止は、
+[11/17のOwner操作記録](#スマートフォンowner操作終了offline検証記録2026-11-17)を参照してください。
 
 - スマホのOwner / 明示割当Viewerによる演奏開始・終了のタッチ操作。
 - 演奏開始・終了ボタンのOffline時抑止。
@@ -389,6 +392,10 @@ PC終了時のmanagement revision=16、旧Eventのスマホ閲覧試験終了時
 
 ### C. 今回未実施の項目・証拠の限界
 
+以下は11/11のViewer操作試験時点の範囲です。スマホOwnerの開始・終了と進行中の終了ボタンの
+Offline抑止は、別Eventで実施した[11/17の記録](#スマートフォンowner操作終了offline検証記録2026-11-17)に
+分けて記録し、11/11の結果へ遡って合算しません。
+
 - 確認したスマホ操作は明示割当Viewerによるもの。スマホOwnerによる開始・終了は未実施。
 - Offline試験はB開始前の開始ボタンの抑止。進行中の終了ボタンのOffline抑止は未実施。
 - 担当解除後の終了不可はUI確認であり、直接RPCを送信した認可拒否試験ではない。
@@ -404,6 +411,102 @@ PC終了時のmanagement revision=16、旧Eventのスマホ閲覧試験終了時
 過去の使い捨てDB・Hosted試験は各日付・環境の証拠として保持し、今回の実機PASSへ合算しません。
 この結果は「スマホ全機能PASS」「Production公開準備完了」ではありません。PRのマージ可否と
 Production公開可否は別判断であり、PR #79はOpen・Draft・未マージを維持します。
+
+## スマートフォンOwner操作・終了Offline検証記録（2026-11-17）
+
+この節は、ユーザーが報告したスマートフォンOwnerの操作・表示確認と、その後ChatGPTが
+検証専用Projectで行ったread-only SQL確認を分けて記録します。11/11のPC・Viewer試験とは
+別Event・別時点の証拠です。この文書更新ではブラウザ試験・SQL・Hosted smokeを再実行していません。
+
+### 検証環境と対象
+
+- 検証日：2026-11-17 JST
+- 案内したPreview：<https://acappella-tt-live-test-qe21663mv-shunta-ohashi.vercel.app>
+  既存記録での対応commitは`05e315286f8f9b85f1e9ddb6c32bba19d4b7f915`。
+  当日の端末からbuild識別子は再取得しておらず、文書更新前HEADの`3bad9316`や今回の文書更新commitを
+  実機検証済みcommitとは扱いません。
+- Supabase検証専用Project：`sqrbioyjhxoehbmacujf`（`acappella-tt-live-validation`）
+- Workspace：学祭2026 Live TT Hosted検証
+  （`e73db27b-f32b-4310-8498-6a21269bd065`）
+- Event：【検証用】スマホOwner操作
+  （`event-f1fd2fb5-b80f-4e7d-8e94-dffc70864bb3`）
+- Live ID：`32c85bb4-3063-4f1a-97ec-fa58b220c4bc`
+- Stage：テスト用（1件）、Entry：OwnerテストA → OwnerテストB（2件）
+- 操作側：スマホOwner。同期確認側：PC。機種・OS・ブラウザの種類／バージョンは今回は再確認していません。
+- 通信：PC・スマホとも学校Wi-Fiとのユーザー報告。今回のSSIDは未確認で、
+  11/11のViewer閲覧試験のmeijo・eduroam成功報告を今回へ流用しません。
+
+### A. ユーザーによる実機操作・表示確認：7項目PASS
+
+Aの基本操作3項目について、ユーザーはすべて成功したと報告しました。
+
+1. スマホOwnerでAを開始・終了できた。
+2. PCにも手動更新なしで反映された。
+3. 再読み込み後もAは終了済み、Bは未開始だった。
+
+続いて、Bを進行中にした上で通信断・復帰を確認し、次の4項目すべてに成功したと報告しました。
+
+1. 通信断中、スマホではBの終了操作ができなくなった。
+2. 通信断中もPCではBが進行中のままだった。
+3. 復帰後、手動更新なしで操作可能になり、Bは勝手に終了しなかった。
+4. スマホでBを終了でき、PCへの反映と、再読み込み後の記録保持にも成功した。
+
+案内した切断手順はスマホの機内モードON・Wi-Fi OFF、Liveタブを維持した短時間の確認です。
+実際の切断継続時間・ボタン無効化までの秒数・復帰遅延は計測していません。タッチ操作、通信断中の
+ボタン状態、PC表示、自動反映はユーザー報告を根拠とし、以下のSQL結果から推定したものではありません。
+
+### B. ChatGPTによる最終read-only SQL確認結果
+
+2026-11-17 09:36:19 JSTにユーザー提示のEvent IDから対象を1件に特定し、
+09:37:55 JSTに同じWorkspace・Event・Liveの最終保存状態を確認しました。
+検証専用Projectで`REPEATABLE READ READ ONLY` transactionを使用し、`read_only=on`を確認して
+`ROLLBACK`で終了しています。以下はその確認結果であり、この文書更新でSQLを再実行した結果ではありません。
+
+| 項目 | 確認値 |
+| --- | --- |
+| source event revision / Live source revision | 1 / 1 |
+| projection version | 1 |
+| management revision | 3 |
+| Stage revision / Stage projection version | 5 / 1 |
+| Stage / Entry件数 | 1 / 2 |
+| Stage progress status | `completed` |
+| current entry / next entry / next performanceの位置 | すべて`null` |
+| Live進行 | OFF（`is_published=false`） |
+| 匿名公開設定 | OFF（`public_view_enabled=false`） |
+| Stage担当割当 | 0件 |
+| 開始・終了記録のactor | 4つの開始・終了記録で同じ1名。確認時点のWorkspace roleは`owner` |
+
+実時刻はすべて2026-11-17 JSTです。
+
+| 演奏 | 状態 | 実開始（JST） | 実終了（JST） |
+| --- | --- | --- | --- |
+| OwnerテストA | `completed` | 09:25:19.585776 | 09:25:23.983430 |
+| OwnerテストB | `completed` | 09:29:12.109457 | 09:30:11.492057 |
+
+両Entryの開始・終了時刻の前後関係は正常で、各Entryの開始者と終了者は同じです。
+OwnerはStage担当への明示割当なしで操作可能なため、担当0件とOwner操作記録は矛盾しません。
+A・Bの終了記録は保持しており、確認SQLによる削除・初期化・権限変更は行っていません。
+
+### C. 証拠の限界と残る判断
+
+- 今回のPASSはスマホOwnerの基本開始・終了、B進行中の通信断時の終了操作抑止、復帰後の
+  意図しない終了がないこと、PCへの自動反映とリロード後の記録保持の範囲です。
+- Bの実開始から実終了までの時刻差は演奏の進行時間であり、通信断時間や復帰遅延ではありません。
+  自動反映をRealtime経路だけの分離計測や遅延保証とは扱いません。
+- mutation送信途中の切断・結果不明・重複送信・再送、同時操作CAS競合、直接RPCの認可拒否、
+  Editor／Workspace外ユーザー、長時間接続・ロック・タブ破棄・負荷・Wi-Fiローミングは今回未実施です。
+  過去に別環境で実施した試験の証拠は、各日付の記録に保持します。
+- actorのroleは最終確認時点のmembershipであり、操作時点のrole履歴を監査した結果ではありません。
+- 今回は元Cloud Event Snapshotや旧Eventとの前後ハッシュ比較を取得していません。
+  source revisionの一致だけでSnapshot本文や他Event全体の不変性を保証しません。
+- 匿名公開設定OFFの保存値は確認しましたが、匿名アクセスのHTTP拒否試験は今回行っていません。
+- 今回の文書更新はrunbookとPR #79本文の記録更新のみです。実装・migration・Auth設定・配備設定は
+  変更せず、マージ・Draft解除・本番DB適用・本番配備も行いません。
+
+11/11時点で残っていたスマホOwner操作と進行中の終了Offline確認は、上記の限定した範囲で
+追加確認できました。「スマホ全機能PASS」「Production公開準備完了」とは扱いません。
+本番バックアップの復元試験や適用前の再確認・別途承認は、この記録では完了扱いにしません。
+PRのマージ可否とProduction公開可否は別判断で、PR #79はOpen・Draft・未マージを維持します。
 
 ## ブラウザ確認
 
