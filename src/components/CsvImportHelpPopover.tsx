@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { CsvImportHelpContent } from '../csv/csvHelp'
+import { useRetainedAppActivity } from '../ui/nativeDialogActivity'
 
 interface CsvImportHelpPopoverProps {
   content: CsvImportHelpContent
@@ -24,6 +25,7 @@ function ColumnTable({ columns }: { columns: CsvImportHelpContent['columns'] }) 
 }
 
 export function CsvImportHelpPopover({ content }: CsvImportHelpPopoverProps) {
+  const active = useRetainedAppActivity()
   const [isOpen, setIsOpen] = useState(false)
   const [isPinned, setIsPinned] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -37,7 +39,7 @@ export function CsvImportHelpPopover({ content }: CsvImportHelpPopoverProps) {
   }, [])
 
   useEffect(() => {
-    if (!isOpen) return
+    if (!active || !isOpen) return
     const handlePointerDown = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) close()
     }
@@ -52,7 +54,18 @@ export function CsvImportHelpPopover({ content }: CsvImportHelpPopoverProps) {
       document.removeEventListener('pointerdown', handlePointerDown)
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [close, isOpen])
+  }, [active, close, isOpen])
+
+  useEffect(() => {
+    if (active) return undefined
+    let current = true
+    queueMicrotask(() => {
+      if (current) close()
+    })
+    return () => {
+      current = false
+    }
+  }, [active, close])
 
   return (
     <div

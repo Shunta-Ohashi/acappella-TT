@@ -1,6 +1,7 @@
-import { useEffect, useId, useRef } from 'react'
+import { useId, useRef } from 'react'
 import type { TimetableGridAssignmentDeletionPresentation } from '../ui/timetableGridAssignment.ts'
 import { formatMinuteAsLocalTime } from '../domain/timeline.ts'
+import { useNativeDialogActivity } from '../ui/nativeDialogActivity'
 
 interface TimetableGridAssignmentDeletionDialogProps {
   items: readonly TimetableGridAssignmentDeletionPresentation[]
@@ -20,13 +21,7 @@ export function TimetableGridAssignmentDeletionDialog({
   const titleId = `${id}-title`
   const descriptionId = `${id}-description`
 
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (dialog && !dialog.open) dialog.showModal()
-    return () => {
-      if (dialog?.open) dialog.close()
-    }
-  }, [])
+  useNativeDialogActivity(dialogRef)
 
   return (
     <dialog

@@ -36,6 +36,12 @@ begin
 end
 $fixture_guard$;
 
+insert into public.profiles (user_id, display_name) values
+  (:'owner_id'::uuid, 'Live HTTP Owner'),
+  (:'editor_id'::uuid, 'Live HTTP Editor'),
+  (:'viewer_id'::uuid, 'Live HTTP Viewer'),
+  (:'outsider_id'::uuid, 'Live HTTP Outsider');
+
 insert into public.workspaces (id, name)
 values (:'workspace_id'::uuid, :'workspace_name');
 

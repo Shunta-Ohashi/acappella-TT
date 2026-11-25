@@ -1,6 +1,5 @@
 import {
   forwardRef,
-  useEffect,
   useImperativeHandle,
   useRef,
   useState,
@@ -37,6 +36,7 @@ import {
   hasSemanticDraftChanges,
   type EventEditorDraftHandle,
 } from '../ui/eventEditorDraftGuard'
+import { useNativeDialogActivity } from '../ui/nativeDialogActivity'
 
 interface EventBandEditorDialogProps {
   event: Event
@@ -235,14 +235,7 @@ EventBandEditorDialogProps
     ? eventDays.find((eventDay) => eventDay.id === selectedEventDayId)
     : undefined
 
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    dialog.showModal()
-    return () => {
-      if (dialog.open) dialog.close()
-    }
-  }, [])
+  useNativeDialogActivity(dialogRef)
 
   const clearError = (field: keyof EventBandSettingsItemErrors) => {
     setErrors((previous) => ({ ...previous, [field]: undefined, form: undefined }))

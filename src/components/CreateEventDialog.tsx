@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import type { LocalDate } from '../domain/models'
 import {
   validateNewEventDraft,
   type NewEventDraft,
   type NewEventValidationErrors,
 } from '../domain/eventCreation'
+import { useNativeDialogActivity } from '../ui/nativeDialogActivity'
 
 interface CreateEventDialogProps {
   onCancel: () => void
@@ -28,15 +29,7 @@ export function CreateEventDialog({
   const [nextDateInputKey, setNextDateInputKey] = useState(1)
   const [errors, setErrors] = useState<NewEventValidationErrors>({})
 
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-
-    dialog.showModal()
-    return () => {
-      if (dialog.open) dialog.close()
-    }
-  }, [])
+  useNativeDialogActivity(dialogRef)
 
   const handleAddDate = () => {
     setDateInputs((previous) => [

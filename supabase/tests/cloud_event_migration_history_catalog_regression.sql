@@ -40,7 +40,9 @@ begin
     'live_timetable_authenticated_inherited_select',
     'live_timetable_authenticated_inherited_write',
     'live_timetable_authenticated_inherited_column_update',
-    'live_timetable_authenticated_inherited_backend_execute'
+    'live_timetable_authenticated_inherited_backend_execute',
+    'live_timetable_serialized_backend_authenticated_inherited_execute',
+    'live_timetable_operator_stage_builder_inherited_execute'
   ) then
     if exists (
       select 1 from pg_catalog.pg_roles
@@ -129,6 +131,16 @@ begin
       when scenario = 'live_timetable_authenticated_inherited_backend_execute' then
         execute format(
           'grant execute on function public.create_or_replace_live_timetable_projection(uuid,uuid,text,bigint,text,jsonb,text,text) to %I',
+          inherited_role_name
+        );
+      when scenario = 'live_timetable_serialized_backend_authenticated_inherited_execute' then
+        execute format(
+          'grant execute on function public.create_or_replace_live_timetable_projection_serialized(uuid,uuid,text,bigint,text,jsonb,text,text) to %I',
+          inherited_role_name
+        );
+      when scenario = 'live_timetable_operator_stage_builder_inherited_execute' then
+        execute format(
+          'grant execute on function public.build_live_timetable_stages_json(uuid,uuid,text,boolean) to %I',
           inherited_role_name
         );
     end case;
@@ -533,6 +545,11 @@ begin
         public.create_or_replace_live_timetable_projection(
           uuid, uuid, text, bigint, text, jsonb, text, text
         ) to authenticated;
+    when 'live_timetable_serialized_source_authenticated_execute' then
+      grant execute on function
+        public.load_live_timetable_projection_source_serialized(
+          uuid, uuid, text, bigint
+        ) to authenticated;
     when 'live_timetable_realtime_missing' then
       alter publication supabase_realtime
         drop table public.live_timetable_stages;
@@ -541,6 +558,51 @@ begin
         drop table public.live_timetable_stages;
       alter publication supabase_realtime
         add table public.live_timetable_stages;
+    when 'live_timetable_operator_granted_role_nullable' then
+      alter table public.live_timetable_stage_operators
+        alter column granted_role drop not null;
+    when 'live_timetable_operator_epoch_nullable' then
+      alter table public.live_timetable_stage_operators
+        alter column granted_authorization_epoch drop not null;
+    when 'live_timetable_membership_epoch_trigger_missing' then
+      drop trigger workspace_members_rotate_authorization_epoch
+        on public.workspace_members;
+    when 'live_timetable_public_view_default_true' then
+      alter table public.live_timetables
+        alter column public_view_enabled set default true;
+    when 'live_timetable_operator_discovery_anon_execute' then
+      grant execute on function
+        public.find_live_timetable_for_event_authorized(uuid, text)
+        to anon;
+    when 'live_timetable_legacy_mutation_overload' then
+      execute $ddl$
+        create function public.set_live_timetable_stage_operator(
+          uuid, text, uuid, boolean, text, text
+        ) returns jsonb
+        language sql
+        volatile
+        security definer
+        set search_path = ''
+        as 'select null::jsonb'
+      $ddl$;
+      revoke all on function public.set_live_timetable_stage_operator(
+        uuid, text, uuid, boolean, text, text
+      ) from public, anon, authenticated, service_role;
+      grant execute on function public.set_live_timetable_stage_operator(
+        uuid, text, uuid, boolean, text, text
+      ) to authenticated;
+    when 'live_timetable_operator_helper_authenticated_execute' then
+      grant execute on function
+        public.build_live_timetable_stages_json_v15(uuid, uuid, text, boolean)
+        to authenticated;
+    when 'live_timetable_authorized_helper_authenticated_execute' then
+      grant execute on function
+        public.load_live_timetable_authorized_v15(uuid)
+        to authenticated;
+    when 'live_timetable_operator_stage_builder_authenticated_execute' then
+      grant execute on function
+        public.build_live_timetable_stages_json(uuid, uuid, text, boolean)
+        to authenticated;
     when 'profiles_missing' then
       alter table public.profiles rename to catalog_regression_profiles;
     when 'profiles_column_missing' then

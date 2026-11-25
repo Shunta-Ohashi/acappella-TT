@@ -224,7 +224,7 @@ const postPageRpc = (fetchImpl, target, accessToken, body) => requestJson(
   },
 )
 
-const exchangeMagicLink = async (fetchImpl, target, magicLink) => {
+export const exchangeMagicLink = async (fetchImpl, target, magicLink) => {
   const parsedLink = parseCloudV1MagicLink(magicLink, target)
   const response = await requestJson(
     fetchImpl,
@@ -246,7 +246,7 @@ const exchangeMagicLink = async (fetchImpl, target, magicLink) => {
   return response.body.access_token
 }
 
-const getAuthenticatedUserId = async (fetchImpl, target, accessToken) => {
+export const getAuthenticatedUserId = async (fetchImpl, target, accessToken) => {
   const response = await requestJson(
     fetchImpl,
     `${target.origin}/auth/v1/user`,
@@ -531,7 +531,7 @@ export const runCloudV1HostedAuthzSmoke = async (target, dependencies = {}) => {
   }
 }
 
-const readHiddenMagicLink = async () => {
+export const readHiddenMagicLink = async (prompt = 'Paste the one-time Magic Link (input hidden): ') => {
   if (!process.stdin.isTTY || typeof process.stdin.setRawMode !== 'function') {
     fail('Magic Link input requires an interactive terminal.')
   }
@@ -574,7 +574,7 @@ const readHiddenMagicLink = async () => {
         }
       }
     }
-    process.stderr.write('Paste the one-time Magic Link (input hidden): ')
+    process.stderr.write(prompt)
     process.stdin.setEncoding('utf8')
     process.stdin.setRawMode(true)
     process.stdin.on('data', onData)

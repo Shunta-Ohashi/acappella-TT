@@ -1,6 +1,5 @@
 import {
   forwardRef,
-  useEffect,
   useImperativeHandle,
   useRef,
   useState,
@@ -8,6 +7,7 @@ import {
 } from 'react'
 import type { Member, MemberId } from '../domain/models'
 import type { EventEditorDraftHandle } from '../ui/eventEditorDraftGuard'
+import { useNativeDialogActivity } from '../ui/nativeDialogActivity'
 
 interface AddEventMembersDialogProps {
   members: Member[]
@@ -44,15 +44,7 @@ AddEventMembersDialogProps
     reportUnsavedChanges: () => {},
   }), [selectedMemberIds])
 
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-
-    dialog.showModal()
-    return () => {
-      if (dialog.open) dialog.close()
-    }
-  }, [])
+  useNativeDialogActivity(dialogRef)
 
   const toggleMember = (memberId: MemberId) => {
     setSelectedMemberIds((previous) => previous.includes(memberId)

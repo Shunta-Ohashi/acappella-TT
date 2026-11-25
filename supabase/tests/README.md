@@ -27,6 +27,7 @@ They create rows in `auth.users` and require an administrator connection.
    - `20261014100000_cloud_v2_cutover_inspection.sql`
    - `20261015100000_cloud_v2_atomic_cutover.sql`
    - `20261019154519_live_timetable_state_foundation.sql`
+   - `20261021050414_live_timetable_operator_ui.sql`
 
    These names are ordered both by their migration version prefixes and by
    ordinary filename sorting; do not infer that every external migration tool

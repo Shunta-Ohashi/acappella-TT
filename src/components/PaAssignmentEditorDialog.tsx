@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import type {
   Event,
   EventBand,
@@ -22,6 +22,7 @@ import {
   type PaAssignmentItemErrors,
 } from '../domain/paAssignments'
 import { AssignmentRangeFields } from './AssignmentRangeFields.tsx'
+import { useNativeDialogActivity } from '../ui/nativeDialogActivity'
 
 interface PaAssignmentEditorDialogProps {
   event: Event
@@ -89,14 +90,7 @@ export function PaAssignmentEditorDialog({
     eventMemberDays,
   })
 
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    dialog.showModal()
-    return () => {
-      if (dialog.open) dialog.close()
-    }
-  }, [])
+  useNativeDialogActivity(dialogRef)
 
   const clearErrors = () => setErrors({})
 

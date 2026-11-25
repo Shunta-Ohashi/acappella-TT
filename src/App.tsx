@@ -322,6 +322,12 @@ import {
   type CloudEventHydrationState,
 } from './cloud/cloudEventLifecycle.ts'
 import { isEventEditorCloudNavigationLocked } from './ui/eventEditorInteraction.ts'
+import {
+  createLiveTimetableHash,
+  resolveRetainedEditorAccountGuardDecision,
+  type RetainedEditorAccountAction,
+  type RetainedEditorAccountGuard,
+} from './live/liveTimetableRouting.ts'
 import './App.css'
 
 type AppView = 'event-editor' | AppSection
@@ -373,7 +379,18 @@ const DEFAULT_EVENT_SETTINGS = {
 const READ_ONLY_WORKSPACE_MESSAGE =
   '閲覧権限のワークスペースではデータを変更できません。'
 
-function App() {
+interface AppProps {
+  isActive?: boolean
+  registerRetainedEditorAccountGuard?: (
+    scopeKey: string,
+    guard: RetainedEditorAccountGuard,
+  ) => () => void
+}
+
+function App({
+  isActive = true,
+  registerRetainedEditorAccountGuard,
+}: AppProps) {
   const cloudWorkspace = useOptionalCloudWorkspace()
   const cloudEnabled = cloudWorkspace !== null
   const canEditWorkspace = cloudWorkspace === null ||
@@ -396,6 +413,16 @@ function App() {
       })
     : STORAGE_KEY
   const requestedCloudWorkspaceVisitId = cloudWorkspace?.workspaceVisitId ?? ''
+  const retainedEditorAccountScopeKey = cloudWorkspace
+    ? JSON.stringify([
+        cloudWorkspace.user.id,
+        cloudWorkspace.workspace.id,
+        cloudWorkspace.workspaceVisitId,
+      ])
+    : ''
+  const retainedEditorAccountGuardRef = useRef<RetainedEditorAccountGuard>(
+    () => ({ allowed: false, reason: 'guard-unavailable' }),
+  )
   const requestedCloudWorkspaceId = cloudWorkspace?.workspace.id ?? ''
   const [activePersistenceStorageKey, setActivePersistenceStorageKey] = useState(
     requestedPersistenceStorageKey,
@@ -894,6 +921,7 @@ function App() {
 
   const timetableHistoryActive = canEditWorkspace && activeView === 'event-editor' &&
     activeStep === 6 && selectedEventId.length > 0
+  const timetableHistoryShortcutsEnabled = timetableHistoryActive && isActive
   useEffect(() => {
     if (!timetableHistoryActive) {
       timetableHistoryController.reset()
@@ -1906,11 +1934,47 @@ function App() {
     setActiveView(section)
   }
 
-  const handleBeforeSignOut = (): boolean =>
-    activeView !== 'event-editor' || !blockUnsavedEditorNavigation('sign-out')
+  const handleBeforeSignOut = (): boolean => {
+    if (appNavigationDisabled) return false
+    return activeView !== 'event-editor' ||
+      !blockUnsavedEditorNavigation('sign-out')
+  }
 
-  const handleBeforeWorkspaceChange = (): boolean =>
-    activeView !== 'event-editor' || !blockUnsavedEditorNavigation('workspace-switch')
+  const handleBeforeWorkspaceChange = (): boolean => {
+    if (appNavigationDisabled) return false
+    return activeView !== 'event-editor' ||
+      !blockUnsavedEditorNavigation('workspace-switch')
+  }
+
+  useLayoutEffect(() => {
+    retainedEditorAccountGuardRef.current = (
+      action: RetainedEditorAccountAction,
+    ) => {
+      if (appNavigationDisabled) {
+        return resolveRetainedEditorAccountGuardDecision({
+          cloudNavigationLocked: true,
+          editorNavigationAllowed: false,
+        })
+      }
+      const allowed = action === 'sign-out'
+        ? handleBeforeSignOut()
+        : handleBeforeWorkspaceChange()
+      return resolveRetainedEditorAccountGuardDecision({
+        cloudNavigationLocked: false,
+        editorNavigationAllowed: allowed,
+      })
+    }
+  })
+
+  useEffect(() => {
+    if (!registerRetainedEditorAccountGuard || !retainedEditorAccountScopeKey) {
+      return
+    }
+    return registerRetainedEditorAccountGuard(
+      retainedEditorAccountScopeKey,
+      action => retainedEditorAccountGuardRef.current(action),
+    )
+  }, [registerRetainedEditorAccountGuard, retainedEditorAccountScopeKey])
 
   const clearTimetableHistoryEphemeralState = () => {
     setGenerationOptionsScope(null)
@@ -2008,7 +2072,7 @@ function App() {
   )
 
   useEffect(() => {
-    if (!timetableHistoryActive) return
+    if (!timetableHistoryShortcutsEnabled) return
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.isComposing || event.altKey || (!event.ctrlKey && !event.metaKey)) return
       const target = event.target instanceof Element ? event.target : null
@@ -2028,7 +2092,7 @@ function App() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [timetableHistoryActive, canUndoTimetable, canRedoTimetable])
+  }, [timetableHistoryShortcutsEnabled, canUndoTimetable, canRedoTimetable])
 
   const timetableResetInput = selectedEvent && timetableEventDay
     ? { event: selectedEvent, eventDay: timetableEventDay, eventDays, stages, eventBands,
@@ -4160,6 +4224,9 @@ function App() {
           stages={stages}
           eventBands={eventBands}
           onOpenEvent={handleOpenEvent}
+          onOpenLive={cloudWorkspace
+            ? eventId => { window.location.hash = createLiveTimetableHash(eventId) }
+            : undefined}
           onCreateEvent={() => setIsCreateEventDialogOpen(true)}
           readOnly={!canEditWorkspace}
         />

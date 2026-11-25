@@ -1,6 +1,7 @@
-import { useEffect, useId, useRef } from 'react'
+import { useId, useRef } from 'react'
 import type { CsvImportError } from '../csv/csv'
 import { formatCsvImportError } from '../csv/csv'
+import { useNativeDialogActivity } from '../ui/nativeDialogActivity'
 
 export interface CsvImportPreview {
   datasetName: string
@@ -29,13 +30,7 @@ export function CsvImportPreviewDialog({
   const id = useId()
   const titleId = `${id}-title`
 
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (dialog && !dialog.open) dialog.showModal()
-    return () => {
-      if (dialog?.open) dialog.close()
-    }
-  }, [])
+  useNativeDialogActivity(dialogRef)
 
   return (
     <dialog
