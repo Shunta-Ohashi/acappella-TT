@@ -508,6 +508,79 @@ A・Bの終了記録は保持しており、確認SQLによる削除・初期化
 本番バックアップの復元試験や適用前の再確認・別途承認は、この記録では完了扱いにしません。
 PRのマージ可否とProduction公開可否は別判断で、PR #79はOpen・Draft・未マージを維持します。
 
+## リリース候補と専用Hosted／Previewの照合（2026-11-24 JST）
+
+今回の候補は `feature/live-tt-operator-ui` の `3bad931`。Vercelからデプロイ `dpl_8APhCgjsrgn5AAs9fLtS9DRJ5NzN` が `READY`、Preview URLは `https://acappella-tt-live-test-qe21663mv-shunta-ohashi.vercel.app/`、ソースは `05e315286f8f9b85f1e9ddb6c32bba19d4b7f915` と確認した。この差は `docs/live-tt-deployment.md` と本書だけ。アプリ、migration、Functions、依存・build設定に差はない。
+
+検証専用接続先は、11/11の同一デプロイURLと当時の保存状態の記録から `sqrbioyjhxoehbmacujf` と対応付けた。このURLはVercel APIのデプロイ固有 `url` で、別に返るbranch aliasとは区別した。`src/cloud/cloudConfig.ts` の接続先はViteのビルド時設定。そのProjectに読み取り専用で全16 migration、`create-live-timetable` と `save-cloud-event` のACTIVE v1・JWT検証有効、`public.live_timetable_stages` の7列publication、RLS有効・`authenticated` SELECT・`anon` SELECTなしを確認した。2 Functionsについて返却された33ファイルは改行を正規化した比較で候補版と差なし。専用Workspace `学祭2026 Live TT Hosted検証` にOwnerとViewerが各1件いる。現在のPreviewの通信先の直接観測は未実施。保護付きHTTP取得は一時共有リンクを作る副作用のため承認レビューで拒否され、デプロイファイル一覧も得られなかった。通常ブラウザーの自動操作は初期化エラーで停止。本実行ではテストEventを作成していない。[VercelのデプロイURL](https://vercel.com/docs/deployments/generated-urls)、[Viteのビルド時環境変数](https://vite.dev/guide/env-and-mode.html)。
+
+| 項目 | 区分 | 根拠 |
+| --- | --- | --- |
+| Ownerによる保存済みCloud Eventからの投影作成 | 11/25本人smokeでPASS | 11/11のスマホ操作試験は画面操作の既存証拠として再利用可能。 |
+| 明示割当Viewerの開始・終了 | 11/25本人smokeでPASS | 11/11の開始・終了の画面操作と保存記録も再利用可能。 |
+| 7列Realtime通知と認可read | 11/25本人smokeで開始・終了ともにPASS | 対象Stageの通知行7列と、通知起点のOwner認可readのrevision・状態を照合した。旧Previewの画面自動反映の記録では通知とpollingの区別はついていない。 |
+| 未割当Viewerの開始・終了拒否と前後不変 | 11/25本人smokeで両方PASS | 本人権限での直接RPC拒否と状態不変。11/24の2回目は開始だけPASS。 |
+
+### 11/24の本人実行と補助の修正
+
+本人実行は `INCOMPLETE AT CREATE_OWNER_PROJECTION`、`FINAL OFF_UNCONFIRMED`、終了値2。対象Event限定の実行後観測では投影が保存され、Live進行OFF、匿名公開OFF、操作割当0件を確認。元の実行結果はそのまま保持する。作成時刻と同じ時間帯のHTTPステータスおよび呼出し順と応答仕様から、作成直後と終了確認の匿名readで、正常な公開対象なしを旧補助が不合格にしたと判断した。停止の根拠と観測範囲は [引き継ぎの第8節](handoff.md#8-次に取り組む作業は1つ) を参照。
+
+2回目は、Owner投影作成と未割当Viewerの開始拒否・前後不変がPASS。 `INCOMPLETE AT REALTIME_AND_ASSIGNED_VIEWER_START`、`FINAL LIVE_OFF ANONYMOUS_READ_DENIED OPERATORS=1`、終了値2を保持する。このrunの開始のDB反映は事後に確認済みで、実通知は未確認。[実行記録と停止原因](handoff.md#2026-11-24-jstのhosted本人セッション2回目)
+
+### 11/25のHosted smoke完了
+
+対象は専用Project `sqrbioyjhxoehbmacujf`、Workspace `e73db27b-f32b-4310-8498-6a21269bd065`、Vercelデプロイ `dpl_8APhCgjsrgn5AAs9fLtS9DRJ5NzN`（既存記録のソースは `05e315286f8f9b85f1e9ddb6c32bba19d4b7f915`）、Event `hosted-live-evidence-5783a7cf-0365-47df-8b33-c3b247bb021e`。ローカルの候補 `3bad931` との差はコミット間で文書2件。実行出力はPostgres Changes準備待ちと担当解除を追加した作業ツリー版のHosted補助に対応する。ローカルファイルの照合情報は引き継ぎに記録した。実行時のファイルハッシュ・Node／SDK実行版は未記録。補助は専用ProjectのAPIへ接続するため、新たにブラウザーの画面や操作を確認した範囲はない。[版と確認範囲](handoff.md#2026-11-25-jstのhosted本人セッション完了)
+
+本人のPowerShell共有出力。
+
+```text
+PASS OWNER_SAVED_EVENT_PROJECTION
+PASS UNASSIGNED_START_ACCESS_DENIED_UNCHANGED
+PASS ASSIGNED_VIEWER_START_REALTIME_7_COLUMNS_AUTHORIZED_READ
+PASS UNASSIGNED_END_ACCESS_DENIED_UNCHANGED
+PASS ASSIGNED_VIEWER_END_REALTIME_7_COLUMNS_AUTHORIZED_READ
+FINAL LIVE_OFF ANONYMOUS_READ_DENIED OPERATORS=0
+FINAL TEST_ASSIGNMENT_ABSENT
+COMPLETED HOSTED LIVE EVIDENCE
+HOSTED_SMOKE_EXIT=0
+```
+
+ChatGPTによる11/25 09:20 JSTの別の読み取り観測では、このEventの進行と匿名公開はOFF、割当0件。演目1件が `completed` で開始・終了時刻を保存済み。今回の文書更新で再照会していない。
+
+09:20 JST時点で、前回Event `hosted-live-evidence-c7862da6-f39c-496e-839c-93e44731a0ef` は進行OFF・匿名公開OFF・割当1件で、当時の送信制限により解除を保留していた。11/25 10:19:17 JSTのChatGPTによる事後の読み取り観測では、同じ専用Project・Workspaceで前回Eventと成功Eventの双方が進行OFF・匿名公開OFF・割当0件。割当残存は観測時点で解消した。解除時刻・実行者は未確認で、元の `INCOMPLETE` と終了値2は履歴として保持する。
+
+本人報告では、専用ProjectにGmailのカスタムSMTPを設定後、Owner／ViewerへのMagic Link到着と通常のブラウザーログインを確認した。設定値と確認範囲はdeployment runbookに記録する。[SMTP・送信制限の確認項目](live-tt-deployment.md#3-supabaseテストproject)
+
+### Hosted smokeの実行手順
+
+以下は必要時に参照する手順。11/25の専用Hosted実測は完了済み。
+
+1. 対象はProject `sqrbioyjhxoehbmacujf` の **学祭2026 Live TT Hosted検証**（Workspace ID `e73db27b-f32b-4310-8498-6a21269bd065`）。11/11に使った個人用検証Ownerと学校用検証Viewerを使う。既存セッションでは、Previewの上部でWorkspaceを選び、既存Live画面を開いて「Workspace権限」がそれぞれ `owner`／`viewer` と表示されることを閲覧で確認できる。メールアドレスが分からなければ、専用ProjectのTable Editorで `public.workspace_members` を対象Workspace IDで絞り、`role` ごとの `user_id` を Authentication → Users のUIDと照合する。メールアドレスは画面内だけで確認し、Workspaceやロールを編集しない。補助も両本人の認証後、同じWorkspaceでロールを照合する。
+2. [通常Preview](https://acappella-tt-live-test-qe21663mv-shunta-ohashi.vercel.app/) を既存のVercelログインで開く。DevToolsのNetworkを表示して再読み込みし、アプリのSupabase通信先のホスト名が `sqrbioyjhxoehbmacujf.supabase.co` と一致する場合に進む。既存セッションがなく通信先が見えない場合は、読み込まれたViteのJSのResponseで固定されたSupabase URLを確認できる。ホストを特定できない場合は `--run` を見送る。
+3. 通常の非管理者PowerShellを開き、まず次を実行する。`--self-test` で匿名read契約、Realtime、後処理の3つのPASSを確認する。`--plan` は通信せず、`PLAN ONLY` に対象のデプロイID・Project・Workspace IDを表示する。どちらかが失敗するか、対象が異なれば `--run` に進まない。
+
+```powershell
+Set-Location -LiteralPath (Join-Path $env:USERPROFILE 'acappella-TT')
+node.exe .\scripts\liveTimetableHostedEvidence.mjs --self-test
+node.exe .\scripts\liveTimetableHostedEvidence.mjs --plan
+```
+
+4. 専用ProjectのDashboardで **Settings → API Keys → Publishable key** の既存 `sb_publishable_` キーを確認する。Previewの「ログイン」画面をアプリ未ログインのブラウザーで表示し、「メールアドレス」にOwnerのアドレスを入力して「ログインリンクを送信」を押す。Viewerも同じ画面で自分の検証アドレス宛てに1通発行する。メールのボタンは開かず、「リンクのアドレスをコピー」で新しい未使用リンクを取得する。コードは `signInWithOtp` と `shouldCreateUser: false` で既存アカウント向けに発行を要求する。
+5. 補助が受け付ける形式は `https://sqrbioyjhxoehbmacujf.supabase.co/auth/v1/verify?token=＜実値＞&type=magiclink`。`redirect_to` は省略または1個、`token` と `type` は各1個。補助は `token` の値を `token_hash`、`type` を `magiclink` として同じAuthのverify APIへPOSTし、返った本人セッションを使う。実際のメールの形式は到着時に確認する。メール追跡URL、OTPコードだけ、`type=email` や招待リンク、期限切れ・使用済みのリンクでは進めない。Vercelのログイン用リンクとも別。メールテンプレートや認証設定は変更しない。[Supabaseのメールテンプレート](https://supabase.com/docs/guides/auth/auth-email-templates)、[キーの取得方法](https://supabase.com/docs/guides/getting-started/api-keys)。
+6. 同じPowerShellで以下を実行する。非表示の入力欄には順に **Publishable Key → OwnerのMagic Link → ViewerのMagic Link** を貼り付け、各欄でEnterを押す。コマンド行、ファイル、チャットには実値を入力しない。両ロール確認後に補助が新しい合成Eventを1件作成する。
+
+```powershell
+node.exe .\scripts\liveTimetableHostedEvidence.mjs --run --confirm-deployment dpl_8APhCgjsrgn5AAs9fLtS9DRJ5NzN --confirm-preview-project sqrbioyjhxoehbmacujf
+$hostedSmokeExit = $LASTEXITCODE
+"HOSTED_SMOKE_EXIT=$hostedSmokeExit"
+```
+
+補助はチャネル参加とPostgres Changesの準備を確認後、Viewerに割当を行う。通知は対象Stageの `UPDATE` の行データ7列と開始／終了それぞれのrevisionを照合し、そのコールバック内のOwner認可readが同じrevision・状態を返したときに合格とする。拒否は正しい未開始／進行中のEntryと最新のrevisionでViewerから送信し、`ACCESS_DENIED` とOwner DTO全体の前後一致を要求する。
+
+補助は正常終了・途中停止ともに、Owner APIで進行OFFと今回の担当割当解除を試みる。更新後のOwner readで進行状態と担当割当を照合し、匿名readはHTTP 200かつ公開RPCの `null` を表す `NOT_FOUND` で合格とする。成功の目印は `HOSTED_SMOKE_EXIT=0`、`COMPLETED HOSTED LIVE EVIDENCE`、`FINAL LIVE_OFF ANONYMOUS_READ_DENIED OPERATORS=0`、`FINAL TEST_ASSIGNMENT_ABSENT`。表示された `FIXTURE_EVENT_ID`、`PASS`、`DIAGNOSTIC`、`INCOMPLETE`、`FINAL`、`COMPLETED`、`HOSTED_SMOKE_EXIT` の行を共有する。`DIAGNOSTIC` は固定工程・HTTPステータス・固定理由だけを表示する。途中停止時は自動再試行せず、`FINAL` の未確認・残存と当該Eventの読み取り専用確認を突き合わせる。
+
+補助は構文、合成応答による通知・認可read・後処理、対象Project不一致での停止をオフライン確認済み。ここでの通知確認はSupabase SDKと同じ認可readを使う専用クライアントで行う。実ブラウザーの通知ハンドラまではこの補助の確認範囲に含めない。本番導入、復旧判定、既存のアプリ設定は従来の扱い。
+
 ## ブラウザ確認
 
 1. owner / editor / viewerでEvent一覧から同じLive画面を開く。
@@ -516,6 +589,23 @@ PRのマージ可否とProduction公開可否は別判断で、PR #79はOpen・D
 4. 二重tap、別端末競合、offline、staleで操作が抑止され、再取得後に現在状態へ収束する。
 5. 開催日・Stage切替、現在/次、予定/実時間、進行一覧がスマートフォンで判別できる。
 6. Live進行を有効にしても匿名公開されず、`#share=`と通常編集画面が変わらない。
+
+### スマホでのLive運営画面の操作性確認
+
+既存記録では「【検証用】スマホ操作テスト」の2演目と、11/25の成功smoke Eventの1演目が終了済み。これらは表示確認に使える。前回の中断Eventも検証履歴として保持する。開始・終了には未開始の演目が2件ある合成Eventを使う。既存記録で適切なものを特定できなければ、操作確認のときにOwnerが専用Workspace内にStage 1件・演目2件の合成Eventを作成してCloud保存する。今回は既存記録で確認し、データの再照会・作成・変更は行っていない。
+
+1. スマホで [現在のPreview](https://acappella-tt-live-test-h89q0n42e-shunta-ohashi.vercel.app/) を開く。専用Project `sqrbioyjhxoehbmacujf` の「学祭2026 Live TT Hosted検証」で、別々のブラウザーセッションに検証OwnerとViewerで入り、同じ合成Event・Stageを開く。
+2. **Owner** は必要なら保存済みEventから「Live TTを作成」し、「Live進行を有効化」する。1件目を開始・終了し、縦画面で確認ダイアログ、現在／次の表示、予定／実時刻が読めて操作しやすいかを見る。この時点で未割当の **Viewer** は閲覧のみ。
+3. **Owner** が「Stage担当者」でViewerを対象Stageに割り当てる。**Viewer** は2件目を開始・終了し、両画面で状態が更新され、再表示後も記録が残るか確認する。操作ボタンの見つけやすさ、タップしやすさ、横はみ出し、状態の見分けやすさを記録する。
+4. **Owner** が割当を解除し、「Live進行を無効化」する。担当者なし、Viewerが閲覧のみ、2件分の記録保持を確認する。匿名公開はOFFのまま扱う。結果は機種・OS・ブラウザー、役割、該当の画面と操作で記録する。
+
+この手順は専用環境での開発検証。既存のHosted smokeと本番導入条件は従来の扱い。
+
+### 11/25の担当者ボタン表示確認
+
+2026-11-25 JSTの本人報告。コミット `0d6f1c7462e2a30cda1ac15f09d1bb063bf07086`、Deployment `dpl_4yXJJZ3FMN12pUb6faL3mvYKS6wC`、接続先は専用Project `sqrbioyjhxoehbmacujf`。ログイン後のスマホ画面で担当者欄の「再割当」「解除」の見た目が改善されたことを確認した。今回の確認範囲はこの2ボタンの表示。[確認したPreview](https://acappella-tt-live-test-h89q0n42e-shunta-ohashi.vercel.app/)
+
+修正が見えなかった時点では旧Preview URLを開いていたことを確認した。本人が提示したSupabase画面では新PreviewのRedirect URLが未登録だったため、新URLの追加と新しいMagic Linkでのログインを案内し、その後に表示改善の報告があった。設定の保存内容と正確な操作時刻は未確認。
 
 ## 今回の範囲外
 

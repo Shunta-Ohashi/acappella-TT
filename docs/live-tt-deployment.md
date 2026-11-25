@@ -60,6 +60,22 @@ Remove-Item Env:VITE_CLOUD_REQUIRED, Env:VITE_SUPABASE_URL, Env:VITE_SUPABASE_PU
 4. Authenticationのメールproviderを有効にし、SMTP設定、送信元、送信制限をDashboardで
    確認する。学祭前に実アドレスへの到達時間とrate limitを確認する。
 
+2026-11-25 JSTの専用検証Project `acappella-tt-live-validation`（`sqrbioyjhxoehbmacujf`）の設定前の記録。
+本人が提示した管理画面ではプロジェクト合計2通／時、`Enable custom SMTP` はOFF。
+`Minimum interval per user` は60秒と表示され、画面説明ではカスタムSMTP設定時の項目だった。
+ChatGPTが確認した同Projectの認証ログにHTTP 429／`over_email_send_rate_limit` があり、
+前回のテストEventの担当割当解除を保留した。この制約下では利用者別の表示値とProject全体の上限を分けて扱う。
+本番のメールprovider、SMTP、送信元、実効上限、到達とredirectは対象Projectで別に確認する。
+設定前の上限の参考。[SupabaseのAuth送信上限](https://supabase.com/docs/guides/auth/rate-limits)。
+
+11/25の本人の実施報告では、送信用Gmailとアプリパスワードを準備し、この専用ProjectにカスタムSMTPを設定した。
+設定した値はProject全体の送信上限30通／時、同一ユーザーの最小間隔60秒。
+Ownerの個人メールとViewerの学校メールにログインメールが届き、両方のブラウザーログインを確認した。
+現在設定の直接取得と上限までの送信負荷試験は未実施。今回の文書更新ではメール送信・設定変更を行っていない。
+
+当面はこの専用Projectと現在のVercel Previewを使い、追加費用をかけずに少人数で開発・検証を続ける。
+次はスマホでのLive運営画面の操作性確認を行う。[スマホ操作性確認手順](./live-tt-operator-ui.md#スマホでのlive運営画面の操作性確認)。
+
 ### Migrationの確認と適用
 
 新規で空のテストProjectだけをlinkします。既存Projectや既存DBへこの手順を流用しません。
@@ -277,6 +293,50 @@ Remove-Item `
   みなさない。
 - key漏えいが疑われる場合は公開を止め、Supabase側で該当keyをrotateし、Vercelを再build
   する。ログやissueへ実値を貼らない。
+
+本番導入前のローカル復元検証では、方法A v3.2でACL証拠を取得・照合した。保存されたSQL順序で
+再作成した `public` に対する追加のPUBLIC向けUSAGE取消しは、実効権限を変えないと評価した。
+この評価は当該ローカル条件での追加文の作用に限る。
+
+元バックアップが表す `PUBLIC` 向け `USAGE` は旧ローカル復元で失われていた。対象アーカイブを
+固定し、再作成・所有者設定直後に同じトランザクションで `USAGE` を補完した別版では、
+新規隔離環境のACLと既存の厳密SQL往復比較（247文対247文）がともに `MATCH`。新runの限定復元は
+`PASS_WITH_DECLARED_PLATFORM_DIFFERENCES`。証拠取得の `EVIDENCE_MATCH` と、旧runの
+SQL往復比較 `MISMATCH`・限定復元 `INCOMPLETE` は履歴として保持する。
+
+厳密な基盤同等性は `BLOCKED_BY_PLATFORM_BASELINE`、Authログイン復旧とSupabase全体復旧は未検証。
+本番導入は停止中。検証範囲、実行結果、適用条件は開発・運用準備の引き継ぎ文書の
+「`PUBLIC` の `USAGE` を補完した別版runnerでの新規隔離復元」を参照。
+
+### 本番Live導入と復旧判定
+
+旧バックアップの実証範囲は #1～#14 のアプリデータ・スキーマとmigration履歴。Auth IDの参照整合性は
+確認済み。Authアカウントや設定の復元、#15／#16で作られるLiveデータの復元は別の範囲になる。
+配布前に登録済み利用者のMagic Link・Workspace認可、Live作成と担当者別操作、7列Realtimeと認可read、
+既存Cloud Eventの保全、匿名公開OFFを対象環境で確認する。専用環境での証拠は版と範囲を明記する。
+
+既存本番では先に対象のmigration履歴・catalog・配備先・承認を確認し、履歴異常では手順を停止する。
+準備案として、使用可能な直近バックアップの範囲、別の復元先、書込み停止と復旧後に再開できる条件を
+切替計画に記録する。通常のログイン確認と既存Authアカウントの災害復旧は別の確認として記録する。
+
+固定した `17.11.0.004` の隔離基盤preflightは比較まで正常終了し、厳密比較は `MISMATCH`。
+既知のロール・所属・拡張・外部関数メタデータの4領域は同じ差が残り、新規差分はなかった。
+新設したコンテナの停止を確認済み。この候補の結果は既存の本番導入条件・停止判断とは別に記録する。
+基盤の根拠と範囲は [引き継ぎの基盤preflight記録](./handoff.md#候補-17110004-の厳密な基盤preflight2026-11-24-jst) を参照。
+
+| 区分 | 項目 | 確認済みの範囲と残る作業 |
+| --- | --- | --- |
+| 完了 | 専用Hostedの機能smoke | 11/25の本人実行で、Owner投影作成、未割当Viewerの両拒否と前後不変、割当Viewerの開始・終了と各7列通知・認可read、終了時の進行OFF・匿名read拒否・割当0件を確認。実行後のDB観測と別に記録した。[Operator UI runbook](./live-tt-operator-ui.md#1125のhosted-smoke完了) |
+| 完了 | ローカルのアプリ範囲の復旧検証 | 対象ACL・厳密SQL往復 `MATCH`、限定復元 `PASS_WITH_DECLARED_PLATFORM_DIFFERENCES`、方法A `EVIDENCE_MATCH`。厳密基盤同等性は `BLOCKED_BY_PLATFORM_BASELINE`。旧runと別々に保持し、ACL調査・候補探索は終了。 |
+| 既存証拠を再利用可能 | 対象版の検証 | 使い捨てDBのmigration／HTTP・Realtime検証、専用Hostedの機能smoke、11/11のPreview実機記録を、対象コミットと確認範囲を添えて使う。対象branchの現在のNode／Deno必須チェックと、対象環境での配布前確認はそれぞれ確認する。 |
+| 残っている作業 | 本番Projectの履歴・カタログと適用計画 | 既往の本番記録は先頭14件一致。その後の状態は未照会。現在の対象Project、適用済みversion、カタログ・実効権限と履歴の整合を読み取りで確認し、未適用分の `#15 → #16` の順序と停止条件を定める。履歴異常・予期しない権限では停止する。#16の内部Stage builderの実効EXECUTE guardと適用前後のmembership列の違いを既存手順に従って確認する。[既存環境のmigration条件](./cloud-setup.md) |
+| 残っている作業 | 配備先と承認 | 本番Supabase ProjectとVercel Productionの接続先、対象branch・revision、同一Projectの `save-cloud-event`／`create-live-timetable` の版・JWT検証、本番Cloud設定を照合する。必須チェック、レビュー・マージ、Production配備承認は個別に確認する。 |
+| 残っている作業 | 配布前確認 | 対象環境で第8節の既存項目と、上記Liveの役割別操作・実通知と認可read・既存Cloud Event保全・匿名公開OFFを確認する。メールprovider・SMTP・送信上限、登録済み利用者への到達、正しいoriginへのredirect、Workspace認可を確認する。Realtimeの取消後通知・JWT refresh・再接続は既存の運用確認項目として、証拠がカバーする範囲を確認する。[Operator UIの同期契約](./live-tt-operator-ui.md) |
+| 残っている作業 | バックアップ・復旧・切替 | 現行バックアップの利用可否と収録範囲、別の復元先、書込み停止と復旧・再開の判断を対象本番の切替計画に具体化する。frontend障害は検証済みVercel配備へのrollbackを判断する。Authアカウントの災害復旧、#15／#16以降のLiveデータ復旧、Supabase全体復旧は上記ローカル復元の実証範囲外。既存runbookの停止判断を維持する。 |
+
+本番対象の履歴・カタログの読み取り照合は保留中。独自ドメインと本番Live導入は必要になった段階で検討する。
+照合を再開したら、確認対象と取得時点、履歴・権限の差、未適用分の順序または停止理由を記録し、
+適用計画の可否を判断する。本番Live導入の停止判断は継続する。[保留中の本番事前確認](./handoff.md#保留中の本番事前確認)。
 
 ## 10. 次のLive TT PRとの境界
 
