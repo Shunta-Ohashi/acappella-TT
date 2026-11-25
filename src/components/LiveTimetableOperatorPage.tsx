@@ -1398,6 +1398,7 @@ function LiveTimetableOperatorWorkspace({
                                   {candidate && (
                                     <button
                                       type="button"
+                                      className="secondary-button"
                                       aria-label={`${stageTargetLabel}の担当者${operatorDisplayName}を現在の権限で再割当`}
                                       disabled={mutationBlocked || stale}
                                       onClick={() => void changeOperator(stage, assignment.userId, true)}
@@ -1407,6 +1408,7 @@ function LiveTimetableOperatorWorkspace({
                                   )}
                                   <button
                                     type="button"
+                                    className="secondary-button"
                                     aria-label={`${stageTargetLabel}の担当者${operatorDisplayName}を解除`}
                                     disabled={mutationBlocked || stale}
                                     onClick={() => void changeOperator(stage, assignment.userId, false)}

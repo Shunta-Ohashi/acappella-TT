@@ -387,6 +387,11 @@
   grid-column: 1 / -1;
 }
 
+.live-operator-management__assignment-actions .secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
 @media (min-width: 42rem) {
   .live-operator-page {
     padding: 1.25rem;
